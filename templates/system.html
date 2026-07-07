@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}System Control Console - TerraHub{% endblock %}
+
+
+
+{% block content %}
+<div class="dashboard-container">
+    <div class="welcome-banner">
+        <div class="welcome-text">
+            <h2>System Control Console</h2>
+            <p>System configuration panel. Administrative access only.</p>
+        </div>
+        <div class="status-badge">
+            <span class="status-dot"></span> Secure System Link
+        </div>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <span class="stat-label">System Uplink</span>
+            <span class="stat-value">99.8%</span>
+            <span class="stat-desc">Telemetry ping stability index</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-label">Active Feeds</span>
+            <span class="stat-value">18 Nodes</span>
+            <span class="stat-desc">Atmospheric & geodetic monitors</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-label">Database Sync</span>
+            <span class="stat-value">Active</span>
+            <span class="stat-desc">SQLite cluster transaction OK</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-label">Security Role</span>
+            <span class="stat-value">{% if user.is_superuser %}ROOT{% else %}USER{% endif %}</span>
+            <span class="stat-desc">Access authorization group</span>
+        </div>
+    </div>
+
+    <div class="console-section">
+        <h3>💻 System Terminal Log</h3>
+        <div class="console-terminal">
+            <div class="terminal-line"><span class="terminal-prompt">terrahub@system:~$</span> init_security_handshake --session_key=sec_prod_key</div>
+            <div class="terminal-line">[INFO] Handshake verified with auth node. Access token cached.</div>
+            <div class="terminal-line"><span class="terminal-prompt">terrahub@system:~$</span> get_workspace_status</div>
+            <div class="terminal-line">[OK] All database schemas mapped successfully. CustomUser backend enabled.</div>
+            <div class="terminal-line">[OK] Standard landing page '/' routing online.</div>
+            <div class="terminal-line">[OK] Access console '/login/' routing online.</div>
+            <div class="terminal-line">[OK] System administrator node '/system/' online.</div>
+            <div class="terminal-line"><span class="terminal-prompt">terrahub@system:~$</span> echo "Welcome, {{ user.username }}!"</div>
+            <div class="terminal-line">Welcome, {{ user.username }}! Environment variables loaded successfully. ready...</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
