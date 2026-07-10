@@ -1,0 +1,525 @@
+{% extends "base.html" %}
+
+{% block title %}Executive Dashboard - TerraHub{% endblock %}
+
+{% block content %}
+<!-- Header Layer -->
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'home' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">Overview</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem;">
+            Executive Overview</h1>
+    </div>
+
+    <div class="header-action-tray">
+        <div class="timestamp-badge">
+            <span class="live-dot"></span>
+            Last Sync: {{ current_timestamp }}
+        </div>
+        <button class="btn btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">Export Log</button>
+        <button class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">Live Filter</button>
+    </div>
+</header>
+
+<!-- Top Performance Visualization Grid -->
+<section class="charts-container-grid animate-fade-in-up" style="animation-delay: 0.1s;">
+    <!-- Sales Order Fulfillment Funnel Card -->
+    <div class="chart-box">
+        <h3>Sales Order Funnel</h3>
+        <div class="chart-wrapper">
+            <canvas id="salesOrderFunnelChart"></canvas>
+        </div>
+        <div class="color-ledger" id="sales-funnel-ledger">
+            <!-- Programmatically populated by JS for accessibility -->
+        </div>
+    </div>
+
+    <!-- Warehouse Space & Optimization Metrics Bar Chart Card -->
+    <div class="chart-box col-span-2-lg">
+        <h3>Warehouse Capacity Optimization (Total vs. Used space in MT)</h3>
+        <div class="chart-wrapper">
+            <canvas id="warehouseCapacityChart"></canvas>
+        </div>
+    </div>
+</section>
+
+<!-- Core Metrics KPI Row -->
+<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay: 0.15s;">
+    <!-- KPI 1: Active Raw Materials -->
+    <div class="kpi-item-card">
+        <span class="kpi-label">Active Raw Materials</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ inventory_metrics.raw_materials|floatformat:0 }}</span>
+            <span class="badge badge-sky">MT Stocked</span>
+        </div>
+        <div class="kpi-sparkline-box">
+            <div class="sparkbar active-primary" style="height: 40%;"></div>
+            <div class="sparkbar active-primary" style="height: 60%;"></div>
+            <div class="sparkbar active-primary" style="height: 55%;"></div>
+            <div class="sparkbar active-primary" style="height: 80%;"></div>
+            <div class="sparkbar active-primary" style="height: 75%;"></div>
+            <div class="sparkbar active-primary" style="height: 95%;"></div>
+        </div>
+    </div>
+
+    <!-- KPI 2: Active Finished Goods -->
+    <div class="kpi-item-card">
+        <span class="kpi-label">Finished Goods</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ inventory_metrics.finished_goods|floatformat:0 }}</span>
+            <span class="badge badge-emerald">Units Ready</span>
+        </div>
+        <div class="kpi-sparkline-box">
+            <div class="sparkbar active-secondary" style="height: 30%;"></div>
+            <div class="sparkbar active-secondary" style="height: 45%;"></div>
+            <div class="sparkbar active-secondary" style="height: 70%;"></div>
+            <div class="sparkbar active-secondary" style="height: 65%;"></div>
+            <div class="sparkbar active-secondary" style="height: 85%;"></div>
+            <div class="sparkbar active-secondary" style="height: 90%;"></div>
+        </div>
+    </div>
+
+    <!-- KPI 3: Global Operating Capacity -->
+    <div class="kpi-item-card">
+        <span class="kpi-label">Global Space Utilization</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ global_utilization|floatformat:1 }}%</span>
+            <span
+                class="badge {% if global_utilization > 85 %}badge-rose{% elif global_utilization > 70 %}badge-amber{% else %}badge-emerald{% endif %}">
+                {% if global_utilization > 85 %}Critical{% elif global_utilization > 70 %}Warning{% else %}Healthy{% endif %}
+            </span>
+        </div>
+        <div class="kpi-sparkline-box">
+            <div class="sparkbar" style="height: 50%;"></div>
+            <div class="sparkbar" style="height: 60%;"></div>
+            <div class="sparkbar" style="height: 70%;"></div>
+            <div class="sparkbar" style="height: 80%;"></div>
+            <div class="sparkbar" style="height: 75%;"></div>
+            <div class="sparkbar {% if global_utilization > 85 %}active-rose{% else %}active-primary{% endif %}"
+                style="height: {{ global_utilization }}%;"></div>
+        </div>
+    </div>
+
+    <!-- KPI 4: Daily Burn -->
+    <div class="kpi-item-card">
+        <span class="kpi-label">Est. Daily Space Cost</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">${{ total_daily_cost|floatformat:2 }}</span>
+            <span class="badge badge-amber">Daily Burn</span>
+        </div>
+        <div class="kpi-sparkline-box">
+            <div class="sparkbar active-primary" style="height: 90%;"></div>
+            <div class="sparkbar active-primary" style="height: 85%;"></div>
+            <div class="sparkbar active-primary" style="height: 80%;"></div>
+            <div class="sparkbar active-primary" style="height: 75%;"></div>
+            <div class="sparkbar active-primary" style="height: 70%;"></div>
+            <div class="sparkbar active-primary" style="height: 72%;"></div>
+        </div>
+    </div>
+</section>
+
+<!-- Operational Split-Pane Layout -->
+<section class="split-grid animate-fade-in-up" style="animation-delay: 0.2s;">
+    <!-- Left Column: Active Logistics Movements Table -->
+    <div class="pane-card">
+        <h3>🚚 Active Logistics Pipeline</h3>
+        <div class="data-table-container">
+            <table class="custom-table">
+                <thead>
+                    <tr>
+                        <th>Tracking / Fleet ID</th>
+                        <th>Direction</th>
+                        <th>Status</th>
+                        <th>ETA Date</th>
+                        <th>Payload</th>
+                        <th style="text-align: right;">Quantity</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for shipment in active_shipments %}
+                    <tr>
+                        <td style="font-family: monospace; font-weight: 600;">{{ shipment.tracking_number }}</td>
+                        <td>
+                            {% if shipment.direction == 'Inbound' %}
+                            <span style="color: #34d399; margin-right: 0.25rem;">📥</span> Inbound
+                            {% elif shipment.direction == 'Outbound' %}
+                            <span style="color: #38bdf8; margin-right: 0.25rem;">📤</span> Outbound
+                            {% else %}
+                            <span style="color: #cbd5e1; margin-right: 0.25rem;">🔁</span> Transfer
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span
+                                class="badge {% if shipment.status == 'Delayed' %}badge-rose{% elif shipment.status == 'Dispatched' %}badge-sky{% else %}badge-slate{% endif %}">
+                                {{ shipment.status }}
+                            </span>
+                        </td>
+                        <td style="color: var(--text-muted);">{{ shipment.expected_eta_date|default:"N/A" }}</td>
+                        <td style="font-weight: 500;">
+                            {% if shipment.material %}
+                            {{ shipment.material.name }} <span style="font-size: 0.75rem; color: var(--text-muted);">({{
+                                shipment.material.sku }})</span>
+                            {% elif shipment.product %}
+                            {{ shipment.product.name }} <span style="font-size: 0.75rem; color: var(--text-muted);">({{
+                                shipment.product.sku }})</span>
+                            {% else %}
+                            Multiple Cargo
+                            {% endif %}
+                        </td>
+                        <td style="text-align: right; font-weight: 700;">{{ shipment.quantity }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                            No active movements in pipeline.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Right Column: Warehouse Space & Cost Optimizer -->
+    <div class="pane-card">
+        <h3>🏢 Space & Cost Optimization</h3>
+        <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+            {% for w in warehouse_stats %}
+            <div
+                style="background: rgba(255, 255, 255, 0.01); border: 1px solid var(--border-light); border-radius: 8px; padding: 1.25rem;">
+                <div
+                    style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+                    <div>
+                        <h4 style="font-family: 'Outfit', sans-serif; font-size: 1.05rem; font-weight: 600;">{{ w.name
+                            }}</h4>
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">Billing: {{ w.billing_mode }}</span>
+                    </div>
+                    <div>
+                        {% if w.raw_type == 'Internal' %}
+                        <span class="badge badge-emerald">Internal Estate</span>
+                        {% else %}
+                        <span class="badge badge-rose">External provider</span>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Micro progress bar -->
+                <div
+                    style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">
+                    <span>Space Utilized: {{ w.used_mt|floatformat:1 }} / {{ w.capacity_mt|floatformat:1 }} MT</span>
+                    <span style="font-weight: 600; color: var(--text-main);">{{ w.utilization_percent|floatformat:1
+                        }}%</span>
+                </div>
+                <div class="micro-progress-container">
+                    <div class="micro-progress-bar {% if w.utilization_percent > 85 %}progress-rose{% elif w.utilization_percent > 70 %}progress-amber{% else %}progress-emerald{% endif %}"
+                        style="width: {{ w.utilization_percent }}%;"></div>
+                </div>
+
+                <div
+                    style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; font-size: 0.8rem; border-top: 1px solid rgba(255, 255, 255, 0.04); padding-top: 0.5rem;">
+                    <span style="color: var(--text-muted);">Daily Burn Rate:</span>
+                    <span
+                        style="font-weight: 700; color: {% if w.daily_cost > 0 %}#f87171{% else %}#34d399{% endif %};">
+                        {% if w.daily_cost > 0 %}${{ w.daily_cost|floatformat:2 }}{% else %}Free (Owned){% endif %}
+                    </span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<!-- Risk Mitigation & Ledger Sections -->
+<section class="animate-fade-in" style="animation-delay: 0.25s; margin-top: 1rem;">
+    <!-- Predictive Degradation Alerts (FIFO Warnings) -->
+    <div class="risk-alert-box">
+        <h3>⚠️ Predictive Material Degradation Alerts (FIFO Risk Warning)</h3>
+        {% if degrading_batches %}
+        <div class="risk-grid">
+            {% for batch in degrading_batches %}
+            <div class="risk-item">
+                <div class="risk-tag-row">
+                    <span style="font-family: monospace; font-weight: 700; font-size: 0.85rem; color: var(--primary);">
+                        BATCH: {{ batch.batch_number }}
+                    </span>
+                    <span class="badge {% if batch.days_remaining <= 10 %}badge-rose{% else %}badge-amber{% endif %}">
+                        Expiring soon
+                    </span>
+                </div>
+                <div style="margin: 0.5rem 0;">
+                    <div style="font-weight: 600;">
+                        {% if batch.material %}
+                        {{ batch.material.name }}
+                        {% elif batch.product %}
+                        {{ batch.product.name }}
+                        {% endif %}
+                    </div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
+                        Stored at: {{ batch.location.warehouse.name|default:"N/A" }}
+                    </div>
+                </div>
+                <div
+                    style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 0.5rem; font-size: 0.8rem;">
+                    <span style="color: var(--text-muted);">Shelf Life Remaining:</span>
+                    <span
+                        style="font-weight: 700; color: {% if batch.days_remaining <= 10 %}#f87171{% else %}#fbbf24{% endif %};">
+                        {{ batch.days_remaining }} Days
+                    </span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="zero-state-box">
+            <div class="zero-state-icon">🛡️</div>
+            <h4 style="font-weight: 600; color: var(--text-main);">No Expiring Stocks</h4>
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem; text-align: center;">
+                All active raw materials and finished goods reside safely within their defined storage thresholds.
+            </p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Registry Transaction Log Ledger -->
+    <div class="pane-card" style="margin-top: 2rem;">
+        <h3>📋 Recent Registry Logs Ledger</h3>
+        <div class="data-table-container">
+            <table class="custom-table">
+                <thead>
+                    <tr>
+                        <th>Transaction Timestamp</th>
+                        <th>Action Code</th>
+                        <th>Cargo Item</th>
+                        <th>Quantity Adjustment</th>
+                        <th>Warehouse Facility</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in recent_logs %}
+                    <tr>
+                        <td style="color: var(--text-muted);">{{ log.timestamp|date:"Y-m-d H:i:s" }}</td>
+                        <td>
+                            <span
+                                class="badge {% if log.action_type == 'Inbound' or log.action_type == 'Produced' %}badge-emerald{% elif log.action_type == 'Outbound' or log.action_type == 'Consumed_For_Manufacturing' %}badge-sky{% else %}badge-slate{% endif %}">
+                                {{ log.get_action_type_display|default:log.action_type }}
+                            </span>
+                        </td>
+                        <td style="font-weight: 500;">{{ log.item_name }}</td>
+                        <td>
+                            {% if log.action_type == 'Inbound' or log.action_type == 'Produced' %}
+                            <span class="ledger-add-value">+{{ log.quantity_changed }}</span>
+                            {% elif log.action_type == 'Outbound' or log.action_type == 'Consumed_For_Manufacturing' or
+                            log.action_type == 'Spoiled_Disposal' %}
+                            <span class="ledger-remove-value">-{{ log.quantity_changed }}</span>
+                            {% else %}
+                            <span style="font-weight: 600;">{{ log.quantity_changed }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ log.warehouse.name|default:"N/A" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                            Registry logs empty.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<!-- Safe JSON data injection -->
+{{ chart_data|json_script:"chart-data" }}
+{{ sales_order_stats|json_script:"so-data" }}
+{% endblock %}
+
+{% block extra_js %}
+<!-- Include Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        // 1. Retrieve Safe JSON statistics injected via Django filters
+        const chartData = JSON.parse(document.getElementById('chart-data').textContent);
+        const soData = JSON.parse(document.getElementById('so-data').textContent);
+
+        // 2. Setup Sales Order Funnel Doughnut Chart
+        const salesCtx = document.getElementById('salesOrderFunnelChart').getContext('2d');
+
+        const funnelLabels = ['Draft', 'Pending Approval', 'Pending (Approved)', 'In Production', 'Ready to Ship', 'Shipped & Delivered'];
+        const funnelCounts = [
+            soData.Draft,
+            soData.Pending_Approval,
+            soData.Pending_Approved,
+            soData.In_Production,
+            soData.Ready_to_Ship,
+            soData.Shipped_Delivered
+        ];
+
+        // HSL based premium dark palette colors
+        const funnelColors = [
+            'rgba(148, 163, 184, 0.75)', // Slate (Draft)
+            'rgba(251, 191, 36, 0.75)',  // Amber (Approval)
+            'rgba(56, 189, 248, 0.75)',  // Sky (Approved)
+            'rgba(138, 43, 226, 0.75)',  // Violet (Production)
+            'rgba(0, 242, 254, 0.75)',   // Cyan (Ready to Ship)
+            'rgba(52, 211, 153, 0.75)'   // Emerald (Shipped)
+        ];
+
+        const funnelHoverColors = [
+            'rgba(148, 163, 184, 0.95)',
+            'rgba(251, 191, 36, 0.95)',
+            'rgba(56, 189, 248, 0.95)',
+            'rgba(138, 43, 226, 0.95)',
+            'rgba(0, 242, 254, 0.95)',
+            'rgba(52, 211, 153, 0.95)'
+        ];
+
+        const salesChart = new Chart(salesCtx, {
+            type: 'doughnut',
+            data: {
+                labels: funnelLabels,
+                datasets: [{
+                    data: funnelCounts,
+                    backgroundColor: funnelColors,
+                    hoverBackgroundColor: funnelHoverColors,
+                    borderWidth: 1.5,
+                    borderColor: '#080b11'
+                }]
+            },
+            options: {
+                maintainAspectRatio: false,
+                responsive: true,
+                animation: {
+                    duration: 1200,
+                    easing: 'easeOutQuart'
+                },
+                plugins: {
+                    legend: {
+                        display: false // We use our own custom accessibility ledger
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(8, 11, 17, 0.95)',
+                        titleColor: '#f3f4f6',
+                        bodyColor: '#9ca3af',
+                        borderColor: 'rgba(255, 255, 255, 0.08)',
+                        borderWidth: 1,
+                        padding: 10,
+                        cornerRadius: 6,
+                        font: {
+                            family: 'Plus Jakarta Sans'
+                        }
+                    }
+                },
+                cutout: '65%'
+            }
+        });
+
+        // Populate custom HTML color ledger for accessibility
+        const ledgerContainer = document.getElementById('sales-funnel-ledger');
+        funnelLabels.forEach((label, index) => {
+            const item = document.createElement('div');
+            item.className = 'ledger-item';
+            item.innerHTML = `
+            <span class="ledger-color" style="background-color: ${funnelColors[index]}"></span>
+            <span>${label} (${funnelCounts[index]})</span>
+        `;
+            ledgerContainer.appendChild(item);
+        });
+
+        // 3. Setup Warehouse Space Optimization Grouped Bar Chart
+        const whCtx = document.getElementById('warehouseCapacityChart').getContext('2d');
+
+        const whChart = new Chart(whCtx, {
+            type: 'bar',
+            data: {
+                labels: chartData.labels,
+                datasets: [
+                    {
+                        label: 'Total Capacity (MT)',
+                        data: chartData.capacities,
+                        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                        borderColor: 'rgba(255, 255, 255, 0.1)',
+                        borderWidth: 1.5,
+                        borderRadius: 4,
+                        barPercentage: 0.6,
+                        categoryPercentage: 0.7
+                    },
+                    {
+                        label: 'Utilized Space (MT)',
+                        data: chartData.used,
+                        backgroundColor: 'rgba(0, 242, 254, 0.75)',
+                        hoverBackgroundColor: 'rgba(0, 242, 254, 0.95)',
+                        borderColor: 'var(--primary)',
+                        borderWidth: 1.5,
+                        borderRadius: 4,
+                        barPercentage: 0.6,
+                        categoryPercentage: 0.7
+                    }
+                ]
+            },
+            options: {
+                maintainAspectRatio: false,
+                responsive: true,
+                animation: {
+                    duration: 1400,
+                    easing: 'easeOutQuart'
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            color: 'var(--text-muted)',
+                            font: {
+                                family: 'Plus Jakarta Sans',
+                                weight: 500
+                            }
+                        }
+                    },
+                    y: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.03)'
+                        },
+                        ticks: {
+                            color: 'var(--text-muted)',
+                            font: {
+                                family: 'Plus Jakarta Sans'
+                            }
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: 'var(--text-main)',
+                            font: {
+                                family: 'Plus Jakarta Sans',
+                                weight: 600
+                            }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(8, 11, 17, 0.95)',
+                        titleColor: '#f3f4f6',
+                        bodyColor: '#9ca3af',
+                        borderColor: 'rgba(255, 255, 255, 0.08)',
+                        borderWidth: 1,
+                        padding: 10,
+                        cornerRadius: 6,
+                        font: {
+                            family: 'Plus Jakarta Sans'
+                        }
+                    }
+                }
+            }
+        });
+    });
+</script>
+{% endblock %}
