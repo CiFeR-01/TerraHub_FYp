@@ -1,9 +1,11 @@
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
-from django.db.models import Sum, F, Case, When, Value, DecimalField, Count
+from django.contrib import messages
+from django import forms
+from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q
 from django.db.models.functions import Coalesce
 from datetime import date
-from .models import Warehouse, Batch, SalesOrder, Shipment, RegistryLog
+from .models import Warehouse, WarehouseLocation, Batch, SalesOrder, Shipment, RegistryLog
 
 @login_required
 def dashboard_view(request):
@@ -150,3 +152,143 @@ def system_view(request):
 
 def home_view(request):
     return render(request, 'home.html')
+
+
+@login_required
+def warehouse_inventory_view(request):
+    warehouses = Warehouse.objects.all().order_by('name')
+    warehouse_id = request.GET.get('warehouse_id')
+    selected_warehouse = None
+    batches = []
+
+    if warehouse_id:
+        try:
+            selected_warehouse = Warehouse.objects.get(id=warehouse_id)
+            batches = Batch.objects.filter(location__warehouse=selected_warehouse, status='Active').select_related(
+                'material', 'product', 'location'
+            ).order_by('location__zone_name', 'location__aisle')
+        except Warehouse.DoesNotExist:
+            pass
+
+    can_adjust = request.user.can_adjust_physical_stock
+
+    context = {
+        'warehouses': warehouses,
+        'selected_warehouse': selected_warehouse,
+        'batches': batches,
+        'can_adjust': can_adjust,
+    }
+    return render(request, 'warehouse_inventory.html', context)
+
+
+class WarehouseForm(forms.ModelForm):
+    class Meta:
+        model = Warehouse
+        fields = ['name', 'location_type', 'ownership_type', 'rental_billing_method', 'rental_cost_per_mt', 'total_capacity_mt']
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-input', 'placeholder': 'e.g. Port Klang Hub B', 'required': 'required'}),
+            'location_type': forms.Select(attrs={'class': 'form-select', 'required': 'required'}),
+            'ownership_type': forms.Select(attrs={'class': 'form-select', 'id': 'id_ownership_type', 'required': 'required'}),
+            'rental_billing_method': forms.Select(attrs={'class': 'form-select', 'id': 'id_rental_billing_method'}),
+            'rental_cost_per_mt': forms.NumberInput(attrs={'class': 'form-input', 'step': '0.01', 'id': 'id_rental_cost_per_mt'}),
+            'total_capacity_mt': forms.NumberInput(attrs={'class': 'form-input', 'step': '0.1', 'required': 'required'}),
+        }
+
+
+@login_required
+def warehouse_create_view(request):
+    if not request.user.has_perm('core.add_warehouse'):
+        messages.error(request, "Permission Denied: You do not have permissions to add a new facility.")
+        return redirect('warehouse_list')
+
+    if request.method == 'POST':
+        form = WarehouseForm(request.POST)
+        if form.is_valid():
+            warehouse = form.save()
+            messages.success(request, f"Facility '{warehouse.name}' was successfully registered.")
+            return redirect('warehouse_list')
+        else:
+            messages.error(request, "Please correct the errors in the form below.")
+    else:
+        form = WarehouseForm()
+
+    return render(request, 'warehouse_form.html', {'form': form})
+
+
+
+@login_required
+def facility_management_view(request):
+    """Facility Management — overview of all warehouse facilities with capacity, cost, and zone data."""
+    used_mt_annotation = Coalesce(
+        Sum(
+            Case(
+                When(
+                    locations__batch__status='Active',
+                    locations__batch__material__isnull=False,
+                    then=F('locations__batch__quantity') * F('locations__batch__material__weight_mt_per_unit')
+                ),
+                When(
+                    locations__batch__status='Active',
+                    locations__batch__product__isnull=False,
+                    then=F('locations__batch__quantity') * F('locations__batch__product__weight_mt_per_unit')
+                ),
+                default=Value(0),
+                output_field=DecimalField()
+            )
+        ),
+        Value(0, output_field=DecimalField())
+    )
+
+    warehouses = Warehouse.objects.annotate(
+        used_mt=used_mt_annotation,
+        zone_count=Count('locations', distinct=True),
+        batch_count=Count('locations__batch', distinct=True, filter=Q(locations__batch__status='Active')),
+    ).order_by('name')
+
+    facility_list = []
+    total_capacity = 0.0
+    total_used = 0.0
+    total_daily_cost = 0.0
+
+    for w in warehouses:
+        used = float(w.used_mt)
+        cap = float(w.total_capacity_mt)
+        total_capacity += cap
+        total_used += used
+        util = (used / cap * 100) if cap > 0 else 0.0
+
+        if w.ownership_type == 'Internal':
+            daily_cost = 0.0
+        elif w.rental_billing_method == 'Overall':
+            daily_cost = float(w.total_capacity_mt * w.rental_cost_per_mt)
+        else:
+            daily_cost = float(w.used_mt * w.rental_cost_per_mt)
+        total_daily_cost += daily_cost
+
+        facility_list.append({
+            'id': w.id,
+            'name': w.name,
+            'location_type': w.get_location_type_display(),
+            'ownership_type': w.get_ownership_type_display(),
+            'raw_ownership': w.ownership_type,
+            'capacity_mt': cap,
+            'used_mt': used,
+            'utilization': util,
+            'daily_cost': daily_cost,
+            'billing_method': w.get_rental_billing_method_display(),
+            'cost_per_mt': float(w.rental_cost_per_mt),
+            'zone_count': w.zone_count,
+            'batch_count': w.batch_count,
+        })
+
+    global_util = (total_used / total_capacity * 100) if total_capacity > 0 else 0.0
+
+    context = {
+        'facility_list': facility_list,
+        'total_facilities': len(facility_list),
+        'total_capacity': total_capacity,
+        'total_used': total_used,
+        'global_utilization': global_util,
+        'total_daily_cost': total_daily_cost,
+    }
+    return render(request, 'warehouse_list.html', context)

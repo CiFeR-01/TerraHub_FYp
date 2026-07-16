@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block title %}Facility Management - TerraHub{% endblock %}
+
+{% block content %}
+<!-- Header Row -->
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">Facility Management</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Facility Management
+        </h1>
+    </div>
+    <div class="header-action-tray">
+        {% if perms.core.add_warehouse %}
+        <a href="{% url 'warehouse_create' %}" class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+            ✚ Register New Facility
+        </a>
+        {% endif %}
+    </div>
+</header>
+
+<!-- Summary KPIs -->
+<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay: 0.05s;">
+    <div class="kpi-item-card">
+        <span class="kpi-label">Total Facilities</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ total_facilities }}</span>
+            <span class="badge badge-sky">Active</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Combined Capacity</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ total_capacity|floatformat:0 }}</span>
+            <span class="badge badge-emerald">MT</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Space Utilized</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ global_utilization|floatformat:1 }}%</span>
+            {% if global_utilization > 85 %}
+            <span class="badge badge-rose">Critical</span>
+            {% elif global_utilization > 70 %}
+            <span class="badge badge-amber">Elevated</span>
+            {% else %}
+            <span class="badge badge-emerald">Healthy</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Total Daily Burn</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value" style="font-size: 1.75rem;">RM{{ total_daily_cost|floatformat:2 }}</span>
+            <span class="badge badge-amber">Per Day</span>
+        </div>
+    </div>
+</section>
+
+<!-- Facility Cards Grid -->
+{% if facility_list %}
+<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 1.5rem; margin-top: 0.5rem;" class="animate-fade-in-up" >
+
+    {% for f in facility_list %}
+    <div class="pane-card" style="animation-delay: {{ forloop.counter0 }}00ms; position: relative; overflow: hidden;">
+        <!-- Accent bar at top -->
+        <div style="position: absolute; top: 0; left: 0; right: 0; height: 3px; background: {% if f.raw_ownership == 'Internal' %}var(--accent-grad){% elif f.raw_ownership == 'ExternalProvider' %}linear-gradient(135deg, #f59e0b, #f97316){% else %}linear-gradient(135deg, #10b981, #059669){% endif %};"></div>
+
+        <!-- Card Header -->
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; padding-top: 0.5rem;">
+            <div>
+                <h3 style="font-family: 'Outfit', sans-serif; font-size: 1.1rem; font-weight: 700; color: var(--text-main); margin: 0;">
+                    {{ f.name }}
+                </h3>
+                <div style="display: flex; gap: 0.4rem; margin-top: 0.4rem; flex-wrap: wrap;">
+                    <span class="badge {% if f.raw_ownership == 'Internal' %}badge-sky{% elif f.raw_ownership == 'ExternalProvider' %}badge-amber{% else %}badge-emerald{% endif %}">
+                        {{ f.ownership_type }}
+                    </span>
+                    <span class="badge badge-slate">{{ f.location_type }}</span>
+                </div>
+            </div>
+            {% if perms.core.change_warehouse %}
+            <a href="#" class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.75rem;" onclick="alert('Edit form coming soon!')">
+                ⚙️ Edit
+            </a>
+            {% endif %}
+        </div>
+
+        <!-- Utilization Bar -->
+        <div style="margin-bottom: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                <span style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Capacity Utilization</span>
+                <span style="font-size: 0.85rem; font-weight: 700; color: {% if f.utilization > 85 %}#dc2626{% elif f.utilization > 70 %}#d97706{% else %}#059669{% endif %};">
+                    {{ f.utilization|floatformat:1 }}%
+                </span>
+            </div>
+            <div class="micro-progress-container">
+                <div class="micro-progress-bar {% if f.utilization > 85 %}progress-rose{% elif f.utilization > 70 %}progress-amber{% else %}progress-emerald{% endif %}" style="width: {{ f.utilization|floatformat:0 }}%;"></div>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-top: 0.25rem; font-size: 0.75rem; color: var(--text-muted);">
+                <span>{{ f.used_mt|floatformat:1 }} MT used</span>
+                <span>{{ f.capacity_mt|floatformat:0 }} MT total</span>
+            </div>
+        </div>
+
+        <!-- Stats Grid -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border-light);">
+            <div style="text-align: center; padding: 0.5rem; background: #f8fafc; border-radius: 8px;">
+                <div style="font-size: 1.35rem; font-weight: 700; color: var(--primary);">{{ f.zone_count }}</div>
+                <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Zones</div>
+            </div>
+            <div style="text-align: center; padding: 0.5rem; background: #f8fafc; border-radius: 8px;">
+                <div style="font-size: 1.35rem; font-weight: 700; color: var(--secondary);">{{ f.batch_count }}</div>
+                <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Active Batches</div>
+            </div>
+        </div>
+
+        <!-- Cost Footer -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; font-size: 0.8rem; padding-top: 0.65rem; border-top: 1px solid var(--border-light);">
+            <div>
+                <span style="color: var(--text-muted);">Billing: </span>
+                <span style="font-weight: 600; color: var(--text-main);">{{ f.billing_method }}</span>
+            </div>
+            <div>
+                <span style="font-weight: 700; color: {% if f.daily_cost > 0 %}#dc2626{% else %}#059669{% endif %};">
+                    {% if f.daily_cost > 0 %}RM{{ f.daily_cost|floatformat:2 }}/day{% else %}Free (Owned){% endif %}
+                </span>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+
+</div>
+{% else %}
+<div class="pane-card animate-fade-in-up" style="text-align: center; padding: 4rem 2rem; color: var(--text-muted);">
+    <div style="font-size: 3.5rem; margin-bottom: 1.5rem;">🏭</div>
+    <h3 style="font-family: 'Outfit', sans-serif; font-size: 1.35rem; font-weight: 600; color: var(--text-main); margin-bottom: 0.5rem;">
+        No Facilities Registered
+    </h3>
+    <p style="font-size: 0.9rem; max-width: 480px; margin: 0 auto; line-height: 1.5;">
+        Register your first warehouse facility to start tracking capacity, costs, and inventory assignments.
+    </p>
+</div>
+{% endif %}
+
+{% endblock %}
