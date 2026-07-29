@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+
+{% block title %}{{ so.so_number }} — Sales Order Detail - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <a href="{% url 'order_list' %}">Orders</a>
+            <span class="separator">/</span>
+            <span class="current-page">{{ so.so_number }}</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Sales Order Detail
+        </h1>
+    </div>
+    <div class="header-action-tray">
+        <form method="post" style="display:inline-flex; gap:0.5rem; align-items:center;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="update_so_status">
+            <select name="status" class="form-select" style="padding:0.45rem 0.75rem; border-radius:6px; font-size:0.85rem; border:1px solid var(--border-light);">
+                {% for code, label in so_status_choices %}
+                <option value="{{ code }}" {% if so.status == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary" style="padding:0.45rem 1rem; font-size:0.85rem;">Update Status</button>
+        </form>
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom:1.5rem;">
+    {% for message in messages %}
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:#d97706;{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Invoice Header Card -->
+<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:2rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <div style="display:grid; grid-template-columns:1fr 280px; gap:2rem; align-items:start;">
+        <div>
+            <div style="display:flex; align-items:center; gap:1rem; margin-bottom:1.25rem;">
+                <h2 style="font-family:'Outfit',sans-serif; font-size:1.6rem; font-weight:800; color:var(--primary); letter-spacing:-0.5px;">{{ so.so_number }}</h2>
+                {% if so.status == 'Draft' %}<span class="badge badge-sky">Draft</span>
+                {% elif so.status == 'Pending' or so.status == 'Pending Approval' %}<span class="badge badge-amber">Pending</span>
+                {% elif so.status == 'Awaiting Acknowledgement' %}<span class="badge badge-amber">Awaiting Ack.</span>
+                {% elif so.status == 'In Production' %}<span class="badge badge-indigo">In Production</span>
+                {% elif so.status == 'Ready to Ship' %}<span class="badge badge-emerald">Ready to Ship</span>
+                {% elif so.status == 'Shipped' %}<span class="badge badge-emerald">Shipped</span>
+                {% elif so.status == 'Delivered' %}<span class="badge badge-emerald">Delivered</span>
+                {% else %}<span class="badge badge-rose">{{ so.status }}</span>{% endif %}
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:1.25rem;">
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Client</div>
+                    <div style="font-size:0.95rem; font-weight:600;">{{ so.client_name }}</div>
+                </div>
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Origin Facility</div>
+                    <div style="font-size:0.95rem; font-weight:600;">{{ so.origin_warehouse.name }}</div>
+                </div>
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Order Date</div>
+                    <div style="font-size:0.95rem; font-weight:600;">{{ so.order_date }}</div>
+                </div>
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Fulfillment Deadline</div>
+                    <div style="font-size:0.95rem; font-weight:600;">{{ so.fulfillment_deadline|default:"—" }}</div>
+                </div>
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Created By</div>
+                    <div style="font-size:0.95rem; font-weight:600;">{{ so.created_by.username|default:"System" }}</div>
+                </div>
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Line Items</div>
+                    <div style="font-size:0.95rem; font-weight:600;">{{ so.items.count }} product(s)</div>
+                </div>
+            </div>
+        </div>
+        <!-- Edit header panel -->
+        <div style="background:#f8fafc; border-radius:10px; border:1px solid var(--border-light); padding:1.25rem;">
+            <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.75rem; text-transform:uppercase; letter-spacing:0.05em;">Edit Details</div>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_so_header">
+                <div style="margin-bottom:0.6rem;">
+                    <label style="font-size:0.78rem; font-weight:600; display:block; margin-bottom:0.2rem;">Client Name</label>
+                    <input type="text" name="client_name" value="{{ so.client_name }}" class="form-input" style="width:100%; padding:0.45rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.82rem;">
+                </div>
+                <div style="margin-bottom:0.6rem;">
+                    <label style="font-size:0.78rem; font-weight:600; display:block; margin-bottom:0.2rem;">Origin Warehouse</label>
+                    <select name="origin_warehouse_id" class="form-select" style="width:100%; padding:0.45rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.82rem;">
+                        {% for w in warehouses %}
+                        <option value="{{ w.id }}" {% if w.id == so.origin_warehouse.id %}selected{% endif %}>{{ w.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div style="margin-bottom:0.75rem;">
+                    <label style="font-size:0.78rem; font-weight:600; display:block; margin-bottom:0.2rem;">Fulfillment Deadline</label>
+                    <input type="date" name="fulfillment_deadline" value="{{ so.fulfillment_deadline|default:'' }}" class="form-input" style="width:100%; padding:0.45rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.82rem;">
+                </div>
+                <button type="submit" class="btn btn-secondary" style="width:100%; padding:0.45rem; font-size:0.82rem;">Save Changes</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Line Items Table -->
+<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.05s;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+        <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700;">Product Line Items</h3>
+        <button onclick="var f=document.getElementById('add-item-form'); f.style.display=f.style.display==='none'?'block':'none';" class="btn btn-primary" style="padding:0.4rem 0.9rem; font-size:0.82rem;">
+            ✚ Add Line Item
+        </button>
+    </div>
+
+    <!-- Add Item Form (hidden by default) -->
+    <div id="add-item-form" style="display:none; background:#f8fafc; border-radius:10px; border:1px solid var(--border-light); padding:1.25rem; margin-bottom:1.25rem;">
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="add_so_item">
+            <div style="display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0.75rem; align-items:end;">
+                <div>
+                    <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Product</label>
+                    <select name="product_id" required class="form-select" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
+                        <option value="">— Select Product —</option>
+                        {% for p in products %}
+                        <option value="{{ p.id }}">{{ p.sku }} — {{ p.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Quantity</label>
+                    <input type="number" step="0.01" name="quantity_ordered" required placeholder="e.g. 100" class="form-input" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
+                </div>
+                <div>
+                    <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Unit Price (RM)</label>
+                    <input type="number" step="0.01" name="unit_price" placeholder="Optional" class="form-input" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
+                </div>
+                <button type="submit" class="btn btn-primary" style="padding:0.5rem 1rem; font-size:0.85rem; white-space:nowrap;">Add Item</button>
+            </div>
+        </form>
+    </div>
+
+    {% if line_items_with_bom %}
+    <div class="table-responsive">
+        <table style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">
+                    <th style="padding:0.6rem 1rem;">#</th>
+                    <th style="padding:0.6rem 1rem;">Product</th>
+                    <th style="padding:0.6rem 1rem;">SKU</th>
+                    <th style="padding:0.6rem 1rem;">Qty Ordered</th>
+                    <th style="padding:0.6rem 1rem;">Qty Shipped</th>
+                    <th style="padding:0.6rem 1rem;">Unit Price</th>
+                    <th style="padding:0.6rem 1rem;">Subtotal</th>
+                    <th style="padding:0.6rem 1rem;">BOM Status</th>
+                    <th style="padding:0.6rem 1rem;">Can Make</th>
+                    <th style="padding:0.6rem 1rem; text-align:right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in line_items_with_bom %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
+                    <td style="padding:0.85rem 1rem; color:var(--text-muted); font-size:0.78rem;">{{ forloop.counter }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:700;">{{ row.item.product.name }}</td>
+                    <td style="padding:0.85rem 1rem; font-family:monospace; font-size:0.8rem; color:var(--text-muted);">{{ row.item.product.sku }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600;">{{ row.item.quantity_ordered|floatformat:1 }} {{ row.item.product.unit_of_measure }}</td>
+                    <td style="padding:0.85rem 1rem;">{{ row.item.quantity_shipped|floatformat:1 }}</td>
+                    <td style="padding:0.85rem 1rem;">{% if row.item.unit_price %}RM {{ row.item.unit_price|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600;">
+                        {% if row.item.unit_price %}
+                        RM {{ row.item.quantity_ordered|floatformat:0 }} × {{ row.item.unit_price|floatformat:2 }}
+                        {% else %}<span style="color:var(--text-muted);">—</span>{% endif %}
+                    </td>
+                    <td style="padding:0.85rem 1rem;">
+                        {% if row.bom_rows %}
+                            {% if row.bom_ready %}<span class="badge badge-emerald">BOM Ready</span>
+                            {% else %}<span class="badge badge-rose">Shortage</span>{% endif %}
+                        {% else %}<span style="font-size:0.78rem; color:var(--text-muted);">No BOM</span>{% endif %}
+                    </td>
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:{% if row.bom_ready %}#059669{% else %}#dc2626{% endif %};">
+                        {{ row.can_make_units }} units
+                    </td>
+                    <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
+                        <button onclick="(function(){var el=document.getElementById('bom-{{ row.item.id }}');el.style.display=el.style.display==='none'?'table-row':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--text-muted); margin-right:0.3rem;">⚗ BOM</button>
+                        <form method="post" style="display:inline;">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="remove_so_item">
+                            <input type="hidden" name="item_id" value="{{ row.item.id }}">
+                            <button type="submit" onclick="return confirm('Remove {{ row.item.product.name }} from this order?')" style="background:none; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:#dc2626;">✕</button>
+                        </form>
+                    </td>
+                </tr>
+                <!-- BOM Detail Row -->
+                <tr id="bom-{{ row.item.id }}" style="display:none; background:#f8fafc;">
+                    <td colspan="10" style="padding:0.75rem 1.5rem 1rem 2rem;">
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">BOM — {{ row.item.product.name }}</div>
+                        {% if row.bom_rows %}
+                        <table style="width:100%; border-collapse:collapse; font-size:0.82rem; max-width:700px;">
+                            <tr style="color:var(--text-muted); font-weight:600; border-bottom:1px solid var(--border-light);">
+                                <td style="padding:0.3rem 0.75rem;">Material</td>
+                                <td style="padding:0.3rem 0.75rem;">Needed for Order</td>
+                                <td style="padding:0.3rem 0.75rem;">In Stock</td>
+                                <td style="padding:0.3rem 0.75rem;">Status</td>
+                            </tr>
+                            {% for brow in row.bom_rows %}
+                            <tr style="border-bottom:1px solid #f1f5f9;">
+                                <td style="padding:0.4rem 0.75rem; font-weight:600;">{{ brow.material.name }}</td>
+                                <td style="padding:0.4rem 0.75rem;">{{ brow.required_for_order|floatformat:2 }} {{ brow.material.unit_of_measure }}</td>
+                                <td style="padding:0.4rem 0.75rem;">{{ brow.available|floatformat:2 }} {{ brow.material.unit_of_measure }}</td>
+                                <td style="padding:0.4rem 0.75rem;">
+                                    {% if brow.sufficient %}<span style="color:#059669; font-weight:700;">✓ Sufficient</span>
+                                    {% else %}<span style="color:#dc2626; font-weight:700;">✗ Short by {{ brow.required_for_order|floatformat:2|add:"-"|add:brow.available|floatformat:2 }}</span>{% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </table>
+                        {% else %}
+                        <span style="color:var(--text-muted); font-size:0.82rem;">No BOM recipe configured for this product.</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div style="text-align:center; padding:3rem; color:var(--text-muted);">
+        <div style="font-size:2.5rem; margin-bottom:0.75rem;">📦</div>
+        <div style="font-weight:600; margin-bottom:0.25rem;">No line items yet</div>
+        <div style="font-size:0.85rem;">Click "Add Line Item" above to add products to this order.</div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Audit Timeline -->
+<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem;">Order Timeline</h3>
+    {% if so.timeline.all %}
+    <div style="position:relative; padding-left:1.5rem;">
+        <div style="position:absolute; left:0.45rem; top:0.35rem; bottom:0; width:2px; background:var(--border-light);"></div>
+        {% for event in so.timeline.all %}
+        <div style="position:relative; margin-bottom:1rem;">
+            <div style="position:absolute; left:-1.5rem; top:0.25rem; width:10px; height:10px; border-radius:50%; background:var(--primary); border:2px solid #fff; box-shadow:0 0 0 2px var(--primary);"></div>
+            <div style="font-size:0.875rem; font-weight:600; color:var(--text-main);">{{ event.action }}</div>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.1rem;">{{ event.timestamp|date:"d M Y, H:i" }}{% if event.user %} · {{ event.user.username }}{% endif %}</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted); font-size:0.875rem;">No timeline events recorded yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Registry Ledger - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">Registry Ledger</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Audit &amp; Transaction Registry Ledger
+        </h1>
+    </div>
+</header>
+
+<!-- KPI Summaries -->
+<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay: 0.05s;">
+    <div class="kpi-item-card">
+        <span class="kpi-label">Total Inbound</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ stats.inbound|floatformat:0 }}</span>
+            <span class="badge badge-emerald">Units</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Total Outbound</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ stats.outbound|floatformat:0 }}</span>
+            <span class="badge badge-sky">Units</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Consumed (Manufacturing)</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ stats.consumed|floatformat:0 }}</span>
+            <span class="badge badge-indigo">Units</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Spoiled / Disposed</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ stats.disposed|floatformat:0 }}</span>
+            <span class="badge badge-rose">Units</span>
+        </div>
+    </div>
+</section>
+
+<!-- Filter Bar & Table -->
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
+    <form method="get" style="display:flex; flex-wrap:wrap; gap:1rem; align-items:center; justify-content:space-between; margin-bottom:1.25rem;">
+        <div style="display:flex; gap:0.5rem; align-items:center; flex:1; max-width:400px;">
+            <input type="text" name="q" value="{{ search_query }}" placeholder="Search by item name or warehouse..." class="form-input" style="width:100%; padding:0.55rem 0.8rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.875rem;">
+            <button type="submit" class="btn btn-secondary" style="padding:0.55rem 1rem;">Search</button>
+        </div>
+        
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+            <label style="font-size:0.85rem; font-weight:600; color:var(--text-muted);">Filter Action:</label>
+            <select name="action" onchange="this.form.submit()" class="form-select" style="padding:0.55rem 0.8rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.875rem;">
+                <option value="">All Transaction Types</option>
+                {% for code, label in action_choices %}
+                <option value="{{ code }}" {% if action_filter == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
+                    <th style="padding:0.75rem 1rem;">Timestamp</th>
+                    <th style="padding:0.75rem 1rem;">Action Type</th>
+                    <th style="padding:0.75rem 1rem;">Item Name / Batch</th>
+                    <th style="padding:0.75rem 1rem;">Quantity Changed</th>
+                    <th style="padding:0.75rem 1rem;">Warehouse Facility</th>
+                    <th style="padding:0.75rem 1rem;">Executed By</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
+                    <td style="padding:0.85rem 1rem; color:var(--text-muted); font-size:0.825rem;">{{ log.timestamp|date:"Y-m-d H:i:s" }}</td>
+                    <td style="padding:0.85rem 1rem;">
+                        {% if log.action_type == 'Inbound' %}
+                        <span class="badge badge-emerald">Inbound</span>
+                        {% elif log.action_type == 'Outbound' %}
+                        <span class="badge badge-sky">Outbound</span>
+                        {% elif log.action_type == 'Adjusted' %}
+                        <span class="badge badge-amber">Stock Adjusted</span>
+                        {% elif log.action_type == 'Consumed_For_Manufacturing' %}
+                        <span class="badge badge-indigo">Consumed</span>
+                        {% elif log.action_type == 'Produced' %}
+                        <span class="badge badge-emerald">Produced</span>
+                        {% elif log.action_type == 'Spoiled_Disposal' %}
+                        <span class="badge badge-rose">Disposed</span>
+                        {% else %}
+                        <span class="badge badge-sky">{{ log.get_action_type_display }}</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:0.85rem 1rem; font-weight:600; color:var(--text-main);">{{ log.item_name }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:700; {% if log.action_type in 'Inbound,Produced,QA_Extension' %}color:#10b981;{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal' %}color:#ef4444;{% endif %}">
+                        {% if log.action_type in 'Inbound,Produced' %}+{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal' %}-{% endif %}{{ log.quantity_changed|floatformat:2 }}
+                    </td>
+                    <td style="padding:0.85rem 1rem;">{{ log.warehouse.name|default:"—" }}</td>
+                    <td style="padding:0.85rem 1rem;">{{ log.user.username|default:"System Engine" }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" style="padding:2rem; text-align:center; color:var(--text-muted);">No transaction logs match the criteria.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

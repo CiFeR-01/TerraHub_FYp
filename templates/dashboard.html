@@ -143,8 +143,7 @@
                 <tbody>
                     {% for shipment in active_shipments %}
                     <tr>
-                        <td style="font-family: monospace; font-weight: 600; color: var(--primary);">{{
-                            shipment.tracking_number }}</td>
+                        <td style="font-family: monospace; font-weight: 600; color: var(--primary);">{{ shipment.tracking_number }}</td>
                         <td>
                             {% if shipment.direction == 'Inbound' %}
                             <span style="color: #059669; margin-right: 0.25rem;">📥</span> Inbound
@@ -163,11 +162,9 @@
                         <td style="color: var(--text-muted);">{{ shipment.expected_eta_date|default:"N/A" }}</td>
                         <td style="font-weight: 500;">
                             {% if shipment.material %}
-                            {{ shipment.material.name }} <span style="font-size: 0.75rem; color: var(--text-muted);">({{
-                                shipment.material.sku }})</span>
+                            {{ shipment.material.name }} <span style="font-size: 0.75rem; color: var(--text-muted);">({{ shipment.material.sku }})</span>
                             {% elif shipment.product %}
-                            {{ shipment.product.name }} <span style="font-size: 0.75rem; color: var(--text-muted);">({{
-                                shipment.product.sku }})</span>
+                            {{ shipment.product.name }} <span style="font-size: 0.75rem; color: var(--text-muted);">({{ shipment.product.sku }})</span>
                             {% else %}
                             Multiple Cargo
                             {% endif %}
@@ -214,8 +211,7 @@
                 <div
                     style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">
                     <span>Space Utilized: {{ w.used_mt|floatformat:1 }} / {{ w.capacity_mt|floatformat:1 }} MT</span>
-                    <span style="font-weight: 600; color: var(--text-main);">{{ w.utilization_percent|floatformat:1
-                        }}%</span>
+                    <span style="font-weight: 600; color: var(--text-main);">{{ w.utilization_percent|floatformat:1 }}%</span>
                 </div>
                 <div class="micro-progress-container">
                     <div class="micro-progress-bar {% if w.utilization_percent > 85 %}progress-rose{% elif w.utilization_percent > 70 %}progress-amber{% else %}progress-emerald{% endif %}"
@@ -317,8 +313,7 @@
                         <td>
                             {% if log.action_type == 'Inbound' or log.action_type == 'Produced' %}
                             <span class="ledger-add-value">+{{ log.quantity_changed }}</span>
-                            {% elif log.action_type == 'Outbound' or log.action_type == 'Consumed_For_Manufacturing' or
-                            log.action_type == 'Spoiled_Disposal' %}
+                            {% elif log.action_type == 'Outbound' or log.action_type == 'Consumed_For_Manufacturing' or log.action_type == 'Spoiled_Disposal' %}
                             <span class="ledger-remove-value">-{{ log.quantity_changed }}</span>
                             {% else %}
                             <span style="font-weight: 600; color: var(--text-main);">{{ log.quantity_changed }}</span>

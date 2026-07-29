@@ -31,9 +31,9 @@
 
                     <!-- Overview -->
                     <li
-                        class="nav-item{% if request.resolver_match.url_name == 'dashboard' %} group-expanded{% endif %}">
+                        class="nav-item{% if request.resolver_match.url_name in 'dashboard,system' %} group-expanded{% endif %}">
                         <a href="#"
-                            class="nav-btn nav-toggle{% if request.resolver_match.url_name == 'dashboard' %} active{% endif %}">
+                            class="nav-btn nav-toggle{% if request.resolver_match.url_name in 'dashboard,system' %} active{% endif %}">
                             <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20">
                                 <rect x="3" y="3" width="7" height="7" rx="1" fill="none" stroke="currentColor"
                                     stroke-width="2" />
@@ -54,6 +54,10 @@
                             <li><a href="{% url 'dashboard' %}"
                                     class="submenu-link{% if request.resolver_match.url_name == 'dashboard' %} active{% endif %}">Dashboard
                                     &amp; Analytics</a></li>
+                            {% if user.is_superuser %}
+                            <li><a href="{% url 'system' %}"
+                                    class="submenu-link{% if request.resolver_match.url_name == 'system' %} active{% endif %}">System Console</a></li>
+                            {% endif %}
                             <li><a href="#" class="submenu-link ai-link">Digital Assistant (AI)</a></li>
                         </ul>
                     </li>
@@ -87,10 +91,10 @@
                             <li><a href="{% url 'warehouse_list' %}" class="submenu-link{% if request.resolver_match.url_name == 'warehouse_list' %} active{% endif %}">Facility Management</a></li>
                             {% endif %}
                             {% if perms.core.view_stockaudit or perms.core.add_stockaudit %}
-                            <li><a href="#" class="submenu-link">Stock Tally (Audit)</a></li>
+                            <li><a href="{% url 'stock_audit' %}" class="submenu-link{% if request.resolver_match.url_name == 'stock_audit' %} active{% endif %}">Stock Tally (Audit)</a></li>
                             {% endif %}
                             {% if perms.core.view_registrylog %}
-                            <li><a href="#" class="submenu-link">Registry Ledger</a></li>
+                            <li><a href="{% url 'registry' %}" class="submenu-link{% if request.resolver_match.url_name == 'registry' %} active{% endif %}">Registry Ledger</a></li>
                             {% endif %}
                         </ul>
                     </li>
@@ -118,10 +122,10 @@
                         </a>
                         <ul class="sidebar-submenu">
                             {% if perms.core.view_product %}
-                            <li><a href="#" class="submenu-link">Products Catalog</a></li>
+                            <li><a href="{% url 'product_list' %}" class="submenu-link{% if request.resolver_match.url_name == 'product_list' %} active{% endif %}">Products Catalog</a></li>
                             {% endif %}
                             {% if perms.core.view_material %}
-                            <li><a href="#" class="submenu-link">Materials Hub</a></li>
+                            <li><a href="{% url 'material_list' %}" class="submenu-link{% if request.resolver_match.url_name == 'material_list' %} active{% endif %}">Materials Hub</a></li>
                             {% endif %}
                         </ul>
                     </li>
@@ -150,18 +154,19 @@
                         </a>
                         <ul class="sidebar-submenu">
                             {% if perms.core.view_shipment %}
-                            <li><a href="#" class="submenu-link">Order Management</a></li>
-                            <li><a href="#" class="submenu-link">Logistics Tracker</a></li>
+                            <li><a href="{% url 'order_list' %}" class="submenu-link{% if request.resolver_match.url_name == 'order_list' %} active{% endif %}">Order Management</a></li>
+                            <li><a href="{% url 'shipments' %}" class="submenu-link{% if request.resolver_match.url_name == 'shipments' %} active{% endif %}">Logistics Tracker</a></li>
                             {% endif %}
                             {% if perms.core.view_productrecipe or perms.core.add_batch %}
-                            <li><a href="#" class="submenu-link">Manufacture</a></li>
+                            <li><a href="{% url 'readiness' %}" class="submenu-link{% if request.resolver_match.url_name == 'readiness' %} active{% endif %}">Manufacture</a></li>
                             {% endif %}
                             {% if perms.core.change_batch %}
-                            <li><a href="#" class="submenu-link warning-link">QA &amp; Spoilage Control</a></li>
+                            <li><a href="{% url 'qa_dashboard' %}" class="submenu-link warning-link{% if request.resolver_match.url_name == 'qa_dashboard' %} active{% endif %}">QA &amp; Spoilage Control</a></li>
                             {% endif %}
                         </ul>
                     </li>
                     {% endif %}
+
 
                 </ul>
             </nav>
@@ -235,9 +240,7 @@
                             </ul>
                         </div>
                     </div>
-                    <span class="topbar-divider"></span>
-                    <span class="topbar-user">{{ user.username }}<span class="topbar-role">{{ user.role|default:"Staff"
-                            }}</span></span>
+                    <span class="topbar-user">{{ user.username }}<span class="topbar-role">{{ user.role|default:"Staff" }}</span></span>
                     <form action="{% url 'logout' %}" method="post" style="margin:0;">
                         {% csrf_token %}
                         <button type="submit" class="btn-logout-topbar" title="Sign out">

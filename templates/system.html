@@ -2,56 +2,498 @@
 
 {% block title %}System Control Console - TerraHub{% endblock %}
 
-
+{% block extra_css %}
+<style>
+    /* Console Tabs styling */
+    .console-tab-btn {
+        background: transparent;
+        border: none;
+        color: #64748b;
+        font-family: inherit;
+        font-size: 0.9rem;
+        font-weight: 700;
+        padding-bottom: 0.5rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        border-bottom: 2px solid transparent;
+    }
+    .console-tab-btn:hover {
+        color: #e2e8f0;
+    }
+    .console-tab-btn.active {
+        color: #38bdf8;
+        border-bottom: 2px solid #38bdf8;
+    }
+    
+    /* Custom scrollbar for sql console */
+    #sql-console-log-buffer::-webkit-scrollbar {
+        width: 6px;
+    }
+    #sql-console-log-buffer::-webkit-scrollbar-track {
+        background: #0f172a;
+    }
+    #sql-console-log-buffer::-webkit-scrollbar-thumb {
+        background: #334155;
+        border-radius: 3px;
+    }
+    #sql-console-log-buffer::-webkit-scrollbar-thumb:hover {
+        background: #475569;
+    }
+    
+    /* Blinking dot for live polling */
+    .polling-dot {
+        display: none;
+    }
+    .polling-dot.active {
+        display: flex !important;
+    }
+    .dot-blink {
+        animation: pulse-dot 1.5s infinite;
+    }
+    @keyframes pulse-dot {
+        0% {
+            transform: scale(0.9);
+            opacity: 0.6;
+        }
+        50% {
+            transform: scale(1.2);
+            opacity: 1;
+            box-shadow: 0 0 6px rgba(74, 222, 128, 0.6);
+        }
+        100% {
+            transform: scale(0.9);
+            opacity: 0.6;
+        }
+    }
+    
+    /* Spin animation for spinner */
+    .animate-spin {
+        animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+        from {
+            transform: rotate(0deg);
+        }
+        to {
+            transform: rotate(360deg);
+        }
+    }
+    
+    /* Log item styling */
+    .log-item {
+        border-bottom: 1px solid #1e293b;
+        padding-bottom: 0.25rem;
+        word-break: break-all;
+    }
+    .log-timestamp {
+        color: #64748b;
+    }
+    .log-duration {
+        color: #cbd5e1;
+    }
+    .log-sql {
+        margin-left: 4px;
+        font-family: inherit;
+    }
+    .log-err-tag {
+        color: #ef4444;
+        font-weight: bold;
+    }
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="dashboard-container">
-    <div class="welcome-banner">
-        <div class="welcome-text">
-            <h2>System Control Console</h2>
-            <p>System configuration panel. Administrative access only.</p>
-        </div>
-        <div class="status-badge">
-            <span class="status-dot"></span> Secure System Link
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">System Control Console</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            System Diagnostics &amp; Telemetry Control
+        </h1>
+    </div>
+    <div class="header-action-tray">
+        <span class="badge badge-emerald" style="padding:0.4rem 0.8rem; font-weight:600;">● System Online (Django 6.0.4)</span>
+    </div>
+</header>
+
+<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay: 0.05s;">
+    <div class="kpi-item-card">
+        <span class="kpi-label">Registered Accounts</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ metrics.total_users }}</span>
+            <span class="badge badge-indigo">CustomUser</span>
         </div>
     </div>
-
-    <div class="stats-grid">
-        <div class="stat-card">
-            <span class="stat-label">System Uplink</span>
-            <span class="stat-value">99.8%</span>
-            <span class="stat-desc">Telemetry ping stability index</span>
-        </div>
-        <div class="stat-card">
-            <span class="stat-label">Active Feeds</span>
-            <span class="stat-value">18 Nodes</span>
-            <span class="stat-desc">Atmospheric & geodetic monitors</span>
-        </div>
-        <div class="stat-card">
-            <span class="stat-label">Database Sync</span>
-            <span class="stat-value">Active</span>
-            <span class="stat-desc">SQLite cluster transaction OK</span>
-        </div>
-        <div class="stat-card">
-            <span class="stat-label">Security Role</span>
-            <span class="stat-value">{% if user.is_superuser %}ROOT{% else %}USER{% endif %}</span>
-            <span class="stat-desc">Access authorization group</span>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Active Warehouse Facilities</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ metrics.total_warehouses }}</span>
+            <span class="badge badge-sky">Sites</span>
         </div>
     </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Active Inventory Batches</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ metrics.total_batches }}</span>
+            <span class="badge badge-emerald">Batches</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Registry Ledger Entries</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ metrics.total_logs }}</span>
+            <span class="badge badge-amber">Transactions</span>
+        </div>
+    </div>
+</section>
 
-    <div class="console-section">
-        <h3>💻 System Terminal Log</h3>
-        <div class="console-terminal">
-            <div class="terminal-line"><span class="terminal-prompt">terrahub@system:~$</span> init_security_handshake --session_key=sec_prod_key</div>
-            <div class="terminal-line">[INFO] Handshake verified with auth node. Access token cached.</div>
-            <div class="terminal-line"><span class="terminal-prompt">terrahub@system:~$</span> get_workspace_status</div>
-            <div class="terminal-line">[OK] All database schemas mapped successfully. CustomUser backend enabled.</div>
-            <div class="terminal-line">[OK] Standard landing page '/' routing online.</div>
-            <div class="terminal-line">[OK] Access console '/login/' routing online.</div>
-            <div class="terminal-line">[OK] System administrator node '/system/' online.</div>
-            <div class="terminal-line"><span class="terminal-prompt">terrahub@system:~$</span> echo "Welcome, {{ user.username }}!"</div>
-            <div class="terminal-line">Welcome, {{ user.username }}! Environment variables loaded successfully. ready...</div>
+<!-- Terminal & Telemetry Row -->
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem; margin-top:1.5rem;" class="animate-fade-in-up">
+    
+    <!-- Left Column: Database Status & Entity Telemetry -->
+    <div style="display:flex; flex-direction:column; gap:1.5rem;">
+        
+        <!-- Live Database Connection Health -->
+        <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; display:flex; flex-direction:column; justify-content:space-between; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+                    <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; margin:0;">Database Connection Health</h3>
+                    <span id="db-status-badge" class="badge {% if db_status.status == 'Connected' %}badge-emerald{% else %}badge-rose{% endif %}" style="font-weight:600; padding: 0.25rem 0.6rem; border-radius: 6px;">
+                        ● <span id="db-status-text">{{ db_status.status }}</span>
+                    </span>
+                </div>
+                
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.25rem;">
+                    <div style="background:#f8fafc; border-radius:8px; padding:0.75rem; border:1px solid #f1f5f9;">
+                        <div style="font-size:0.75rem; color:#64748b; margin-bottom:0.25rem;">Engine / Context</div>
+                        <div style="font-weight:700; font-size:0.9rem; color:var(--text-main);">
+                            {{ db_status.engine }}
+                            {% if db_status.is_live %}
+                            <span style="color:#10b981; font-size:0.75rem; font-weight:600; display:block;">(Live PostgreSQL)</span>
+                            {% else %}
+                            <span style="color:#64748b; font-size:0.75rem; font-weight:500; display:block;">(Local/Development)</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div style="background:#f8fafc; border-radius:8px; padding:0.75rem; border:1px solid #f1f5f9;">
+                        <div style="font-size:0.75rem; color:#64748b; margin-bottom:0.25rem;">Latency (Test Query)</div>
+                        <div id="db-latency-text" style="font-weight:700; font-size:1.1rem; color:var(--primary); font-family:monospace;">
+                            {{ db_status.latency|default:"N/A" }}
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="display:flex; flex-direction:column; gap:0.5rem; font-size:0.825rem; border-top: 1px dashed #e2e8f0; padding-top:1rem; margin-bottom:1.25rem;">
+                    <div style="display:flex; justify-content:space-between;">
+                        <span style="color:#64748b;">Target Host:</span>
+                        <span style="font-family:monospace; font-weight:600; color:var(--text-main);">{{ db_status.host|default:"localhost" }}:{{ db_status.port|default:"default" }}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between;">
+                        <span style="color:#64748b;">Database Name:</span>
+                        <span style="font-family:monospace; font-weight:600; color:var(--text-main);">{{ db_status.name }}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between;">
+                        <span style="color:#64748b;">Database User:</span>
+                        <span style="font-family:monospace; font-weight:600; color:var(--text-main);">{{ db_status.user|default:"N/A" }}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <button id="btn-retest-db" onclick="testConnection()" class="btn btn-secondary" style="width:100%; display:flex; align-items:center; justify-content:center; gap:0.5rem; cursor:pointer; font-weight:600; font-size:0.875rem; padding: 0.5rem; transition: all 0.2s;">
+                <svg id="db-test-spinner" class="animate-spin" style="display:none; width: 16px; height: 16px; color: var(--primary);" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                ⚡ Test Latency &amp; Status
+            </button>
+        </div>
+
+        <!-- Live Database Summary Card -->
+        <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Database Entity Telemetry</h3>
+            <div style="display:flex; flex-direction:column; gap:0.75rem;">
+                <div style="display:flex; justify-content:space-between; padding:0.6rem; background:#f8fafc; border-radius:6px; font-size:0.875rem;">
+                    <span style="font-weight:600; color:var(--text-main);">Sales Orders</span>
+                    <span style="font-weight:700; color:var(--primary);">{{ metrics.total_sales_orders }} Orders</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; padding:0.6rem; background:#f8fafc; border-radius:6px; font-size:0.875rem;">
+                    <span style="font-weight:600; color:var(--text-main);">Purchase Orders</span>
+                    <span style="font-weight:700; color:var(--primary);">{{ metrics.total_purchase_orders }} Orders</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; padding:0.6rem; background:#f8fafc; border-radius:6px; font-size:0.875rem;">
+                    <span style="font-weight:600; color:var(--text-main);">Logistics &amp; Fleet Shipments</span>
+                    <span style="font-weight:700; color:var(--primary);">{{ metrics.total_shipments }} Shipments</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; padding:0.6rem; background:#f8fafc; border-radius:6px; font-size:0.875rem;">
+                    <span style="font-weight:600; color:var(--text-main);">Raw Materials Catalog</span>
+                    <span style="font-weight:700; color:var(--primary);">{{ metrics.total_materials }} Items</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; padding:0.6rem; background:#f8fafc; border-radius:6px; font-size:0.875rem;">
+                    <span style="font-weight:600; color:var(--text-main);">Finished Products Catalog</span>
+                    <span style="font-weight:700; color:var(--primary);">{{ metrics.total_products }} Products</span>
+                </div>
+            </div>
+        </div>
+        
+    </div>
+
+    <!-- Right Column: Terminal Console Log (Tabbed Layout) -->
+    <div style="background:#0f172a; border-radius:12px; padding:1.5rem; color:#f8fafc; font-family:'Courier New', Courier, monospace; display:flex; flex-direction:column; min-height: 500px; justify-content:space-between; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3);">
+        <div>
+            <!-- Terminal Header with Tabs -->
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #334155; padding-bottom:0.5rem; margin-bottom:0.75rem;">
+                <div style="display:flex; gap:1.25rem;">
+                    <button id="tab-btn-system" class="console-tab-btn active" onclick="switchConsoleTab('system')">
+                        💻 System Console
+                    </button>
+                    <button id="tab-btn-sql" class="console-tab-btn" onclick="switchConsoleTab('sql')">
+                        🗄️ SQL DB queries
+                    </button>
+                </div>
+                <!-- Polling indicator dot -->
+                <div id="polling-indicator" class="polling-dot" style="align-items:center; gap:0.35rem; font-size:0.7rem; color:#94a3b8;">
+                    <span class="dot-blink" style="width: 8px; height: 8px; background-color: #4ade80; border-radius: 50%; display: inline-block;"></span>
+                    Live Logs
+                </div>
+            </div>
+
+            <!-- Tab 1: System Console Pane -->
+            <div id="console-pane-system" style="font-size:0.8rem; line-height:1.6; color:#94a3b8;">
+                <div><span style="color:#4ade80;">terrahub@node-01:~$</span> init_system_telemetry --auth=OK</div>
+                <div>[OK] Django 6.0.4 {{ db_status.engine }} backend connected.</div>
+                <div>[OK] All 9 system routes verified and mapped.</div>
+                <div><span style="color:#4ade80;">terrahub@node-01:~$</span> tail -n 4 /var/log/registry.log</div>
+                {% for log in recent_logs|slice:":4" %}
+                <div>[EVENT] {{ log.timestamp|date:"H:i:s" }} - {{ log.action_type }}: {{ log.item_name }} ({{ log.quantity_changed }})</div>
+                {% empty %}
+                <div>[INFO] System log initialized. Ready for transactions.</div>
+                {% endfor %}
+            </div>
+
+            <!-- Tab 2: SQL DB Query Logs Pane -->
+            <div id="console-pane-sql" style="display:none; flex-direction:column; height: 100%;">
+                <div id="sql-console-log-buffer" style="font-size:0.75rem; line-height:1.6; color:#94a3b8; overflow-y:auto; height:320px; padding-bottom: 0.5rem; display:flex; flex-direction:column; gap:0.4rem; scroll-behavior: smooth;">
+                    <!-- Queries will be dynamically rendered here -->
+                    <div class="terminal-empty">[INFO] Loading database logs...</div>
+                </div>
+                
+                <!-- Controls footer inside SQL Pane -->
+                <div style="border-top:1px dashed #334155; padding-top:0.75rem; margin-top:0.75rem; display:flex; flex-direction:column; gap:0.5rem;">
+                    <!-- Auto-refresh and clear -->
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer; font-size:0.75rem; color:#e2e8f0; user-select:none;">
+                            <input type="checkbox" id="autorefresh-check" onchange="toggleAutorefresh(this)" style="accent-color:#38bdf8; width: 14px; height: 14px;">
+                            <span>Autorefresh DB Logs (2s)</span>
+                        </label>
+                        <button onclick="clearDbLogs()" style="background:#ef4444; color:#fff; border:none; border-radius:4px; padding:0.25rem 0.6rem; font-size:0.7rem; font-weight:bold; cursor:pointer; font-family:sans-serif; transition:background 0.2s;" onmouseover="this.style.background='#dc2626'" onmouseout="this.style.background='#ef4444'">
+                            Clear Buffer
+                        </button>
+                    </div>
+                    
+                    <!-- Diagnostic trigger buttons -->
+                    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-top:0.25rem;">
+                        <span style="font-size:0.7rem; color:#64748b;">Debug Operations:</span>
+                        <button onclick="triggerDbTest('read')" style="background:#1e293b; color:#38bdf8; border:1px solid #334155; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; font-weight:600; cursor:pointer; font-family:sans-serif;" onmouseover="this.style.background='#334155'" onmouseout="this.style.background='#1e293b'">
+                            Test Read (SELECT)
+                        </button>
+                        <button onclick="triggerDbTest('write')" style="background:#1e293b; color:#4ade80; border:1px solid #334155; border-radius:4px; padding:0.25rem 0.5rem; font-size:0.7rem; font-weight:600; cursor:pointer; font-family:sans-serif;" onmouseover="this.style.background='#334155'" onmouseout="this.style.background='#1e293b'">
+                            Test Write (INSERT)
+                        </button>
+                        <span id="test-msg-area" style="font-size:0.7rem; color:#e2e8f0; font-style:italic; transition: opacity 0.3s; opacity:0; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div style="margin-top:1rem; font-size:0.75rem; color:#64748b; border-top:1px solid #1e293b; padding-top:0.5rem;">
+            User Session: {{ user.username }} (Role: {{ user.role|default:"Staff" }}) | Security Status: Verified
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Database connection tester
+    function testConnection() {
+        const btn = document.getElementById('btn-retest-db');
+        const statusText = document.getElementById('db-status-text');
+        const statusBadge = document.getElementById('db-status-badge');
+        const latencyText = document.getElementById('db-latency-text');
+        const spinner = document.getElementById('db-test-spinner');
+        
+        btn.disabled = true;
+        if (spinner) spinner.style.display = 'inline-block';
+        
+        fetch('{% url "db_logs_api" %}')
+            .then(response => response.json())
+            .then(data => {
+                const status = data.db_status.status;
+                const latency = data.db_status.latency;
+                const error = data.db_status.error;
+                
+                statusText.innerText = status;
+                latencyText.innerText = latency || 'N/A';
+                
+                if (status === 'Connected') {
+                    statusBadge.className = 'badge badge-emerald';
+                    statusBadge.innerHTML = '● ' + status;
+                } else {
+                    statusBadge.className = 'badge badge-rose';
+                    statusBadge.innerHTML = '● ' + status;
+                    if (error) console.error("Database connection error:", error);
+                }
+            })
+            .catch(err => {
+                console.error("Failed to test db connection:", err);
+                statusText.innerText = 'Error';
+                statusBadge.className = 'badge badge-rose';
+                statusBadge.innerHTML = '● Error';
+            })
+            .finally(() => {
+                btn.disabled = false;
+                if (spinner) spinner.style.display = 'none';
+            });
+    }
+
+    // SQL Log Console polling
+    let queryPollingInterval = null;
+    const terminalConsole = document.getElementById('sql-console-log-buffer');
+
+    function fetchDbLogs() {
+        fetch('{% url "db_logs_api" %}')
+            .then(response => response.json())
+            .then(data => {
+                // Update connection latency dynamically if available
+                if (data.db_status && data.db_status.latency) {
+                    const latencyText = document.getElementById('db-latency-text');
+                    if (latencyText) latencyText.innerText = data.db_status.latency;
+                }
+                renderLogs(data.logs);
+            })
+            .catch(err => console.error("Error fetching db logs:", err));
+    }
+
+    function renderLogs(logs) {
+        if (!terminalConsole) return;
+        
+        if (logs.length === 0) {
+            terminalConsole.innerHTML = '<div class="terminal-empty">[INFO] No database operations recorded yet. Use the test buttons below to trigger activity.</div>';
+            return;
+        }
+        
+        let html = '';
+        logs.forEach(log => {
+            let badgeColor = '#94a3b8'; // default grey
+            if (log.type === 'READ') badgeColor = '#38bdf8'; // sky
+            else if (log.type === 'WRITE') badgeColor = '#4ade80'; // green
+            else if (log.type === 'TRANSACTION') badgeColor = '#fbbf24'; // amber
+            
+            let successBadge = '';
+            if (!log.success) {
+                successBadge = '<span class="log-err-tag">[FAILED]</span> ';
+            }
+            
+            html += `<div class="log-item">
+                <span class="log-timestamp">[${log.timestamp}]</span>
+                <span class="log-badge" style="background: ${badgeColor}; color: #0f172a; padding: 1px 4px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; margin: 0 4px; display: inline-block;">${log.type}</span>
+                <span class="log-duration">(${log.duration})</span>
+                <span class="log-sql" style="color: ${log.success ? '#e2e8f0' : '#f87171'}">${successBadge}${escapeHtml(log.sql)}</span>
+            </div>`;
+        });
+        
+        terminalConsole.innerHTML = html;
+        // Auto scroll to bottom
+        terminalConsole.scrollTop = terminalConsole.scrollHeight;
+    }
+
+    function escapeHtml(str) {
+        return str
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function toggleAutorefresh(checkbox) {
+        const indicator = document.getElementById('polling-indicator');
+        if (checkbox.checked) {
+            if (indicator) indicator.classList.add('active');
+            fetchDbLogs();
+            queryPollingInterval = setInterval(fetchDbLogs, 2000);
+        } else {
+            if (indicator) indicator.classList.remove('active');
+            if (queryPollingInterval) {
+                clearInterval(queryPollingInterval);
+                queryPollingInterval = null;
+            }
+        }
+    }
+
+    function clearDbLogs() {
+        fetch('{% url "db_clear_logs" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                if (terminalConsole) {
+                    terminalConsole.innerHTML = '<div class="terminal-empty">[INFO] Console cleared.</div>';
+                }
+            }
+        });
+    }
+
+    function triggerDbTest(type) {
+        const msgArea = document.getElementById('test-msg-area');
+        if (msgArea) {
+            msgArea.innerText = `Triggering test ${type}...`;
+            msgArea.style.opacity = '1';
+        }
+        
+        fetch(`{% url "db_test_op" %}?type=${type}`)
+            .then(response => response.json())
+            .then(data => {
+                if (msgArea) {
+                    msgArea.innerText = data.message;
+                    setTimeout(() => { msgArea.style.opacity = '0'; }, 3000);
+                }
+                // If polling is off, fetch once to show the new query
+                const autoChk = document.getElementById('autorefresh-check');
+                if (autoChk && !autoChk.checked) {
+                    fetchDbLogs();
+                }
+            })
+            .catch(err => {
+                if (msgArea) msgArea.innerText = "Error: " + err;
+            });
+    }
+
+    // Tab Switching Logic
+    function switchConsoleTab(tabName) {
+        const tabs = document.querySelectorAll('.console-tab-btn');
+        const paneSystem = document.getElementById('console-pane-system');
+        const paneSql = document.getElementById('console-pane-sql');
+        
+        tabs.forEach(tab => tab.classList.remove('active'));
+        
+        if (tabName === 'system') {
+            document.getElementById('tab-btn-system').classList.add('active');
+            paneSystem.style.display = 'block';
+            paneSql.style.display = 'none';
+        } else {
+            document.getElementById('tab-btn-sql').classList.add('active');
+            paneSystem.style.display = 'none';
+            paneSql.style.display = 'flex';
+            fetchDbLogs(); // Initial fetch on tab switch
+        }
+    }
+</script>
 {% endblock %}

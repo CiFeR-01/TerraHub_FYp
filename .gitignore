@@ -11,6 +11,7 @@ ENV/
 db.sqlite3
 *.log
 local_settings.py
+.env
 media/
 staticfiles/
 
@@ -22,3 +23,10 @@ staticfiles/
 *.njsproj
 *.sln
 *.swp
+
+# System Console & Debug Tracker
+*.console
+*system_console*
+db_tracker.log
+logs/
+

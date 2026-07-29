@@ -1,0 +1,605 @@
+{% extends "base.html" %}
+
+{% block title %}Logistics Tracker - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">Logistics Tracker</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Fleet &amp; Freight Logistics Control Center
+        </h1>
+    </div>
+    <div class="header-action-tray">
+        <button class="btn btn-primary" onclick="document.getElementById('shipment-modal').style.display='flex'" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+            ✚ Dispatch Freight / Shipment
+        </button>
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: #d97706;{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: #059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- KPI Cards -->
+<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay: 0.05s;">
+    <div class="kpi-item-card">
+        <span class="kpi-label">Active Dispatched Fleets</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ stats.dispatched }}</span>
+            <span class="badge badge-emerald">En Route</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Preparing Cargo</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ stats.preparing }}</span>
+            <span class="badge badge-indigo">Staging</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Delayed Shipments</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ stats.delayed }}</span>
+            {% if stats.delayed > 0 %}<span class="badge badge-rose">Attention</span>{% else %}<span class="badge badge-emerald">On Time</span>{% endif %}
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Total Shipments Tracked</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ stats.total }}</span>
+            <span class="badge badge-sky">Logged</span>
+        </div>
+    </div>
+</section>
+
+<!-- Table Container -->
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
+    <form method="get" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+        <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700;">Freight Tracking Logs</h3>
+        <div style="display:flex; gap:0.75rem;">
+            <select name="direction" onchange="this.form.submit()" class="form-select" style="padding:0.45rem 0.75rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
+                <option value="">All Directions</option>
+                {% for code, label in direction_choices %}
+                <option value="{{ code }}" {% if request.GET.direction == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <select name="status" onchange="this.form.submit()" class="form-select" style="padding:0.45rem 0.75rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
+                <option value="">All Statuses</option>
+                {% for code, label in status_choices %}
+                <option value="{{ code }}" {% if request.GET.status == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
+                    <th style="padding:0.75rem 1rem;">Tracking #</th>
+                    <th style="padding:0.75rem 1rem;">Direction</th>
+                    <th style="padding:0.75rem 1rem;">Cargo Item</th>
+                    <th style="padding:0.75rem 1rem;">Quantity</th>
+                    <th style="padding:0.75rem 1rem;">Origin</th>
+                    <th style="padding:0.75rem 1rem;">Destination</th>
+                    <th style="padding:0.75rem 1rem;">ETA Date</th>
+                    <th style="padding:0.75rem 1rem;">Status</th>
+                    <th style="padding:0.75rem 1rem; text-align:right;">Update Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ship in shipments %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ ship.tracking_number }}</td>
+                    <td style="padding:0.85rem 1rem;"><span class="badge badge-sky">{{ ship.get_direction_display }}</span></td>
+                    <td style="padding:0.85rem 1rem; font-weight:600;">{% if ship.material %}{{ ship.material.name }}{% elif ship.product %}{{ ship.product.name }}{% else %}General Cargo{% endif %}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600;">{{ ship.quantity|floatformat:1 }}</td>
+                    <td style="padding:0.85rem 1rem;">{% if ship.origin_warehouse %}{{ ship.origin_warehouse.name }}{% elif ship.external_origin %}{{ ship.external_origin }}{% else %}Supplier Storage{% endif %}</td>
+                    <td style="padding:0.85rem 1rem;">{% if ship.destination_warehouse %}{{ ship.destination_warehouse.name }}{% else %}Client Port{% endif %}</td>
+                    <td style="padding:0.85rem 1rem;">{{ ship.expected_eta_date|default:"TBD" }}</td>
+                    <td style="padding:0.85rem 1rem;">
+                        {% if ship.status == 'Dispatched' %}<span class="badge badge-emerald">Dispatched</span>
+                        {% elif ship.status == 'Preparing' %}<span class="badge badge-indigo">Preparing</span>
+                        {% elif ship.status == 'Delayed' %}<span class="badge badge-rose">Delayed</span>
+                        {% else %}<span class="badge badge-emerald">Arrived</span>{% endif %}
+                    </td>
+                    <td style="padding:0.85rem 1rem; text-align:right;">
+                        <form method="post" style="display:inline-flex; gap:0.4rem; align-items:center;">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_status">
+                            <input type="hidden" name="shipment_id" value="{{ ship.id }}">
+                            <select name="status" class="form-select" style="padding:0.3rem 0.5rem; font-size:0.78rem; border-radius:4px; border:1px solid var(--border-light);">
+                                {% for code, label in status_choices %}
+                                <option value="{{ code }}" {% if ship.status == code %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem;">Save</button>
+                        </form>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="9" style="padding:2rem; text-align:center; color:var(--text-muted);">No logistics shipment records found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal: New Shipment -->
+<div id="shipment-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); backdrop-filter: blur(4px); z-index:1000; align-items:center; justify-content:center; padding: 1.5rem; transition: var(--transition-smooth);">
+    <div style="background:#fff; border-radius:16px; width:100%; max-width:750px; padding:2rem; box-shadow:0 25px 50px -12px rgba(15, 23, 42, 0.25); border: 1px solid var(--border-light); max-height: 90vh; overflow-y: auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem; border-bottom: 1px solid var(--border-light); padding-bottom: 1rem;">
+            <h3 style="font-family:'Outfit', sans-serif; font-size:1.35rem; font-weight:700; color: var(--text-main);">Dispatch New Shipment / Fleet</h3>
+            <button onclick="document.getElementById('shipment-modal').style.display='none'" style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        </div>
+        <form method="post" id="shipment-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="create_shipment">
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem;">
+                <!-- General Settings -->
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Direction</label>
+                    <select name="direction" id="id_direction" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); font-weight:500;">
+                        <option value="Inbound">Inbound (From Supplier)</option>
+                        <option value="Outbound">Outbound (To Client)</option>
+                        <option value="Transfer">Internal Transfer</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Initial Status</label>
+                    <select name="status" id="id_status" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); font-weight:500;">
+                        {% for code, label in status_choices %}
+                        <option value="{{ code }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <!-- Tracking number generation -->
+            <div style="background: #f8fafc; border: 1px solid var(--border-light); border-radius: 8px; padding: 1rem; margin-bottom: 1.25rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <span style="font-size: 0.85rem; font-weight: 600;">Tracking / Fleet ID</span>
+                    <label style="display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.8rem; font-weight: 500; color: var(--primary);">
+                        <input type="checkbox" name="tracking_mode" value="auto" id="id_tracking_mode" checked style="accent-color: var(--primary);">
+                        Auto-generate Tracking ID
+                    </label>
+                </div>
+                <input type="text" name="tracking_number" id="id_tracking_number" value="{{ next_tracking_number }}" placeholder="TRK-0101" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background: #f8fafc; font-weight: 500;" readonly>
+            </div>
+
+            <!-- Conditional Order reference & Cargo Item Type -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem;">
+                <!-- Order Reference -->
+                <div id="div_purchase_order">
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Purchase Order</label>
+                    <select name="purchase_order_id" id="id_purchase_order" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                        <option value="">-- Select PO (Optional) --</option>
+                        {% for po in purchase_orders %}
+                        <option value="{{ po.id }}">{{ po.po_number }} ({{ po.supplier_name }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div id="div_sales_order" style="display: none;">
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Sales Order</label>
+                    <select name="sales_order_id" id="id_sales_order" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                        <option value="">-- Select SO (Optional) --</option>
+                        {% for so in sales_orders %}
+                        <option value="{{ so.id }}">{{ so.so_number }} ({{ so.client_name }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Cargo Type selection -->
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Cargo Type</label>
+                    <div style="display: flex; gap: 1rem; padding-top: 0.4rem;">
+                        <label style="display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; cursor: pointer;">
+                            <input type="radio" name="cargo_type" value="material" id="cargo_type_material" checked style="accent-color: var(--primary);"> Raw Material
+                        </label>
+                        <label style="display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; cursor: pointer;">
+                            <input type="radio" name="cargo_type" value="product" id="cargo_type_product" style="accent-color: var(--primary);"> Finished Product
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Items and Batches -->
+            <div style="display: grid; grid-template-columns: 1.25fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem;">
+                <div>
+                    <label id="cargo_item_label" style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Cargo Item</label>
+                    
+                    <!-- Material dropdown -->
+                    <select name="material_id" id="id_material" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                        <option value="">-- Select Material --</option>
+                        {% for m in materials %}
+                        <option value="{{ m.id }}">{{ m.sku }} — {{ m.name }}</option>
+                        {% endfor %}
+                    </select>
+                    
+                    <!-- Product dropdown -->
+                    <select name="product_id" id="id_product" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); display: none;">
+                        <option value="">-- Select Product --</option>
+                        {% for p in products %}
+                        <option value="{{ p.id }}">{{ p.sku }} — {{ p.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Batch Reference (Optional)</label>
+                    <select name="batch_id" id="id_batch" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                        <option value="">-- Select Batch --</option>
+                        {% for b in batches %}
+                        <option value="{{ b.id }}" data-material="{{ b.material.id|default:'' }}" data-product="{{ b.product.id|default:'' }}">{{ b.batch_number }} (Qty: {{ b.quantity|floatformat:1 }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <!-- Quantity & External origin -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem;">
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Quantity</label>
+                    <input type="number" step="0.01" name="quantity" id="id_quantity" required placeholder="0.0" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+                
+                <!-- External Origin (Shown for Inbound if Supplier) -->
+                <div id="div_external_origin">
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">External Origin Name</label>
+                    <input type="text" name="external_origin" id="id_external_origin" placeholder="Supplier or external port name" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+            </div>
+
+            <!-- Routing facilities -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem;" id="div_facilities_row">
+                <div id="div_origin_warehouse">
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Origin Facility (Internal)</label>
+                    <select name="origin_warehouse_id" id="id_origin_warehouse" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                        <option value="">-- None / Select Warehouse --</option>
+                        {% for w in warehouses %}
+                        <option value="{{ w.id }}">{{ w.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div id="div_destination_warehouse">
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Destination Facility (Internal)</label>
+                    <select name="destination_warehouse_id" id="id_destination_warehouse" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                        <option value="">-- None / Select Warehouse --</option>
+                        {% for w in warehouses %}
+                        <option value="{{ w.id }}">{{ w.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <!-- Dates section -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Dispatch Date</label>
+                    <input type="date" name="dispatch_date" id="id_dispatch_date" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Expected ETA</label>
+                    <input type="date" name="expected_eta_date" id="id_expected_eta_date" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+                <div id="div_actual_arrival_date" style="display: none;">
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Actual Arrival Date</label>
+                    <input type="date" name="actual_arrival_date" id="id_actual_arrival_date" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem; border-top: 1px solid var(--border-light); padding-top: 1.25rem;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('shipment-modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Dispatch Shipment</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    // Embed JSON Data safely
+    const poData = {% if purchase_orders %}
+        {
+            {% for po in purchase_orders %}
+            "{{ po.id }}": {
+                "warehouse_id": "{{ po.target_warehouse.id|default:'' }}",
+                "items": [
+                    {% for item in po.items.all %}
+                    {"id": "{{ item.material.id }}", "sku": "{{ item.material.sku|escapejs }}", "name": "{{ item.material.name|escapejs }}", "qty": "{{ item.quantity_ordered }}"}
+                    {% if not forloop.last %},{% endif %}
+                    {% endfor %}
+                ]
+            }{% if not forloop.last %},{% endif %}
+            {% endfor %}
+        }
+    {% else %}{}{% endif %};
+
+    const soData = {% if sales_orders %}
+        {
+            {% for so in sales_orders %}
+            "{{ so.id }}": {
+                "warehouse_id": "{{ so.origin_warehouse.id|default:'' }}",
+                "items": [
+                    {% for item in so.items.all %}
+                    {"id": "{{ item.product.id }}", "sku": "{{ item.product.sku|escapejs }}", "name": "{{ item.product.name|escapejs }}", "qty": "{{ item.quantity_ordered }}"}
+                    {% if not forloop.last %},{% endif %}
+                    {% endfor %}
+                ]
+            }{% if not forloop.last %},{% endif %}
+            {% endfor %}
+        }
+    {% else %}{}{% endif %};
+
+    document.addEventListener("DOMContentLoaded", function() {
+        const trackingMode = document.getElementById("id_tracking_mode");
+        const trackingNumber = document.getElementById("id_tracking_number");
+        const directionSelect = document.getElementById("id_direction");
+        const statusSelect = document.getElementById("id_status");
+        
+        const divPO = document.getElementById("div_purchase_order");
+        const divSO = document.getElementById("div_sales_order");
+        const divExtOrigin = document.getElementById("div_external_origin");
+        const divOriginWh = document.getElementById("div_origin_warehouse");
+        const divDestWh = document.getElementById("div_destination_warehouse");
+        const divActualArrival = document.getElementById("div_actual_arrival_date");
+        
+        const poSelect = document.getElementById("id_purchase_order");
+        const soSelect = document.getElementById("id_sales_order");
+        const materialSelect = document.getElementById("id_material");
+        const productSelect = document.getElementById("id_product");
+        const batchSelect = document.getElementById("id_batch");
+        const quantityInput = document.getElementById("id_quantity");
+        
+        const cargoTypeMaterial = document.getElementById("cargo_type_material");
+        const cargoTypeProduct = document.getElementById("cargo_type_product");
+        const cargoItemLabel = document.getElementById("cargo_item_label");
+        
+        // Initial setup
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('id_dispatch_date').value = today;
+
+        // Auto tracking ID toggle
+        trackingMode.addEventListener("change", function() {
+            if (this.checked) {
+                trackingNumber.readOnly = true;
+                trackingNumber.style.background = "#f8fafc";
+                trackingNumber.value = "{{ next_tracking_number }}";
+            } else {
+                trackingNumber.readOnly = false;
+                trackingNumber.style.background = "#ffffff";
+                trackingNumber.placeholder = "e.g. FLEET-TX-990";
+                trackingNumber.focus();
+            }
+        });
+
+        // Direction Toggle Logic
+        directionSelect.addEventListener("change", handleDirectionChange);
+
+        function handleDirectionChange() {
+            const dir = directionSelect.value;
+            if (dir === "Inbound") {
+                divPO.style.display = "block";
+                divSO.style.display = "none";
+                soSelect.value = "";
+                
+                divExtOrigin.style.display = "block";
+                divOriginWh.style.display = "none";
+                document.getElementById("id_origin_warehouse").value = "";
+                divDestWh.style.display = "block";
+                
+                cargoTypeMaterial.checked = true;
+                handleCargoTypeChange();
+            } else if (dir === "Outbound") {
+                divPO.style.display = "none";
+                poSelect.value = "";
+                divSO.style.display = "block";
+                
+                divExtOrigin.style.display = "none";
+                document.getElementById("id_external_origin").value = "";
+                divOriginWh.style.display = "block";
+                divDestWh.style.display = "none";
+                document.getElementById("id_destination_warehouse").value = "";
+                
+                cargoTypeProduct.checked = true;
+                handleCargoTypeChange();
+            } else { // Transfer
+                divPO.style.display = "none";
+                poSelect.value = "";
+                divSO.style.display = "none";
+                soSelect.value = "";
+                
+                divExtOrigin.style.display = "none";
+                document.getElementById("id_external_origin").value = "";
+                divOriginWh.style.display = "block";
+                divDestWh.style.display = "block";
+            }
+            filterCargoOptions();
+        }
+
+        // Cargo Type Selection Logic
+        cargoTypeMaterial.addEventListener("change", handleCargoTypeChange);
+        cargoTypeProduct.addEventListener("change", handleCargoTypeChange);
+
+        function handleCargoTypeChange() {
+            if (cargoTypeMaterial.checked) {
+                materialSelect.style.display = "block";
+                productSelect.style.display = "none";
+                productSelect.value = "";
+                cargoItemLabel.innerText = "Cargo Item (Material)";
+            } else {
+                materialSelect.style.display = "none";
+                productSelect.style.display = "block";
+                materialSelect.value = "";
+                cargoItemLabel.innerText = "Cargo Item (Product)";
+            }
+            filterBatches();
+        }
+
+        // Status change logic
+        statusSelect.addEventListener("change", function() {
+            if (this.value === "Arrived") {
+                divActualArrival.style.display = "block";
+                document.getElementById("id_actual_arrival_date").value = today;
+            } else {
+                divActualArrival.style.display = "none";
+                document.getElementById("id_actual_arrival_date").value = "";
+            }
+        });
+
+        // Filter batches based on selected Material or Product
+        materialSelect.addEventListener("change", filterBatches);
+        productSelect.addEventListener("change", filterBatches);
+
+        function filterBatches() {
+            const selectedMat = materialSelect.value;
+            const selectedProd = productSelect.value;
+            
+            const options = batchSelect.options;
+            for (let i = 0; i < options.length; i++) {
+                const opt = options[i];
+                if (opt.value === "") {
+                    opt.style.display = "";
+                    continue;
+                }
+                const bMat = opt.getAttribute("data-material");
+                const bProd = opt.getAttribute("data-product");
+                
+                if (selectedMat && bMat === selectedMat) {
+                    opt.style.display = "";
+                } else if (selectedProd && bProd === selectedProd) {
+                    opt.style.display = "";
+                } else if (!selectedMat && !selectedProd) {
+                    opt.style.display = "";
+                } else {
+                    opt.style.display = "none";
+                }
+            }
+            // Clear batch selection if the selected batch does not match the active filters
+            const selectedOpt = batchSelect.options[batchSelect.selectedIndex];
+            if (selectedOpt && selectedOpt.value !== "") {
+                const bMat = selectedOpt.getAttribute("data-material");
+                const bProd = selectedOpt.getAttribute("data-product");
+                if (selectedMat && bMat !== selectedMat) batchSelect.value = "";
+                if (selectedProd && bProd !== selectedProd) batchSelect.value = "";
+            }
+        }
+
+        // Purchase Order Selection -> autofill destination warehouse & filter materials
+        poSelect.addEventListener("change", function() {
+            const poId = this.value;
+            if (!poId || !poData[poId]) {
+                filterCargoOptions();
+                return;
+            }
+            const info = poData[poId];
+            if (info.warehouse_id) {
+                document.getElementById("id_destination_warehouse").value = info.warehouse_id;
+            }
+            
+            // Filter materials
+            const allowedIds = info.items.map(item => item.id);
+            const matOptions = materialSelect.options;
+            let lastMatchedId = "";
+            let matchedCount = 0;
+            
+            for (let i = 0; i < matOptions.length; i++) {
+                const opt = matOptions[i];
+                if (opt.value === "") continue;
+                if (allowedIds.includes(opt.value)) {
+                    opt.style.display = "";
+                    lastMatchedId = opt.value;
+                    matchedCount++;
+                } else {
+                    opt.style.display = "none";
+                }
+            }
+            
+            // If only 1 material matched, auto-select it and fill quantity
+            if (matchedCount === 1) {
+                materialSelect.value = lastMatchedId;
+                const matchedItem = info.items.find(item => item.id === lastMatchedId);
+                if (matchedItem) {
+                    quantityInput.value = matchedItem.qty;
+                }
+                filterBatches();
+            } else {
+                materialSelect.value = "";
+                quantityInput.value = "";
+            }
+        });
+
+        // Sales Order Selection -> autofill origin warehouse & filter products
+        soSelect.addEventListener("change", function() {
+            const soId = this.value;
+            if (!soId || !soData[soId]) {
+                filterCargoOptions();
+                return;
+            }
+            const info = soData[soId];
+            if (info.warehouse_id) {
+                document.getElementById("id_origin_warehouse").value = info.warehouse_id;
+            }
+            
+            // Filter products
+            const allowedIds = info.items.map(item => item.id);
+            const prodOptions = productSelect.options;
+            let lastMatchedId = "";
+            let matchedCount = 0;
+            
+            for (let i = 0; i < prodOptions.length; i++) {
+                const opt = prodOptions[i];
+                if (opt.value === "") continue;
+                if (allowedIds.includes(opt.value)) {
+                    opt.style.display = "";
+                    lastMatchedId = opt.value;
+                    matchedCount++;
+                } else {
+                    opt.style.display = "none";
+                }
+            }
+            
+            // If only 1 product matched, auto-select it and fill quantity
+            if (matchedCount === 1) {
+                productSelect.value = lastMatchedId;
+                const matchedItem = info.items.find(item => item.id === lastMatchedId);
+                if (matchedItem) {
+                    quantityInput.value = matchedItem.qty;
+                }
+                filterBatches();
+            } else {
+                productSelect.value = "";
+                quantityInput.value = "";
+            }
+        });
+
+        function filterCargoOptions() {
+            // Restore all options if no PO/SO is selected
+            const matOptions = materialSelect.options;
+            for (let i = 0; i < matOptions.length; i++) {
+                matOptions[i].style.display = "";
+            }
+            const prodOptions = productSelect.options;
+            for (let i = 0; i < prodOptions.length; i++) {
+                prodOptions[i].style.display = "";
+            }
+        }
+
+        // Initialize form layout based on default values
+        handleDirectionChange();
+    });
+</script>
+{% endblock %}

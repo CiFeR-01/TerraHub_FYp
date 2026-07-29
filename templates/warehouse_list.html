@@ -85,7 +85,7 @@
                 </div>
             </div>
             {% if perms.core.change_warehouse %}
-            <a href="#" class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.75rem;" onclick="alert('Edit form coming soon!')">
+            <a href="{% url 'warehouse_edit' f.id %}" class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.75rem;">
                 ⚙️ Edit
             </a>
             {% endif %}

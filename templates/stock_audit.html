@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+
+{% block title %}Stock Audit & Tally - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">Stock Audit &amp; Tally</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Physical Stock Audit Ledger
+        </h1>
+    </div>
+    <div class="header-action-tray">
+        <button class="btn btn-primary" onclick="document.getElementById('audit-modal').style.display='flex'" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+            ✚ Log Physical Count
+        </button>
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: #d97706;{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: #059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay: 0.05s;">
+    <div class="kpi-item-card">
+        <span class="kpi-label">Pending Discrepancies</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ pending_count }}</span>
+            {% if pending_count > 0 %}<span class="badge badge-amber">Action Required</span>{% else %}<span class="badge badge-emerald">Clear</span>{% endif %}
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Resolved Audits</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ resolved_count }}</span>
+            <span class="badge badge-indigo">Reconciled</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Audited Batches</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{{ audits.count }}</span>
+            <span class="badge badge-sky">Total Records</span>
+        </div>
+    </div>
+</section>
+
+<!-- Audits Table -->
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700;">Audit Discrepancy Logs</h3>
+    </div>
+
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
+                    <th style="padding:0.75rem 1rem;">ID</th>
+                    <th style="padding:0.75rem 1rem;">Batch #</th>
+                    <th style="padding:0.75rem 1rem;">Item / Material</th>
+                    <th style="padding:0.75rem 1rem;">Location</th>
+                    <th style="padding:0.75rem 1rem;">Expected Qty</th>
+                    <th style="padding:0.75rem 1rem;">Actual Count</th>
+                    <th style="padding:0.75rem 1rem;">Variance</th>
+                    <th style="padding:0.75rem 1rem;">Auditor</th>
+                    <th style="padding:0.75rem 1rem;">Status</th>
+                    <th style="padding:0.75rem 1rem; text-align:right;">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for audit in audits %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
+                    <td style="padding:0.85rem 1rem; font-weight:600;">#{{ audit.id }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ audit.batch.batch_number }}</td>
+                    <td style="padding:0.85rem 1rem;">{% if audit.batch.material %}{{ audit.batch.material.name }}{% elif audit.batch.product %}{{ audit.batch.product.name }}{% else %}Batch Item{% endif %}</td>
+                    <td style="padding:0.85rem 1rem;">{% if audit.batch.location and audit.batch.location.warehouse %}{{ audit.batch.location.warehouse.name }}{% else %}Unassigned{% endif %}</td>
+                    <td style="padding:0.85rem 1rem;">{{ audit.expected_quantity|floatformat:2 }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600;">{{ audit.actual_quantity|floatformat:2 }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:700; {% if audit.variance < 0 %}color:#ef4444;{% elif audit.variance > 0 %}color:#10b981;{% else %}color:var(--text-muted);{% endif %}">
+                        {% if audit.variance > 0 %}+{% endif %}{{ audit.variance|floatformat:2 }}
+                    </td>
+                    <td style="padding:0.85rem 1rem;">{{ audit.auditor.username|default:"System" }}</td>
+                    <td style="padding:0.85rem 1rem;">
+                        {% if audit.status == 'Pending' %}
+                        <span class="badge badge-amber">Pending</span>
+                        {% else %}
+                        <span class="badge badge-emerald">Resolved</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:0.85rem 1rem; text-align:right;">
+                        {% if audit.status == 'Pending' %}
+                        <form method="post" style="display:inline;">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="resolve">
+                            <input type="hidden" name="audit_id" value="{{ audit.id }}">
+                            <button type="submit" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem; border-color:#059669; color:#059669;">
+                                Apply &amp; Resolve
+                            </button>
+                        </form>
+                        {% else %}
+                        <span style="font-size:0.78rem; color:var(--text-muted);">reconciled</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="10" style="padding:2rem; text-align:center; color:var(--text-muted);">No stock audit records found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Audit Submission Modal -->
+<div id="audit-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:12px; width:100%; max-width:480px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+            <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Log Physical Stock Count</h3>
+            <button onclick="document.getElementById('audit-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        </div>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="create">
+            <div style="margin-bottom:1rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.4rem;">Select Active Batch</label>
+                <select name="batch_id" required class="form-select" style="width:100%; padding:0.6rem; border-radius:6px; border:1px solid var(--border-light);">
+                    {% for b in active_batches %}
+                    <option value="{{ b.id }}">Batch {{ b.batch_number }} — {% if b.material %}{{ b.material.name }}{% elif b.product %}{{ b.product.name }}{% else %}Batch Item{% endif %} (Current: {{ b.quantity|floatformat:1 }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.4rem;">Actual Counted Quantity</label>
+                <input type="number" step="0.01" name="actual_quantity" required placeholder="e.g. 7500.00" class="form-input" style="width:100%; padding:0.6rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('audit-modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Submit Audit</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

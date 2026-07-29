@@ -90,7 +90,7 @@
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
             <h3 style="margin-bottom: 0;">📋 Physical Stock Ledger: {{ selected_warehouse.name }}</h3>
             {% if perms.core.change_warehouse %}
-            <a href="#" class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 0.4rem;" onclick="alert('Facility constraints editor is coming soon!')">
+            <a href="{% url 'warehouse_edit' selected_warehouse.id %}" class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 0.4rem;">
                 ⚙️ Edit Constraints
             </a>
             {% endif %}

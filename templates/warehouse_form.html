@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Register Facility - TerraHub{% endblock %}
+{% block title %}{% if edit_mode %}Edit Facility: {{ warehouse.name }}{% else %}Register Facility{% endif %} - TerraHub{% endblock %}
 
 {% block content %}
 <!-- Header Row -->
@@ -11,10 +11,10 @@
             <span class="separator">/</span>
             <a href="{% url 'warehouse_list' %}">Facility Management</a>
             <span class="separator">/</span>
-            <span class="current-page">New Facility</span>
+            <span class="current-page">{% if edit_mode %}Edit Facility{% else %}New Facility{% endif %}</span>
         </nav>
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
-            Register New Facility
+            {% if edit_mode %}Edit Facility: {{ warehouse.name }}{% else %}Register New Facility{% endif %}
         </h1>
     </div>
 </header>
@@ -22,7 +22,9 @@
 <!-- Form Container Card -->
 <div class="pane-card animate-fade-in-up" style="max-width: 680px; margin: 1.5rem auto 3rem; padding: 2.5rem;">
     <h3 style="margin-bottom: 0.5rem; font-family: 'Outfit', sans-serif; font-weight: 700; color: var(--text-main);">🏢 Facility Configuration</h3>
-    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 2rem;">Setup capacity limits, billing methods, and ownership details for the new warehouse estate.</p>
+    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 2rem;">
+        {% if edit_mode %}Modify capacity limits, billing methods, and ownership details for this facility.{% else %}Setup capacity limits, billing methods, and ownership details for the new warehouse estate.{% endif %}
+    </p>
 
     {% if form.errors %}
     <div class="form-errors">
@@ -38,7 +40,7 @@
     </div>
     {% endif %}
 
-    <form method="POST" action="{% url 'warehouse_create' %}">
+    <form method="POST" action="">
         {% csrf_token %}
 
         <!-- Facility Name -->
@@ -97,7 +99,7 @@
                 Cancel
             </a>
             <button type="submit" class="btn btn-primary" style="padding: 0.65rem 2rem;">
-                Register Facility
+                {% if edit_mode %}Save Changes{% else %}Register Facility{% endif %}
             </button>
         </div>
     </form>
