@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+
+{% block title %}Order Management - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">Order Management</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Commercial &amp; Procurement Orders
+        </h1>
+    </div>
+    <div class="header-action-tray">
+        <button class="btn btn-secondary" onclick="document.getElementById('po-modal').style.display='flex'" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+            ✚ New Purchase Order (PO)
+        </button>
+        <button class="btn btn-primary" onclick="document.getElementById('so-modal').style.display='flex'" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+            ✚ New Sales Order (SO)
+        </button>
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: #d97706;{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: #059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Tabs Navigation -->
+<div style="display:flex; gap:1rem; margin-bottom:1.5rem;" class="animate-fade-in-up">
+    <button id="tab-so-btn" class="btn btn-primary" onclick="switchOrderTab('so')">
+        Sales Orders ({{ sales_orders.count }})
+    </button>
+    <button id="tab-po-btn" class="btn btn-secondary" onclick="switchOrderTab('po')">
+        Purchase Orders ({{ purchase_orders.count }})
+    </button>
+</div>
+
+<!-- Sales Orders Section -->
+<div id="so-section" class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+    <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Sales Orders (Client Demand)</h3>
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
+                    <th style="padding:0.75rem 1rem;">SO Number</th>
+                    <th style="padding:0.75rem 1rem;">Client Name</th>
+                    <th style="padding:0.75rem 1rem;">Origin Facility</th>
+                    <th style="padding:0.75rem 1rem;">Order Date</th>
+                    <th style="padding:0.75rem 1rem;">Items</th>
+                    <th style="padding:0.75rem 1rem;">Status</th>
+                    <th style="padding:0.75rem 1rem;">Timeline &amp; Logs</th>
+                    <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for so in sales_orders %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ so.so_number }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600;">{{ so.client_name }}</td>
+                    <td style="padding:0.85rem 1rem;">{{ so.origin_warehouse.name }}</td>
+                    <td style="padding:0.85rem 1rem;">{{ so.order_date }}</td>
+                    <td style="padding:0.85rem 1rem;">
+                        <span style="font-size:0.82rem; font-weight:600;">{{ so.items.count }}</span>
+                        <span style="font-size:0.75rem; color:var(--text-muted);"> product(s)</span>
+                    </td>
+                    <td style="padding:0.85rem 1rem;">
+                        {% if so.status == 'Draft' %}<span class="badge badge-sky">Draft</span>
+                        {% elif so.status == 'Pending' or so.status == 'Pending Approval' %}<span class="badge badge-amber">Pending</span>
+                        {% elif so.status == 'In Production' %}<span class="badge badge-indigo">In Production</span>
+                        {% elif so.status == 'Ready to Ship' %}<span class="badge badge-emerald">Ready to Ship</span>
+                        {% elif so.status == 'Shipped' or so.status == 'Delivered' %}<span class="badge badge-emerald">Shipped/Delivered</span>
+                        {% else %}<span class="badge badge-rose">{{ so.status }}</span>{% endif %}
+                    </td>
+                    <td style="padding:0.85rem 1rem;">
+                        {% for event in so.timeline.all|slice:":2" %}
+                        <div style="font-size:0.75rem; color:var(--text-muted);">• {{ event.action }} ({{ event.timestamp|date:"m/d H:i" }})</div>
+                        {% empty %}
+                        <span style="font-size:0.78rem; color:var(--text-muted);">No timeline logs</span>
+                        {% endfor %}
+                    </td>
+                    <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
+                        <a href="{% url 'so_detail' so.pk %}" class="btn btn-primary" style="padding:0.3rem 0.7rem; font-size:0.78rem; text-decoration:none; display:inline-block;">View →</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="padding:2rem; text-align:center; color:var(--text-muted);">No sales orders found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Purchase Orders Section -->
+<div id="po-section" class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; display:none;">
+    <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Purchase Orders (Supplier Procurement)</h3>
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
+                    <th style="padding:0.75rem 1rem;">PO Number</th>
+                    <th style="padding:0.75rem 1rem;">Supplier Name</th>
+                    <th style="padding:0.75rem 1rem;">Target Facility</th>
+                    <th style="padding:0.75rem 1rem;">Order Date</th>
+                    <th style="padding:0.75rem 1rem;">Items</th>
+                    <th style="padding:0.75rem 1rem;">Status</th>
+                    <th style="padding:0.75rem 1rem;">Timeline &amp; Logs</th>
+                    <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for po in purchase_orders %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ po.po_number }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600;">{{ po.supplier_name }}</td>
+                    <td style="padding:0.85rem 1rem;">{{ po.target_warehouse.name }}</td>
+                    <td style="padding:0.85rem 1rem;">{{ po.order_date }}</td>
+                    <td style="padding:0.85rem 1rem;">
+                        <span style="font-size:0.82rem; font-weight:600;">{{ po.items.count }}</span>
+                        <span style="font-size:0.75rem; color:var(--text-muted);"> material(s)</span>
+                    </td>
+                    <td style="padding:0.85rem 1rem;">
+                        {% if po.status == 'Draft' %}<span class="badge badge-sky">Draft</span>
+                        {% elif po.status == 'Pending' or po.status == 'Pending Approval' %}<span class="badge badge-amber">Pending</span>
+                        {% elif po.status == 'Partially Received' %}<span class="badge badge-amber">Partially Received</span>
+                        {% elif po.status == 'Completed' %}<span class="badge badge-emerald">Completed</span>
+                        {% else %}<span class="badge badge-rose">{{ po.status }}</span>{% endif %}
+                    </td>
+                    <td style="padding:0.85rem 1rem;">
+                        {% for event in po.timeline.all|slice:":2" %}
+                        <div style="font-size:0.75rem; color:var(--text-muted);">• {{ event.action }} ({{ event.timestamp|date:"m/d H:i" }})</div>
+                        {% empty %}
+                        <span style="font-size:0.78rem; color:var(--text-muted);">No timeline logs</span>
+                        {% endfor %}
+                    </td>
+                    <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
+                        <a href="{% url 'po_detail' po.pk %}" class="btn btn-secondary" style="padding:0.3rem 0.7rem; font-size:0.78rem; text-decoration:none; display:inline-block;">View →</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="padding:2rem; text-align:center; color:var(--text-muted);">No purchase orders found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal: New SO -->
+<div id="so-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:12px; width:100%; max-width:480px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+            <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Create Sales Order</h3>
+            <button onclick="document.getElementById('so-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        </div>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="create_so">
+            <div style="margin-bottom:0.85rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.3rem;">
+                    <label style="font-size:0.85rem; font-weight:600;">SO Number</label>
+                    <label style="font-size:0.75rem; color:var(--text-muted); cursor:pointer; display:flex; align-items:center; gap:0.35rem;">
+                        <input type="checkbox" id="so_number_auto" name="so_number_auto" value="1" checked onchange="toggleIdMode('so_number', 'so_number_auto', '{{ next_so_number }}')" style="accent-color:var(--primary);">
+                        Auto-generate
+                    </label>
+                </div>
+                <input type="text" id="so_number" name="so_number" value="{{ next_so_number }}" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background:#f8fafc;" readonly>
+            </div>
+            <div style="margin-bottom:0.85rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Client Name</label>
+                <input type="text" name="client_name" required placeholder="e.g. Apex Dynamics Ltd" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Fulfillment Warehouse</label>
+                <select name="origin_warehouse_id" required class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                    {% for w in warehouses %}
+                    <option value="{{ w.id }}">{{ w.name }} ({{ w.ownership_type }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('so-modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Sales Order</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal: New PO -->
+<div id="po-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:12px; width:100%; max-width:480px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+            <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Create Purchase Order</h3>
+            <button onclick="document.getElementById('po-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        </div>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="create_po">
+            <div style="margin-bottom:0.85rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.3rem;">
+                    <label style="font-size:0.85rem; font-weight:600;">PO Number</label>
+                    <label style="font-size:0.75rem; color:var(--text-muted); cursor:pointer; display:flex; align-items:center; gap:0.35rem;">
+                        <input type="checkbox" id="po_number_auto" name="po_number_auto" value="1" checked onchange="toggleIdMode('po_number', 'po_number_auto', '{{ next_po_number }}')" style="accent-color:var(--primary);">
+                        Auto-generate
+                    </label>
+                </div>
+                <input type="text" id="po_number" name="po_number" value="{{ next_po_number }}" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background:#f8fafc;" readonly>
+            </div>
+            <div style="margin-bottom:0.85rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Supplier Name</label>
+                <input type="text" name="supplier_name" required placeholder="e.g. Chemical Global Industries" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Destination Warehouse</label>
+                <select name="target_warehouse_id" required class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                    {% for w in warehouses %}
+                    <option value="{{ w.id }}">{{ w.name }} ({{ w.ownership_type }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('po-modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Purchase Order</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    function toggleIdMode(inputId, toggleId, autoVal) {
+        var input = document.getElementById(inputId);
+        var toggle = document.getElementById(toggleId);
+        if (toggle.checked) {
+            input.value = autoVal;
+            input.readOnly = true;
+            input.style.background = '#f8fafc';
+        } else {
+            input.readOnly = false;
+            input.style.background = '#ffffff';
+            input.focus();
+        }
+    }
+
+    function switchOrderTab(tab) {
+        var soSec = document.getElementById('so-section');
+        var poSec = document.getElementById('po-section');
+        var soBtn = document.getElementById('tab-so-btn');
+        var poBtn = document.getElementById('tab-po-btn');
+
+        if (tab === 'so') {
+            soSec.style.display = 'block';
+            poSec.style.display = 'none';
+            soBtn.className = 'btn btn-primary';
+            poBtn.className = 'btn btn-secondary';
+        } else {
+            soSec.style.display = 'none';
+            poSec.style.display = 'block';
+            soBtn.className = 'btn btn-secondary';
+            poBtn.className = 'btn btn-primary';
+        }
+    }
+</script>
+{% endblock %}

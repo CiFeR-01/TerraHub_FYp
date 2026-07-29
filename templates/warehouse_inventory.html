@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+
+{% block title %}Warehouse Inventory Ledger - TerraHub{% endblock %}
+
+{% block content %}
+<!-- Header Row -->
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">Warehouse Inventory</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Warehouse Inventory Module
+        </h1>
+    </div>
+
+    <div class="header-action-tray">
+        {% if perms.core.add_warehouse %}
+        <a href="{% url 'warehouse_create' %}" class="btn btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+            ✚ Add New Facility
+        </a>
+        {% endif %}
+        {% if can_adjust %}
+        <a href="#" class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;" onclick="alert('Stock intake module is coming soon!')">
+            Register Brand New Stock
+        </a>
+        {% endif %}
+    </div>
+</header>
+
+<!-- Filter & Selection Card -->
+<div class="pane-card animate-fade-in-up" style="margin-bottom: 2rem; animation-delay: 0.05s;">
+    <h3 style="margin-bottom: 1rem;">🏢 Select Warehouse Facility</h3>
+    <form method="GET" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 250px;">
+            <label style="display: block; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.5rem; text-transform: uppercase;">
+                Active Warehouses
+            </label>
+            <select name="warehouse_id" style="width: 100%; padding: 0.65rem 1rem; border-radius: 8px; border: 1px solid var(--border-light); font-size: 0.95rem; color: var(--text-main); font-family: inherit; background: #ffffff; outline: none; transition: var(--transition-smooth); cursor: pointer;" onchange="this.form.submit()">
+                <option value="">-- Pick a facility --</option>
+                {% for w in warehouses %}
+                <option value="{{ w.id }}" {% if selected_warehouse and w.id == selected_warehouse.id %}selected{% endif %}>
+                    {{ w.name }} ({% if w.ownership_type == 'Internal' %}Internal Estate{% elif w.ownership_type == 'ExternalProvider' %}External Service Provider{% else %}Supplier Storage{% endif %})
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary" style="padding: 0.65rem 1.5rem; height: 40px; display: inline-flex; align-items: center; justify-content: center;">
+            Scan Inventory
+        </button>
+    </form>
+</div>
+
+{% if selected_warehouse %}
+    <!-- Summary stats for selected warehouse -->
+    <section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay: 0.1s;">
+        <div class="kpi-item-card">
+            <span class="kpi-label">Warehouse Capacity</span>
+            <div class="kpi-value-row">
+                <span class="kpi-value">{{ selected_warehouse.total_capacity_mt|floatformat:1 }}</span>
+                <span class="badge badge-sky">MT Limit</span>
+            </div>
+        </div>
+        <div class="kpi-item-card">
+            <span class="kpi-label">Active Batches</span>
+            <div class="kpi-value-row">
+                <span class="kpi-value">{{ batches|length }}</span>
+                <span class="badge badge-emerald">In Stock</span>
+            </div>
+        </div>
+        <div class="kpi-item-card">
+            <span class="kpi-label">Billing Mode</span>
+            <div class="kpi-value-row">
+                <span class="kpi-value" style="font-size: 1.5rem; line-height: 2.25rem;">
+                    {% if selected_warehouse.ownership_type == 'Internal' %}
+                        Free (Owned)
+                    {% else %}
+                        RM{{ selected_warehouse.rental_cost_per_mt }}/MT
+                    {% endif %}
+                </span>
+                <span class="badge badge-amber">{{ selected_warehouse.rental_billing_method }}</span>
+            </div>
+        </div>
+    </section>
+
+    {% if batches %}
+    <div class="pane-card animate-fade-in-up" style="animation-delay: 0.15s; margin-top: 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+            <h3 style="margin-bottom: 0;">📋 Physical Stock Ledger: {{ selected_warehouse.name }}</h3>
+            {% if perms.core.change_warehouse %}
+            <a href="{% url 'warehouse_edit' selected_warehouse.id %}" class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 0.4rem;">
+                ⚙️ Edit Constraints
+            </a>
+            {% endif %}
+        </div>
+        
+        <div class="data-table-container">
+            <table class="custom-table">
+                <thead>
+                    <tr>
+                        <th>Zone/Aisle</th>
+                        <th>Batch Number</th>
+                        <th>Item Type</th>
+                        <th>Item Details</th>
+                        <th style="text-align: right;">Current Qty</th>
+                        <th>Expiry Date</th>
+                        <th>Days Remaining</th>
+                        {% if can_adjust %}<th style="text-align: right;">Action</th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for b in batches %}
+                    <tr>
+                        <td style="font-weight: 600; color: var(--text-muted);">
+                            Zone {{ b.location.zone_name }} / Aisle {{ b.location.aisle }}
+                        </td>
+                        <td style="font-family: monospace; font-weight: 700; color: var(--primary);">
+                            {{ b.batch_number }}
+                        </td>
+                        <td>
+                            {% if b.material %}
+                            <span class="badge badge-sky">Material</span>
+                            {% else %}
+                            <span class="badge badge-emerald">Product</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div style="font-weight: 600; color: var(--text-main);">
+                                {% if b.material %}{{ b.material.name }}{% else %}{{ b.product.name }}{% endif %}
+                            </div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.15rem; font-family: monospace;">
+                                SKU: {% if b.material %}{{ b.material.sku }}{% else %}{{ b.product.sku }}{% endif %}
+                            </div>
+                        </td>
+                        <td style="text-align: right; font-weight: 700;">
+                            {{ b.quantity }} 
+                            <span style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">
+                                {% if b.material %}{{ b.material.get_unit_of_measure_display|default:b.material.unit_of_measure }}{% else %}{{ b.product.get_unit_of_measure_display|default:b.product.unit_of_measure }}{% endif %}
+                            </span>
+                        </td>
+                        <td style="font-weight: 500;">
+                            {{ b.expiry_date|date:"Y-m-d"|default:"Indefinite" }}
+                        </td>
+                        <td>
+                            {% if b.expiry_date %}
+                                {% if b.days_until_expiry <= 10 %}
+                                <span class="badge badge-rose">{{ b.days_until_expiry }} Days</span>
+                                {% elif b.days_until_expiry <= 30 %}
+                                <span class="badge badge-amber">{{ b.days_until_expiry }} Days</span>
+                                {% else %}
+                                <span class="badge badge-emerald">{{ b.days_until_expiry }} Days</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="badge badge-slate">N/A</span>
+                            {% endif %}
+                        </td>
+                        {% if can_adjust %}
+                        <td style="text-align: right;">
+                            <a href="#" class="btn btn-secondary" style="background: rgba(245, 158, 11, 0.08); color: #b45309; border: 1px solid rgba(245, 158, 11, 0.2); padding: 0.35rem 0.75rem; font-size: 0.8rem; border-radius: 6px;" onclick="alert('Audit Stock action is coming soon!')">
+                                Adjust Stock
+                            </a>
+                        </td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="pane-card animate-fade-in-up" style="text-align: center; padding: 3rem; animation-delay: 0.15s;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">🛡️</div>
+        <h4 style="font-weight: 600; color: var(--text-main); margin-bottom: 0.25rem;">Empty Facility Ledger</h4>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">
+            No active stock batches were found assigned to {{ selected_warehouse.name }}.
+        </p>
+    </div>
+    {% endif %}
+{% else %}
+<div class="pane-card animate-fade-in-up" style="text-align: center; padding: 4rem 2rem; color: var(--text-muted); animation-delay: 0.1s;">
+    <div style="font-size: 3.5rem; margin-bottom: 1.5rem; background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">
+        🏭
+    </div>
+    <h3 style="font-family: 'Outfit', sans-serif; font-size: 1.35rem; font-weight: 600; color: var(--text-main); margin-bottom: 0.5rem;">
+        Generate Physical Stock Reports
+    </h3>
+    <p style="font-size: 0.9rem; max-width: 480px; margin: 0 auto; line-height: 1.5;">
+        Select an active facility from the list above to retrieve its zone/aisle mappings, stock ledger counts, and predictive expiry warnings.
+    </p>
+</div>
+{% endif %}
+
+{% endblock %}

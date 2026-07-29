@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+
+{% block title %}Products Catalog - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">Products Catalog</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Products &amp; Recipe Assembly Hub
+        </h1>
+    </div>
+    <div class="header-action-tray">
+        <button class="btn btn-secondary" onclick="document.getElementById('recipe-modal').style.display='flex'" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+            ⚙ Add Recipe Requirement
+        </button>
+        <button class="btn btn-primary" onclick="document.getElementById('product-modal').style.display='flex'" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+            ✚ Register New Product
+        </button>
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: #d97706;{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: #059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
+                    <th style="padding:0.75rem 1rem;">SKU</th>
+                    <th style="padding:0.75rem 1rem;">Product Name</th>
+                    <th style="padding:0.75rem 1rem;">Description</th>
+                    <th style="padding:0.75rem 1rem;">Unit of Measure</th>
+                    <th style="padding:0.75rem 1rem;">Unit Weight (MT)</th>
+                    <th style="padding:0.75rem 1rem;">Price / Unit</th>
+                    <th style="padding:0.75rem 1rem;">Bill of Materials (Recipe)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for prod in products %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ prod.sku }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600;">{{ prod.name }}</td>
+                    <td style="padding:0.85rem 1rem; color:var(--text-muted);">{{ prod.description|default:"—" }}</td>
+                    <td style="padding:0.85rem 1rem;"><span class="badge badge-sky">{{ prod.get_unit_of_measure_display }}</span></td>
+                    <td style="padding:0.85rem 1rem;">{{ prod.weight_mt_per_unit|floatformat:4 }} MT</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600;">RM{{ prod.price_per_unit|floatformat:2 }}</td>
+                    <td style="padding:0.85rem 1rem;">
+                        {% for item in prod.recipe_items.all %}
+                        <div style="font-size:0.8rem; background:#f1f5f9; padding:0.2rem 0.5rem; border-radius:4px; margin-bottom:0.2rem; display:inline-block;">
+                            {{ item.material.sku }}: <strong>{{ item.quantity_required }}</strong> {{ item.material.unit_of_measure }}
+                        </div>
+                        {% empty %}
+                        <span style="font-size:0.8rem; color:var(--text-muted); italic;">No recipe defined</span>
+                        {% endfor %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="padding:2rem; text-align:center; color:var(--text-muted);">No products registered yet.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal: New Product -->
+<div id="product-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:12px; width:100%; max-width:500px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+            <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Register New Product</h3>
+            <button onclick="document.getElementById('product-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        </div>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="create_product">
+            <div style="margin-bottom:0.85rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Product Name</label>
+                <input type="text" name="name" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
+            <div style="margin-bottom:0.85rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.3rem;">
+                    <label style="font-size:0.85rem; font-weight:600;">SKU</label>
+                    <label style="font-size:0.75rem; color:var(--text-muted); cursor:pointer; display:flex; align-items:center; gap:0.35rem;">
+                        <input type="checkbox" id="sku_auto" name="sku_auto" value="1" checked onchange="toggleProductSkuAuto()" style="accent-color:var(--primary);">
+                        Auto-generate
+                    </label>
+                </div>
+                <input type="text" id="prod_sku_input" name="sku" value="{{ next_product_sku }}" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background:#f8fafc;" readonly>
+            </div>
+            <div style="margin-bottom:0.85rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Description</label>
+                <input type="text" name="description" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:1.25rem;">
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Weight MT/Unit</label>
+                    <input type="number" step="0.0001" name="weight_mt_per_unit" value="0.5000" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Price / Unit (RM)</label>
+                    <input type="number" step="0.01" name="price_per_unit" value="100.00" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('product-modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Product</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function toggleProductSkuAuto() {
+    var input = document.getElementById('prod_sku_input');
+    var toggle = document.getElementById('sku_auto');
+    if (toggle.checked) {
+        input.value = "{{ next_product_sku }}";
+        input.readOnly = true;
+        input.style.background = '#f8fafc';
+    } else {
+        input.readOnly = false;
+        input.style.background = '#ffffff';
+        input.focus();
+    }
+}
+</script>
+
+<!-- Modal: Add Recipe -->
+<div id="recipe-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:12px; width:100%; max-width:480px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+            <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Add Material Recipe Requirement</h3>
+            <button onclick="document.getElementById('recipe-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        </div>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="add_recipe">
+            <div style="margin-bottom:0.85rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Target Product</label>
+                <select name="product_id" required class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                    {% for p in products %}
+                    <option value="{{ p.id }}">{{ p.sku }} — {{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="margin-bottom:0.85rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Required Material</label>
+                <select name="material_id" required class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                    {% for m in materials %}
+                    <option value="{{ m.id }}">{{ m.sku }} — {{ m.name }} ({{ m.unit_of_measure }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Quantity Required per Product Unit</label>
+                <input type="number" step="0.01" name="quantity_required" required placeholder="e.g. 5.0" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('recipe-modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Recipe Requirement</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

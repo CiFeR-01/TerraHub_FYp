@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block title %}{% if edit_mode %}Edit Facility: {{ warehouse.name }}{% else %}Register Facility{% endif %} - TerraHub{% endblock %}
+
+{% block content %}
+<!-- Header Row -->
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <a href="{% url 'warehouse_list' %}">Facility Management</a>
+            <span class="separator">/</span>
+            <span class="current-page">{% if edit_mode %}Edit Facility{% else %}New Facility{% endif %}</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            {% if edit_mode %}Edit Facility: {{ warehouse.name }}{% else %}Register New Facility{% endif %}
+        </h1>
+    </div>
+</header>
+
+<!-- Form Container Card -->
+<div class="pane-card animate-fade-in-up" style="max-width: 680px; margin: 1.5rem auto 3rem; padding: 2.5rem;">
+    <h3 style="margin-bottom: 0.5rem; font-family: 'Outfit', sans-serif; font-weight: 700; color: var(--text-main);">🏢 Facility Configuration</h3>
+    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 2rem;">
+        {% if edit_mode %}Modify capacity limits, billing methods, and ownership details for this facility.{% else %}Setup capacity limits, billing methods, and ownership details for the new warehouse estate.{% endif %}
+    </p>
+
+    {% if form.errors %}
+    <div class="form-errors">
+        <strong>Validation Failed:</strong>
+        {% for field in form %}
+            {% for error in field.errors %}
+            <span>{{ field.label }}: {{ error }}</span>
+            {% endfor %}
+        {% endfor %}
+        {% for error in form.non_field_errors %}
+        <span>{{ error }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <form method="POST" action="">
+        {% csrf_token %}
+
+        <!-- Facility Name -->
+        <div class="form-group">
+            <label class="form-label" for="{{ form.name.id_for_label }}">Facility Name</label>
+            {{ form.name }}
+            <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 0.35rem;">
+                Specify a unique and recognizable identifier (e.g. "Klang Depot A").
+            </span>
+        </div>
+
+        <!-- Layout details side-by-side -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+            <div class="form-group" style="margin: 0;">
+                <label class="form-label" for="{{ form.location_type.id_for_label }}">Facility Class Type</label>
+                {{ form.location_type }}
+            </div>
+            <div class="form-group" style="margin: 0;">
+                <label class="form-label" for="id_ownership_type">Ownership Structure</label>
+                {{ form.ownership_type }}
+            </div>
+        </div>
+
+        <!-- Capacity Limit -->
+        <div class="form-group">
+            <label class="form-label" for="{{ form.total_capacity_mt.id_for_label }}">Total Capacity Limit (MT)</label>
+            {{ form.total_capacity_mt }}
+            <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 0.35rem;">
+                Define physical capacity limit in Metric Tons (MT).
+            </span>
+        </div>
+
+        <!-- External Billing constraints (collapsible via JS) -->
+        <div id="billing-section" style="transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); overflow: hidden;">
+            <div style="border-top: 1px solid var(--border-light); margin: 2rem 0 1.5rem; padding-top: 1.5rem;">
+                <h4 style="font-family: 'Outfit', sans-serif; font-size: 0.95rem; font-weight: 700; color: var(--text-main); margin-bottom: 1rem;">
+                    Billing & Cost Settings
+                </h4>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                    <div class="form-group" style="margin: 0;">
+                        <label class="form-label" for="id_rental_billing_method">Billing Basis Method</label>
+                        {{ form.rental_billing_method }}
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label class="form-label" for="id_rental_cost_per_mt">Daily Rental Cost (RM / MT)</label>
+                        {{ form.rental_cost_per_mt }}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Submit Tray -->
+        <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 2.5rem; border-top: 1px solid var(--border-light); padding-top: 1.5rem;">
+            <a href="{% url 'warehouse_list' %}" class="btn btn-secondary" style="padding: 0.65rem 1.5rem;">
+                Cancel
+            </a>
+            <button type="submit" class="btn btn-primary" style="padding: 0.65rem 2rem;">
+                {% if edit_mode %}Save Changes{% else %}Register Facility{% endif %}
+            </button>
+        </div>
+    </form>
+</div>
+
+<style>
+    /* Styling select lists to match the form-input style properties exactly */
+    .form-select {
+        width: 100%;
+        background: #ffffff;
+        border: 1px solid var(--border-light);
+        color: var(--text-main);
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        font-family: inherit;
+        font-size: 0.95rem;
+        transition: var(--transition-smooth);
+        outline: none;
+        cursor: pointer;
+    }
+    
+    .form-select:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 10px rgba(79, 70, 229, 0.15);
+    }
+</style>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const ownershipSelect = document.getElementById('id_ownership_type');
+        const billingSection = document.getElementById('billing-section');
+        const billingMethodSelect = document.getElementById('id_rental_billing_method');
+        const costInput = document.getElementById('id_rental_cost_per_mt');
+
+        function toggleBillingSection() {
+            if (ownershipSelect.value === 'Internal') {
+                // Smooth hide billing fields for Internal (free) warehouses
+                billingSection.style.maxHeight = '0px';
+                billingSection.style.opacity = '0';
+                billingSection.style.pointerEvents = 'none';
+                
+                // Set default/reset values
+                costInput.value = '0.00';
+            } else {
+                // Show billing fields
+                billingSection.style.maxHeight = '400px';
+                billingSection.style.opacity = '1';
+                billingSection.style.pointerEvents = 'auto';
+            }
+        }
+
+        // Run on load and on selection change
+        ownershipSelect.addEventListener('change', toggleBillingSection);
+        toggleBillingSection();
+    });
+</script>
+{% endblock %}
