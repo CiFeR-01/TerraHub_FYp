@@ -23,12 +23,15 @@ load_dotenv(BASE_DIR / '.env')
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-q-%3+dj4%@gt&773333mbq41=6abjt9j%=3@n+spibj9t#3jv0'
+# Locally: falls back to the insecure dev key. On Railway: set SECRET_KEY env var.
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-q-%3+dj4%@gt&773333mbq41=6abjt9j%=3@n+spibj9t#3jv0')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# Locally: defaults to True. On Railway: set DEBUG=False env var.
+DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = ['*']
+# Locally: accepts all. On Railway: set ALLOWED_HOSTS=your-app.up.railway.app
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
 
 # Application definition
@@ -45,6 +48,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # Serves static files in production
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -97,6 +101,12 @@ else:
         }
     }
 
+# Railway PostgreSQL — auto-overrides DB config when DATABASE_URL env var is injected
+import dj_database_url
+DATABASE_URL = os.getenv('DATABASE_URL')
+if DATABASE_URL:
+    DATABASES['default'] = dj_database_url.config(default=DATABASE_URL, conn_max_age=600)
+
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
@@ -134,10 +144,11 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
+STATIC_ROOT = BASE_DIR / 'staticfiles'  # Output folder for collectstatic
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Custom Authentication Configuration
 AUTH_USER_MODEL = 'core.CustomUser'
 LOGIN_REDIRECT_URL = 'dashboard'
 LOGIN_URL = 'login'
 LOGOUT_REDIRECT_URL = 'home'
-
