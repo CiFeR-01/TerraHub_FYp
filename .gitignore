@@ -30,3 +30,5 @@ staticfiles/
 db_tracker.log
 logs/
 
+# Dev-only scripts (not needed in production or public repo)
+seed_data.py
