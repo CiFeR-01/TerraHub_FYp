@@ -141,3 +141,163 @@ class FacilityEditTests(TestCase):
         self.assertEqual(float(self.warehouse.rental_cost_per_mt), 15.50)
         self.assertEqual(float(self.warehouse.total_capacity_mt), 750.00)
 
+
+from core.models import Product, Material, ProductRecipe
+import io
+
+class BulkImportExportTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='catalogmanager', password='password123')
+        self.client.login(username='catalogmanager', password='password123')
+
+        self.p1 = Product.objects.create(
+            name="Existing Product Alpha",
+            sku="PROD0001",
+            description="Alpha product desc",
+            unit_of_measure="pcs",
+            weight_mt_per_unit=0.5,
+            price_per_unit=100.00
+        )
+        self.m1 = Material.objects.create(
+            name="Existing Material Alpha",
+            sku="MAT0001",
+            category="Chemicals",
+            unit_of_measure="MT",
+            safe_storage_days=90,
+            weight_mt_per_unit=1.0,
+            cost_per_unit=50.00
+        )
+
+    def test_export_product_template(self):
+        url = reverse('export_product_template')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/csv; charset=utf-8')
+        self.assertContains(response, 'name,sku,description,unit_of_measure,weight_mt_per_unit,price_per_unit')
+
+    def test_export_products_csv(self):
+        url = reverse('export_products_csv')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Existing Product Alpha')
+        self.assertContains(response, 'PROD0001')
+
+    def test_import_products_create_and_skip_duplicates(self):
+        url = reverse('import_products')
+        csv_data = (
+            "name,sku,description,unit_of_measure,weight_mt_per_unit,price_per_unit\n"
+            "Existing Product Alpha,PROD0001,Dup test,pcs,0.5,100.00\n" # DB Dup (Skip)
+            "Brand New Product Beta,,New product desc,kg,0.25,250.00\n" # New Auto SKU
+        )
+        file = io.BytesIO(csv_data.encode('utf-8'))
+        file.name = 'products.csv'
+        
+        response = self.client.post(url, {'csv_file': file, 'duplicate_mode': 'skip'}, follow=True)
+        self.assertEqual(response.status_code, 200)
+        
+        # New product created
+        self.assertTrue(Product.objects.filter(name="Brand New Product Beta").exists())
+        # Total products count = 2
+        self.assertEqual(Product.objects.count(), 2)
+
+    def test_import_products_update_mode(self):
+        url = reverse('import_products')
+        csv_data = (
+            "name,sku,description,unit_of_measure,weight_mt_per_unit,price_per_unit\n"
+            "Existing Product Alpha Updated,PROD0001,Updated desc,pcs,0.75,199.99\n"
+        )
+        file = io.BytesIO(csv_data.encode('utf-8'))
+        file.name = 'products_update.csv'
+
+        response = self.client.post(url, {'csv_file': file, 'duplicate_mode': 'update'}, follow=True)
+        self.assertEqual(response.status_code, 200)
+        
+        self.p1.refresh_from_db()
+        self.assertEqual(self.p1.name, "Existing Product Alpha Updated")
+        self.assertEqual(float(self.p1.price_per_unit), 199.99)
+
+    def test_export_material_template(self):
+        url = reverse('export_material_template')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'name,sku,category,unit_of_measure,safe_storage_days,weight_mt_per_unit,cost_per_unit')
+
+    def test_export_materials_csv(self):
+        url = reverse('export_materials_csv')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Existing Material Alpha')
+
+    def test_import_materials_create(self):
+        url = reverse('import_materials')
+        csv_data = (
+            "name,sku,category,unit_of_measure,safe_storage_days,weight_mt_per_unit,cost_per_unit\n"
+            "Solvent Fluid Beta,MAT0002,Solvents,L,60,0.001,15.00\n"
+        )
+        file = io.BytesIO(csv_data.encode('utf-8'))
+        file.name = 'materials.csv'
+
+        response = self.client.post(url, {'csv_file': file, 'duplicate_mode': 'skip'}, follow=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(Material.objects.filter(sku="MAT0002").exists())
+
+    def test_import_product_recipes(self):
+        url = reverse('import_recipes')
+        csv_data = (
+            "product_sku,material_sku,quantity_required\n"
+            "PROD0001,MAT0001,5.50\n"
+        )
+        file = io.BytesIO(csv_data.encode('utf-8'))
+        file.name = 'recipes.csv'
+
+        response = self.client.post(url, {'csv_file': file}, follow=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(ProductRecipe.objects.filter(product=self.p1, material=self.m1, quantity_required=5.50).exists())
+
+    def test_get_product_recipe_api(self):
+        ProductRecipe.objects.create(product=self.p1, material=self.m1, quantity_required=3.5)
+        url = reverse('get_product_recipe_api', kwargs={'product_id': self.p1.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.assertEqual(data['product_sku'], 'PROD0001')
+        self.assertEqual(len(data['recipe_items']), 1)
+        self.assertEqual(data['recipe_items'][0]['quantity_required'], 3.5)
+
+    def test_save_product_recipe_api_batch_save(self):
+        url = reverse('save_product_recipe_api')
+        response = self.client.post(url, {
+            'action': 'save_batch',
+            'product_id': self.p1.id,
+            'material_ids[]': [self.m1.id],
+            'quantities[]': ['4.25']
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(ProductRecipe.objects.filter(product=self.p1, material=self.m1, quantity_required=4.25).exists())
+
+    def test_save_product_recipe_api_delete_and_clone(self):
+        recipe = ProductRecipe.objects.create(product=self.p1, material=self.m1, quantity_required=10.0)
+        p2 = Product.objects.create(name="Target Product Beta", sku="PROD0002")
+
+        # Clone
+        url = reverse('save_product_recipe_api')
+        clone_res = self.client.post(url, {
+            'action': 'clone_recipe',
+            'source_product_id': self.p1.id,
+            'target_product_id': p2.id
+        })
+        self.assertEqual(clone_res.status_code, 200)
+        self.assertTrue(ProductRecipe.objects.filter(product=p2, material=self.m1, quantity_required=10.0).exists())
+
+        # Delete
+        del_res = self.client.post(url, {
+            'action': 'delete_item',
+            'recipe_id': recipe.id
+        })
+        self.assertEqual(del_res.status_code, 200)
+        self.assertFalse(ProductRecipe.objects.filter(id=recipe.id).exists())
+
+
+
