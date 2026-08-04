@@ -242,18 +242,13 @@ class BulkImportExportTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(Material.objects.filter(sku="MAT0002").exists())
 
-    def test_import_product_recipes(self):
-        url = reverse('import_recipes')
-        csv_data = (
-            "product_sku,material_sku,quantity_required\n"
-            "PROD0001,MAT0001,5.50\n"
-        )
-        file = io.BytesIO(csv_data.encode('utf-8'))
-        file.name = 'recipes.csv'
-
-        response = self.client.post(url, {'csv_file': file}, follow=True)
+    def test_export_product_recipes_csv(self):
+        ProductRecipe.objects.create(product=self.p1, material=self.m1, quantity_required=5.0)
+        url = reverse('export_recipes_csv')
+        response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(ProductRecipe.objects.filter(product=self.p1, material=self.m1, quantity_required=5.50).exists())
+        self.assertContains(response, 'PROD0001')
+        self.assertContains(response, 'MAT0001')
 
     def test_get_product_recipe_api(self):
         ProductRecipe.objects.create(product=self.p1, material=self.m1, quantity_required=3.5)

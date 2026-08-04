@@ -945,18 +945,6 @@ def import_materials(request):
 
 
 @login_required
-def export_recipe_template(request):
-    """Download reference CSV template for Product Recipes."""
-    response = HttpResponse(content_type='text/csv; charset=utf-8')
-    response['Content-Disposition'] = 'attachment; filename="recipe_import_template.csv"'
-    writer = csv.writer(response)
-    writer.writerow(['product_sku', 'material_sku', 'quantity_required'])
-    writer.writerow(['PROD1001', 'MAT1001', '2.50'])
-    writer.writerow(['PROD1001', 'MAT1002', '10.00'])
-    return response
-
-
-@login_required
 def export_product_recipes_csv(request):
     """Export all Product Recipes as CSV."""
     response = HttpResponse(content_type='text/csv; charset=utf-8')
@@ -974,83 +962,7 @@ def export_product_recipes_csv(request):
         ])
     return response
 
-
-@login_required
-def import_product_recipes(request):
-    """Bulk import Product Recipe requirements from uploaded CSV."""
-    if request.method != 'POST':
-        return redirect('product_list')
-
-    csv_file = request.FILES.get('csv_file')
-    if not csv_file or not csv_file.name.endswith('.csv'):
-        messages.error(request, "Please select a valid CSV file to upload.")
-        return redirect('product_list')
-
-    try:
-        file_data = csv_file.read().decode('utf-8-sig')
-        io_string = io.StringIO(file_data)
-        reader = csv.DictReader(io_string)
-    except Exception as e:
-        messages.error(request, f"Could not read CSV file: {e}")
-        return redirect('product_list')
-
-    headers = [h.strip().lower() for h in reader.fieldnames if h] if reader.fieldnames else []
-    if 'product_sku' not in headers or 'material_sku' not in headers or 'quantity_required' not in headers:
-        messages.error(request, "CSV header missing required columns: product_sku, material_sku, quantity_required.")
-        return redirect('product_list')
-
-    products = {p.sku.upper(): p for p in Product.objects.all()}
-    materials = {m.sku.upper(): m for m in Material.objects.all()}
-
-    created_count = 0
-    updated_count = 0
-    error_count = 0
-
-    rows = list(reader)
-    with transaction.atomic():
-        for idx, raw_row in enumerate(rows, start=2):
-            row = {k.strip().lower(): (v.strip() if v else '') for k, v in raw_row.items() if k}
-            p_sku = row.get('product_sku', '').upper()
-            m_sku = row.get('material_sku', '').upper()
-            qty_str = row.get('quantity_required', '0')
-
-            if not p_sku or p_sku not in products:
-                error_count += 1
-                continue
-            if not m_sku or m_sku not in materials:
-                error_count += 1
-                continue
-
-            try:
-                qty = float(qty_str)
-                if qty <= 0: raise ValueError()
-            except ValueError:
-                error_count += 1
-                continue
-
-            prod = products[p_sku]
-            mat = materials[m_sku]
-
-            recipe, created = ProductRecipe.objects.update_or_create(
-                product=prod, material=mat,
-                defaults={'quantity_required': qty}
-            )
-            if created:
-                created_count += 1
-            else:
-                updated_count += 1
-
-    if created_count > 0 or updated_count > 0:
-        RegistryLog.objects.create(
-            action_type='Adjusted',
-            item_name=f"Bulk Import Recipes ({created_count} created, {updated_count} updated)",
-            quantity_changed=created_count + updated_count,
-            warehouse=None,
-            user=request.user if request.user.is_authenticated else None
-        )
-
-    messages.success(request, f"Recipe import complete: {created_count} requirements added, {updated_count} updated. ({error_count} skipped errors)")
-    return redirect('product_list')
+# Recipe Bulk CSV Import disabled per user request (Recipe Studio UI used instead).
 
 
 @login_required
