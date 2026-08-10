@@ -22,6 +22,7 @@ urlpatterns = [
     path('catalog/products/template/', views.export_product_template, name='export_product_template'),
     path('catalog/products/import/', views.import_products, name='import_products'),
     path('catalog/materials/', views.material_list_view, name='material_list'),
+    path('catalog/materials/<int:pk>/edit/', views.material_edit_view, name='material_edit'),
     path('catalog/materials/export/', views.export_materials_csv, name='export_materials_csv'),
     path('catalog/materials/template/', views.export_material_template, name='export_material_template'),
     path('catalog/materials/import/', views.import_materials, name='import_materials'),

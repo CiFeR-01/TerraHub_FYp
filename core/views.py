@@ -1186,6 +1186,74 @@ def material_list_view(request):
     return render(request, 'material_list.html', context)
 
 
+@login_required
+def material_edit_view(request, pk):
+    """View to edit an existing raw material record."""
+    material = get_object_or_404(Material, pk=pk)
+
+    if request.method == 'POST':
+        name = request.POST.get('name', '').strip()
+        sku = request.POST.get('sku', '').strip().upper()
+        category = request.POST.get('category', '').strip()
+        uom = request.POST.get('unit_of_measure', 'MT')
+        
+        try:
+            safe_days = int(request.POST.get('safe_storage_days', 90))
+            weight = float(request.POST.get('weight_mt_per_unit', 1.0))
+            cost = float(request.POST.get('cost_per_unit', 0.0))
+
+            if not name:
+                messages.error(request, "Material name is required.")
+                return redirect('material_list')
+
+            if not sku:
+                sku = material.sku
+
+            # Check SKU uniqueness against other materials
+            if Material.objects.filter(sku=sku).exclude(pk=material.pk).exists():
+                messages.error(request, f"SKU '{sku}' is already assigned to another material.")
+                return redirect('material_list')
+
+            material.name = name
+            material.sku = sku
+            material.category = category or material.category
+            material.unit_of_measure = uom
+            material.safe_storage_days = safe_days
+            material.weight_mt_per_unit = weight
+            material.cost_per_unit = cost
+            material.save()
+
+            RegistryLog.objects.create(
+                action_type='Adjusted',
+                item_name=f"Updated Material '{material.name}' (SKU: {material.sku})",
+                quantity_changed=0,
+                warehouse=None,
+                user=request.user if request.user.is_authenticated else None
+            )
+
+            messages.success(request, f"Material '{material.name}' (SKU: {material.sku}) updated successfully.")
+        except Exception as e:
+            messages.error(request, f"Error updating material: {e}")
+
+        return redirect('material_list')
+
+    # GET request - AJAX returns JSON data for modal; standard request renders form page
+    if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+        return JsonResponse({
+            'success': True,
+            'id': material.id,
+            'name': material.name,
+            'sku': material.sku,
+            'category': material.category,
+            'unit_of_measure': material.unit_of_measure,
+            'safe_storage_days': material.safe_storage_days,
+            'weight_mt_per_unit': float(material.weight_mt_per_unit),
+            'cost_per_unit': float(material.cost_per_unit),
+        })
+
+    return render(request, 'material_form.html', {'material': material, 'edit_mode': True})
+
+
 # --------------------------------------------------------------------------
 # ORDER MANAGEMENT (PO & SO)
 # --------------------------------------------------------------------------

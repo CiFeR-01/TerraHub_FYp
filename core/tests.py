@@ -294,5 +294,28 @@ class BulkImportExportTests(TestCase):
         self.assertEqual(del_res.status_code, 200)
         self.assertFalse(ProductRecipe.objects.filter(id=recipe.id).exists())
 
+    def test_material_edit_view(self):
+        url = reverse('material_edit', kwargs={'pk': self.m1.id})
+        get_res = self.client.get(url)
+        self.assertEqual(get_res.status_code, 200)
+
+        post_res = self.client.post(url, {
+            'name': 'Updated Titanium Pigment',
+            'sku': 'MAT0001',
+            'category': 'Chemicals Advanced',
+            'unit_of_measure': 'kg',
+            'safe_storage_days': '120',
+            'weight_mt_per_unit': '0.0010',
+            'cost_per_unit': '85.00'
+        }, follow=True)
+        self.assertEqual(post_res.status_code, 200)
+
+        self.m1.refresh_from_db()
+        self.assertEqual(self.m1.name, 'Updated Titanium Pigment')
+        self.assertEqual(self.m1.category, 'Chemicals Advanced')
+        self.assertEqual(self.m1.unit_of_measure, 'kg')
+        self.assertEqual(self.m1.safe_storage_days, 120)
+        self.assertEqual(float(self.m1.cost_per_unit), 85.00)
+
 
 
