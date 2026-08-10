@@ -297,6 +297,8 @@ class RegistryLog(models.Model):
         ('QA_Extension', 'Expiry Extended (QA)'),
     )
     action_type = models.CharField(max_length=50, choices=ACTION_CHOICES)
+    product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True)
+    material = models.ForeignKey(Material, on_delete=models.SET_NULL, null=True, blank=True)
     item_name = models.CharField(max_length=255)
     quantity_changed = models.DecimalField(max_digits=12, decimal_places=2)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True)

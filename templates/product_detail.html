@@ -203,8 +203,8 @@
         <div id="sales-chart-container" style="flex-grow: 1; min-height: 250px; position: relative;">
             <canvas id="salesChart"></canvas>
         </div>
-        <div id="stock-chart-container" style="display: none; flex-grow: 1; min-height: 250px; text-align: center; color: var(--text-muted); padding-top: 3rem;">
-            <em>Historical stock tracking is currently under development.</em>
+        <div id="stock-chart-container" style="display: none; flex-grow: 1; min-height: 250px; position: relative;">
+            <canvas id="stockChart"></canvas>
         </div>
     </div>
     
@@ -284,9 +284,14 @@
     const chartLabels = {{ chart_labels|safe }};
     const chartSalesData = {{ chart_sales_data|safe }};
 
+    // Stock Chart Logic
+    let stockChart;
+    const chartStockLabels = {{ chart_stock_labels|safe }};
+    const chartStockData = {{ chart_stock_data|safe }};
+
     function initCharts() {
-        const ctx = document.getElementById('salesChart').getContext('2d');
-        salesChart = new Chart(ctx, {
+        const ctxSales = document.getElementById('salesChart').getContext('2d');
+        salesChart = new Chart(ctxSales, {
             type: 'line',
             data: {
                 labels: chartLabels.length > 0 ? chartLabels : ['No Data'],
@@ -298,6 +303,34 @@
                     borderWidth: 2,
                     tension: 0.3,
                     fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: { beginAtZero: true }
+                }
+            }
+        });
+
+        const ctxStock = document.getElementById('stockChart').getContext('2d');
+        stockChart = new Chart(ctxStock, {
+            type: 'line',
+            data: {
+                labels: chartStockLabels.length > 0 ? chartStockLabels : ['No Data'],
+                datasets: [{
+                    label: 'Total Stock (MT)',
+                    data: chartStockData.length > 0 ? chartStockData : [0],
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.3,
+                    fill: true,
+                    stepped: true
                 }]
             },
             options: {

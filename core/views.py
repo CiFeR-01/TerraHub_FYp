@@ -436,6 +436,8 @@ def stock_audit_view(request):
                     RegistryLog.objects.create(
                         action_type='Adjusted',
                         item_name=f"Batch {b.batch_number} ({b.material or b.product})",
+                        product=b.product,
+                        material=b.material,
                         quantity_changed=variance,
                         warehouse=wh,
                         user=request.user
@@ -1186,6 +1188,37 @@ def product_detail_view(request, pk):
     chart_labels = sorted(sales_by_month.keys())
     chart_sales_data = [sales_by_month[lbl] for lbl in chart_labels]
 
+    # Calculate Historical Stock (last 30 days)
+    daily_changes = {}
+    logs = RegistryLog.objects.filter(product=product).order_by('-timestamp')
+    for log in logs:
+        day_str = log.timestamp.strftime('%Y-%m-%d')
+        val = float(log.quantity_changed)
+        if log.action_type in ['Outbound', 'Consumed_For_Manufacturing', 'Spoiled_Disposal']:
+            net = -val
+        elif log.action_type in ['Inbound', 'Produced']:
+            net = val
+        elif log.action_type == 'Adjusted':
+            net = val
+        else:
+            net = 0
+        daily_changes[day_str] = daily_changes.get(day_str, 0) + net
+
+    from datetime import date, timedelta
+    today = date.today()
+    chart_stock_labels = []
+    chart_stock_data = []
+    running_stock = float(total_stock)
+    
+    for i in range(30):
+        day = today - timedelta(days=i)
+        day_str = day.strftime('%Y-%m-%d')
+        chart_stock_labels.insert(0, day_str)
+        chart_stock_data.insert(0, running_stock)
+        running_stock -= daily_changes.get(day_str, 0)
+        # Prevent negative historical stock if data is incomplete
+        if running_stock < 0: running_stock = 0
+
     context = {
         'product': product,
         'products': Product.objects.all().order_by('name'),
@@ -1195,6 +1228,8 @@ def product_detail_view(request, pk):
         'production_runs': production_runs,
         'chart_labels': chart_labels,
         'chart_sales_data': chart_sales_data,
+        'chart_stock_labels': chart_stock_labels,
+        'chart_stock_data': chart_stock_data,
         'uom_choices': Product.UNIT_CHOICES,
     }
     return render(request, 'product_detail.html', context)
@@ -1286,6 +1321,7 @@ def material_edit_view(request, pk):
             RegistryLog.objects.create(
                 action_type='Adjusted',
                 item_name=f"Updated Material '{material.name}' (SKU: {material.sku})",
+                material=material,
                 quantity_changed=0,
                 warehouse=None,
                 user=request.user if request.user.is_authenticated else None
@@ -1676,6 +1712,7 @@ def manufacturing_view(request):
                 RegistryLog.objects.create(
                     action_type='Produced',
                     item_name=f"{run.target_product.name} (Batch {batch.batch_number})",
+                    product=run.target_product,
                     quantity_changed=run.expected_yield,
                     warehouse=run.manufacturing_plant,
                     user=request.user
@@ -1970,6 +2007,7 @@ def manufacturing_view(request):
                 RegistryLog.objects.create(
                     action_type='Produced',
                     item_name=f"{run.target_product.name} (Batch {batch.batch_number})",
+                    product=run.target_product,
                     quantity_changed=run.expected_yield,
                     warehouse=run.manufacturing_plant,
                     user=request.user
@@ -2035,6 +2073,8 @@ def qa_dashboard_view(request):
                 RegistryLog.objects.create(
                     action_type='QA_Extension',
                     item_name=f"Batch {batch.batch_number} (+{days} days)",
+                    product=batch.product,
+                    material=batch.material,
                     quantity_changed=batch.quantity,
                     warehouse=batch.location.warehouse if batch.location else None,
                     user=request.user
@@ -2059,6 +2099,8 @@ def qa_dashboard_view(request):
             RegistryLog.objects.create(
                 action_type='Spoiled_Disposal',
                 item_name=f"Batch {batch.batch_number} Disposed",
+                product=batch.product,
+                material=batch.material,
                 quantity_changed=batch.quantity,
                 warehouse=batch.location.warehouse if batch.location else None,
                 user=request.user
