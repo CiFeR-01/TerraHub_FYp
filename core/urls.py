@@ -18,6 +18,7 @@ urlpatterns = [
     path('warehouse/stock-audit/', views.stock_audit_view, name='stock_audit'),
     path('warehouse/registry/', views.registry_ledger_view, name='registry'),
     path('catalog/products/', views.product_list_view, name='product_list'),
+    path('catalog/products/<int:pk>/', views.product_detail_view, name='product_detail'),
     path('catalog/products/export/', views.export_products_csv, name='export_products_csv'),
     path('catalog/products/template/', views.export_product_template, name='export_product_template'),
     path('catalog/products/import/', views.import_products, name='import_products'),

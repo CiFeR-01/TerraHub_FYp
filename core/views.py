@@ -1140,6 +1140,66 @@ def product_list_view(request):
     return render(request, 'product_list.html', context)
 
 
+@login_required
+def product_detail_view(request, pk):
+    product = get_object_or_404(Product.objects.prefetch_related('recipe_items__material'), pk=pk)
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'update_product':
+            try:
+                product.name = request.POST.get('name', product.name)
+                product.sku = request.POST.get('sku', product.sku)
+                product.description = request.POST.get('description', product.description)
+                product.unit_of_measure = request.POST.get('unit_of_measure', product.unit_of_measure)
+                product.weight_mt_per_unit = float(request.POST.get('weight_mt_per_unit', product.weight_mt_per_unit))
+                product.price_per_unit = float(request.POST.get('price_per_unit', product.price_per_unit))
+                product.save()
+                messages.success(request, f"Product '{product.sku}' updated successfully.")
+            except Exception as e:
+                messages.error(request, f"Error updating product: {e}")
+        return redirect('product_detail', pk=pk)
+
+    # Inventory Overview
+    active_batches = Batch.objects.filter(product=product, status='Active').select_related('location__warehouse').order_by('expiry_date')
+    total_stock = sum(b.quantity for b in active_batches)
+
+    # Manufacturing History
+    production_runs = ProductionRun.objects.filter(target_product=product).select_related('supervisor', 'sales_order').order_by('-id')[:10]
+    
+    # Sales Orders containing this product for the Chart
+    sales_details = SalesOrderDetail.objects.filter(product=product).select_related('sales_order')
+    
+    # Aggregate sales by month for the chart
+    sales_data = []
+    for sd in sales_details:
+        if sd.sales_order.order_date:
+            sales_data.append({
+                'date': sd.sales_order.order_date.strftime('%Y-%m'),
+                'quantity': float(sd.quantity_ordered)
+            })
+    sales_by_month = {}
+    for item in sales_data:
+        m = item['date']
+        sales_by_month[m] = sales_by_month.get(m, 0) + item['quantity']
+        
+    chart_labels = sorted(sales_by_month.keys())
+    chart_sales_data = [sales_by_month[lbl] for lbl in chart_labels]
+
+    context = {
+        'product': product,
+        'products': Product.objects.all().order_by('name'),
+        'materials': Material.objects.all().order_by('name'),
+        'active_batches': active_batches,
+        'total_stock': total_stock,
+        'production_runs': production_runs,
+        'chart_labels': chart_labels,
+        'chart_sales_data': chart_sales_data,
+        'uom_choices': Product.UNIT_CHOICES,
+    }
+    return render(request, 'product_detail.html', context)
+
+
 # --------------------------------------------------------------------------
 # MATERIALS HUB
 # --------------------------------------------------------------------------
