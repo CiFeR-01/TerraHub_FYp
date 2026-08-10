@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+
+{% block title %}Product Details - TerraHub{% endblock %}
+
+{% block extra_css %}
+<style>
+    .detail-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+        margin-top: 1.5rem;
+        align-items: start;
+    }
+    
+    .detail-card {
+        background: #fff;
+        border-radius: 12px;
+        border: 1px solid var(--border-light);
+        padding: 1.5rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        min-height: 0;
+        min-width: 0;
+    }
+
+    .dark-panel {
+        background: #0f172a;
+        color: #f8fafc;
+        border: 1px solid #1e293b;
+        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3);
+    }
+    
+    .section-title {
+        font-family: 'Outfit', sans-serif;
+        font-size: 1.15rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+        border-bottom: 1px solid var(--border-light);
+        padding-bottom: 0.5rem;
+    }
+
+    .dark-panel .section-title {
+        border-bottom-color: #334155;
+    }
+
+    .form-group-inline {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 0.75rem;
+    }
+    
+    .form-group-inline label {
+        min-width: 150px;
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--text-main);
+    }
+
+    .dark-panel .form-group-inline label {
+        color: #cbd5e1;
+    }
+
+    .table-container {
+        border: 1px solid #334155;
+        border-radius: 6px;
+        padding: 0.5rem;
+        background: #1e293b;
+        overflow-y: auto;
+    }
+    
+    .list-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.4rem 0.5rem;
+        border-bottom: 1px solid #334155;
+        font-size: 0.85rem;
+    }
+    .list-item:last-child {
+        border-bottom: none;
+    }
+    
+    .badge {
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.75rem;
+    }
+    .badge-success { background: #d1fae5; color: #065f46; }
+    .badge-warning { background: #fef3c7; color: #92400e; }
+    
+    /* Toggle switch for charts */
+    .chart-toggle {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    .chart-toggle button {
+        background: #f1f5f9;
+        border: 1px solid var(--border-light);
+        padding: 0.4rem 0.8rem;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 0.85rem;
+    }
+    .chart-toggle button.active {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+    }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div>
+            <nav class="breadcrumb-nav">
+                <a href="{% url 'dashboard' %}">Dashboard</a>
+                <span class="separator">/</span>
+                <a href="{% url 'product_list' %}">Product Catalog</a>
+                <span class="separator">/</span>
+                <span class="current-page">{{ product.sku }}</span>
+            </nav>
+            <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+                [{{ product.sku }}] {{ product.name }}
+            </h1>
+        </div>
+        <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary);">
+            Total Stock: {{ total_stock|floatformat:2 }} {{ product.get_unit_of_measure_display }}
+        </div>
+    </div>
+</header>
+
+<!-- Django Messages -->
+{% if messages %}
+<div style="margin-top:1rem;">
+    {% for message in messages %}
+    <div class="badge {% if message.tags == 'error' %}badge-rose{% elif message.tags == 'success' %}badge-emerald{% else %}badge-sky{% endif %}" style="padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; display: block; font-weight: 600;">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="detail-grid animate-fade-in-up" style="animation-delay: 0.05s;">
+    
+    <!-- Top Left: Core Details (Editable) -->
+    <div class="detail-card">
+        <h3 class="section-title">Core Information</h3>
+        <form method="POST" action="{% url 'product_detail' product.id %}" style="display: flex; flex-direction: column; flex-grow: 1;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="update_product">
+            
+            <div class="form-group-inline">
+                <label>Product Name</label>
+                <input type="text" name="name" value="{{ product.name }}" class="form-input" required style="width: 100%;">
+            </div>
+            <div class="form-group-inline">
+                <label>SKU</label>
+                <input type="text" name="sku" value="{{ product.sku }}" class="form-input" required style="width: 100%;">
+            </div>
+            <div class="form-group-inline">
+                <label>Description</label>
+                <textarea name="description" class="form-input" rows="2" style="width: 100%; resize:vertical;">{{ product.description }}</textarea>
+            </div>
+            <div class="form-group-inline">
+                <label>Unit of Measure</label>
+                <select name="unit_of_measure" class="form-input" required style="width: 100%;">
+                    {% for val, display in uom_choices %}
+                        <option value="{{ val }}" {% if product.unit_of_measure == val %}selected{% endif %}>{{ display }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group-inline">
+                <label>Weight (MT) per Unit</label>
+                <input type="number" step="0.0001" name="weight_mt_per_unit" value="{{ product.weight_mt_per_unit|floatformat:4 }}" class="form-input" required style="width: 100%;">
+            </div>
+            <div class="form-group-inline">
+                <label>Price</label>
+                <input type="number" step="0.01" name="price_per_unit" value="{{ product.price_per_unit|floatformat:2 }}" class="form-input" required style="width: 100%;">
+            </div>
+            
+            <div style="text-align: right; margin-top: auto;">
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Top Right: Charts (Sales & Stock Over Time) -->
+    <div class="detail-card">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-light); padding-bottom: 0.5rem; margin-bottom: 1rem;">
+            <h3 class="section-title" style="border: none; margin: 0; padding: 0;">Analytics</h3>
+            <div class="chart-toggle">
+                <button type="button" id="btn-sales-chart" class="active" onclick="showChart('sales')">Sales Trend</button>
+                <button type="button" id="btn-stock-chart" onclick="showChart('stock')">Stock Trend (Coming Soon)</button>
+            </div>
+        </div>
+        <div id="sales-chart-container" style="flex-grow: 1; min-height: 250px; position: relative;">
+            <canvas id="salesChart"></canvas>
+        </div>
+        <div id="stock-chart-container" style="display: none; flex-grow: 1; min-height: 250px; text-align: center; color: var(--text-muted); padding-top: 3rem;">
+            <em>Historical stock tracking is currently under development.</em>
+        </div>
+    </div>
+    
+    <!-- Bottom Left: Inventory & Production -->
+    <div class="detail-card dark-panel">
+        <h3 class="section-title">Active Batches (Inventory)</h3>
+        <div class="table-container" style="max-height: 200px; margin-bottom: 1.5rem;">
+            {% for batch in active_batches %}
+            <div class="list-item">
+                <span><strong style="color: #38bdf8;">{{ batch.batch_number }}</strong> @ {{ batch.location.warehouse.name|default:"Unassigned" }}</span>
+                <span>
+                    <strong>{{ batch.quantity|floatformat:2 }}</strong>
+                    {% if batch.days_until_expiry %}
+                        <span class="badge {% if batch.days_until_expiry < 30 %}badge-warning{% else %}badge-success{% endif %}" style="margin-left: 0.5rem;">Exp in {{ batch.days_until_expiry }}d</span>
+                    {% endif %}
+                </span>
+            </div>
+            {% empty %}
+            <div class="list-item" style="color:#64748b;">No active inventory batches.</div>
+            {% endfor %}
+        </div>
+
+        <h3 class="section-title">Recent Production Runs</h3>
+        <div class="table-container" style="max-height: 200px;">
+            {% for run in production_runs %}
+            <div class="list-item">
+                <span><strong>{{ run.run_number }}</strong> ({{ run.get_status_display }})</span>
+                <span>Yield: {{ run.expected_yield|floatformat:2 }}</span>
+            </div>
+            {% empty %}
+            <div class="list-item" style="color:#64748b;">No manufacturing history.</div>
+            {% endfor %}
+        </div>
+    </div>
+    
+    <!-- Bottom Right: Bill of Materials (Recipe) -->
+    <div class="detail-card dark-panel">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
+            <h3 class="section-title" style="border: none; margin: 0; padding: 0;">Bill of Materials (Recipe)</h3>
+            <button type="button" onclick="openRecipeStudio({{ product.id }})" class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.75rem;">
+                ⚙ Open Recipe Studio
+            </button>
+        </div>
+        <div class="table-container" style="max-height: 400px;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.85rem; color: #f8fafc;">
+                <thead>
+                    <tr style="background:#0f172a; text-align:left; color:#94a3b8;">
+                        <th style="padding:0.5rem;">Material</th>
+                        <th style="padding:0.5rem;">Required Qty</th>
+                        <th style="padding:0.5rem; text-align:right;">Cost</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in product.recipe_items.all %}
+                    <tr style="border-bottom: 1px solid #334155;">
+                        <td style="padding:0.5rem;"><strong>{{ item.material.sku }}</strong> — {{ item.material.name }}</td>
+                        <td style="padding:0.5rem;">{{ item.quantity_required }} {{ item.material.unit_of_measure }}</td>
+                        <td style="padding:0.5rem; text-align:right; color:#4ade80;">
+                            {{ item.material.cost_per_unit|floatformat:2 }} / unit
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="3" style="padding:1.5rem; text-align:center; color:#64748b;">No recipe defined for this product.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+</div>
+
+<script>
+    // Chart Logic
+    let salesChart;
+    const chartLabels = {{ chart_labels|safe }};
+    const chartSalesData = {{ chart_sales_data|safe }};
+
+    function initCharts() {
+        const ctx = document.getElementById('salesChart').getContext('2d');
+        salesChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: chartLabels.length > 0 ? chartLabels : ['No Data'],
+                datasets: [{
+                    label: 'Units Sold (Sales Orders)',
+                    data: chartSalesData.length > 0 ? chartSalesData : [0],
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.3,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: { beginAtZero: true }
+                }
+            }
+        });
+    }
+
+    function showChart(type) {
+        document.getElementById('btn-sales-chart').classList.remove('active');
+        document.getElementById('btn-stock-chart').classList.remove('active');
+        document.getElementById('sales-chart-container').style.display = 'none';
+        document.getElementById('stock-chart-container').style.display = 'none';
+
+        if (type === 'sales') {
+            document.getElementById('btn-sales-chart').classList.add('active');
+            document.getElementById('sales-chart-container').style.display = 'block';
+        } else {
+            document.getElementById('btn-stock-chart').classList.add('active');
+            document.getElementById('stock-chart-container').style.display = 'block';
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        initCharts();
+    });
+</script>
+
+{% include 'partials/recipe_studio_modal.html' %}
+
+{% endblock %}

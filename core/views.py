@@ -1,4 +1,5 @@
 from django.shortcuts import render, redirect, get_object_or_404
+from django.http import HttpResponse, JsonResponse
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django import forms
@@ -6,6 +7,8 @@ from django.db import transaction
 from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q
 from django.db.models.functions import Coalesce
 from datetime import date, timedelta
+import csv
+import io
 from .models import (
     CustomUser, Warehouse, WarehouseLocation, Material, Product,
     ProductRecipe, ProductionRun, ProductionConsumption, Batch,
@@ -489,6 +492,604 @@ def registry_ledger_view(request):
 
 
 # --------------------------------------------------------------------------
+# BULK IMPORT / EXPORT & REFERENCE TEMPLATE HANDLERS
+# --------------------------------------------------------------------------
+
+@login_required
+def export_product_template(request):
+    """Download reference CSV template for Products."""
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = 'attachment; filename="product_import_template.csv"'
+    writer = csv.writer(response)
+    writer.writerow(['name', 'sku', 'description', 'unit_of_measure', 'weight_mt_per_unit', 'price_per_unit'])
+    writer.writerow(['Polymer Compound Alpha', 'PROD1001', 'High density industrial resin', 'pcs', '0.5000', '150.00'])
+    writer.writerow(['Bio-Solvent Solution', 'PROD1002', 'Organic chemical solvent', 'L', '1.0000', '85.50'])
+    writer.writerow(['Composite Sheet Grade B', '', 'Standard structural panel (Auto SKU)', 'pcs', '0.2500', '45.00'])
+    return response
+
+
+@login_required
+def export_products_csv(request):
+    """Export all registered Products as CSV."""
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = 'attachment; filename="products_export.csv"'
+    writer = csv.writer(response)
+    writer.writerow(['name', 'sku', 'description', 'unit_of_measure', 'weight_mt_per_unit', 'price_per_unit'])
+    for prod in Product.objects.all().order_by('sku'):
+        writer.writerow([
+            prod.name,
+            prod.sku,
+            prod.description or '',
+            prod.unit_of_measure,
+            f"{prod.weight_mt_per_unit:.4f}",
+            f"{prod.price_per_unit:.2f}"
+        ])
+    return response
+
+
+@login_required
+def import_products(request):
+    """Bulk import Products from uploaded CSV with dry-run, anti-duplication, and error reporting."""
+    if request.method != 'POST':
+        return redirect('product_list')
+
+    csv_file = request.FILES.get('csv_file')
+    if not csv_file:
+        messages.error(request, "Please select a valid CSV file to upload.")
+        return redirect('product_list')
+
+    if not csv_file.name.endswith('.csv'):
+        messages.error(request, "File format not supported. Please upload a standard .csv file.")
+        return redirect('product_list')
+
+    duplicate_mode = request.POST.get('duplicate_mode', 'skip')
+    is_dry_run = request.POST.get('dry_run') == '1'
+
+    try:
+        file_data = csv_file.read().decode('utf-8-sig')
+        io_string = io.StringIO(file_data)
+        reader = csv.DictReader(io_string)
+    except Exception as e:
+        messages.error(request, f"Could not read CSV file: {e}")
+        return redirect('product_list')
+
+    if not reader.fieldnames:
+        messages.error(request, "CSV file is empty or missing headers.")
+        return redirect('product_list')
+
+    headers = [h.strip().lower() for h in reader.fieldnames if h]
+    if 'name' not in headers:
+        messages.error(request, "CSV header missing required 'name' column.")
+        return redirect('product_list')
+
+    valid_uoms = {'mt', 'kg', 'l', 'g', 'pcs'}
+    existing_skus = {p.sku.upper(): p for p in Product.objects.all()}
+    existing_names = {p.name.strip().upper(): p for p in Product.objects.all()}
+
+    seen_skus_in_file = set()
+    seen_names_in_file = set()
+
+    created_count = 0
+    updated_count = 0
+    skipped_count = 0
+    error_rows = []
+    dry_run_results = []
+
+    rows = list(reader)
+
+    with transaction.atomic():
+        for idx, raw_row in enumerate(rows, start=2):
+            row = {k.strip().lower(): (v.strip() if v else '') for k, v in raw_row.items() if k}
+            
+            name = row.get('name', '')
+            sku = row.get('sku', '').upper()
+            description = row.get('description', '')
+            uom = row.get('unit_of_measure', 'pcs')
+            weight_str = row.get('weight_mt_per_unit', '1.0')
+            price_str = row.get('price_per_unit', '0.0')
+
+            # 1. Validation
+            if not name:
+                err = f"Line {idx}: Missing product name."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name or '—', 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
+                continue
+
+            if uom.lower() not in valid_uoms:
+                err = f"Line {idx}: Invalid unit of measure '{uom}'. Valid: MT, kg, L, g, pcs."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
+                continue
+
+            try:
+                weight = float(weight_str) if weight_str else 1.0
+                if weight < 0: raise ValueError()
+            except ValueError:
+                err = f"Line {idx}: Weight MT/Unit must be a non-negative number."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
+                continue
+
+            try:
+                price = float(price_str) if price_str else 0.0
+                if price < 0: raise ValueError()
+            except ValueError:
+                err = f"Line {idx}: Price/Unit must be a non-negative number."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
+                continue
+
+            # Intra-file duplicate check
+            clean_name_key = name.strip().upper()
+            if sku and sku in seen_skus_in_file:
+                err = f"Line {idx}: Duplicate SKU '{sku}' within CSV file."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name, 'sku': sku, 'status': 'error', 'msg': err})
+                continue
+
+            if clean_name_key in seen_names_in_file and not sku:
+                err = f"Line {idx}: Duplicate product name '{name}' within CSV file."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
+                continue
+
+            # DB Duplicate check
+            db_match = None
+            if sku and sku in existing_skus:
+                db_match = existing_skus[sku]
+            elif clean_name_key in existing_names:
+                db_match = existing_names[clean_name_key]
+
+            if db_match:
+                if duplicate_mode == 'skip':
+                    skipped_count += 1
+                    msg = f"Line {idx}: Skipped duplicate item '{name}' (SKU: {db_match.sku})."
+                    dry_run_results.append({'line': idx, 'name': name, 'sku': db_match.sku, 'status': 'duplicate', 'msg': msg})
+                    continue
+                else: # 'update'
+                    if not is_dry_run:
+                        db_match.name = name
+                        if description: db_match.description = description
+                        db_match.unit_of_measure = uom
+                        db_match.weight_mt_per_unit = weight
+                        db_match.price_per_unit = price
+                        db_match.save()
+                    updated_count += 1
+                    msg = f"Line {idx}: Updated existing product '{name}' (SKU: {db_match.sku})."
+                    dry_run_results.append({'line': idx, 'name': name, 'sku': db_match.sku, 'status': 'updated', 'msg': msg})
+                    continue
+
+            # Create New Product
+            if not sku:
+                sku = generate_next_code(Product, 'sku', 'PROD', 1001, pad=4)
+                while sku in existing_skus or sku in seen_skus_in_file:
+                    seq = int(sku.replace('PROD', '')) + 1
+                    sku = f"PROD{seq:04d}"
+
+            if not is_dry_run:
+                p = Product.objects.create(
+                    name=name, sku=sku, description=description,
+                    unit_of_measure=uom, weight_mt_per_unit=weight, price_per_unit=price
+                )
+                existing_skus[sku.upper()] = p
+                existing_names[clean_name_key] = p
+
+            if sku: seen_skus_in_file.add(sku.upper())
+            seen_names_in_file.add(clean_name_key)
+            created_count += 1
+            msg = f"Line {idx}: Ready to create product '{name}' (SKU: {sku})."
+            dry_run_results.append({'line': idx, 'name': name, 'sku': sku, 'status': 'created', 'msg': msg})
+
+        if is_dry_run:
+            transaction.set_rollback(True)
+
+    if is_dry_run:
+        return JsonResponse({
+            'success': True,
+            'dry_run': True,
+            'created_count': created_count,
+            'updated_count': updated_count,
+            'skipped_count': skipped_count,
+            'error_count': len(error_rows),
+            'results': dry_run_results
+        })
+
+    if created_count > 0 or updated_count > 0:
+        RegistryLog.objects.create(
+            action_type='Adjusted',
+            item_name=f"Bulk Import Products ({created_count} created, {updated_count} updated, {skipped_count} skipped)",
+            quantity_changed=created_count + updated_count,
+            warehouse=None,
+            user=request.user if request.user.is_authenticated else None
+        )
+
+    summary_msg = f"Product import completed: {created_count} created, {updated_count} updated, {skipped_count} skipped duplicates."
+    if error_rows:
+        summary_msg += f" {len(error_rows)} row(s) had validation errors."
+        messages.warning(request, summary_msg)
+    else:
+        messages.success(request, summary_msg)
+
+    return redirect('product_list')
+
+
+@login_required
+def export_material_template(request):
+    """Download reference CSV template for Materials."""
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = 'attachment; filename="material_import_template.csv"'
+    writer = csv.writer(response)
+    writer.writerow(['name', 'sku', 'category', 'unit_of_measure', 'safe_storage_days', 'weight_mt_per_unit', 'cost_per_unit'])
+    writer.writerow(['Titanium Dioxide Pigment', 'MAT1001', 'Chemicals', 'MT', '90', '1.0000', '450.00'])
+    writer.writerow(['Recycled Polyethylene Pellets', 'MAT1002', 'Polymers', 'kg', '180', '0.0010', '2.50'])
+    writer.writerow(['Organic Catalyst Fluid', '', 'Additives (Auto SKU)', 'L', '60', '0.0010', '12.00'])
+    return response
+
+
+@login_required
+def export_materials_csv(request):
+    """Export all registered Materials as CSV."""
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = 'attachment; filename="materials_export.csv"'
+    writer = csv.writer(response)
+    writer.writerow(['name', 'sku', 'category', 'unit_of_measure', 'safe_storage_days', 'weight_mt_per_unit', 'cost_per_unit'])
+    for mat in Material.objects.all().order_by('sku'):
+        writer.writerow([
+            mat.name,
+            mat.sku,
+            mat.category,
+            mat.unit_of_measure,
+            mat.safe_storage_days,
+            f"{mat.weight_mt_per_unit:.4f}",
+            f"{mat.cost_per_unit:.2f}"
+        ])
+    return response
+
+
+@login_required
+def import_materials(request):
+    """Bulk import Materials from uploaded CSV with dry-run, anti-duplication, and error reporting."""
+    if request.method != 'POST':
+        return redirect('material_list')
+
+    csv_file = request.FILES.get('csv_file')
+    if not csv_file:
+        messages.error(request, "Please select a valid CSV file to upload.")
+        return redirect('material_list')
+
+    if not csv_file.name.endswith('.csv'):
+        messages.error(request, "File format not supported. Please upload a standard .csv file.")
+        return redirect('material_list')
+
+    duplicate_mode = request.POST.get('duplicate_mode', 'skip')
+    is_dry_run = request.POST.get('dry_run') == '1'
+
+    try:
+        file_data = csv_file.read().decode('utf-8-sig')
+        io_string = io.StringIO(file_data)
+        reader = csv.DictReader(io_string)
+    except Exception as e:
+        messages.error(request, f"Could not read CSV file: {e}")
+        return redirect('material_list')
+
+    if not reader.fieldnames:
+        messages.error(request, "CSV file is empty or missing headers.")
+        return redirect('material_list')
+
+    headers = [h.strip().lower() for h in reader.fieldnames if h]
+    if 'name' not in headers:
+        messages.error(request, "CSV header missing required 'name' column.")
+        return redirect('material_list')
+
+    valid_uoms = {'mt', 'kg', 'l', 'g', 'pcs'}
+    existing_skus = {m.sku.upper(): m for m in Material.objects.all()}
+    existing_names = {m.name.strip().upper(): m for m in Material.objects.all()}
+
+    seen_skus_in_file = set()
+    seen_names_in_file = set()
+
+    created_count = 0
+    updated_count = 0
+    skipped_count = 0
+    error_rows = []
+    dry_run_results = []
+
+    rows = list(reader)
+
+    with transaction.atomic():
+        for idx, raw_row in enumerate(rows, start=2):
+            row = {k.strip().lower(): (v.strip() if v else '') for k, v in raw_row.items() if k}
+            
+            name = row.get('name', '')
+            sku = row.get('sku', '').upper()
+            category = row.get('category', 'General')
+            uom = row.get('unit_of_measure', 'MT')
+            days_str = row.get('safe_storage_days', '90')
+            weight_str = row.get('weight_mt_per_unit', '1.0')
+            cost_str = row.get('cost_per_unit', '0.0')
+
+            # 1. Validation
+            if not name:
+                err = f"Line {idx}: Missing material name."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name or '—', 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
+                continue
+
+            if uom.lower() not in valid_uoms:
+                err = f"Line {idx}: Invalid unit of measure '{uom}'. Valid: MT, kg, L, g, pcs."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
+                continue
+
+            try:
+                days = int(days_str) if days_str else 90
+                if days < 0: raise ValueError()
+            except ValueError:
+                err = f"Line {idx}: Safe storage days must be a non-negative integer."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
+                continue
+
+            try:
+                weight = float(weight_str) if weight_str else 1.0
+                if weight < 0: raise ValueError()
+            except ValueError:
+                err = f"Line {idx}: Weight MT/Unit must be a non-negative number."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
+                continue
+
+            try:
+                cost = float(cost_str) if cost_str else 0.0
+                if cost < 0: raise ValueError()
+            except ValueError:
+                err = f"Line {idx}: Cost/Unit must be a non-negative number."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
+                continue
+
+            # Intra-file duplicate check
+            clean_name_key = name.strip().upper()
+            if sku and sku in seen_skus_in_file:
+                err = f"Line {idx}: Duplicate SKU '{sku}' within CSV file."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name, 'sku': sku, 'status': 'error', 'msg': err})
+                continue
+
+            if clean_name_key in seen_names_in_file and not sku:
+                err = f"Line {idx}: Duplicate material name '{name}' within CSV file."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
+                continue
+
+            # DB Duplicate check
+            db_match = None
+            if sku and sku in existing_skus:
+                db_match = existing_skus[sku]
+            elif clean_name_key in existing_names:
+                db_match = existing_names[clean_name_key]
+
+            if db_match:
+                if duplicate_mode == 'skip':
+                    skipped_count += 1
+                    msg = f"Line {idx}: Skipped duplicate material '{name}' (SKU: {db_match.sku})."
+                    dry_run_results.append({'line': idx, 'name': name, 'sku': db_match.sku, 'status': 'duplicate', 'msg': msg})
+                    continue
+                else: # 'update'
+                    if not is_dry_run:
+                        db_match.name = name
+                        db_match.category = category or db_match.category
+                        db_match.unit_of_measure = uom
+                        db_match.safe_storage_days = days
+                        db_match.weight_mt_per_unit = weight
+                        db_match.cost_per_unit = cost
+                        db_match.save()
+                    updated_count += 1
+                    msg = f"Line {idx}: Updated existing material '{name}' (SKU: {db_match.sku})."
+                    dry_run_results.append({'line': idx, 'name': name, 'sku': db_match.sku, 'status': 'updated', 'msg': msg})
+                    continue
+
+            # Create New Material
+            if not sku:
+                sku = generate_next_code(Material, 'sku', 'MAT', 1001, pad=4)
+                while sku in existing_skus or sku in seen_skus_in_file:
+                    seq = int(sku.replace('MAT', '')) + 1
+                    sku = f"MAT{seq:04d}"
+
+            if not is_dry_run:
+                m = Material.objects.create(
+                    name=name, sku=sku, category=category or 'General',
+                    unit_of_measure=uom, safe_storage_days=days,
+                    weight_mt_per_unit=weight, cost_per_unit=cost
+                )
+                existing_skus[sku.upper()] = m
+                existing_names[clean_name_key] = m
+
+            if sku: seen_skus_in_file.add(sku.upper())
+            seen_names_in_file.add(clean_name_key)
+            created_count += 1
+            msg = f"Line {idx}: Ready to create material '{name}' (SKU: {sku})."
+            dry_run_results.append({'line': idx, 'name': name, 'sku': sku, 'status': 'created', 'msg': msg})
+
+        if is_dry_run:
+            transaction.set_rollback(True)
+
+    if is_dry_run:
+        return JsonResponse({
+            'success': True,
+            'dry_run': True,
+            'created_count': created_count,
+            'updated_count': updated_count,
+            'skipped_count': skipped_count,
+            'error_count': len(error_rows),
+            'results': dry_run_results
+        })
+
+    if created_count > 0 or updated_count > 0:
+        RegistryLog.objects.create(
+            action_type='Adjusted',
+            item_name=f"Bulk Import Materials ({created_count} created, {updated_count} updated, {skipped_count} skipped)",
+            quantity_changed=created_count + updated_count,
+            warehouse=None,
+            user=request.user if request.user.is_authenticated else None
+        )
+
+    summary_msg = f"Material import completed: {created_count} created, {updated_count} updated, {skipped_count} skipped duplicates."
+    if error_rows:
+        summary_msg += f" {len(error_rows)} row(s) had validation errors."
+        messages.warning(request, summary_msg)
+    else:
+        messages.success(request, summary_msg)
+
+    return redirect('material_list')
+
+
+@login_required
+def export_product_recipes_csv(request):
+    """Export all Product Recipes as CSV."""
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = 'attachment; filename="product_recipes_export.csv"'
+    writer = csv.writer(response)
+    writer.writerow(['product_sku', 'product_name', 'material_sku', 'material_name', 'quantity_required', 'material_uom'])
+    for r in ProductRecipe.objects.select_related('product', 'material').order_by('product__sku'):
+        writer.writerow([
+            r.product.sku,
+            r.product.name,
+            r.material.sku,
+            r.material.name,
+            f"{r.quantity_required:.2f}",
+            r.material.unit_of_measure
+        ])
+    return response
+
+# Recipe Bulk CSV Import disabled per user request (Recipe Studio UI used instead).
+
+
+@login_required
+def get_product_recipe_api(request, product_id):
+    """API endpoint to get full recipe details for a product."""
+    product = get_object_or_404(Product, id=product_id)
+    items = ProductRecipe.objects.filter(product=product).select_related('material')
+    
+    recipe_list = []
+    total_cost = 0.0
+    total_weight = 0.0
+    for r in items:
+        qty = float(r.quantity_required)
+        unit_cost = float(r.material.cost_per_unit)
+        item_cost = qty * unit_cost
+        total_cost += item_cost
+        
+        unit_weight = float(r.material.weight_mt_per_unit)
+        item_weight = qty * unit_weight
+        total_weight += item_weight
+
+        recipe_list.append({
+            'id': r.id,
+            'material_id': r.material.id,
+            'material_sku': r.material.sku,
+            'material_name': r.material.name,
+            'unit_of_measure': r.material.unit_of_measure,
+            'quantity_required': qty,
+            'cost_per_unit': unit_cost,
+            'total_cost': item_cost,
+            'weight_mt_per_unit': unit_weight,
+            'total_weight': item_weight,
+        })
+
+    return JsonResponse({
+        'success': True,
+        'product_id': product.id,
+        'product_sku': product.sku,
+        'product_name': product.name,
+        'recipe_items': recipe_list,
+        'total_cost': round(total_cost, 2),
+        'total_weight': round(total_weight, 4)
+    })
+
+
+@login_required
+def save_product_recipe_api(request):
+    """API endpoint for live inline recipe modifications (add, update, delete, clone)."""
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST method required.'}, status=400)
+
+    action = request.POST.get('action')
+    product_id = request.POST.get('product_id')
+
+    if action == 'delete_item':
+        recipe_id = request.POST.get('recipe_id')
+        try:
+            item = get_object_or_404(ProductRecipe, id=recipe_id)
+            p_id = item.product.id
+            item.delete()
+            return JsonResponse({'success': True, 'message': 'Recipe item deleted successfully.', 'product_id': p_id})
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+
+    elif action == 'clone_recipe':
+        source_id = request.POST.get('source_product_id')
+        target_id = request.POST.get('target_product_id')
+        try:
+            source_prod = get_object_or_404(Product, id=source_id)
+            target_prod = get_object_or_404(Product, id=target_id)
+            
+            source_items = ProductRecipe.objects.filter(product=source_prod)
+            cloned_count = 0
+            for item in source_items:
+                ProductRecipe.objects.update_or_create(
+                    product=target_prod,
+                    material=item.material,
+                    defaults={'quantity_required': item.quantity_required}
+                )
+                cloned_count += 1
+
+            return JsonResponse({
+                'success': True,
+                'message': f"Successfully cloned {cloned_count} requirement(s) from {source_prod.sku} to {target_prod.sku}.",
+                'product_id': target_prod.id
+            })
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+
+    elif action == 'save_batch':
+        try:
+            product = get_object_or_404(Product, id=product_id)
+            material_ids = request.POST.getlist('material_ids[]')
+            quantities = request.POST.getlist('quantities[]')
+            
+            if not material_ids:
+                m_id = request.POST.get('material_id')
+                qty = request.POST.get('quantity_required')
+                if m_id and qty:
+                    material_ids = [m_id]
+                    quantities = [qty]
+
+            saved_count = 0
+            for m_id, q_val in zip(material_ids, quantities):
+                if not m_id or not q_val: continue
+                qty = float(q_val)
+                if qty <= 0: continue
+                mat = get_object_or_404(Material, id=m_id)
+                ProductRecipe.objects.update_or_create(
+                    product=product,
+                    material=mat,
+                    defaults={'quantity_required': qty}
+                )
+                saved_count += 1
+
+            return JsonResponse({
+                'success': True,
+                'message': f"Saved {saved_count} recipe requirement(s) for {product.sku}.",
+                'product_id': product.id
+            })
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+
+    return JsonResponse({'success': False, 'error': 'Invalid action.'}, status=400)
+
+
+# --------------------------------------------------------------------------
 # PRODUCTS CATALOG
 # --------------------------------------------------------------------------
 @login_required
@@ -539,6 +1140,66 @@ def product_list_view(request):
     return render(request, 'product_list.html', context)
 
 
+@login_required
+def product_detail_view(request, pk):
+    product = get_object_or_404(Product.objects.prefetch_related('recipe_items__material'), pk=pk)
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'update_product':
+            try:
+                product.name = request.POST.get('name', product.name)
+                product.sku = request.POST.get('sku', product.sku)
+                product.description = request.POST.get('description', product.description)
+                product.unit_of_measure = request.POST.get('unit_of_measure', product.unit_of_measure)
+                product.weight_mt_per_unit = float(request.POST.get('weight_mt_per_unit', product.weight_mt_per_unit))
+                product.price_per_unit = float(request.POST.get('price_per_unit', product.price_per_unit))
+                product.save()
+                messages.success(request, f"Product '{product.sku}' updated successfully.")
+            except Exception as e:
+                messages.error(request, f"Error updating product: {e}")
+        return redirect('product_detail', pk=pk)
+
+    # Inventory Overview
+    active_batches = Batch.objects.filter(product=product, status='Active').select_related('location__warehouse').order_by('expiry_date')
+    total_stock = sum(b.quantity for b in active_batches)
+
+    # Manufacturing History
+    production_runs = ProductionRun.objects.filter(target_product=product).select_related('supervisor', 'sales_order').order_by('-id')[:10]
+    
+    # Sales Orders containing this product for the Chart
+    sales_details = SalesOrderDetail.objects.filter(product=product).select_related('sales_order')
+    
+    # Aggregate sales by month for the chart
+    sales_data = []
+    for sd in sales_details:
+        if sd.sales_order.order_date:
+            sales_data.append({
+                'date': sd.sales_order.order_date.strftime('%Y-%m'),
+                'quantity': float(sd.quantity_ordered)
+            })
+    sales_by_month = {}
+    for item in sales_data:
+        m = item['date']
+        sales_by_month[m] = sales_by_month.get(m, 0) + item['quantity']
+        
+    chart_labels = sorted(sales_by_month.keys())
+    chart_sales_data = [sales_by_month[lbl] for lbl in chart_labels]
+
+    context = {
+        'product': product,
+        'products': Product.objects.all().order_by('name'),
+        'materials': Material.objects.all().order_by('name'),
+        'active_batches': active_batches,
+        'total_stock': total_stock,
+        'production_runs': production_runs,
+        'chart_labels': chart_labels,
+        'chart_sales_data': chart_sales_data,
+        'uom_choices': Product.UNIT_CHOICES,
+    }
+    return render(request, 'product_detail.html', context)
+
+
 # --------------------------------------------------------------------------
 # MATERIALS HUB
 # --------------------------------------------------------------------------
@@ -583,6 +1244,74 @@ def material_list_view(request):
         'next_material_sku': generate_next_code(Material, 'sku', 'MAT', 1001, pad=4),
     }
     return render(request, 'material_list.html', context)
+
+
+@login_required
+def material_edit_view(request, pk):
+    """View to edit an existing raw material record."""
+    material = get_object_or_404(Material, pk=pk)
+
+    if request.method == 'POST':
+        name = request.POST.get('name', '').strip()
+        sku = request.POST.get('sku', '').strip().upper()
+        category = request.POST.get('category', '').strip()
+        uom = request.POST.get('unit_of_measure', 'MT')
+        
+        try:
+            safe_days = int(request.POST.get('safe_storage_days', 90))
+            weight = float(request.POST.get('weight_mt_per_unit', 1.0))
+            cost = float(request.POST.get('cost_per_unit', 0.0))
+
+            if not name:
+                messages.error(request, "Material name is required.")
+                return redirect('material_list')
+
+            if not sku:
+                sku = material.sku
+
+            # Check SKU uniqueness against other materials
+            if Material.objects.filter(sku=sku).exclude(pk=material.pk).exists():
+                messages.error(request, f"SKU '{sku}' is already assigned to another material.")
+                return redirect('material_list')
+
+            material.name = name
+            material.sku = sku
+            material.category = category or material.category
+            material.unit_of_measure = uom
+            material.safe_storage_days = safe_days
+            material.weight_mt_per_unit = weight
+            material.cost_per_unit = cost
+            material.save()
+
+            RegistryLog.objects.create(
+                action_type='Adjusted',
+                item_name=f"Updated Material '{material.name}' (SKU: {material.sku})",
+                quantity_changed=0,
+                warehouse=None,
+                user=request.user if request.user.is_authenticated else None
+            )
+
+            messages.success(request, f"Material '{material.name}' (SKU: {material.sku}) updated successfully.")
+        except Exception as e:
+            messages.error(request, f"Error updating material: {e}")
+
+        return redirect('material_list')
+
+    # GET request - AJAX returns JSON data for modal; standard request renders form page
+    if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+        return JsonResponse({
+            'success': True,
+            'id': material.id,
+            'name': material.name,
+            'sku': material.sku,
+            'category': material.category,
+            'unit_of_measure': material.unit_of_measure,
+            'safe_storage_days': material.safe_storage_days,
+            'weight_mt_per_unit': float(material.weight_mt_per_unit),
+            'cost_per_unit': float(material.cost_per_unit),
+        })
+
+    return render(request, 'material_form.html', {'material': material, 'edit_mode': True})
 
 
 # --------------------------------------------------------------------------

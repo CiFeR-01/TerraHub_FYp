@@ -14,7 +14,16 @@
             Raw Materials &amp; Chemical Supplies Directory
         </h1>
     </div>
-    <div class="header-action-tray">
+    <div class="header-action-tray" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+        <a href="{% url 'export_material_template' %}" class="btn btn-secondary" style="padding: 0.5rem 0.85rem; font-size: 0.85rem; text-decoration:none;">
+            📄 Material Template
+        </a>
+        <a href="{% url 'export_materials_csv' %}" class="btn btn-secondary" style="padding: 0.5rem 0.85rem; font-size: 0.85rem; text-decoration:none;">
+            📥 Export Materials
+        </a>
+        <button class="btn btn-secondary" onclick="document.getElementById('import-mat-modal').style.display='flex'" style="padding: 0.5rem 0.85rem; font-size: 0.85rem;">
+            📤 Import Materials
+        </button>
         <button class="btn btn-primary" onclick="document.getElementById('material-modal').style.display='flex'" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
             ✚ Register Raw Material
         </button>
@@ -44,7 +53,8 @@
                     <th style="padding:0.75rem 1rem;">Unit Cost (RM)</th>
                     <th style="padding:0.75rem 1rem;">Active Inventory</th>
                     <th style="padding:0.75rem 1rem;">Total Weight (MT)</th>
-                    <th style="padding:0.75rem 1rem; text-align:right;">Valuation (RM)</th>
+                    <th style="padding:0.75rem 1rem;">Valuation (RM)</th>
+                    <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -62,11 +72,16 @@
                     <td style="padding:0.85rem 1rem;">RM{{ item.material.cost_per_unit|floatformat:2 }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:700;">{{ item.current_stock|floatformat:0 }} {{ item.material.unit_of_measure }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600; color:var(--primary);">{{ item.total_mt|floatformat:2 }} MT</td>
-                    <td style="padding:0.85rem 1rem; font-weight:700; text-align:right; color:#059669;">RM{{ item.total_value|floatformat:2 }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:#059669;">RM{{ item.total_value|floatformat:2 }}</td>
+                    <td style="padding:0.85rem 1rem; text-align:right;">
+                        <button class="btn btn-secondary" onclick="openEditMaterialModal({{ item.material.id }}, '{{ item.material.name|escapejs }}', '{{ item.material.sku|escapejs }}', '{{ item.material.category|escapejs }}', '{{ item.material.unit_of_measure|escapejs }}', {{ item.material.safe_storage_days }}, {{ item.material.weight_mt_per_unit }}, {{ item.material.cost_per_unit }})" style="padding:0.35rem 0.65rem; font-size:0.775rem;">
+                            ✏️ Edit
+                        </button>
+                    </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="9" style="padding:2rem; text-align:center; color:var(--text-muted);">No materials registered yet.</td>
+                    <td colspan="10" style="padding:2rem; text-align:center; color:var(--text-muted);">No materials registered yet.</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -137,6 +152,131 @@
     </div>
 </div>
 
+<!-- Modal: Edit Material -->
+<div id="edit-material-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:12px; width:100%; max-width:520px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+            <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;" id="edit_modal_title">Edit Raw Material</h3>
+            <button onclick="document.getElementById('edit-material-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        </div>
+        <form id="edit-material-form" method="post">
+            {% csrf_token %}
+            <div style="margin-bottom:0.85rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Material Name</label>
+                <input type="text" id="edit_mat_name" name="name" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:0.85rem;">
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">SKU</label>
+                    <input type="text" id="edit_mat_sku" name="sku" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Category</label>
+                    <input type="text" id="edit_mat_category" name="category" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:0.85rem;">
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Unit of Measure</label>
+                    <select id="edit_mat_uom" name="unit_of_measure" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                        <option value="MT">Metric Ton (MT)</option>
+                        <option value="kg">Kilograms (kg)</option>
+                        <option value="L">Litres (L)</option>
+                        <option value="g">Grams (g)</option>
+                        <option value="pcs">Pieces (pcs)</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Safe Storage Days</label>
+                    <input type="number" id="edit_mat_days" name="safe_storage_days" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:1.25rem;">
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">MT Weight / Unit</label>
+                    <input type="number" step="0.0001" id="edit_mat_weight" name="weight_mt_per_unit" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Cost / Unit (RM)</label>
+                    <input type="number" step="0.01" id="edit_mat_cost" name="cost_per_unit" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-material-modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Material Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal: Bulk Import Materials -->
+<div id="import-mat-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:12px; width:100%; max-width:620px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1); max-height:90vh; overflow-y:auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+            <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Bulk Import Materials (CSV)</h3>
+            <button onclick="document.getElementById('import-mat-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        </div>
+        
+        <div style="background:#f8fafc; border:1px dashed var(--border-light); border-radius:8px; padding:1rem; margin-bottom:1.25rem; font-size:0.85rem;">
+            <div style="font-weight:600; margin-bottom:0.3rem;">📋 Material CSV Formatting Guide:</div>
+            <div style="color:var(--text-muted); margin-bottom:0.5rem;">Expected headers: <code>name, sku, category, unit_of_measure, safe_storage_days, weight_mt_per_unit, cost_per_unit</code></div>
+            <a href="{% url 'export_material_template' %}" style="color:var(--primary); font-weight:600; text-decoration:none;">📄 Click here to download sample Material CSV template</a>
+        </div>
+
+        <form id="mat-import-form" action="{% url 'import_materials' %}" method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div style="margin-bottom:1rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.35rem;">Select CSV File</label>
+                <input type="file" id="mat_csv_file" name="csv_file" accept=".csv" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
+
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.35rem;">Anti-Duplication Strategy</label>
+                <div style="display:flex; flex-direction:column; gap:0.5rem; font-size:0.85rem;">
+                    <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+                        <input type="radio" name="duplicate_mode" value="skip" checked style="accent-color:var(--primary);">
+                        <span><strong>Skip Duplicates</strong> (Safest mode — leaves existing database items untouched)</span>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+                        <input type="radio" name="duplicate_mode" value="update" style="accent-color:var(--primary);">
+                        <span><strong>Update Existing</strong> (Updates cost, storage days, UOM for items with matching SKU)</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Dry-run live preview section -->
+            <div id="mat-dryrun-container" style="display:none; margin-bottom:1.25rem; background:#f1f5f9; border-radius:8px; padding:1rem; max-height:220px; overflow-y:auto;">
+                <div style="font-weight:700; font-size:0.85rem; margin-bottom:0.5rem; display:flex; justify-content:space-between;">
+                    <span>Dry-Run Validation Results:</span>
+                    <span id="mat-dryrun-badges"></span>
+                </div>
+                <table style="width:100%; border-collapse:collapse; font-size:0.775rem; background:#fff; border-radius:6px; overflow:hidden;">
+                    <thead>
+                        <tr style="background:#e2e8f0; text-align:left;">
+                            <th style="padding:0.4rem 0.6rem;">Line</th>
+                            <th style="padding:0.4rem 0.6rem;">Material Name</th>
+                            <th style="padding:0.4rem 0.6rem;">SKU</th>
+                            <th style="padding:0.4rem 0.6rem;">Status</th>
+                            <th style="padding:0.4rem 0.6rem;">Details</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mat-dryrun-tbody"></tbody>
+                </table>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; gap:0.75rem;">
+                <button type="button" class="btn btn-secondary" onclick="runMaterialDryRun()" style="font-size:0.85rem;">
+                    🔍 Dry-Run Preview
+                </button>
+                <div style="display:flex; gap:0.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('import-mat-modal').style.display='none'">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Confirm &amp; Import Materials</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 function toggleMaterialSkuAuto() {
     var input = document.getElementById('mat_sku_input');
@@ -150,6 +290,82 @@ function toggleMaterialSkuAuto() {
         input.style.background = '#ffffff';
         input.focus();
     }
+}
+
+function openEditMaterialModal(id, name, sku, category, uom, days, weight, cost) {
+    document.getElementById('edit_modal_title').innerText = "Edit Raw Material: " + name;
+    document.getElementById('edit_mat_name').value = name;
+    document.getElementById('edit_mat_sku').value = sku;
+    document.getElementById('edit_mat_category').value = category;
+    document.getElementById('edit_mat_uom').value = uom;
+    document.getElementById('edit_mat_days').value = days;
+    document.getElementById('edit_mat_weight').value = weight;
+    document.getElementById('edit_mat_cost').value = cost;
+
+    var form = document.getElementById('edit-material-form');
+    form.action = "/catalog/materials/" + id + "/edit/";
+
+    document.getElementById('edit-material-modal').style.display = 'flex';
+}
+
+function runMaterialDryRun() {
+    var fileInput = document.getElementById('mat_csv_file');
+    if (!fileInput.files || fileInput.files.length === 0) {
+        alert('Please select a CSV file first.');
+        return;
+    }
+    var form = document.getElementById('mat-import-form');
+    var formData = new FormData(form);
+    formData.append('dry_run', '1');
+
+    fetch("{% url 'import_materials' %}", {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (!data.success) {
+            alert('Dry run failed.');
+            return;
+        }
+        var container = document.getElementById('mat-dryrun-container');
+        var tbody = document.getElementById('mat-dryrun-tbody');
+        var badges = document.getElementById('mat-dryrun-badges');
+
+        container.style.display = 'block';
+        tbody.innerHTML = '';
+        badges.innerHTML = `
+            <span style="color:#059669; font-weight:700;">+${data.created_count} New</span> |
+            <span style="color:#2563eb; font-weight:700;">~${data.updated_count} Update</span> |
+            <span style="color:#d97706; font-weight:700;">=${data.skipped_count} Skip</span> |
+            <span style="color:#dc2626; font-weight:700;">!${data.error_count} Error</span>
+        `;
+
+        data.results.forEach(r => {
+            var tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid #cbd5e1';
+            var statusBadge = '';
+            if (r.status === 'created') statusBadge = '<span style="background:#d1fae5; color:#065f46; padding:2px 6px; border-radius:4px; font-weight:600;">NEW</span>';
+            else if (r.status === 'updated') statusBadge = '<span style="background:#dbeafe; color:#1e40af; padding:2px 6px; border-radius:4px; font-weight:600;">UPDATE</span>';
+            else if (r.status === 'duplicate') statusBadge = '<span style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-weight:600;">SKIP</span>';
+            else statusBadge = '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-weight:600;">ERROR</span>';
+
+            tr.innerHTML = `
+                <td style="padding:0.4rem 0.6rem; font-weight:600;">L${r.line}</td>
+                <td style="padding:0.4rem 0.6rem;">${r.name}</td>
+                <td style="padding:0.4rem 0.6rem; font-weight:600;">${r.sku}</td>
+                <td style="padding:0.4rem 0.6rem;">${statusBadge}</td>
+                <td style="padding:0.4rem 0.6rem; color:var(--text-muted);">${r.msg}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    })
+    .catch(err => {
+        alert('Error performing dry run: ' + err);
+    });
 }
 </script>
 {% endblock %}

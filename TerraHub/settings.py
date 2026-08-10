@@ -33,6 +33,9 @@ DEBUG = os.getenv('DEBUG', 'True') == 'True'
 # Locally: accepts all. On Railway: set ALLOWED_HOSTS=your-app.up.railway.app
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
+# Required in production for CSRF to work — must include full https:// URL
+CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost').split(',')
+
 
 # Application definition
 
