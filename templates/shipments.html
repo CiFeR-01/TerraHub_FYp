@@ -88,49 +88,26 @@
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
                     <th style="padding:0.75rem 1rem;">Tracking #</th>
-                    <th style="padding:0.75rem 1rem;">Direction</th>
-                    <th style="padding:0.75rem 1rem;">Cargo Item</th>
-                    <th style="padding:0.75rem 1rem;">Quantity</th>
-                    <th style="padding:0.75rem 1rem;">Origin</th>
-                    <th style="padding:0.75rem 1rem;">Destination</th>
-                    <th style="padding:0.75rem 1rem;">ETA Date</th>
-                    <th style="padding:0.75rem 1rem;">Status</th>
-                    <th style="padding:0.75rem 1rem; text-align:right;">Update Status</th>
+                    <th style="padding:0.75rem 1.5rem; text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Direction & Status</th>
+                    <th style="padding:0.75rem 1.5rem; text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Items</th>
+                    <th style="padding:0.75rem 1.5rem; text-align:right; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Actions</th>
                 </tr>
             </thead>
             <tbody>
-                {% for ship in shipments %}
+                {% for s in shipments %}
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
-                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ ship.tracking_number }}</td>
-                    <td style="padding:0.85rem 1rem;"><span class="badge badge-sky">{{ ship.get_direction_display }}</span></td>
-                    <td style="padding:0.85rem 1rem; font-weight:600;">{% if ship.material %}{{ ship.material.name }}{% elif ship.product %}{{ ship.product.name }}{% else %}General Cargo{% endif %}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:600;">{{ ship.quantity|floatformat:1 }}</td>
-                    <td style="padding:0.85rem 1rem;">{% if ship.origin_warehouse %}{{ ship.origin_warehouse.name }}{% elif ship.external_origin %}{{ ship.external_origin }}{% else %}Supplier Storage{% endif %}</td>
-                    <td style="padding:0.85rem 1rem;">{% if ship.destination_warehouse %}{{ ship.destination_warehouse.name }}{% else %}Client Port{% endif %}</td>
-                    <td style="padding:0.85rem 1rem;">{{ ship.expected_eta_date|default:"TBD" }}</td>
-                    <td style="padding:0.85rem 1rem;">
-                        {% if ship.status == 'Dispatched' %}<span class="badge badge-emerald">Dispatched</span>
-                        {% elif ship.status == 'Preparing' %}<span class="badge badge-indigo">Preparing</span>
-                        {% elif ship.status == 'Delayed' %}<span class="badge badge-rose">Delayed</span>
-                        {% else %}<span class="badge badge-emerald">Arrived</span>{% endif %}
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ s.tracking_number }}</td>
+                    <td style="padding:0.85rem 1rem;"><span class="badge badge-sky">{{ s.get_direction_display }}</span> - <span class="badge badge-emerald">{{ s.status }}</span></td>
+                    <td style="padding:1rem 1.5rem; font-weight:500;">
+                        {{ s.items.count }} Item(s)
                     </td>
-                    <td style="padding:0.85rem 1rem; text-align:right;">
-                        <form method="post" style="display:inline-flex; gap:0.4rem; align-items:center;">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="update_status">
-                            <input type="hidden" name="shipment_id" value="{{ ship.id }}">
-                            <select name="status" class="form-select" style="padding:0.3rem 0.5rem; font-size:0.78rem; border-radius:4px; border:1px solid var(--border-light);">
-                                {% for code, label in status_choices %}
-                                <option value="{{ code }}" {% if ship.status == code %}selected{% endif %}>{{ label }}</option>
-                                {% endfor %}
-                            </select>
-                            <button type="submit" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem;">Save</button>
-                        </form>
+                    <td style="padding:1rem 1.5rem; text-align:right;">
+                        <a href="{% url 'shipment_detail' s.pk %}" class="btn btn-secondary" style="padding:0.35rem 0.75rem; font-size:0.8rem;">Manage</a>
                     </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="9" style="padding:2rem; text-align:center; color:var(--text-muted);">No logistics shipment records found.</td>
+                    <td colspan="4" style="padding:2rem; text-align:center; color:var(--text-muted);">No logistics shipment records found.</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -150,7 +127,6 @@
             <input type="hidden" name="action" value="create_shipment">
             
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem;">
-                <!-- General Settings -->
                 <div>
                     <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Direction</label>
                     <select name="direction" id="id_direction" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); font-weight:500;">
@@ -181,7 +157,8 @@
                 <input type="text" name="tracking_number" id="id_tracking_number" value="{{ next_tracking_number }}" placeholder="TRK-0101" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background: #f8fafc; font-weight: 500;" readonly>
             </div>
 
-            <!-- Conditional Order reference & Cargo Item Type -->
+
+            <!-- Order reference & External Origin -->
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem;">
                 <!-- Order Reference -->
                 <div id="div_purchase_order">
@@ -203,60 +180,6 @@
                     </select>
                 </div>
 
-                <!-- Cargo Type selection -->
-                <div>
-                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Cargo Type</label>
-                    <div style="display: flex; gap: 1rem; padding-top: 0.4rem;">
-                        <label style="display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; cursor: pointer;">
-                            <input type="radio" name="cargo_type" value="material" id="cargo_type_material" checked style="accent-color: var(--primary);"> Raw Material
-                        </label>
-                        <label style="display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; cursor: pointer;">
-                            <input type="radio" name="cargo_type" value="product" id="cargo_type_product" style="accent-color: var(--primary);"> Finished Product
-                        </label>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Items and Batches -->
-            <div style="display: grid; grid-template-columns: 1.25fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem;">
-                <div>
-                    <label id="cargo_item_label" style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Cargo Item</label>
-                    
-                    <!-- Material dropdown -->
-                    <select name="material_id" id="id_material" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-                        <option value="">-- Select Material --</option>
-                        {% for m in materials %}
-                        <option value="{{ m.id }}">{{ m.sku }} — {{ m.name }}</option>
-                        {% endfor %}
-                    </select>
-                    
-                    <!-- Product dropdown -->
-                    <select name="product_id" id="id_product" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); display: none;">
-                        <option value="">-- Select Product --</option>
-                        {% for p in products %}
-                        <option value="{{ p.id }}">{{ p.sku }} — {{ p.name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                
-                <div>
-                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Batch Reference (Optional)</label>
-                    <select name="batch_id" id="id_batch" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-                        <option value="">-- Select Batch --</option>
-                        {% for b in batches %}
-                        <option value="{{ b.id }}" data-material="{{ b.material.id|default:'' }}" data-product="{{ b.product.id|default:'' }}">{{ b.batch_number }} (Qty: {{ b.quantity|floatformat:1 }})</option>
-                        {% endfor %}
-                    </select>
-                </div>
-            </div>
-
-            <!-- Quantity & External origin -->
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem;">
-                <div>
-                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Quantity</label>
-                    <input type="number" step="0.01" name="quantity" id="id_quantity" required placeholder="0.0" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-                </div>
-                
                 <!-- External Origin (Shown for Inbound if Supplier) -->
                 <div id="div_external_origin">
                     <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">External Origin Name</label>
@@ -359,14 +282,6 @@
         
         const poSelect = document.getElementById("id_purchase_order");
         const soSelect = document.getElementById("id_sales_order");
-        const materialSelect = document.getElementById("id_material");
-        const productSelect = document.getElementById("id_product");
-        const batchSelect = document.getElementById("id_batch");
-        const quantityInput = document.getElementById("id_quantity");
-        
-        const cargoTypeMaterial = document.getElementById("cargo_type_material");
-        const cargoTypeProduct = document.getElementById("cargo_type_product");
-        const cargoItemLabel = document.getElementById("cargo_item_label");
         
         // Initial setup
         const today = new Date().toISOString().split('T')[0];
@@ -400,9 +315,6 @@
                 divOriginWh.style.display = "none";
                 document.getElementById("id_origin_warehouse").value = "";
                 divDestWh.style.display = "block";
-                
-                cargoTypeMaterial.checked = true;
-                handleCargoTypeChange();
             } else if (dir === "Outbound") {
                 divPO.style.display = "none";
                 poSelect.value = "";
@@ -413,9 +325,6 @@
                 divOriginWh.style.display = "block";
                 divDestWh.style.display = "none";
                 document.getElementById("id_destination_warehouse").value = "";
-                
-                cargoTypeProduct.checked = true;
-                handleCargoTypeChange();
             } else { // Transfer
                 divPO.style.display = "none";
                 poSelect.value = "";
@@ -427,29 +336,8 @@
                 divOriginWh.style.display = "block";
                 divDestWh.style.display = "block";
             }
-            filterCargoOptions();
         }
 
-        // Cargo Type Selection Logic
-        cargoTypeMaterial.addEventListener("change", handleCargoTypeChange);
-        cargoTypeProduct.addEventListener("change", handleCargoTypeChange);
-
-        function handleCargoTypeChange() {
-            if (cargoTypeMaterial.checked) {
-                materialSelect.style.display = "block";
-                productSelect.style.display = "none";
-                productSelect.value = "";
-                cargoItemLabel.innerText = "Cargo Item (Material)";
-            } else {
-                materialSelect.style.display = "none";
-                productSelect.style.display = "block";
-                materialSelect.value = "";
-                cargoItemLabel.innerText = "Cargo Item (Product)";
-            }
-            filterBatches();
-        }
-
-        // Status change logic
         statusSelect.addEventListener("change", function() {
             if (this.value === "Arrived") {
                 divActualArrival.style.display = "block";
@@ -459,144 +347,6 @@
                 document.getElementById("id_actual_arrival_date").value = "";
             }
         });
-
-        // Filter batches based on selected Material or Product
-        materialSelect.addEventListener("change", filterBatches);
-        productSelect.addEventListener("change", filterBatches);
-
-        function filterBatches() {
-            const selectedMat = materialSelect.value;
-            const selectedProd = productSelect.value;
-            
-            const options = batchSelect.options;
-            for (let i = 0; i < options.length; i++) {
-                const opt = options[i];
-                if (opt.value === "") {
-                    opt.style.display = "";
-                    continue;
-                }
-                const bMat = opt.getAttribute("data-material");
-                const bProd = opt.getAttribute("data-product");
-                
-                if (selectedMat && bMat === selectedMat) {
-                    opt.style.display = "";
-                } else if (selectedProd && bProd === selectedProd) {
-                    opt.style.display = "";
-                } else if (!selectedMat && !selectedProd) {
-                    opt.style.display = "";
-                } else {
-                    opt.style.display = "none";
-                }
-            }
-            // Clear batch selection if the selected batch does not match the active filters
-            const selectedOpt = batchSelect.options[batchSelect.selectedIndex];
-            if (selectedOpt && selectedOpt.value !== "") {
-                const bMat = selectedOpt.getAttribute("data-material");
-                const bProd = selectedOpt.getAttribute("data-product");
-                if (selectedMat && bMat !== selectedMat) batchSelect.value = "";
-                if (selectedProd && bProd !== selectedProd) batchSelect.value = "";
-            }
-        }
-
-        // Purchase Order Selection -> autofill destination warehouse & filter materials
-        poSelect.addEventListener("change", function() {
-            const poId = this.value;
-            if (!poId || !poData[poId]) {
-                filterCargoOptions();
-                return;
-            }
-            const info = poData[poId];
-            if (info.warehouse_id) {
-                document.getElementById("id_destination_warehouse").value = info.warehouse_id;
-            }
-            
-            // Filter materials
-            const allowedIds = info.items.map(item => item.id);
-            const matOptions = materialSelect.options;
-            let lastMatchedId = "";
-            let matchedCount = 0;
-            
-            for (let i = 0; i < matOptions.length; i++) {
-                const opt = matOptions[i];
-                if (opt.value === "") continue;
-                if (allowedIds.includes(opt.value)) {
-                    opt.style.display = "";
-                    lastMatchedId = opt.value;
-                    matchedCount++;
-                } else {
-                    opt.style.display = "none";
-                }
-            }
-            
-            // If only 1 material matched, auto-select it and fill quantity
-            if (matchedCount === 1) {
-                materialSelect.value = lastMatchedId;
-                const matchedItem = info.items.find(item => item.id === lastMatchedId);
-                if (matchedItem) {
-                    quantityInput.value = matchedItem.qty;
-                }
-                filterBatches();
-            } else {
-                materialSelect.value = "";
-                quantityInput.value = "";
-            }
-        });
-
-        // Sales Order Selection -> autofill origin warehouse & filter products
-        soSelect.addEventListener("change", function() {
-            const soId = this.value;
-            if (!soId || !soData[soId]) {
-                filterCargoOptions();
-                return;
-            }
-            const info = soData[soId];
-            if (info.warehouse_id) {
-                document.getElementById("id_origin_warehouse").value = info.warehouse_id;
-            }
-            
-            // Filter products
-            const allowedIds = info.items.map(item => item.id);
-            const prodOptions = productSelect.options;
-            let lastMatchedId = "";
-            let matchedCount = 0;
-            
-            for (let i = 0; i < prodOptions.length; i++) {
-                const opt = prodOptions[i];
-                if (opt.value === "") continue;
-                if (allowedIds.includes(opt.value)) {
-                    opt.style.display = "";
-                    lastMatchedId = opt.value;
-                    matchedCount++;
-                } else {
-                    opt.style.display = "none";
-                }
-            }
-            
-            // If only 1 product matched, auto-select it and fill quantity
-            if (matchedCount === 1) {
-                productSelect.value = lastMatchedId;
-                const matchedItem = info.items.find(item => item.id === lastMatchedId);
-                if (matchedItem) {
-                    quantityInput.value = matchedItem.qty;
-                }
-                filterBatches();
-            } else {
-                productSelect.value = "";
-                quantityInput.value = "";
-            }
-        });
-
-        function filterCargoOptions() {
-            // Restore all options if no PO/SO is selected
-            const matOptions = materialSelect.options;
-            for (let i = 0; i < matOptions.length; i++) {
-                matOptions[i].style.display = "";
-            }
-            const prodOptions = productSelect.options;
-            for (let i = 0; i < prodOptions.length; i++) {
-                prodOptions[i].style.display = "";
-            }
-        }
 
         // Initialize form layout based on default values
         handleDirectionChange();

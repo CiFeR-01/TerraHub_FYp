@@ -136,8 +136,7 @@
                         <th>Direction</th>
                         <th>Status</th>
                         <th>ETA Date</th>
-                        <th>Payload</th>
-                        <th style="text-align: right;">Quantity</th>
+                        <th style="text-align: right;">Items</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -160,20 +159,11 @@
                             </span>
                         </td>
                         <td style="color: var(--text-muted);">{{ shipment.expected_eta_date|default:"N/A" }}</td>
-                        <td style="font-weight: 500;">
-                            {% if shipment.material %}
-                            {{ shipment.material.name }} <span style="font-size: 0.75rem; color: var(--text-muted);">({{ shipment.material.sku }})</span>
-                            {% elif shipment.product %}
-                            {{ shipment.product.name }} <span style="font-size: 0.75rem; color: var(--text-muted);">({{ shipment.product.sku }})</span>
-                            {% else %}
-                            Multiple Cargo
-                            {% endif %}
-                        </td>
-                        <td style="text-align: right; font-weight: 700;">{{ shipment.quantity }}</td>
+                        <td style="text-align: right; font-weight: 700;">{{ shipment.items.count }} Item(s)</td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                        <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">
                             No active movements in pipeline.
                         </td>
                     </tr>

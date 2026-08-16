@@ -1,4 +1,5 @@
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.http import HttpResponse, JsonResponse
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
@@ -13,7 +14,7 @@ from .models import (
     CustomUser, Warehouse, WarehouseLocation, Material, Product,
     ProductRecipe, ProductionRun, ProductionConsumption, Batch,
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
-    Shipment, StockAudit, RegistryLog, OrderTimeline, Notification
+    Shipment, ShipmentItem, StockAudit, RegistryLog, OrderTimeline, Notification
 )
 from .utils import generate_next_code
 
@@ -113,8 +114,8 @@ def dashboard_view(request):
 
     # 4. Active shipments (status is not 'Arrived', ordered by expected_eta_date)
     active_shipments = Shipment.objects.exclude(status='Arrived').select_related(
-        'material', 'product', 'origin_warehouse', 'destination_warehouse'
-    ).order_by('expected_eta_date')
+        'origin_warehouse', 'destination_warehouse'
+    ).prefetch_related('items').order_by('expected_eta_date')
 
     # 5. Degrading batches (active batches, <= 30 days remaining shelf life OR less than material.safe_storage_days)
     active_batches = Batch.objects.filter(status='Active').select_related('material', 'product', 'location__warehouse')
@@ -231,29 +232,124 @@ def home_view(request):
 
 @login_required
 def warehouse_inventory_view(request):
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'manual_receive':
+            if not request.user.can_adjust_physical_stock:
+                messages.error(request, "Permission Denied: You cannot manually adjust stock.")
+                return redirect('warehouse_inventory')
+            
+            material_id = request.POST.get('material_id')
+            product_id = request.POST.get('product_id')
+            qty = request.POST.get('quantity')
+            wh_id = request.POST.get('warehouse_id')
+            expiry = request.POST.get('expiry_date')
+            
+            if not qty or float(qty) <= 0:
+                messages.error(request, "Invalid quantity.")
+                return redirect('warehouse_inventory')
+                
+            try:
+                loc = WarehouseLocation.objects.filter(warehouse_id=wh_id).first()
+                if not loc:
+                    messages.error(request, "Target warehouse has no defined locations.")
+                    return redirect('warehouse_inventory')
+                
+                if material_id:
+                    mat = get_object_or_404(Material, id=material_id)
+                    b = Batch.objects.create(
+                        batch_number=f"M-ADJ-{mat.sku}-{date.today().strftime('%Y%m%d')}",
+                        status='Active',
+                        material=mat,
+                        quantity=float(qty),
+                        manufacturing_date=date.today(),
+                        expiry_date=expiry if expiry else date.today() + timedelta(days=365),
+                        location=loc
+                    )
+                    log_item = mat.name
+                elif product_id:
+                    prod = get_object_or_404(Product, id=product_id)
+                    b = Batch.objects.create(
+                        batch_number=f"P-ADJ-{prod.sku}-{date.today().strftime('%Y%m%d')}",
+                        status='Active',
+                        product=prod,
+                        quantity=float(qty),
+                        manufacturing_date=date.today(),
+                        expiry_date=expiry if expiry else date.today() + timedelta(days=365),
+                        location=loc
+                    )
+                    log_item = prod.name
+                else:
+                    messages.error(request, "Must select either Material or Product.")
+                    return redirect('warehouse_inventory')
+                    
+                RegistryLog.objects.create(
+                    action_type='Adjusted',
+                    item_name=f"Manual Receipt of {log_item}",
+                    quantity_changed=float(qty),
+                    warehouse=loc.warehouse,
+                    user=request.user
+                )
+                messages.success(request, f"Successfully received {qty} of {log_item}.")
+            except Exception as e:
+                messages.error(request, f"Error receiving stock: {e}")
+            return redirect('warehouse_inventory')
+
     warehouses = Warehouse.objects.all().order_by('name')
     warehouse_id = request.GET.get('warehouse_id')
     selected_warehouse = None
     batches = []
+    global_kpis = None
 
     if warehouse_id:
         try:
             selected_warehouse = Warehouse.objects.get(id=warehouse_id)
             batches = Batch.objects.filter(location__warehouse=selected_warehouse, status='Active').select_related(
-                'material', 'product', 'location'
+                'material', 'product', 'location', 'location__warehouse'
             ).order_by('location__zone_name', 'location__aisle')
         except Warehouse.DoesNotExist:
             pass
+
+    if not selected_warehouse:
+        batches = Batch.objects.filter(status='Active').select_related(
+            'material', 'product', 'location', 'location__warehouse'
+        ).order_by('-manufacturing_date')
+        
+        from django.db.models import Sum
+        total_cap = Warehouse.objects.aggregate(t=Sum('total_capacity_mt'))['t'] or 0
+        global_kpis = {
+            'total_warehouses': warehouses.count(),
+            'total_capacity': total_cap,
+            'total_batches': batches.count(),
+        }
 
     can_adjust = request.user.can_adjust_physical_stock
 
     context = {
         'warehouses': warehouses,
+        'materials': Material.objects.all().order_by('name'),
+        'products': Product.objects.all().order_by('name'),
         'selected_warehouse': selected_warehouse,
         'batches': batches,
+        'global_kpis': global_kpis,
         'can_adjust': can_adjust,
     }
     return render(request, 'warehouse_inventory.html', context)
+
+@login_required
+def batch_detail_view(request, batch_number):
+    from django.shortcuts import get_object_or_404
+    batch = get_object_or_404(Batch.objects.select_related(
+        'material', 'product', 'location', 'location__warehouse', 'purchase_order', 'produced_in', 'produced_in__manufacturing_plant'
+    ), batch_number=batch_number)
+    
+    logs = RegistryLog.objects.filter(item_name__icontains=batch.batch_number).select_related('user', 'warehouse').order_by('-timestamp')
+    
+    context = {
+        'batch': batch,
+        'logs': logs,
+    }
+    return render(request, 'batch_detail.html', context)
 
 
 class WarehouseForm(forms.ModelForm):
@@ -1315,10 +1411,10 @@ def material_edit_view(request, pk):
 
 
 # --------------------------------------------------------------------------
-# ORDER MANAGEMENT (PO & SO)
+# SALES ORDERS
 # --------------------------------------------------------------------------
 @login_required
-def order_list_view(request):
+def sales_order_list_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'create_so':
@@ -1339,7 +1435,68 @@ def order_list_view(request):
             except Exception as e:
                 messages.error(request, f"Error creating Sales Order: {e}")
 
-        elif action == 'create_po':
+        elif action == 'update_so_status':
+            new_status = request.POST.get('status')
+            if new_status in ['Pending', 'Awaiting Acknowledgement']:
+                if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
+                    messages.error(request, "Permission Denied: Only Managers can approve Sales Orders.")
+                    return redirect('so_list')
+            so_id = request.POST.get('so_id')
+            new_status = request.POST.get('status')
+            so = get_object_or_404(SalesOrder, id=so_id)
+            old_status = so.status
+            so.status = new_status
+            if new_status in ['Pending', 'Awaiting Acknowledgement']:
+                so.approved_by = request.user
+            so.save()
+            OrderTimeline.objects.create(sales_order=so, action=f"Status changed to '{new_status}'", user=request.user)
+            
+            from .utils import allocate_stock, deduct_stock_from_allocation
+            if old_status != 'Pending' and new_status == 'Pending':
+                for item in so.items.all():
+                    allocate_stock('sales_order', so, item.product, item.quantity_ordered)
+                    
+            if old_status not in ['Shipped', 'Delivered'] and new_status in ['Shipped', 'Delivered']:
+                deduct_stock_from_allocation('sales_order', so)
+                
+            messages.success(request, f"Sales Order {so.so_number} updated to {new_status}.")
+
+        return redirect('so_list')
+
+    search_query = request.GET.get('q', '').strip()
+    status_filter = request.GET.get('status', '').strip()
+    
+    sales_orders = SalesOrder.objects.select_related('origin_warehouse', 'created_by', 'approved_by').prefetch_related('items__product', 'timeline').order_by('-order_date')
+    
+    if search_query:
+        sales_orders = sales_orders.filter(
+            Q(so_number__icontains=search_query) | Q(client_name__icontains=search_query)
+        )
+        
+    if status_filter:
+        sales_orders = sales_orders.filter(status=status_filter)
+
+    warehouses = Warehouse.objects.all().order_by('name')
+
+    context = {
+        'search_query': search_query,
+        'status_filter': status_filter,
+        'sales_orders': sales_orders,
+        'warehouses': warehouses,
+        'so_status_choices': SalesOrder.STATUS_CHOICES,
+        'next_so_number': generate_next_code(SalesOrder, 'so_number', 'SO', 1001),
+    }
+    return render(request, 'so_list.html', context)
+
+
+# --------------------------------------------------------------------------
+# PURCHASE ORDERS
+# --------------------------------------------------------------------------
+@login_required
+def purchase_order_list_view(request):
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'create_po':
             po_number_auto = request.POST.get('po_number_auto') == '1'
             po_number = request.POST.get('po_number')
             if po_number_auto or not po_number:
@@ -1357,17 +1514,6 @@ def order_list_view(request):
             except Exception as e:
                 messages.error(request, f"Error creating Purchase Order: {e}")
 
-        elif action == 'update_so_status':
-            so_id = request.POST.get('so_id')
-            new_status = request.POST.get('status')
-            so = get_object_or_404(SalesOrder, id=so_id)
-            so.status = new_status
-            if new_status in ['Pending', 'Awaiting Acknowledgement']:
-                so.approved_by = request.user
-            so.save()
-            OrderTimeline.objects.create(sales_order=so, action=f"Status changed to '{new_status}'", user=request.user)
-            messages.success(request, f"Sales Order {so.so_number} updated to {new_status}.")
-
         elif action == 'update_po_status':
             po_id = request.POST.get('po_id')
             new_status = request.POST.get('status')
@@ -1379,22 +1525,32 @@ def order_list_view(request):
             OrderTimeline.objects.create(purchase_order=po, action=f"Status changed to '{new_status}'", user=request.user)
             messages.success(request, f"Purchase Order {po.po_number} updated to {new_status}.")
 
-        return redirect('order_list')
+        return redirect('po_list')
 
-    sales_orders = SalesOrder.objects.select_related('origin_warehouse', 'created_by', 'approved_by').prefetch_related('items__product', 'timeline').order_by('-order_date')
+    search_query = request.GET.get('q', '').strip()
+    status_filter = request.GET.get('status', '').strip()
+    
     purchase_orders = PurchaseOrder.objects.select_related('target_warehouse', 'created_by', 'approved_by').prefetch_related('items__material', 'timeline').order_by('-order_date')
+    
+    if search_query:
+        purchase_orders = purchase_orders.filter(
+            Q(po_number__icontains=search_query) | Q(supplier_name__icontains=search_query)
+        )
+        
+    if status_filter:
+        purchase_orders = purchase_orders.filter(status=status_filter)
+
     warehouses = Warehouse.objects.all().order_by('name')
 
     context = {
-        'sales_orders': sales_orders,
+        'search_query': search_query,
+        'status_filter': status_filter,
         'purchase_orders': purchase_orders,
         'warehouses': warehouses,
-        'so_status_choices': SalesOrder.STATUS_CHOICES,
         'po_status_choices': PurchaseOrder.STATUS_CHOICES,
-        'next_so_number': generate_next_code(SalesOrder, 'so_number', 'SO', 1001),
         'next_po_number': generate_next_code(PurchaseOrder, 'po_number', 'PO', 5001),
     }
-    return render(request, 'order_list.html', context)
+    return render(request, 'po_list.html', context)
 
 
 # --------------------------------------------------------------------------
@@ -1439,13 +1595,36 @@ def so_detail_view(request, pk):
 
         elif action == 'update_so_status':
             new_status = request.POST.get('status')
+            if new_status in ['Pending', 'Awaiting Acknowledgement']:
+                if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
+                    messages.error(request, "Permission Denied: Only Managers can approve Sales Orders.")
+                    return redirect('so_detail', pk=so.pk)
+            old_status = so.status
             so.status = new_status
             if new_status in ['Pending', 'Awaiting Acknowledgement']:
                 so.approved_by = request.user
             so.save()
             OrderTimeline.objects.create(sales_order=so, action=f"Status updated to '{new_status}'", user=request.user)
-            messages.success(request, f"{so.so_number} status updated to {new_status}.")
+            
+            from .utils import allocate_stock, deduct_stock_from_allocation
+            if old_status != 'Pending' and new_status == 'Pending':
+                for item in so.items.all():
+                    allocate_stock('sales_order', so, item.product, item.quantity_ordered)
+                    
+            if old_status not in ['Shipped', 'Delivered'] and new_status in ['Shipped', 'Delivered']:
+                deduct_stock_from_allocation('sales_order', so)
 
+            # Notify followers of status change
+            for follower in so.followers.all():
+                if follower != request.user:
+                    Notification.objects.create(
+                        user=follower,
+                        message=f"Sales Order {so.so_number} status changed to {new_status}.",
+                        link=reverse('so_detail', args=[so.pk])
+                    )
+
+            messages.success(request, f"{so.so_number} status updated to {new_status}.")
+            
         elif action == 'update_so_header':
             so.client_name = request.POST.get('client_name', so.client_name)
             wh_id = request.POST.get('origin_warehouse_id')
@@ -1453,19 +1632,78 @@ def so_detail_view(request, pk):
                 so.origin_warehouse = get_object_or_404(Warehouse, id=wh_id)
             deadline = request.POST.get('fulfillment_deadline')
             so.fulfillment_deadline = deadline if deadline else so.fulfillment_deadline
+            so.updated_by = request.user
             so.save()
             messages.success(request, f"{so.so_number} details updated.")
 
+        elif action == 'request_approval':
+            manager_id = request.POST.get('manager_id')
+            remarks = request.POST.get('remarks', '').strip()
+            
+            mgr = CustomUser.objects.filter(id=manager_id).first()
+            if not mgr:
+                messages.error(request, "Please select a valid manager for approval.")
+            else:
+                so.status = 'Pending Approval'
+                so.assigned_to = mgr
+                so.approval_remarks = remarks
+                so.save()
+                
+                OrderTimeline.objects.create(sales_order=so, action=f"Approval Requested from {mgr.username}. Remarks: {remarks}", user=request.user)
+                Notification.objects.create(
+                    user=mgr,
+                    message=f"Sales Order {so.so_number} requires your approval.",
+                    link=reverse('approvals_inbox')
+                )
+                messages.success(request, f"Approval requested from {mgr.get_full_name() or mgr.username}.")
+        elif action == 'add_follower':
+            user_id = request.POST.get('user_id')
+            user_to_add = CustomUser.objects.filter(id=user_id).first()
+            if user_to_add:
+                so.followers.add(user_to_add)
+                messages.success(request, f"Added {user_to_add.username} as a follower.")
+            else:
+                messages.error(request, "User not found.")
+
+        elif action == 'remove_follower':
+            user_id = request.POST.get('user_id')
+            user_to_remove = CustomUser.objects.filter(id=user_id).first()
+            if user_to_remove:
+                so.followers.remove(user_to_remove)
+                messages.success(request, f"Removed {user_to_remove.username} from followers.")
+
         return redirect('so_detail', pk=so.pk)
 
-    # BOM readiness per line item
+    # BOM readiness and Allocation logic
     line_items_with_bom = []
+    from django.db.models import Sum, F
+    from .models import StockAllocation
+    
     for item in so.items.select_related('product').all():
+        allocated = float(StockAllocation.objects.filter(sales_order=so, batch__product=item.product).aggregate(s=Sum('quantity'))['s'] or 0)
+        global_avail = float(Batch.objects.filter(product=item.product, status='Active').annotate(avail=F('quantity')-F('allocated_quantity')).aggregate(s=Sum('avail'))['s'] or 0)
+        
+        incoming_production = float(ProductionRun.objects.filter(
+            sales_order=so,
+            target_product=item.product,
+            status__in=['Pending Approval', 'Planned', 'InProgress']
+        ).aggregate(s=Sum('expected_yield'))['s'] or 0)
+
+        if so.status in ['Ready to Ship', 'Shipped', 'Delivered', 'Cancelled']:
+            deficit = 0.0
+        else:
+            if so.status in ['Draft', 'Pending Approval']:
+                deficit = float(item.quantity_ordered) - global_avail - incoming_production
+            else:
+                deficit = float(item.quantity_ordered) - allocated - incoming_production
+                
+            deficit = max(0.0, deficit)
+
         recipes = item.product.recipe_items.select_related('material').all()
         bom_rows = []
         can_make_units = None
         for r in recipes:
-            avail = float(Batch.objects.filter(material=r.material, status='Active').aggregate(s=Sum('quantity'))['s'] or 0)
+            avail = float(Batch.objects.filter(material=r.material, status='Active').annotate(avail=F('quantity')-F('allocated_quantity')).aggregate(s=Sum('avail'))['s'] or 0)
             needed_per_unit = float(r.quantity_required)
             needed_for_order = needed_per_unit * float(item.quantity_ordered)
             sufficient = avail >= needed_for_order
@@ -1484,14 +1722,18 @@ def so_detail_view(request, pk):
             'bom_rows': bom_rows,
             'can_make_units': can_make_units if can_make_units is not None else '∞',
             'bom_ready': all(row['sufficient'] for row in bom_rows),
+            'allocated': allocated,
+            'deficit': deficit,
         })
 
     context = {
         'so': so,
-        'line_items_with_bom': line_items_with_bom,
+        'line_items': line_items_with_bom,
         'products': products,
         'warehouses': warehouses,
         'so_status_choices': SalesOrder.STATUS_CHOICES,
+        'managers': CustomUser.objects.filter(role__in=['Admin', 'Manager']).order_by('username'),
+        'all_users': CustomUser.objects.all().order_by('username'),
     }
     return render(request, 'so_detail.html', context)
 
@@ -1541,9 +1783,28 @@ def po_detail_view(request, pk):
             qty_received = request.POST.get('qty_received', 0)
             try:
                 item = get_object_or_404(PurchaseOrderDetail, id=item_id, purchase_order=po)
-                item.quantity_received = float(qty_received)
+                old_qty = float(item.quantity_received)
+                new_qty = float(qty_received)
+                delta = new_qty - old_qty
+                
+                item.quantity_received = new_qty
                 item.save()
-                OrderTimeline.objects.create(purchase_order=po, action=f"Received {qty_received} of {item.material.name}", user=request.user)
+                OrderTimeline.objects.create(purchase_order=po, action=f"Received {new_qty} of {item.material.name}", user=request.user)
+                
+                if delta > 0:
+                    from datetime import date, timedelta
+                    from .models import Batch, WarehouseLocation
+                    loc = WarehouseLocation.objects.filter(warehouse=po.target_warehouse).first()
+                    Batch.objects.create(
+                        batch_number=f"B-{po.po_number}-{item.material.sku}-{int(new_qty)}",
+                        status='Active',
+                        material=item.material,
+                        quantity=delta,
+                        manufacturing_date=date.today(),
+                        expiry_date=date.today() + timedelta(days=365),
+                        location=loc
+                    )
+                
                 # Auto update PO status
                 all_items = po.items.all()
                 total_ordered = sum(float(i.quantity_ordered) for i in all_items)
@@ -1553,7 +1814,7 @@ def po_detail_view(request, pk):
                 elif total_received > 0:
                     po.status = 'Partially Received'
                 po.save()
-                messages.success(request, f"Updated received quantity for {item.material.name}.")
+                messages.success(request, f"Updated received quantity for {item.material.name} and added {delta} to inventory.")
             except Exception as e:
                 messages.error(request, f"Error updating received qty: {e}")
 
@@ -1564,6 +1825,16 @@ def po_detail_view(request, pk):
                 po.approved_by = request.user
             po.save()
             OrderTimeline.objects.create(purchase_order=po, action=f"Status updated to '{new_status}'", user=request.user)
+
+            # Notify followers of status change
+            for follower in po.followers.all():
+                if follower != request.user:
+                    Notification.objects.create(
+                        user=follower,
+                        message=f"Purchase Order {po.po_number} status changed to {new_status}.",
+                        link=reverse('po_detail', args=[po.pk])
+                    )
+
             messages.success(request, f"{po.po_number} status updated to {new_status}.")
 
         elif action == 'update_po_header':
@@ -1573,8 +1844,45 @@ def po_detail_view(request, pk):
                 po.target_warehouse = get_object_or_404(Warehouse, id=wh_id)
             deadline = request.POST.get('expected_delivery_date')
             po.expected_delivery_date = deadline if deadline else po.expected_delivery_date
+            po.updated_by = request.user
             po.save()
             messages.success(request, f"{po.po_number} details updated.")
+
+        elif action == 'request_approval':
+            manager_id = request.POST.get('manager_id')
+            remarks = request.POST.get('remarks', '').strip()
+            
+            mgr = CustomUser.objects.filter(id=manager_id).first()
+            if not mgr:
+                messages.error(request, "Please select a valid manager for approval.")
+            else:
+                po.status = 'Pending Approval'
+                po.assigned_to = mgr
+                po.approval_remarks = remarks
+                po.save()
+                
+                OrderTimeline.objects.create(purchase_order=po, action=f"Approval Requested from {mgr.username}. Remarks: {remarks}", user=request.user)
+                Notification.objects.create(
+                    user=mgr,
+                    message=f"Purchase Order {po.po_number} requires your approval.",
+                    link=reverse('approvals_inbox')
+                )
+                messages.success(request, f"Approval requested from {mgr.get_full_name() or mgr.username}.")
+        elif action == 'add_follower':
+            user_id = request.POST.get('user_id')
+            user_to_add = CustomUser.objects.filter(id=user_id).first()
+            if user_to_add:
+                po.followers.add(user_to_add)
+                messages.success(request, f"Added {user_to_add.username} as a follower.")
+            else:
+                messages.error(request, "User not found.")
+
+        elif action == 'remove_follower':
+            user_id = request.POST.get('user_id')
+            user_to_remove = CustomUser.objects.filter(id=user_id).first()
+            if user_to_remove:
+                po.followers.remove(user_to_remove)
+                messages.success(request, f"Removed {user_to_remove.username} from followers.")
 
         return redirect('po_detail', pk=po.pk)
 
@@ -1597,6 +1905,8 @@ def po_detail_view(request, pk):
         'materials': materials,
         'warehouses': warehouses,
         'po_status_choices': PurchaseOrder.STATUS_CHOICES,
+        'managers': CustomUser.objects.filter(role__in=['Admin', 'Manager']).order_by('username'),
+        'all_users': CustomUser.objects.all().order_by('username'),
     }
     return render(request, 'po_detail.html', context)
 
@@ -1622,11 +1932,16 @@ def manufacturing_view(request):
                 plant = get_object_or_404(Warehouse, id=plant_id)
                 so = SalesOrder.objects.filter(id=so_id).first() if so_id else None
 
+                from django.utils import timezone
+                tomorrow = timezone.now().replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                
                 run = ProductionRun.objects.create(
                     run_number=run_number, target_product=prod,
                     expected_yield=yield_qty, manufacturing_plant=plant,
-                    status='Planned', supervisor=request.user,
-                    sales_order=so
+                    status='Pending Approval', supervisor=request.user,
+                    sales_order=so,
+                    start_time=tomorrow,
+                    end_time=tomorrow + timedelta(hours=4)
                 )
 
                 # Auto-update SO status to "In Production" if linked
@@ -1643,59 +1958,114 @@ def manufacturing_view(request):
             except Exception as e:
                 messages.error(request, f"Error scheduling run: {e}")
 
-        elif action == 'start_run':
+        elif action == 'approve_run':
+            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
+                messages.error(request, "Permission Denied: Only Managers can approve Production Runs.")
+                return redirect('readiness')
             run_id = request.POST.get('run_id')
             run = get_object_or_404(ProductionRun, id=run_id)
-            run.status = 'InProgress'
-            from django.utils import timezone
-            run.start_time = timezone.now()
+
+            missing_materials = []
+            for req in run.target_product.recipe_items.all():
+                needed = float(req.quantity_required) * float(run.expected_yield)
+                available = Batch.objects.filter(
+                    material=req.material, 
+                    location__warehouse=run.manufacturing_plant,
+                    status='Active'
+                ).aggregate(total=Sum(F('quantity') - F('allocated_quantity')))['total'] or 0
+                if float(available) < needed:
+                    missing_materials.append(f"{req.material.name} (Need {needed}, Have {available})")
+                    
+            if missing_materials:
+                messages.error(request, f"Cannot approve run. Insufficient materials at {run.manufacturing_plant.name}: {', '.join(missing_materials)}")
+                return redirect('readiness')
+
+            run.status = 'Planned'
             run.save()
-            messages.success(request, f"Production Run {run.run_number} started.")
+            messages.success(request, f"Production Run {run.run_number} approved. Please allocate materials to begin.")
+
+        elif action == 'update_run_schedule':
+            run_id = request.POST.get('run_id')
+            start_str = request.POST.get('start_time')
+            end_str = request.POST.get('end_time')
+            run = get_object_or_404(ProductionRun, id=run_id)
+            from django.utils.dateparse import parse_datetime
+            if start_str:
+                run.start_time = parse_datetime(start_str)
+            if end_str:
+                run.end_time = parse_datetime(end_str)
+            run.save()
+            if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+                return JsonResponse({'success': True})
+            return redirect('readiness')
+
+        elif action == 'start_run':
+            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager', 'Staff_Edit']:
+                messages.error(request, "Permission Denied: You do not have permission to start Production Runs.")
+                return redirect('readiness')
+            run_id = request.POST.get('run_id')
+            run = get_object_or_404(ProductionRun, id=run_id)
+            if run.status == 'Planned':
+                run.status = 'InProgress'
+                from django.utils import timezone
+                run.start_time = timezone.now()
+                run.save()
+                messages.success(request, f"Production Run {run.run_number} started.")
 
         elif action == 'complete_run':
+            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager', 'Staff_Edit']:
+                messages.error(request, "Permission Denied: You do not have permission to complete Production Runs.")
+                return redirect('readiness')
             run_id = request.POST.get('run_id')
             run = get_object_or_404(ProductionRun, id=run_id)
             with transaction.atomic():
                 from django.utils import timezone
-                run.status = 'Completed'
-                run.end_time = timezone.now()
-                run.save()
+                from .utils import deduct_stock_from_allocation
+                
+                if run.status == 'InProgress':
+                    actual_yield = request.POST.get('actual_yield')
+                    run.actual_yield = float(actual_yield) if actual_yield else run.expected_yield
+                    run.status = 'Completed'
+                    run.end_time = timezone.now()
+                    run.save()
+                    
+                    # Permanently deduct the allocated raw materials
+                    deduct_stock_from_allocation('production_run', run)
 
-                # Find warehouse location for storing finished product
-                loc = WarehouseLocation.objects.filter(warehouse=run.manufacturing_plant).first()
-                batch = Batch.objects.create(
-                    batch_number=f"B-PROD-{run.run_number}",
-                    status='Active',
-                    product=run.target_product,
-                    quantity=run.expected_yield,
-                    produced_in=run,
-                    manufacturing_date=date.today(),
-                    expiry_date=date.today() + timedelta(days=365),
-                    location=loc
-                )
-                RegistryLog.objects.create(
-                    action_type='Produced',
-                    item_name=f"{run.target_product.name} (Batch {batch.batch_number})",
-                    quantity_changed=run.expected_yield,
-                    warehouse=run.manufacturing_plant,
-                    user=request.user
-                )
+                    # Find warehouse location for storing finished product
+                    loc = WarehouseLocation.objects.filter(warehouse=run.manufacturing_plant).first()
+                    batch = Batch.objects.create(
+                        batch_number=f"B-PROD-{run.run_number}",
+                        status='Active',
+                        product=run.target_product,
+                        quantity=run.actual_yield,
+                        produced_in=run,
+                        manufacturing_date=date.today(),
+                        expiry_date=date.today() + timedelta(days=365),
+                        location=loc
+                    )
+                    RegistryLog.objects.create(
+                        action_type='Produced',
+                        item_name=f"{run.target_product.name} (Batch {batch.batch_number})",
+                        quantity_changed=run.actual_yield,
+                        warehouse=run.manufacturing_plant,
+                        user=request.user
+                    )
 
-                # Auto-check if all runs for a linked SO are complete
-                if run.sales_order:
-                    so = run.sales_order
-                    so_runs = ProductionRun.objects.filter(sales_order=so)
-                    all_complete = all(r.status == 'Completed' for r in so_runs)
-                    if all_complete:
-                        so.status = 'Ready to Ship'
-                        so.save()
-                        OrderTimeline.objects.create(
-                            sales_order=so,
-                            action="All production runs completed — status auto-updated to 'Ready to Ship'",
-                            user=request.user
-                        )
-
-            messages.success(request, f"Run {run.run_number} completed. Produced {run.expected_yield} units of {run.target_product.sku}.")
+                    # Auto-check if all runs for a linked SO are complete
+                    if run.sales_order:
+                        so = run.sales_order
+                        so_runs = ProductionRun.objects.filter(sales_order=so)
+                        all_complete = all(r.status == 'Completed' for r in so_runs)
+                        if all_complete:
+                            so.status = 'Ready to Ship'
+                            so.save()
+                            OrderTimeline.objects.create(
+                                sales_order=so,
+                                action="All production runs completed ➔ status auto-updated to 'Ready to Ship'",
+                                user=request.user
+                            )
+                    messages.success(request, f"Production Run {run.run_number} completed. Produced {run.actual_yield} units of {run.target_product.sku}.")
 
         return redirect('readiness')
 
@@ -1707,18 +2077,18 @@ def manufacturing_view(request):
 
     # Material availability analysis for recipes — with max_producible
     recipe_readiness = []
+    from django.db.models import F
     for p in products:
         recipes = p.recipe_items.select_related('material')
         items = []
         is_ready = True
         max_producible = None
         for r in recipes:
-            avail = float(Batch.objects.filter(material=r.material, status='Active').aggregate(s=Sum('quantity'))['s'] or 0)
+            avail = float(Batch.objects.filter(material=r.material, status='Active').annotate(avail=F('quantity')-F('allocated_quantity')).aggregate(s=Sum('avail'))['s'] or 0)
             needed = float(r.quantity_required)
             sufficient = avail >= needed
             if not sufficient:
                 is_ready = False
-            # max units = how many full batches we can make with available stock
             if needed > 0:
                 can_make = int(avail / needed)
                 max_producible = min(max_producible, can_make) if max_producible is not None else can_make
@@ -1750,7 +2120,7 @@ def manufacturing_view(request):
             bom_rows = []
             can_make = None
             for r in recipes:
-                avail = float(Batch.objects.filter(material=r.material, status='Active').aggregate(s=Sum('quantity'))['s'] or 0)
+                avail = float(Batch.objects.filter(material=r.material, status='Active').annotate(avail=F('quantity')-F('allocated_quantity')).aggregate(s=Sum('avail'))['s'] or 0)
                 needed_per_unit = float(r.quantity_required)
                 needed_total = needed_per_unit * float(item.quantity_ordered)
                 sufficient = avail >= needed_total
@@ -1831,11 +2201,8 @@ def shipments_view(request):
 
                 origin_wh = Warehouse.objects.filter(id=origin_id).first() if origin_id else None
                 dest_wh = Warehouse.objects.filter(id=dest_id).first() if dest_id else None
-                material = Material.objects.filter(id=mat_id).first() if mat_id else None
-                product = Product.objects.filter(id=prod_id).first() if prod_id else None
                 po = PurchaseOrder.objects.filter(id=po_id).first() if po_id else None
                 so = SalesOrder.objects.filter(id=so_id).first() if so_id else None
-                batch = Batch.objects.filter(id=batch_id).first() if batch_id else None
 
                 shipment = Shipment.objects.create(
                     tracking_number=tracking_number,
@@ -1843,18 +2210,26 @@ def shipments_view(request):
                     status=status,
                     origin_warehouse=origin_wh,
                     destination_warehouse=dest_wh,
-                    material=material,
-                    product=product,
-                    quantity=float(qty) if qty else 0.0,
                     purchase_order=po,
                     sales_order=so,
-                    batch=batch,
                     dispatch_date=dispatch_dt if dispatch_dt else date.today(),
                     expected_eta_date=eta if eta else None,
                     actual_arrival_date=actual_arrival_dt if (status == 'Arrived' and actual_arrival_dt) else None,
                     external_origin=external_origin if external_origin else None
                 )
-                messages.success(request, f"Shipment '{tracking_number}' registered.")
+                
+                # Auto update Sales Order status based on Shipment
+                if so:
+                    if status == 'Preparing':
+                        so.status = 'Ready to Ship'
+                    elif status == 'Dispatched':
+                        so.status = 'Shipped'
+                    elif status == 'Arrived':
+                        so.status = 'Delivered'
+                    so.save()
+                    
+                messages.success(request, f"Shipment '{tracking_number}' registered. Now you can add items.")
+                return redirect('shipment_detail', pk=shipment.pk)
             except Exception as e:
                 messages.error(request, f"Error registering shipment: {e}")
 
@@ -1866,6 +2241,18 @@ def shipments_view(request):
             if new_status == 'Arrived':
                 shipment.actual_arrival_date = date.today()
             shipment.save()
+            
+            # Auto update Sales Order status based on Shipment
+            if shipment.sales_order:
+                so = shipment.sales_order
+                if new_status == 'Preparing':
+                    so.status = 'Ready to Ship'
+                elif new_status == 'Dispatched':
+                    so.status = 'Shipped'
+                elif new_status == 'Arrived':
+                    so.status = 'Delivered'
+                so.save()
+            
             messages.success(request, f"Shipment {shipment.tracking_number} updated to {new_status}.")
 
         return redirect('shipments')
@@ -1874,8 +2261,8 @@ def shipments_view(request):
     direction_filter = request.GET.get('direction')
 
     shipments = Shipment.objects.select_related(
-        'origin_warehouse', 'destination_warehouse', 'material', 'product', 'purchase_order', 'sales_order'
-    ).order_by('-id')
+        'origin_warehouse', 'destination_warehouse', 'purchase_order', 'sales_order'
+    ).prefetch_related('items').order_by('-id')
 
     if status_filter:
         shipments = shipments.filter(status=status_filter)
@@ -1912,109 +2299,6 @@ def shipments_view(request):
     }
     return render(request, 'shipments.html', context)
 
-
-# --------------------------------------------------------------------------
-# MANUFACTURING & READINESS
-# --------------------------------------------------------------------------
-@login_required
-def manufacturing_view(request):
-    if request.method == 'POST':
-        action = request.POST.get('action')
-        if action == 'create_run':
-            run_number = request.POST.get('run_number')
-            prod_id = request.POST.get('target_product_id')
-            plant_id = request.POST.get('manufacturing_plant_id')
-            try:
-                yield_qty = float(request.POST.get('expected_yield', 100))
-                prod = get_object_or_404(Product, id=prod_id)
-                plant = get_object_or_404(Warehouse, id=plant_id)
-                ProductionRun.objects.create(
-                    run_number=run_number, target_product=prod,
-                    expected_yield=yield_qty, manufacturing_plant=plant,
-                    status='Planned', supervisor=request.user
-                )
-                messages.success(request, f"Production Run {run_number} scheduled.")
-            except Exception as e:
-                messages.error(request, f"Error scheduling run: {e}")
-
-        elif action == 'start_run':
-            run_id = request.POST.get('run_id')
-            run = get_object_or_404(ProductionRun, id=run_id)
-            run.status = 'InProgress'
-            from django.utils import timezone
-            run.start_time = timezone.now()
-            run.save()
-            messages.success(request, f"Production Run {run.run_number} started.")
-
-        elif action == 'complete_run':
-            run_id = request.POST.get('run_id')
-            run = get_object_or_404(ProductionRun, id=run_id)
-            with transaction.atomic():
-                from django.utils import timezone
-                run.status = 'Completed'
-                run.end_time = timezone.now()
-                run.save()
-
-                # Find warehouse location for storing finished product
-                loc = WarehouseLocation.objects.filter(warehouse=run.manufacturing_plant).first()
-                batch = Batch.objects.create(
-                    batch_number=f"B-PROD-{run.run_number}",
-                    status='Active',
-                    product=run.target_product,
-                    quantity=run.expected_yield,
-                    produced_in=run,
-                    manufacturing_date=date.today(),
-                    expiry_date=date.today() + timedelta(days=365),
-                    location=loc
-                )
-                RegistryLog.objects.create(
-                    action_type='Produced',
-                    item_name=f"{run.target_product.name} (Batch {batch.batch_number})",
-                    quantity_changed=run.expected_yield,
-                    warehouse=run.manufacturing_plant,
-                    user=request.user
-                )
-            messages.success(request, f"Run {run.run_number} completed. Produced {run.expected_yield} units of {run.target_product.sku}.")
-
-        return redirect('readiness')
-
-    runs = ProductionRun.objects.select_related('target_product', 'supervisor', 'manufacturing_plant').order_by('-id')
-    products = Product.objects.all()
-    plants = Warehouse.objects.filter(location_type='Manufacturing')
-    if not plants.exists():
-        plants = Warehouse.objects.all()
-
-    # Material availability analysis for recipes
-    recipe_readiness = []
-    for p in products:
-        recipes = p.recipe_items.select_related('material')
-        items = []
-        is_ready = True
-        for r in recipes:
-            avail = Batch.objects.filter(material=r.material, status='Active').aggregate(s=Sum('quantity'))['s'] or 0
-            needed = r.quantity_required
-            sufficient = avail >= needed
-            if not sufficient:
-                is_ready = False
-            items.append({
-                'material': r.material,
-                'required': needed,
-                'available': float(avail),
-                'sufficient': sufficient
-            })
-        recipe_readiness.append({
-            'product': p,
-            'items': items,
-            'is_ready': is_ready
-        })
-
-    context = {
-        'runs': runs,
-        'products': products,
-        'plants': plants,
-        'recipe_readiness': recipe_readiness,
-    }
-    return render(request, 'manufacturing.html', context)
 
 
 # --------------------------------------------------------------------------
@@ -2096,3 +2380,498 @@ def qa_dashboard_view(request):
     }
     return render(request, 'qa_dashboard.html', context)
 
+
+# --------------------------------------------------------------------------
+# APPROVALS INBOX (Action Center)
+# --------------------------------------------------------------------------
+from .decorators import role_required
+
+@login_required
+@role_required(['Admin', 'Manager'])
+def approvals_inbox_view(request):
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        item_type = request.POST.get('item_type')
+        item_id = request.POST.get('item_id')
+        comment = request.POST.get('comment', '').strip()
+
+        if item_type == 'sales_order':
+            so = get_object_or_404(SalesOrder, id=item_id)
+            if action == 'approve':
+                old_status = so.status
+                so.status = 'Pending'
+                so.approved_by = request.user
+                so.save()
+                OrderTimeline.objects.create(sales_order=so, action=f"Approved by Manager. Comment: {comment}" if comment else "Approved by Manager.", user=request.user)
+                from .utils import allocate_stock
+                if old_status != 'Pending':
+                    for item in so.items.all():
+                        allocate_stock('sales_order', so, item.product, item.quantity_ordered)
+                messages.success(request, f"Sales Order {so.so_number} approved.")
+            elif action == 'reject':
+                so.status = 'Draft'
+                so.assigned_to = None
+                so.approval_remarks = ''
+                so.save()
+                OrderTimeline.objects.create(sales_order=so, action=f"Approval Rejected by Manager. Comment: {comment}" if comment else "Approval Rejected by Manager.", user=request.user)
+                messages.warning(request, f"Sales Order {so.so_number} returned to Draft.")
+
+        elif item_type == 'production_run':
+            run = get_object_or_404(ProductionRun, id=item_id)
+            if action == 'approve':
+                missing_materials = []
+                for req in run.target_product.recipe_items.all():
+                    needed = float(req.quantity_required) * float(run.expected_yield)
+                    available = Batch.objects.filter(
+                        material=req.material, 
+                        location__warehouse=run.manufacturing_plant,
+                        status='Active'
+                    ).aggregate(total=Sum(F('quantity') - F('allocated_quantity')))['total'] or 0
+                    if float(available) < needed:
+                        missing_materials.append(f"{req.material.name} (Need {needed}, Have {available})")
+                        
+                if missing_materials:
+                    messages.error(request, f"Cannot approve run {run.run_number}. Insufficient materials at {run.manufacturing_plant.name}: {', '.join(missing_materials)}")
+                    return redirect('approvals_inbox')
+                
+                run.status = 'Planned'
+                run.save()
+                from .utils import allocate_stock
+                for req in run.target_product.recipe_items.all():
+                    allocate_stock('production_run', run, req.material, float(req.quantity_required) * float(run.expected_yield), warehouse=run.manufacturing_plant)
+                messages.success(request, f"Production Run {run.run_number} approved and allocated.")
+            elif action == 'reject':
+                run.status = 'Cancelled'
+                run.save()
+                messages.warning(request, f"Production Run {run.run_number} rejected.")
+                
+        elif item_type == 'purchase_order':
+            po = get_object_or_404(PurchaseOrder, id=item_id)
+            if action == 'approve':
+                po.status = 'Sent'
+                po.save()
+                OrderTimeline.objects.create(purchase_order=po, action=f"Approved by Manager. Comment: {comment}" if comment else "Approved by Manager.", user=request.user)
+                messages.success(request, f"Purchase Order {po.po_number} approved.")
+            elif action == 'reject':
+                po.status = 'Draft'
+                po.assigned_to = None
+                po.approval_remarks = ''
+                po.save()
+                OrderTimeline.objects.create(purchase_order=po, action=f"Approval Rejected by Manager. Comment: {comment}" if comment else "Approval Rejected by Manager.", user=request.user)
+                messages.warning(request, f"Purchase Order {po.po_number} returned to Draft.")
+                
+        return redirect('approvals_inbox')
+
+    pending_sos = SalesOrder.objects.filter(status='Pending Approval', assigned_to=request.user).order_by('order_date').prefetch_related('items__product')
+    pending_runs = ProductionRun.objects.filter(status='Pending Approval').order_by('start_time')
+    pending_pos = PurchaseOrder.objects.filter(status='Pending Approval', assigned_to=request.user).order_by('order_date').prefetch_related('items__material')
+    pending_shipments = Shipment.objects.filter(status='Discrepant', assigned_manager=request.user).order_by('-id')
+    
+    # History
+    history_sos = SalesOrder.objects.filter(timeline__user=request.user, timeline__action__icontains='Approv').distinct().order_by('-order_date')
+    history_pos = PurchaseOrder.objects.filter(timeline__user=request.user, timeline__action__icontains='Approv').distinct().order_by('-order_date')
+
+    # Analytics
+    pending_count = pending_sos.count() + pending_pos.count() + pending_runs.count() + pending_shipments.count()
+    start_of_week = date.today() - timedelta(days=date.today().weekday())
+    approved_this_week = OrderTimeline.objects.filter(user=request.user, action__icontains='Approved by Manager', timestamp__gte=start_of_week).count()
+    rejected_this_week = OrderTimeline.objects.filter(user=request.user, action__icontains='Approval Rejected', timestamp__gte=start_of_week).count()
+
+    context = {
+        'pending_sos': pending_sos,
+        'pending_runs': pending_runs,
+        'pending_pos': pending_pos,
+        'pending_shipments': pending_shipments,
+        'history_sos': history_sos,
+        'history_pos': history_pos,
+        'pending_count': pending_count,
+        'approved_this_week': approved_this_week,
+        'rejected_this_week': rejected_this_week,
+    }
+    return render(request, 'approvals_inbox.html', context)
+
+
+@login_required
+def shipment_detail_view(request, pk):
+    shipment = get_object_or_404(Shipment.objects.prefetch_related('items__material', 'items__product', 'items__batch'), pk=pk)
+    
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        
+        if action == 'add_item':
+            mat_id = request.POST.get('material_id')
+            prod_id = request.POST.get('product_id')
+            batch_id = request.POST.get('batch_id')
+            qty = request.POST.get('quantity')
+            
+            try:
+                mat = Material.objects.filter(id=mat_id).first() if mat_id else None
+                prod = Product.objects.filter(id=prod_id).first() if prod_id else None
+                batch = Batch.objects.filter(id=batch_id).first() if batch_id else None
+                qty_val = float(qty) if qty else 0.0
+                
+                # Validation for Internal Transfers
+                if shipment.direction == 'Transfer' and not batch:
+                    messages.error(request, "A Batch MUST be selected for Internal Transfers.")
+                elif shipment.direction in ['Outbound', 'Transfer'] and batch:
+                    qty_val = float(qty) if qty else 0.0
+                    if qty_val > float(batch.available_quantity):
+                        messages.error(request, f"Cannot add {qty_val}. Only {batch.available_quantity:.2f} available to allocate from batch {batch.batch_number}.")
+                    else:
+                        ShipmentItem.objects.create(
+                            shipment=shipment,
+                            material=mat,
+                            product=prod,
+                            batch=batch,
+                            quantity=qty_val
+                        )
+                        # Allocation Logic (Lock Stock)
+                        from .models import StockAllocation
+                        qty_dec = Decimal(str(qty_val))
+                        if shipment.sales_order:
+                            so_alloc = StockAllocation.objects.filter(sales_order=shipment.sales_order, batch=batch).first()
+                            if so_alloc:
+                                deduct = min(qty_dec, so_alloc.quantity)
+                                so_alloc.quantity -= deduct
+                                if so_alloc.quantity <= 0: so_alloc.delete()
+                                else: so_alloc.save(update_fields=['quantity'])
+                                StockAllocation.objects.create(batch=batch, shipment=shipment, quantity=deduct)
+                                qty_dec -= deduct
+                        
+                        if qty_dec > 0:
+                            batch.allocated_quantity += qty_dec
+                            batch.save(update_fields=['allocated_quantity'])
+                            StockAllocation.objects.create(batch=batch, shipment=shipment, quantity=qty_dec)
+                        messages.success(request, "Item added and stock locked.")
+                else:
+                    ShipmentItem.objects.create(
+                        shipment=shipment,
+                        material=mat,
+                        product=prod,
+                        batch=batch,
+                        quantity=qty_val
+                    )
+                    messages.success(request, "Item added to shipment.")
+            except Exception as e:
+                messages.error(request, f"Error adding item: {e}")
+                
+        elif action == 'remove_item':
+            item_id = request.POST.get('item_id')
+            try:
+                item = ShipmentItem.objects.filter(id=item_id, shipment=shipment).first()
+                if item:
+                    qty = item.quantity
+                    batch = item.batch
+                    if batch and shipment.direction in ['Outbound', 'Transfer']:
+                        from .models import StockAllocation
+                        alloc = StockAllocation.objects.filter(shipment=shipment, batch=batch).first()
+                        if alloc:
+                            deduct = min(Decimal(str(qty)), alloc.quantity)
+                            alloc.quantity -= deduct
+                            if alloc.quantity <= 0: alloc.delete()
+                            else: alloc.save(update_fields=['quantity'])
+                            batch.allocated_quantity -= deduct
+                            batch.save(update_fields=['allocated_quantity'])
+                    item.delete()
+                    messages.success(request, "Item removed and stock lock released.")
+            except Exception as e:
+                messages.error(request, f"Error removing item: {e}")
+
+        elif action == 'update_dates':
+            eta = request.POST.get('eta_date')
+            arrival = request.POST.get('arrival_date')
+            if eta:
+                shipment.expected_eta_date = eta
+            if arrival:
+                shipment.actual_arrival_date = arrival
+            shipment.last_edited_by = request.user
+            shipment.save()
+            messages.success(request, "Shipment dates updated.")
+            
+        elif action == 'complete_shipment':
+            has_discrepancy = False
+            for item in shipment.items.all():
+                req_qty_str = request.POST.get(f'received_qty_{item.id}')
+                if req_qty_str:
+                    rcv = float(req_qty_str)
+                    item.received_quantity = rcv
+                    from django.utils import timezone
+                    item.date_confirmed = timezone.now()
+                    item.save()
+                    if rcv != float(item.quantity):
+                        has_discrepancy = True
+            
+            if has_discrepancy:
+                shipment.status = 'Discrepant'
+                shipment.save()
+                messages.warning(request, "Shipment receipt saved. Shortage detected. You may correct it later or request a Manager Force Close.")
+            else:
+                shipment.status = 'Completed'
+                shipment.acknowledged_by = request.user
+                shipment.last_edited_by = request.user
+                shipment.save()
+                
+                # Release lock and deduct stock
+                if shipment.direction in ['Outbound', 'Transfer']:
+                    from .utils import deduct_stock_from_allocation
+                    deduct_stock_from_allocation('shipment', shipment)
+                
+                if shipment.direction == 'Transfer' and shipment.destination_warehouse:
+                    loc = WarehouseLocation.objects.filter(warehouse=shipment.destination_warehouse).first()
+                    if loc:
+                        for item in shipment.items.all():
+                            if not item.batch or float(item.received_quantity) <= 0: continue
+                            b = item.batch
+                            rcv_qty = float(item.received_quantity)
+                            
+                            new_batch, created = Batch.objects.get_or_create(
+                                batch_number=f"{b.batch_number}-TRF-{shipment.id}",
+                                defaults={
+                                    'status': 'Active',
+                                    'material': b.material,
+                                    'product': b.product,
+                                    'quantity': rcv_qty,
+                                    'manufacturing_date': b.manufacturing_date,
+                                    'expiry_date': b.expiry_date,
+                                    'location': loc,
+                                    'produced_in': b.produced_in
+                                }
+                            )
+                            if not created:
+                                # Update quantity in case it was reopened and changed
+                                new_batch.quantity = rcv_qty
+                                new_batch.save(update_fields=['quantity'])
+                            RegistryLog.objects.create(
+                                action_type='Inbound',
+                                item_name=f"Internal Transfer Received: {new_batch.batch_number}",
+                                quantity_changed=rcv_qty,
+                                warehouse=shipment.destination_warehouse,
+                                user=request.user
+                            )
+                messages.success(request, "Shipment receipt confirmed and marked as Completed.")
+        
+        elif action == 'request_force_close':
+            mgr_id = request.POST.get('assigned_manager_id')
+            remarks = request.POST.get('discrepancy_remarks', '').strip()
+            if not mgr_id or not remarks:
+                messages.error(request, "You must provide remarks and assign a manager to request Force Close.")
+                return redirect('shipment_detail', pk=shipment.pk)
+                
+            mgr = CustomUser.objects.get(id=mgr_id)
+            shipment.discrepancy_remarks = remarks
+            shipment.assigned_manager = mgr
+            shipment.save()
+            Notification.objects.create(
+                user=mgr,
+                message=f"Force Close requested on Discrepant Shipment {shipment.tracking_number}.",
+                link=f"/operations/shipments/{shipment.id}/"
+            )
+            messages.success(request, f"Force Close escalation sent to {mgr.get_full_name() or mgr.username}.")
+            
+        elif action == 'cancel_escalation':
+            shipment.assigned_manager = None
+            shipment.discrepancy_remarks = ''
+            shipment.save()
+            messages.success(request, "Escalation cancelled. You can now edit quantities and retry completion.")
+            
+        elif action == 'force_close_shipment':
+            if shipment.assigned_manager and request.user != shipment.assigned_manager:
+                messages.error(request, "Only the assigned manager can approve the Force Close.")
+                return redirect('shipment_detail', pk=shipment.pk)
+                
+            mgr_comment = request.POST.get('manager_comment', '').strip()
+            if mgr_comment:
+                if shipment.discrepancy_remarks:
+                    shipment.discrepancy_remarks += f"\n\nManager Acknowledgment: {mgr_comment}"
+                else:
+                    shipment.discrepancy_remarks = f"Manager Acknowledgment: {mgr_comment}"
+            
+            shipment.status = 'Completed'
+            shipment.approved_by = request.user
+            shipment.save()
+            
+            # Manually handle discrepancy deduction and lock release
+            if shipment.direction in ['Outbound', 'Transfer']:
+                from .models import StockAllocation
+                allocs = StockAllocation.objects.filter(shipment=shipment)
+                for alloc in allocs:
+                    batch = alloc.batch
+                    item = shipment.items.filter(batch=batch).first()
+                    rcv_qty = item.received_quantity if item else 0
+                    
+                    batch.quantity -= Decimal(str(rcv_qty))
+                    batch.allocated_quantity -= alloc.quantity
+                    batch.save(update_fields=['quantity', 'allocated_quantity'])
+                    alloc.delete()
+                    
+            if shipment.direction == 'Transfer' and shipment.destination_warehouse:
+                loc = WarehouseLocation.objects.filter(warehouse=shipment.destination_warehouse).first()
+                if loc:
+                    for item in shipment.items.all():
+                        if not item.batch or float(item.received_quantity) <= 0: continue
+                        b = item.batch
+                        rcv_qty = float(item.received_quantity)
+                        
+                        new_batch, created = Batch.objects.get_or_create(
+                            batch_number=f"{b.batch_number}-TRF-{shipment.id}",
+                            defaults={
+                                'status': 'Active',
+                                'material': b.material,
+                                'product': b.product,
+                                'quantity': rcv_qty,
+                                'manufacturing_date': b.manufacturing_date,
+                                'expiry_date': b.expiry_date,
+                                'location': loc,
+                                'produced_in': b.produced_in
+                            }
+                        )
+                        if not created:
+                            new_batch.quantity = rcv_qty
+                            new_batch.save(update_fields=['quantity'])
+            
+            if shipment.purchase_order:
+                po = shipment.purchase_order
+                po.status = 'Partially Received'
+                po.save()
+            
+            messages.success(request, "Shipment Force Closed. Unreceived stock locks released.")
+            
+        elif action == 'reopen_shipment':
+            shipment.status = 'Arrived'
+            shipment.acknowledged_by = None
+            shipment.last_edited_by = request.user
+            shipment.save()
+            RegistryLog.objects.create(
+                action_type='Adjusted',
+                item_name=f"Shipment {shipment.tracking_number} reopened",
+                quantity_changed=0,
+                warehouse=shipment.destination_warehouse or shipment.origin_warehouse,
+                user=request.user
+            )
+            messages.success(request, "Shipment reopened for editing.")
+
+        elif action == 'update_status':
+            new_status = request.POST.get('status')
+            shipment.status = new_status
+            if new_status == 'Arrived':
+                shipment.actual_arrival_date = date.today()
+            shipment.last_edited_by = request.user
+            shipment.save()
+            
+            # Auto update Sales Order status based on Shipment
+            if shipment.sales_order:
+                so = shipment.sales_order
+                if new_status == 'Preparing':
+                    so.status = 'Ready to Ship'
+                elif new_status == 'Dispatched':
+                    so.status = 'Shipped'
+                elif new_status == 'Arrived':
+                    so.status = 'Delivered'
+                so.save()
+            
+            messages.success(request, f"Shipment {shipment.tracking_number} updated to {new_status}.")
+                
+        return redirect('shipment_detail', pk=shipment.pk)
+        
+    materials = Material.objects.all().order_by('name')
+    products = Product.objects.all().order_by('name')
+    batches = Batch.objects.filter(status='Active').order_by('batch_number')
+    managers = CustomUser.objects.filter(role__in=['Admin', 'Manager'])
+    
+    context = {
+        'shipment': shipment,
+        'materials': materials,
+        'products': products,
+        'batches': batches,
+        'managers': managers,
+        'status_choices': Shipment.STATUS_CHOICES,
+    }
+    return render(request, 'shipment_detail.html', context)
+
+def production_run_allocate_view(request, pk):
+    run = get_object_or_404(ProductionRun, pk=pk)
+    
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'allocate_custom':
+            from .models import StockAllocation
+            from decimal import Decimal
+            with transaction.atomic():
+                for key, value in request.POST.items():
+                    if key.startswith('allocate_') and value:
+                        try:
+                            parts = key.split('_')
+                            batch_id = parts[1]
+                            mat_id = parts[2]
+                            qty = float(value)
+                            
+                            if qty > 0:
+                                batch = Batch.objects.get(id=batch_id)
+                                batch.allocated_quantity += Decimal(str(qty))
+                                batch.save(update_fields=['allocated_quantity'])
+                                StockAllocation.objects.create(
+                                    batch=batch,
+                                    production_run=run,
+                                    quantity=qty
+                                )
+                        except Exception as e:
+                            pass
+                
+                run.status = 'InProgress'
+                from django.utils import timezone
+                run.start_time = timezone.now()
+                run.save()
+                messages.success(request, f"Materials allocated successfully. Production Run {run.run_number} started.")
+                return redirect('readiness')
+                
+        elif action == 'allocate_auto':
+            from .utils import allocate_stock
+            for req in run.target_product.recipe_items.all():
+                allocate_stock('production_run', run, req.material, float(req.quantity_required) * float(run.expected_yield), warehouse=run.manufacturing_plant)
+            run.status = 'InProgress'
+            from django.utils import timezone
+            run.start_time = timezone.now()
+            run.save()
+            messages.success(request, f"Materials automatically allocated using FEFO/FIFO. Production Run {run.run_number} started.")
+            return redirect('readiness')
+
+    # Get materials and recommended batches
+    recipe_reqs = []
+    from django.db.models import F
+    for req in run.target_product.recipe_items.all():
+        needed = float(req.quantity_required) * float(run.expected_yield)
+        batches = Batch.objects.filter(
+            material=req.material,
+            location__warehouse=run.manufacturing_plant,
+            status='Active'
+        ).annotate(
+            avail=F('quantity') - F('allocated_quantity')
+        ).filter(avail__gt=0).order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
+        
+        batch_list = []
+        for b in batches:
+            if remaining > 0:
+                take = min(float(b.avail), remaining)
+                remaining -= take
+            else:
+                take = 0
+            batch_list.append({'obj': b, 'suggested_qty': take})
+            
+        recipe_reqs.append({
+            'material': req.material,
+            'needed': needed,
+            'batch_list': batch_list,
+        })
+
+    return render(request, 'production_allocate.html', {
+        'run': run,
+        'recipe_reqs': recipe_reqs
+    })
+
+@login_required
+def mark_notifications_read(request):
+    if request.method == 'POST':
+        request.user.notifications.all().delete()
+        if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+            return JsonResponse({'status': 'ok'})
+    return redirect(request.META.get('HTTP_REFERER', 'home'))

@@ -175,6 +175,13 @@
     </div>
 </section>
 
+<!-- SECTION 2.5: Production Run Calendar -->
+<section class="animate-fade-in-up" style="margin-bottom:2rem; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Production Schedule</h3>
+    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
+    <div id="calendar" style="min-height: 400px; font-size:0.85rem;"></div>
+</section>
+
 <!-- SECTION 3: Production Runs Ledger -->
 <div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
@@ -214,19 +221,26 @@
                     <td style="padding:0.85rem 1rem;">{{ run.manufacturing_plant.name|default:"Site Alpha" }}</td>
                     <td style="padding:0.85rem 1rem;">{{ run.supervisor.username|default:"System" }}</td>
                     <td style="padding:0.85rem 1rem;">
-                        {% if run.status == 'Planned' %}<span class="badge badge-sky">Planned</span>
+                        {% if run.status == 'Pending Approval' %}<span class="badge badge-amber">Pending Approval</span>
+                        {% elif run.status == 'Planned' %}<span class="badge badge-sky">Planned</span>
                         {% elif run.status == 'InProgress' %}<span class="badge badge-amber">In Progress</span>
                         {% elif run.status == 'Completed' %}<span class="badge badge-emerald">Completed</span>
                         {% else %}<span class="badge badge-rose">{{ run.status }}</span>{% endif %}
                     </td>
-                    <td style="padding:0.85rem 1rem; text-align:right;">
-                        {% if run.status == 'Planned' %}
+                    <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
+                        {% if run.status == 'Pending Approval' %}
+                        {% if user.is_superuser or user.role in 'Admin,Manager' %}
                         <form method="post" style="display:inline;">
                             {% csrf_token %}
-                            <input type="hidden" name="action" value="start_run">
+                            <input type="hidden" name="action" value="approve_run">
                             <input type="hidden" name="run_id" value="{{ run.id }}">
-                            <button type="submit" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem; border-color:var(--primary); color:var(--primary);">Start</button>
+                            <button type="submit" class="btn btn-primary" style="padding:0.3rem 0.6rem; font-size:0.78rem; background:#10b981; border-color:#10b981;">Approve</button>
                         </form>
+                        {% else %}
+                        <span style="font-size:0.75rem; color:var(--text-muted); font-style:italic;">Requires Manager Approval</span>
+                        {% endif %}
+                        {% elif run.status == 'Planned' %}
+                        <a href="{% url 'production_run_allocate' run.id %}" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem; border-color:var(--primary); color:var(--primary); text-decoration:none;">Allocate Materials</a>
                         {% elif run.status == 'InProgress' %}
                         <form method="post" style="display:inline;">
                             {% csrf_token %}
@@ -304,6 +318,58 @@
 </div>
 
 <script>
+document.addEventListener('DOMContentLoaded', function() {
+    var calendarEl = document.getElementById('calendar');
+    if(calendarEl) {
+        var calendar = new FullCalendar.Calendar(calendarEl, {
+            initialView: 'timeGridWeek',
+            headerToolbar: {
+                left: 'prev,next today',
+                center: 'title',
+                right: 'dayGridMonth,timeGridWeek,timeGridDay'
+            },
+            editable: true,
+            droppable: true,
+            events: [
+                {% for run in runs %}
+                {% if run.start_time %}
+                {
+                    id: '{{ run.id }}',
+                    title: '{{ run.run_number }} ({{ run.target_product.sku }})',
+                    start: '{{ run.start_time|date:"c" }}',
+                    {% if run.end_time %}end: '{{ run.end_time|date:"c" }}',{% endif %}
+                    color: '{% if run.status == "Pending Approval" %}#f59e0b{% elif run.status == "Planned" %}#0ea5e9{% elif run.status == "InProgress" %}#10b981{% else %}#94a3b8{% endif %}'
+                },
+                {% endif %}
+                {% endfor %}
+            ],
+            eventDrop: function(info) {
+                var fd = new FormData();
+                fd.append('action', 'update_run_schedule');
+                fd.append('run_id', info.event.id);
+                fd.append('start_time', info.event.start.toISOString());
+                if(info.event.end) fd.append('end_time', info.event.end.toISOString());
+                fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+                fetch('', { method: 'POST', body: fd, headers: {'X-Requested-With': 'XMLHttpRequest'} })
+                    .then(res => { if(!res.ok) info.revert(); })
+                    .catch(err => info.revert());
+            },
+            eventResize: function(info) {
+                var fd = new FormData();
+                fd.append('action', 'update_run_schedule');
+                fd.append('run_id', info.event.id);
+                fd.append('start_time', info.event.start.toISOString());
+                if(info.event.end) fd.append('end_time', info.event.end.toISOString());
+                fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+                fetch('', { method: 'POST', body: fd, headers: {'X-Requested-With': 'XMLHttpRequest'} })
+                    .then(res => { if(!res.ok) info.revert(); })
+                    .catch(err => info.revert());
+            }
+        });
+        calendar.render();
+    }
+});
+
 document.getElementById('open-run-modal-btn').addEventListener('click', function() {
     document.getElementById('modal-so-id').value = '';
     document.getElementById('modal-so-display').style.display = 'none';

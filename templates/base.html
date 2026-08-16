@@ -59,6 +59,16 @@
                                     class="submenu-link{% if request.resolver_match.url_name == 'system' %} active{% endif %}">System Console</a></li>
                             {% endif %}
                             <li><a href="#" class="submenu-link ai-link">Digital Assistant (AI)</a></li>
+                            {% if user.role in 'Admin,Manager' or user.is_superuser %}
+                            <li>
+                                <a href="{% url 'approvals_inbox' %}" class="submenu-link{% if request.resolver_match.url_name == 'approvals_inbox' %} active{% endif %}" style="display:flex; justify-content:space-between; align-items:center;">
+                                    Action Center 
+                                    {% if pending_approvals_total and pending_approvals_total > 0 %}
+                                    <span style="background:#ef4444; color:#fff; font-size:0.7rem; font-weight:700; padding:0.15rem 0.4rem; border-radius:10px; line-height:1;">{{ pending_approvals_total }}</span>
+                                    {% endif %}
+                                </a>
+                            </li>
+                            {% endif %}
                         </ul>
                     </li>
 
@@ -134,9 +144,9 @@
                     <!-- Operations & Logistics -->
                     {% if perms.core.view_shipment or perms.core.view_productrecipe or perms.core.add_batch or perms.core.change_batch %}
                     <li
-                        class="nav-item{% if request.resolver_match.url_name in 'order_list,shipments,readiness,qa_dashboard' %} group-expanded{% endif %}">
+                        class="nav-item{% if request.resolver_match.url_name in 'so_list,po_list,shipments,readiness,qa_dashboard' %} group-expanded{% endif %}">
                         <a href="#"
-                            class="nav-btn nav-toggle{% if request.resolver_match.url_name in 'order_list,shipments,readiness,qa_dashboard' %} active{% endif %}">
+                            class="nav-btn nav-toggle{% if request.resolver_match.url_name in 'so_list,po_list,shipments,readiness,qa_dashboard' %} active{% endif %}">
                             <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20">
                                 <rect x="1" y="3" width="15" height="13" rx="2" fill="none" stroke="currentColor"
                                     stroke-width="2" />
@@ -154,7 +164,8 @@
                         </a>
                         <ul class="sidebar-submenu">
                             {% if perms.core.view_shipment %}
-                            <li><a href="{% url 'order_list' %}" class="submenu-link{% if request.resolver_match.url_name == 'order_list' %} active{% endif %}">Order Management</a></li>
+                            <li><a href="{% url 'so_list' %}" class="submenu-link{% if request.resolver_match.url_name == 'so_list' %} active{% endif %}">Sales Orders</a></li>
+                            <li><a href="{% url 'po_list' %}" class="submenu-link{% if request.resolver_match.url_name == 'po_list' %} active{% endif %}">Purchase Orders</a></li>
                             <li><a href="{% url 'shipments' %}" class="submenu-link{% if request.resolver_match.url_name == 'shipments' %} active{% endif %}">Logistics Tracker</a></li>
                             {% endif %}
                             {% if perms.core.view_productrecipe or perms.core.add_batch %}
@@ -218,13 +229,19 @@
                             {% endif %}
                         </button>
                         <div id="notif-dropdown" class="notif-dropdown" hidden>
-                            <div class="notif-header">
+                            <div class="notif-header" style="display:flex; justify-content:space-between; align-items:center;">
                                 <span>Notifications</span>
+                                {% if user.notifications.count > 0 %}
+                                <form id="clear-notifs-form" method="post" action="{% url 'mark_notifications_read' %}" style="margin:0;">
+                                    {% csrf_token %}
+                                    <button type="submit" style="background:none; border:none; color:var(--primary); font-size:0.75rem; font-weight:600; cursor:pointer; padding:0; text-decoration:underline;">Clear All</button>
+                                </form>
+                                {% endif %}
                             </div>
                             <ul class="notif-list">
                                 {% for notif in user.notifications.all|slice:":5" %}
                                 <li class="notif-item{% if not notif.is_read %} unread{% endif %}">
-                                    <a href="#" class="notif-link">
+                                    <a href="{{ notif.link|default:'#' }}" class="notif-link">
                                         <div class="notif-msg"
                                             style="font-weight:{% if not notif.is_read %}600{% else %}400{% endif %};">
                                             {{ notif.message }}</div>
@@ -322,6 +339,26 @@
             });
             document.addEventListener('click', function () { notifDrop.hidden = true; });
             notifDrop.addEventListener('click', function (e) { e.stopPropagation(); });
+            
+            var clearForm = document.getElementById('clear-notifs-form');
+            if (clearForm) {
+                clearForm.addEventListener('submit', function (e) {
+                    e.preventDefault();
+                    fetch(clearForm.action, {
+                        method: 'POST',
+                        body: new FormData(clearForm),
+                        headers: {
+                            'X-Requested-With': 'XMLHttpRequest'
+                        }
+                    }).then(function(response) {
+                        var badge = document.querySelector('.notif-badge');
+                        if (badge) badge.remove();
+                        var list = document.querySelector('.notif-list');
+                        if (list) list.innerHTML = '<li class="notif-empty">No new notifications.</li>';
+                        clearForm.style.display = 'none';
+                    });
+                });
+            }
         }
     </script>
 </body>
