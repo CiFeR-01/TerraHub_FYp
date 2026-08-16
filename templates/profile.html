@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}My Profile - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">My Profile</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            My Profile
+        </h1>
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:#d97706;{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<section class="animate-fade-in-up" style="display:grid; grid-template-columns: 1fr 1fr; gap:2rem; max-width:1000px;">
+    <!-- Profile Edit Form -->
+    <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:2rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+        <h3 style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:700; margin-bottom:1.5rem;">Personal Information</h3>
+        <form method="post">
+            {% csrf_token %}
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-muted); margin-bottom:0.5rem;">Username (Read-Only)</label>
+                <input type="text" value="{{ user.username }}" class="form-input" disabled style="width:100%; padding:0.65rem; border-radius:8px; border:1px solid var(--border-light); background:#f8fafc; color:var(--text-muted); cursor:not-allowed;">
+            </div>
+            
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin-bottom:1.25rem;">
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-muted); margin-bottom:0.5rem;">First Name</label>
+                    <input type="text" name="first_name" value="{{ user.first_name }}" class="form-input" style="width:100%; padding:0.65rem; border-radius:8px; border:1px solid var(--border-light);">
+                </div>
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-muted); margin-bottom:0.5rem;">Last Name</label>
+                    <input type="text" name="last_name" value="{{ user.last_name }}" class="form-input" style="width:100%; padding:0.65rem; border-radius:8px; border:1px solid var(--border-light);">
+                </div>
+            </div>
+
+            <div style="margin-bottom:2rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-muted); margin-bottom:0.5rem;">Email Address</label>
+                <input type="email" name="email" value="{{ user.email }}" class="form-input" style="width:100%; padding:0.65rem; border-radius:8px; border:1px solid var(--border-light);">
+            </div>
+
+            <button type="submit" class="btn btn-primary" style="width:100%; padding:0.75rem;">Save Changes</button>
+        </form>
+    </div>
+
+    <!-- Assigned Roles and Locations (Read-Only) -->
+    <div style="display:flex; flex-direction:column; gap:2rem;">
+        <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:2rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1.25rem; display:flex; align-items:center; gap:0.5rem;">
+                <span style="color:var(--primary); font-size:1.2rem;">&#128100;</span> Assigned Roles
+            </h3>
+            <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">Your system roles dictate your permissions across TerraHub. Contact an Admin to request changes.</p>
+            <div style="display:flex; flex-wrap:wrap; gap:0.5rem;">
+                {% if user.roles.all %}
+                    {% for r in user.roles.all %}
+                    <span class="badge" style="background:var(--primary-light); color:var(--primary); border:1px solid rgba(79,70,229,0.2); font-size:0.85rem; padding:0.35rem 0.75rem;">{{ r.name }}</span>
+                    {% endfor %}
+                {% elif user.role %}
+                    <span class="badge" style="background:var(--primary-light); color:var(--primary); border:1px solid rgba(79,70,229,0.2); font-size:0.85rem; padding:0.35rem 0.75rem;">{{ user.role }} (Legacy)</span>
+                {% else %}
+                    <span style="font-size:0.85rem; color:var(--text-muted); font-style:italic;">No roles assigned.</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:2rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1.25rem; display:flex; align-items:center; gap:0.5rem;">
+                <span style="color:#059669; font-size:1.2rem;">&#127981;</span> Allowed Locations
+            </h3>
+            <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">You only have operational access to the facilities listed below.</p>
+            <div style="display:flex; flex-direction:column; gap:0.5rem;">
+                {% if user.allowed_locations.all %}
+                    {% for wh in user.allowed_locations.all %}
+                    <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:6px; padding:0.75rem 1rem; display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-weight:600; font-size:0.85rem;">{{ wh.name }}</span>
+                        <span class="badge" style="background:#fff; border:1px solid #e2e8f0; color:var(--text-muted); font-size:0.7rem;">{{ wh.get_type_display|default:wh.type }}</span>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <span style="font-size:0.85rem; color:var(--text-muted); font-style:italic;">No specific facilities assigned.</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

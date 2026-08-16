@@ -8,16 +8,27 @@
         <nav class="breadcrumb-nav">
             <a href="{% url 'dashboard' %}">Dashboard</a>
             <span class="separator">/</span>
-            <span class="current-page">Manufacture</span>
+            <span class="current-page">Manufacturing</span>
         </nav>
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
-            Production Runs &amp; Material Readiness
+            Production Readiness &amp; Manufacturing
         </h1>
     </div>
-    <div class="header-action-tray">
-        <button id="open-run-modal-btn" class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
-            &#10010; Schedule Production Run
-        </button>
+    
+    <div style="display:flex; align-items:center; gap:1rem;">
+        <form method="get" style="display:flex; align-items:center; gap:0.5rem;">
+            <select name="loc" class="form-select" style="padding:0.4rem 0.75rem; border-radius:6px; font-size:0.85rem; border:1px solid var(--border-light);" onchange="this.form.submit()">
+                <option value="">All Locations</option>
+                {% for p in plants %}
+                <option value="{{ p.id }}" {% if loc_filter == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+                {% endfor %}
+            </select>
+        </form>
+        <div class="header-action-tray">
+            <button id="open-run-modal-btn" class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+                &#10010; Schedule Production Run
+            </button>
+        </div>
     </div>
 </header>
 
@@ -109,10 +120,32 @@
                         {% if si.existing_run %}
                         <div style="background:#f8fafc; border-radius:8px; border:1px solid var(--border-light); padding:0.75rem; text-align:center;">
                             <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); margin-bottom:0.25rem; text-transform:uppercase;">Production Run</div>
-                            <div style="font-weight:700; font-size:0.85rem; color:var(--primary);">{{ si.existing_run.run_number }}</div>
-                            {% if si.existing_run.status == 'Planned' %}<span class="badge badge-sky">Planned</span>
-                            {% elif si.existing_run.status == 'InProgress' %}<span class="badge badge-amber">In Progress</span>
-                            {% elif si.existing_run.status == 'Completed' %}<span class="badge badge-emerald">Completed</span>{% endif %}
+                            <div style="font-weight:700; font-size:0.85rem; color:var(--primary); margin-bottom:0.5rem;">{{ si.existing_run.run_number }}</div>
+                            
+                            {% if si.existing_run.status == 'Pending Allocation' %}
+                                <span class="badge badge-amber" style="margin-bottom:0.5rem;">Pending Allocation</span>
+                                <a href="{% url 'production_run_allocate' si.existing_run.pk %}" class="btn btn-primary" style="width:100%; font-size:0.75rem; padding:0.4rem;">Acknowledge & Allocate</a>
+                            
+                            {% elif si.existing_run.status == 'Awaiting Materials' %}
+                                <span class="badge badge-rose" style="margin-bottom:0.5rem;">Awaiting Materials</span>
+                                {% if si.existing_run.linked_pos.exists %}
+                                    <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.25rem;">Draft PO Created</div>
+                                {% else %}
+                                    <form method="post" action="{% url 'readiness' %}">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="draft_po_from_shortage">
+                                        <input type="hidden" name="run_id" value="{{ si.existing_run.id }}">
+                                        <button type="submit" class="btn btn-secondary" style="width:100%; font-size:0.75rem; padding:0.4rem; border-color:#dc2626; color:#dc2626;">Draft PO for Shortage</button>
+                                    </form>
+                                {% endif %}
+                                
+                            {% elif si.existing_run.status == 'Planned' %}
+                                <span class="badge badge-sky">Planned</span>
+                            {% elif si.existing_run.status == 'InProgress' %}
+                                <span class="badge badge-amber">In Progress</span>
+                            {% elif si.existing_run.status == 'Completed' %}
+                                <span class="badge badge-emerald">Completed</span>
+                            {% endif %}
                         </div>
                         {% else %}
                         <button onclick="openScheduleModal('{{ entry.so.id }}', '{{ si.item.product.id }}', '{{ si.item.product.name }}', '{{ si.item.quantity_ordered|floatformat:0 }}')" class="btn btn-primary" style="width:100%; font-size:0.82rem; padding:0.5rem 0.75rem;">

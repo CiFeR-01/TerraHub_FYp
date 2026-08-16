@@ -1,19 +1,8 @@
 {% extends "base.html" %}
 
-{% block title %}Allocate Materials - {{ run.run_number }}{% endblock %}
+{% block title %}Acknowledge & Allocate - {{ run.run_number }}{% endblock %}
 
 {% block content %}
-<!-- Django Messages -->
-{% if messages %}
-<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
-    {% for message in messages %}
-    <div class="alert {% if message.tags == 'error' %}alert-danger{% else %}alert-success{% endif %}" style="padding: 1rem; border-radius: 8px; margin-bottom: 0.5rem; background: {% if message.tags == 'error' %}#fee2e2; color: #991b1b; border: 1px solid #f87171;{% else %}#dcfce7; color: #166534; border: 1px solid #4ade80;{% endif %}">
-        {{ message }}
-    </div>
-    {% endfor %}
-</div>
-{% endif %}
-
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
@@ -21,89 +10,87 @@
             <span class="separator">/</span>
             <a href="{% url 'readiness' %}">Manufacturing</a>
             <span class="separator">/</span>
-            <span class="current-page">Allocate Materials</span>
+            <span class="current-page">Acknowledge Order</span>
         </nav>
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
-            Allocate Materials: {{ run.run_number }}
+            Acknowledge &amp; Allocate Materials
         </h1>
-        <div style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.35rem;">
-            Target Product: <strong>{{ run.target_product.name }}</strong> | Yield: <strong>{{ run.expected_yield|floatformat:0 }}</strong>
-        </div>
-    </div>
-    <div style="display:flex; gap:1rem;">
-        <form method="POST">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="allocate_auto">
-            <button class="btn btn-primary" type="submit" style="padding: 0.65rem 1.25rem; font-weight: 600;">
-                ? Auto Allocate (FEFO/FIFO)
-            </button>
-        </form>
+        <p style="font-size:0.9rem; color:var(--text-muted);">Run {{ run.run_number }} ({{ run.target_product.name }})</p>
     </div>
 </header>
 
-<div class="animate-fade-in-up" style="margin-top: 1.5rem;">
-    <form method="POST">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="allocate_custom">
-        
-        <div style="display: flex; flex-direction: column; gap: 1.5rem; margin-bottom: 2rem;">
-            {% for req in recipe_reqs %}
-            <div class="pane-card" style="padding:0; overflow:hidden;">
-                <div style="background:#f8fafc; padding: 1rem 1.5rem; border-bottom: 1px solid var(--border-light); display:flex; justify-content:space-between; align-items:center;">
-                    <div>
-                        <h3 style="margin:0; font-size:1.1rem;">{{ req.material.name }}</h3>
-                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.25rem;">SKU: {{ req.material.sku }}</div>
-                    </div>
-                    <div style="text-align:right;">
-                        <div style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase; font-weight:600; margin-bottom:0.15rem;">Required Qty</div>
-                        <div style="font-size:1.2rem; font-weight:700; color:var(--primary);">{{ req.needed|floatformat:2 }}</div>
-                    </div>
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:#d97706;{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="animate-fade-in-up" style="display:grid; grid-template-columns:1fr 1fr; gap:2rem; max-width:1200px;">
+    <!-- Left Column: Location Selection & Confirmation -->
+    <div>
+        <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1.25rem;">Select Manufacturing Facility</h3>
+            <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Choose the facility where this production run will take place. The system will automatically allocate materials from this facility based on FIFO.</p>
+            
+            <form method="post" action="{% url 'production_run_allocate' run.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="allocate_run">
+                
+                <div style="margin-bottom:2rem;">
+                    <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase;">Facility</label>
+                    <select name="warehouse_id" required class="form-select" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
+                        <option value="">-- Select a facility --</option>
+                        {% for w in warehouses %}
+                        <option value="{{ w.id }}">{{ w.name }} ({{ w.get_ownership_type_display|default:w.ownership_type }})</option>
+                        {% endfor %}
+                    </select>
                 </div>
-                <div style="padding: 1.5rem;">
-                    <table style="width:100%; border-collapse:collapse; font-size:0.9rem;">
-                        <thead>
-                            <tr style="border-bottom: 1px solid var(--border-light);">
-                                <th style="text-align:left; padding-bottom:0.5rem; color:var(--text-muted); font-weight:600;">Batch Number</th>
-                                <th style="text-align:left; padding-bottom:0.5rem; color:var(--text-muted); font-weight:600;">Expiry Date</th>
-                                <th style="text-align:right; padding-bottom:0.5rem; color:var(--text-muted); font-weight:600;">Available</th>
-                                <th style="text-align:right; padding-bottom:0.5rem; color:var(--text-muted); font-weight:600;">Allocate Qty</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for b in req.batch_list %}
-                            <tr style="border-bottom: 1px dashed var(--border-light);">
-                                <td style="padding:0.75rem 0; font-weight:600; color:var(--text-main);">{{ b.obj.batch_number }}</td>
-                                <td style="padding:0.75rem 0; color:var(--text-muted);">
-                                    {% if b.obj.expiry_date %}{{ b.obj.expiry_date|date:"Y-m-d" }}{% else %}N/A{% endif %}
-                                </td>
-                                <td style="padding:0.75rem 0; text-align:right; color:var(--text-main);">{{ b.obj.avail|floatformat:2 }}</td>
-                                <td style="padding:0.75rem 0; text-align:right;">
-                                    <input type="number" step="0.01" name="allocate_{{ b.obj.id }}_{{ req.material.id }}" 
-                                           value="{% if b.suggested_qty > 0 %}{{ b.suggested_qty|floatformat:2 }}{% endif %}" 
-                                           placeholder="0" class="form-input" 
-                                           style="width:120px; text-align:right; padding:0.4rem; border:1px solid #cbd5e1; border-radius:4px; {% if b.suggested_qty > 0 %}background:#f0fdf4; border-color:#86efac;{% endif %}">
-                                </td>
-                            </tr>
-                            {% empty %}
-                            <tr>
-                                <td colspan="4" style="padding:1rem 0; text-align:center; color:var(--text-muted); font-style:italic;">No available batches for this material in the manufacturing plant.</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                
+                <div style="display:flex; justify-content:flex-end; gap:1rem;">
+                    <a href="{% url 'readiness' %}" class="btn btn-secondary">Cancel</a>
+                    <button type="submit" class="btn btn-primary">Acknowledge &amp; Allocate</button>
                 </div>
-            </div>
-            {% endfor %}
+            </form>
         </div>
-        
-        <div style="display:flex; justify-content:space-between; align-items:center; background:#fff; padding:1.5rem; border-radius:8px; border:1px solid var(--border-light); box-shadow:var(--shadow-sm);">
-            <div style="color:var(--text-muted); font-size:0.9rem;">
-                Ensure all required quantities are fulfilled before submitting.
-            </div>
-            <button type="submit" class="btn btn-secondary" style="padding: 0.75rem 2rem; font-weight:700; font-size:1rem;">
-                Submit Custom Allocation & Start
-            </button>
+    </div>
+
+    <!-- Right Column: Materials Preview -->
+    <div>
+        <div style="background:#f8fafc; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem;">
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:0.5rem;">Material Requirements</h3>
+            <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.25rem;">Preview of required materials across all facilities.</p>
+            
+            <table class="modern-table" style="width:100%; border-collapse:collapse; background:#fff; border-radius:8px; overflow:hidden; border:1px solid var(--border-light);">
+                <thead>
+                    <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                        <th style="padding:0.75rem 1rem; text-align:left;">Material</th>
+                        <th style="padding:0.75rem 1rem; text-align:right;">Needed</th>
+                        <th style="padding:0.75rem 1rem; text-align:right;">Total Available</th>
+                        <th style="padding:0.75rem 1rem; text-align:right;">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in preview %}
+                    <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                        <td style="padding:0.75rem 1rem; font-weight:600;">{{ item.material.name }}</td>
+                        <td style="padding:0.75rem 1rem; text-align:right;">{{ item.needed|floatformat:2 }} {{ item.material.unit_of_measure }}</td>
+                        <td style="padding:0.75rem 1rem; text-align:right;">{{ item.avail|floatformat:2 }} {{ item.material.unit_of_measure }}</td>
+                        <td style="padding:0.75rem 1rem; text-align:right;">
+                            {% if item.shortage > 0 %}
+                            <span style="color:#dc2626; font-weight:700;">Short ({{ item.shortage|floatformat:2 }})</span>
+                            {% else %}
+                            <span style="color:#059669; font-weight:700;">OK</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
-    </form>
+    </div>
 </div>
 {% endblock %}

@@ -15,6 +15,11 @@
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
             Purchase Order Detail
         </h1>
+        {% if po.linked_production_run %}
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem; display:flex; align-items:center; gap:0.5rem;">
+            <span class="badge badge-indigo">Linked to Production Run {{ po.linked_production_run.run_number }}</span>
+        </p>
+        {% endif %}
     </div>
     <div class="header-action-tray">
         <form method="post" style="display:inline-flex; gap:0.5rem; align-items:center;">

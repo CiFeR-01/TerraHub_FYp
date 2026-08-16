@@ -1,339 +1,251 @@
-{% extends 'base.html' %}
-{% load static %}
-{% block title %}Action Center | TerraHub ERP{% endblock %}
+{% extends "base.html" %}
 
-{% block content %}
-<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
-    <div>
-        <h1 style="font-family:'Outfit',sans-serif; font-size:1.75rem; font-weight:700; color:var(--text-main); margin-bottom:0.25rem;">Action Center</h1>
-        <p style="color:var(--text-muted); font-size:0.95rem;">Review and authorize pending operations across the enterprise.</p>
-    </div>
-</div>
-
-
-<!-- Analytics Dashboard -->
-<div class="animate-fade-in-up" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:1.5rem; margin-bottom:2rem; animation-delay:0.05s;">
-    <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); display:flex; align-items:center; gap:1rem;">
-        <div style="width:48px; height:48px; border-radius:12px; background:rgba(245,158,11,0.1); color:#d97706; display:flex; align-items:center; justify-content:center;">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-        </div>
-        <div>
-            <div style="font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Pending Actions</div>
-            <div style="font-size:1.5rem; font-weight:800; color:var(--text-main);">{{ pending_count }}</div>
-        </div>
-    </div>
-    
-    <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); display:flex; align-items:center; gap:1rem;">
-        <div style="width:48px; height:48px; border-radius:12px; background:rgba(16,185,129,0.1); color:#059669; display:flex; align-items:center; justify-content:center;">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
-        </div>
-        <div>
-            <div style="font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Approved (This Week)</div>
-            <div style="font-size:1.5rem; font-weight:800; color:var(--text-main);">{{ approved_this_week }}</div>
-        </div>
-    </div>
-    
-    <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); display:flex; align-items:center; gap:1rem;">
-        <div style="width:48px; height:48px; border-radius:12px; background:rgba(239,68,68,0.1); color:#dc2626; display:flex; align-items:center; justify-content:center;">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
-        </div>
-        <div>
-            <div style="font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Rejected (This Week)</div>
-            <div style="font-size:1.5rem; font-weight:800; color:var(--text-main);">{{ rejected_this_week }}</div>
-        </div>
-    </div>
-</div>
-
-<!-- Tabs -->
-<div class="animate-fade-in-up" style="margin-bottom:1.5rem; border-bottom:1px solid var(--border-light); display:flex; gap:2rem; animation-delay:0.1s;">
-    <button onclick="switchTab('pending')" id="tab-pending" style="background:none; border:none; padding:0.75rem 0; font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:700; color:var(--primary); border-bottom:3px solid var(--primary); cursor:pointer;">
-        Pending Authorizations
-    </button>
-    <button onclick="switchTab('history')" id="tab-history" style="background:none; border:none; padding:0.75rem 0; font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:600; color:var(--text-muted); border-bottom:3px solid transparent; cursor:pointer; transition:all 0.2s;">
-        Decision History
-    </button>
-</div>
-
+{% block title %}Action Center - TerraHub
 <script>
-function switchTab(tab) {
-    if (tab === 'pending') {
-        document.getElementById('view-pending').style.display = 'block';
-        document.getElementById('view-history').style.display = 'none';
-        document.getElementById('tab-pending').style.color = 'var(--primary)';
-        document.getElementById('tab-pending').style.fontWeight = '700';
-        document.getElementById('tab-pending').style.borderBottom = '3px solid var(--primary)';
-        
-        document.getElementById('tab-history').style.color = 'var(--text-muted)';
-        document.getElementById('tab-history').style.fontWeight = '600';
-        document.getElementById('tab-history').style.borderBottom = '3px solid transparent';
-    } else {
-        document.getElementById('view-pending').style.display = 'none';
-        document.getElementById('view-history').style.display = 'block';
-        document.getElementById('tab-history').style.color = 'var(--primary)';
-        document.getElementById('tab-history').style.fontWeight = '700';
-        document.getElementById('tab-history').style.borderBottom = '3px solid var(--primary)';
-        
-        document.getElementById('tab-pending').style.color = 'var(--text-muted)';
-        document.getElementById('tab-pending').style.fontWeight = '600';
-        document.getElementById('tab-pending').style.borderBottom = '3px solid transparent';
-    }
+function switchTab(tabId) {
+    document.getElementById('tasks-tab').style.display = 'none';
+    document.getElementById('following-tab').style.display = 'none';
+    document.getElementById('btn-tasks').style.borderBottom = 'none';
+    document.getElementById('btn-tasks').style.color = 'var(--text-muted)';
+    document.getElementById('btn-following').style.borderBottom = 'none';
+    document.getElementById('btn-following').style.color = 'var(--text-muted)';
+    
+    document.getElementById(tabId + '-tab').style.display = 'block';
+    document.getElementById('btn-' + tabId).style.borderBottom = '2px solid var(--primary)';
+    document.getElementById('btn-' + tabId).style.color = 'var(--primary)';
 }
 </script>
+{% endblock %}
 
-<div id="view-pending" class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
-    
-    
-    {% if not pending_sos and not pending_runs and not pending_pos and not pending_shipments %}
-    <div style="text-align:center; padding:3rem; color:var(--text-muted);">
-        <svg viewBox="0 0 24 24" width="48" height="48" style="margin:0 auto 1rem; opacity:0.5;">
-            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
-            <polyline points="22 4 12 14.01 9 11.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>
-        </svg>
-        <p style="font-size:1.1rem; font-weight:600; color:var(--text-main);">You're all caught up!</p>
-        <p style="font-size:0.9rem;">No items require your approval at this time.</p>
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">Action Center</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Action Center
+        </h1>
     </div>
-    {% else %}
-    <div style="display:flex; flex-direction:column; gap:1rem;">
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:#d97706;{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div style="display:grid; grid-template-columns: 2fr 1fr; gap:1.5rem; margin-bottom:2rem;" class="animate-fade-in-up">
+    <!-- Tasks Section -->
+    <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+        <div style="display:flex; gap:1.5rem; margin-bottom:1.5rem; border-bottom:1px solid var(--border-light);">
+            <button id="btn-tasks" onclick="switchTab('tasks')" style="background:none; border:none; border-bottom:2px solid var(--primary); padding-bottom:0.75rem; font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; color:var(--primary); cursor:pointer;">Assigned Tasks & Approvals</button>
+            <button id="btn-following" onclick="switchTab('following')" style="background:none; border:none; padding-bottom:0.75rem; font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:600; color:var(--text-muted); cursor:pointer;">Following</button>
+        </div>
         
-        <!-- Sales Orders -->
-        {% for so in pending_sos %}
-        <div style="border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:flex-start; background:#f8fafc; transition:all 0.2s ease;">
-            <div style="flex:1;">
-                <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.5rem;">
-                    <span style="background:#e0e7ff; color:#4338ca; padding:0.25rem 0.5rem; border-radius:6px; font-size:0.75rem; font-weight:700; display:flex; align-items:center; gap:0.25rem;">
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
-                        SALES ORDER
-                    </span>
-                    <span style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700;"><a href="{% url 'so_detail' so.pk %}" style="text-decoration:none; color:var(--text-main);">{{ so.so_number }}</a></span>
-                    <span style="color:var(--text-muted); font-size:0.85rem;">• {{ so.order_date }}</span>
+        <div id="tasks-tab" style="display:block;">
+        <div style="display:flex; flex-direction:column; gap:1rem;">
+            <!-- Sales Orders -->
+            {% for so in pending_sos %}
+            <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
+                <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Sales Order Approval</div>
+                        <a href="{% url 'so_detail' so.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ so.so_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Client: {{ so.client_name }} &middot; Revenue: ${{ so.total_revenue|floatformat:2 }}</div>
+                    </div>
+                    <span class="badge badge-amber">Pending Approval</span>
                 </div>
-                <div style="font-size:0.9rem; color:var(--text-main); margin-bottom:0.75rem;">
-                    <strong>Client:</strong> {{ so.client_name }}<br>
-                    <strong>Total Value:</strong> ${{ so.total_amount }}
-                </div>
+                
                 {% if so.approval_remarks %}
-                <div style="background:#fff3cd; color:#856404; padding:0.75rem; border-radius:6px; font-size:0.85rem; margin-bottom:0.75rem; border:1px solid #ffeeba;">
-                    <strong style="display:block; margin-bottom:0.25rem;">Operator Remarks:</strong>
-                    {{ so.approval_remarks }}
+                <div style="background:#fff; border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">
+                    "{{ so.approval_remarks }}"
                 </div>
                 {% endif %}
-                
-                <details style="font-size:0.85rem; color:var(--text-muted); cursor:pointer;">
-                    <summary style="font-weight:600; color:var(--primary); margin-bottom:0.5rem;">View Line Items ({{ so.items.count }})</summary>
-                    <ul style="margin-left:1.5rem; margin-top:0.25rem; line-height:1.6;">
-                        {% for item in so.items.all %}
-                        <li>{{ item.quantity_ordered }}x {{ item.product.sku }} ({{ item.product.name }})</li>
-                        {% endfor %}
-                    </ul>
-                </details>
-            </div>
-            
-            <div style="background:#fff; border:1px solid var(--border-light); border-radius:8px; padding:1rem; min-width:280px; box-shadow:0 2px 8px rgba(0,0,0,0.03);">
-                <form method="post" action="{% url 'approvals_inbox' %}">
+
+                <form method="post" style="display:flex; gap:0.5rem; align-items:center;">
                     {% csrf_token %}
                     <input type="hidden" name="item_type" value="sales_order">
                     <input type="hidden" name="item_id" value="{{ so.id }}">
-                    <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.25rem; color:var(--text-muted);">Manager Comment (Optional)</label>
-                    <textarea name="comment" rows="2" style="width:100%; border:1px solid var(--border-light); border-radius:6px; padding:0.5rem; font-size:0.85rem; margin-bottom:0.75rem; resize:none;" placeholder="Notes for the timeline..."></textarea>
-                    
-                    <div style="display:flex; gap:0.5rem;">
-                        <button type="submit" name="action" value="reject" class="btn btn-secondary" style="flex:1; border-color:#ef4444; color:#ef4444; background:transparent;">Reject</button>
-                        <button type="submit" name="action" value="approve" class="btn btn-primary" style="flex:2;">Approve</button>
-                    </div>
+                    <input type="text" name="comment" placeholder="Add comment..." class="form-input" style="flex:1; padding:0.4rem 0.6rem; font-size:0.85rem; border-radius:6px; border:1px solid var(--border-light);">
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject</button>
+                    <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem;">Approve</button>
                 </form>
             </div>
-        </div>
-        {% endfor %}
-        
-        <!-- Purchase Orders -->
-        {% for po in pending_pos %}
-        <div style="border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:flex-start; background:#f8fafc; transition:all 0.2s ease;">
-            <div style="flex:1;">
-                <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.5rem;">
-                    <span style="background:#fce7f3; color:#be185d; padding:0.25rem 0.5rem; border-radius:6px; font-size:0.75rem; font-weight:700; display:flex; align-items:center; gap:0.25rem;">
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>
-                        PURCHASE ORDER
-                    </span>
-                    <span style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700;"><a href="{% url 'po_detail' po.pk %}" style="text-decoration:none; color:var(--text-main);">{{ po.po_number }}</a></span>
-                    <span style="color:var(--text-muted); font-size:0.85rem;">• {{ po.order_date }}</span>
+            {% endfor %}
+
+            <!-- Purchase Orders -->
+            {% for po in pending_pos %}
+            <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
+                <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:#059669; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Purchase Order Approval / Action</div>
+                        <a href="{% url 'po_detail' po.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ po.po_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Supplier: {{ po.supplier }} &middot; Cost: ${{ po.total_cost|floatformat:2 }}</div>
+                        {% if po.linked_production_run %}
+                        <div style="font-size:0.75rem; color:var(--primary); margin-top:0.25rem; font-weight:600;">Drafted for Run: {{ po.linked_production_run.run_number }}</div>
+                        {% endif %}
+                    </div>
+                    <span class="badge badge-amber">{{ po.status }}</span>
                 </div>
-                <div style="font-size:0.9rem; color:var(--text-main); margin-bottom:0.75rem;">
-                    <strong>Supplier:</strong> {{ po.supplier_name }}<br>
-                    <strong>Total Value:</strong> ${{ po.total_amount }}
-                </div>
+                
                 {% if po.approval_remarks %}
-                <div style="background:#fff3cd; color:#856404; padding:0.75rem; border-radius:6px; font-size:0.85rem; margin-bottom:0.75rem; border:1px solid #ffeeba;">
-                    <strong style="display:block; margin-bottom:0.25rem;">Operator Remarks:</strong>
-                    {{ po.approval_remarks }}
+                <div style="background:#fff; border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">
+                    "{{ po.approval_remarks }}"
                 </div>
                 {% endif %}
                 
-                <details style="font-size:0.85rem; color:var(--text-muted); cursor:pointer;">
-                    <summary style="font-weight:600; color:var(--primary); margin-bottom:0.5rem;">View Materials Requested ({{ po.items.count }})</summary>
-                    <ul style="margin-left:1.5rem; margin-top:0.25rem; line-height:1.6;">
-                        {% for item in po.items.all %}
-                        <li>{{ item.quantity_ordered }}x {{ item.material.sku }} ({{ item.material.name }})</li>
-                        {% endfor %}
-                    </ul>
-                </details>
-            </div>
-            
-            <div style="background:#fff; border:1px solid var(--border-light); border-radius:8px; padding:1rem; min-width:280px; box-shadow:0 2px 8px rgba(0,0,0,0.03);">
-                <form method="post" action="{% url 'approvals_inbox' %}">
+                {% if po.status == 'Draft' %}
+                <!-- It's assigned to a purchaser to fill out -->
+                <div style="display:flex; gap:0.5rem;">
+                    <a href="{% url 'po_detail' po.pk %}" class="btn btn-primary" style="padding:0.4rem 1rem;">Open PO to Complete</a>
+                </div>
+                {% else %}
+                <form method="post" style="display:flex; gap:0.5rem; align-items:center;">
                     {% csrf_token %}
                     <input type="hidden" name="item_type" value="purchase_order">
                     <input type="hidden" name="item_id" value="{{ po.id }}">
-                    <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.25rem; color:var(--text-muted);">Manager Comment (Optional)</label>
-                    <textarea name="comment" rows="2" style="width:100%; border:1px solid var(--border-light); border-radius:6px; padding:0.5rem; font-size:0.85rem; margin-bottom:0.75rem; resize:none;" placeholder="Notes for the timeline..."></textarea>
-                    
-                    <div style="display:flex; gap:0.5rem;">
-                        <button type="submit" name="action" value="reject" class="btn btn-secondary" style="flex:1; border-color:#ef4444; color:#ef4444; background:transparent;">Reject</button>
-                        <button type="submit" name="action" value="approve" class="btn btn-primary" style="flex:2;">Approve</button>
-                    </div>
+                    <input type="text" name="comment" placeholder="Add comment..." class="form-input" style="flex:1; padding:0.4rem 0.6rem; font-size:0.85rem; border-radius:6px; border:1px solid var(--border-light);">
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject</button>
+                    <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem;">Approve</button>
                 </form>
-            </div>
-        </div>
-        {% endfor %}
-
-        <!-- Production Runs -->
-        {% for run in pending_runs %}
-        <div style="border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:flex-start; background:#f8fafc; transition:all 0.2s ease;">
-            <div style="flex:1;">
-                <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.5rem;">
-                    <span style="background:#ffedd5; color:#c2410c; padding:0.25rem 0.5rem; border-radius:6px; font-size:0.75rem; font-weight:700; display:flex; align-items:center; gap:0.25rem;">
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                        PRODUCTION RUN
-                    </span>
-                    <span style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700;"><a href="{% url 'readiness' %}" style="text-decoration:none; color:var(--text-main);">{{ run.run_number }}</a></span>
-                </div>
-                <div style="font-size:0.9rem; color:var(--text-main); margin-bottom:0.75rem;">
-                    <strong>Target Product:</strong> {{ run.target_product.sku }} - {{ run.target_product.name }}<br>
-                    <strong>Expected Yield:</strong> {{ run.expected_yield }} {{ run.target_product.unit_of_measure }}<br>
-                    <strong>Schedule:</strong> {{ run.start_time|date:"M d, H:i" }} to {{ run.end_time|date:"M d, H:i" }}
-                </div>
-                {% if run.sales_order %}
-                <div style="font-size:0.85rem; color:#166534; font-weight:600; display:flex; align-items:center; gap:0.25rem;">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
-                    Linked to Sales Order: {{ run.sales_order.so_number }}
-                </div>
                 {% endif %}
             </div>
+            {% endfor %}
             
-            <div style="background:#fff; border:1px solid var(--border-light); border-radius:8px; padding:1rem; min-width:280px; box-shadow:0 2px 8px rgba(0,0,0,0.03);">
-                <form method="post" action="{% url 'approvals_inbox' %}">
-                    {% csrf_token %}
-                    <input type="hidden" name="item_type" value="production_run">
-                    <input type="hidden" name="item_id" value="{{ run.id }}">
-                    <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.25rem; color:var(--text-muted);">Manager Comment (Optional)</label>
-                    <textarea name="comment" rows="2" style="width:100%; border:1px solid var(--border-light); border-radius:6px; padding:0.5rem; font-size:0.85rem; margin-bottom:0.75rem; resize:none;" placeholder="Notes for the timeline..."></textarea>
-                    
-                    <div style="display:flex; gap:0.5rem;">
-                        <button type="submit" name="action" value="reject" class="btn btn-secondary" style="flex:1; border-color:#ef4444; color:#ef4444; background:transparent;">Reject</button>
-                        <button type="submit" name="action" value="approve" class="btn btn-primary" style="flex:2;">Approve</button>
-                    </div>
-                </form>
+            {% if not pending_sos and not pending_pos %}
+            <div style="text-align:center; padding:3rem 1rem; color:var(--text-muted);">
+                <div style="font-size:2rem; margin-bottom:0.5rem;">&#127881;</div>
+                <div style="font-weight:600; font-size:1rem;">You're all caught up!</div>
+                <div style="font-size:0.85rem; margin-top:0.25rem;">No pending approvals assigned to you.</div>
             </div>
+            {% endif %}
         </div>
-        {% endfor %}
-        <!-- Shipments (Discrepancy Escalations) -->
-        {% for ship in pending_shipments %}
-        <div style="border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:flex-start; background:#f8fafc; transition:all 0.2s ease;">
-            <div style="flex:1;">
-                <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.5rem;">
-                    <span style="background:#fee2e2; color:#b91c1c; padding:0.25rem 0.5rem; border-radius:6px; font-size:0.75rem; font-weight:700; display:flex; align-items:center; gap:0.25rem;">
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
-                        DISCREPANCY ESCALATION
-                    </span>
-                    <span style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700;"><a href="{% url 'shipment_detail' ship.pk %}" style="text-decoration:none; color:var(--text-main);">{{ ship.tracking_number }}</a></span>
-                    <span style="color:var(--text-muted); font-size:0.85rem;">• Escalated By: {{ ship.last_edited_by.username|default:"System" }}</span>
-                </div>
-                <div style="font-size:0.9rem; color:var(--text-main); margin-bottom:0.75rem;">
-                    <strong>Type:</strong> {{ ship.get_direction_display }} Shipment<br>
-                    <strong>Origin:</strong> {{ ship.origin_warehouse.name|default:"External" }} ➔ <strong>Dest:</strong> {{ ship.destination_warehouse.name|default:"External" }}
-                </div>
-                {% if ship.discrepancy_remarks %}
-                <div style="margin-bottom:0.75rem; background:#fff; padding:0.75rem; border-radius:6px; border:1px solid #e2e8f0; font-size:0.85rem; color:#475569;">
-                    <strong>Operator Remarks:</strong><br>
-                    {{ ship.discrepancy_remarks|linebreaksbr }}
-                </div>
-                {% endif %}
-            </div>
-            
-            <div style="background:#fff; border:1px solid var(--border-light); border-radius:8px; padding:1rem; min-width:280px; box-shadow:0 2px 8px rgba(0,0,0,0.03);">
-                <form method="post" action="{% url 'shipment_detail' ship.pk %}">
-                    {% csrf_token %}
-                    <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.25rem; color:var(--text-muted);">Manager Comment (Optional)</label>
-                    <textarea name="manager_comment" rows="2" style="width:100%; border:1px solid var(--border-light); border-radius:6px; padding:0.5rem; font-size:0.85rem; margin-bottom:0.75rem; resize:none;" placeholder="Notes for Force Close..."></textarea>
-                    
-                    <div style="display:flex; gap:0.5rem; flex-direction:column;">
-                        <button type="submit" name="action" value="force_close_shipment" class="btn btn-primary" style="width:100%;">Sign-Off & Force Close</button>
-                        <button type="submit" name="action" value="cancel_escalation" class="btn btn-secondary" style="width:100%; border-color:#ef4444; color:#ef4444; background:transparent;">Cancel Escalation</button>
-                    </div>
-                </form>
-            </div>
         </div>
-        {% endfor %}
 
+        <div id="following-tab" style="display:none;">
+            <div style="display:grid; gap:1rem;">
+                {% for po in followed_pos %}
+                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <a href="{% url 'po_detail' po.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ po.po_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Supplier: {{ po.supplier_name|default:po.supplier|default:"-" }} &middot; Created: {{ po.order_date }}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <span class="badge badge-sky">{{ po.status }}</span>
+                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.5rem;">Assigned to: {{ po.assigned_to.get_full_name|default:po.assigned_to.username|default:"Unassigned" }}</div>
+                    </div>
+                </div>
+                {% empty %}
+                <div style="text-align:center; padding:3rem 1rem; color:var(--text-muted);">
+                    <div style="font-size:2rem; margin-bottom:0.5rem;">&#128065;</div>
+                    <div style="font-weight:600; font-size:1rem;">You aren't following any orders.</div>
+                    <div style="font-size:0.85rem; margin-top:0.25rem;">Follow Purchase Orders to track their status here.</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
     </div>
-    {% endif %}
-</div>
 
-<div id="view-history" style="display:none;" class="animate-fade-in-up">
-    <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
-        {% if not history_sos and not history_pos %}
-        <div style="text-align:center; padding:3rem; color:var(--text-muted);">
-            <p style="font-size:1.1rem; font-weight:600; color:var(--text-main);">No Decision History</p>
-            <p style="font-size:0.9rem;">You haven't approved or rejected any items yet.</p>
+    <!-- Notifications Section -->
+    <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem; border-bottom:1px solid var(--border-light); padding-bottom:0.75rem;">
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.2rem; font-weight:700;">Notifications</h3>
+            {% if notifications %}
+            <form action="{% url 'mark_notifications_read' %}" method="post">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.75rem;">Mark All Read</button>
+            </form>
+            {% endif %}
         </div>
-        {% else %}
-        <div style="display:flex; flex-direction:column; gap:1rem;">
-            <!-- History SOs -->
+        
+        <div style="display:flex; flex-direction:column; gap:0.75rem;">
+            {% for note in notifications %}
+            <div style="background:#f0f9ff; border-left:3px solid var(--primary); padding:1rem; border-radius:0 8px 8px 0;">
+                <div style="font-size:0.85rem; font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">
+                    {{ note.message }}
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.5rem;">
+                    <span style="font-size:0.7rem; color:var(--text-muted);">{{ note.created_at|timesince }} ago</span>
+                    {% if note.link %}
+                    <a href="{{ note.link }}" style="font-size:0.75rem; font-weight:600; color:var(--primary); text-decoration:none;">View &rarr;</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% empty %}
+            <div style="text-align:center; padding:2rem 1rem; color:var(--text-muted); font-size:0.85rem;">
+                No new notifications.
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- History Section -->
+    <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:1.5rem;">
+        <h3 style="font-family:'Outfit',sans-serif; font-size:1.2rem; font-weight:700; margin-bottom:1.5rem; border-bottom:1px solid var(--border-light); padding-bottom:0.75rem;">Your Approval History</h3>
+        <div style="display:flex; flex-direction:column; gap:0.75rem; max-height:400px; overflow-y:auto; padding-right:0.5rem;">
             {% for so in history_sos %}
-            <div style="border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center; background:#fafafa;">
-                <div>
-                    <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.25rem;">
-                        <span style="background:#e0e7ff; color:#4338ca; padding:0.2rem 0.4rem; border-radius:4px; font-size:0.7rem; font-weight:700;">SALES ORDER</span>
-                        <span style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700;"><a href="{% url 'so_detail' so.pk %}" style="text-decoration:none; color:var(--text-main);">{{ so.so_number }}</a></span>
-                    </div>
-                    <div style="font-size:0.85rem; color:var(--text-muted);">Client: {{ so.client_name }} | Order Date: {{ so.order_date }}</div>
-                </div>
-                <div style="text-align:right;">
-                    <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.2rem;">Current Status</div>
-                    {% if so.status == 'Draft' %}<span class="badge badge-sky">Returned to Draft (Rejected)</span>
-                    {% elif so.status == 'Pending' %}<span class="badge badge-amber">Pending (Approved)</span>
-                    {% elif so.status == 'Awaiting Acknowledgement' %}<span class="badge badge-amber">Awaiting Ack.</span>
-                    {% elif so.status == 'In Production' %}<span class="badge badge-indigo">In Production</span>
-                    {% elif so.status == 'Ready to Ship' %}<span class="badge badge-emerald">Ready to Ship</span>
-                    {% elif so.status == 'Shipped' %}<span class="badge badge-emerald">Shipped</span>
-                    {% elif so.status == 'Delivered' %}<span class="badge badge-emerald">Delivered</span>
-                    {% else %}<span class="badge badge-rose">{{ so.status }}</span>{% endif %}
-                </div>
+            <div style="font-size:0.85rem; padding:0.75rem; border:1px solid var(--border-light); border-radius:8px;">
+                <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">SO: <a href="{% url 'so_detail' so.pk %}" style="color:var(--primary); text-decoration:none;">{{ so.so_number }}</a></div>
+                <div style="color:var(--text-muted); font-size:0.8rem;">Status: {{ so.status }}</div>
             </div>
             {% endfor %}
-            
-            <!-- History POs -->
             {% for po in history_pos %}
-            <div style="border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center; background:#fafafa;">
-                <div>
-                    <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.25rem;">
-                        <span style="background:#fce7f3; color:#be185d; padding:0.2rem 0.4rem; border-radius:4px; font-size:0.7rem; font-weight:700;">PURCHASE ORDER</span>
-                        <span style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700;"><a href="{% url 'po_detail' po.pk %}" style="text-decoration:none; color:var(--text-main);">{{ po.po_number }}</a></span>
-                    </div>
-                    <div style="font-size:0.85rem; color:var(--text-muted);">Supplier: {{ po.supplier_name }} | Order Date: {{ po.order_date }}</div>
-                </div>
-                <div style="text-align:right;">
-                    <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.2rem;">Current Status</div>
-                    {% if po.status == 'Draft' %}<span class="badge badge-sky">Returned to Draft (Rejected)</span>
-                    {% elif po.status == 'Pending' %}<span class="badge badge-amber">Pending (Approved)</span>
-                    {% elif po.status == 'Partially Received' %}<span class="badge badge-indigo">Partially Received</span>
-                    {% elif po.status == 'Completed' %}<span class="badge badge-emerald">Completed</span>
-                    {% else %}<span class="badge badge-rose">{{ po.status }}</span>{% endif %}
-                </div>
+            <div style="font-size:0.85rem; padding:0.75rem; border:1px solid var(--border-light); border-radius:8px;">
+                <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">PO: <a href="{% url 'po_detail' po.pk %}" style="color:var(--primary); text-decoration:none;">{{ po.po_number }}</a></div>
+                <div style="color:var(--text-muted); font-size:0.8rem;">Status: {{ po.status }}</div>
             </div>
             {% endfor %}
+            {% if not history_sos and not history_pos %}
+            <div style="text-align:center; padding:1rem; color:var(--text-muted); font-size:0.85rem;">No approval history found.</div>
+            {% endif %}
         </div>
-        {% endif %}
+        </div>
+
+        <div id="following-tab" style="display:none;">
+            <div style="display:grid; gap:1rem;">
+                {% for po in followed_pos %}
+                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <a href="{% url 'po_detail' po.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ po.po_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Supplier: {{ po.supplier_name|default:po.supplier|default:"-" }} &middot; Created: {{ po.order_date }}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <span class="badge badge-sky">{{ po.status }}</span>
+                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.5rem;">Assigned to: {{ po.assigned_to.get_full_name|default:po.assigned_to.username|default:"Unassigned" }}</div>
+                    </div>
+                </div>
+                {% empty %}
+                <div style="text-align:center; padding:3rem 1rem; color:var(--text-muted);">
+                    <div style="font-size:2rem; margin-bottom:0.5rem;">&#128065;</div>
+                    <div style="font-weight:600; font-size:1rem;">You aren't following any orders.</div>
+                    <div style="font-size:0.85rem; margin-top:0.25rem;">Follow Purchase Orders to track their status here.</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
     </div>
 </div>
 
+
+<script>
+function switchTab(tabId) {
+    document.getElementById('tasks-tab').style.display = 'none';
+    document.getElementById('following-tab').style.display = 'none';
+    document.getElementById('btn-tasks').style.borderBottom = 'none';
+    document.getElementById('btn-tasks').style.color = 'var(--text-muted)';
+    document.getElementById('btn-following').style.borderBottom = 'none';
+    document.getElementById('btn-following').style.color = 'var(--text-muted)';
+    
+    document.getElementById(tabId + '-tab').style.display = 'block';
+    document.getElementById('btn-' + tabId).style.borderBottom = '2px solid var(--primary)';
+    document.getElementById('btn-' + tabId).style.color = 'var(--primary)';
+}
+</script>
 {% endblock %}

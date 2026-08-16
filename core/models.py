@@ -2,6 +2,13 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from datetime import date
 
+class Role(models.Model):
+    name = models.CharField(max_length=50, unique=True)
+    description = models.CharField(max_length=255, blank=True, null=True)
+
+    def __str__(self):
+        return self.name
+
 class CustomUser(AbstractUser):
     ROLE_CHOICES = (
         ('Admin', 'Admin'),
@@ -12,6 +19,14 @@ class CustomUser(AbstractUser):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='Staff_View')
     branch = models.CharField(max_length=100, default='HQ', help_text="Department / Division mapping")
     can_adjust_physical_stock = models.BooleanField(default=False, help_text="Explicit permission to adjust warehouse stock")
+
+    roles = models.ManyToManyField(Role, blank=True, related_name='users')
+    allowed_locations = models.ManyToManyField('Warehouse', blank=True, related_name='allowed_users')
+    updated_by = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_users')
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def has_role(self, role_name):
+        return self.roles.filter(name=role_name).exists()
 
     @property
     def unread_notifications_count(self):
@@ -87,6 +102,8 @@ class ProductRecipe(models.Model):
 class ProductionRun(models.Model):
     STATUS_CHOICES = (
         ('Pending Approval', 'Pending Approval'),
+        ('Pending Allocation', 'Pending Allocation'),
+        ('Awaiting Materials', 'Awaiting Materials'),
         ('Planned', 'Planned'),
         ('InProgress', 'In Progress'),
         ('Completed', 'Completed'),
@@ -178,6 +195,7 @@ class PurchaseOrder(models.Model):
     rejection_reason = models.TextField(blank=True, null=True)
     revision_count = models.IntegerField(default=0)
     followers = models.ManyToManyField(CustomUser, blank=True, related_name='followed_pos')
+    linked_production_run = models.ForeignKey('ProductionRun', on_delete=models.SET_NULL, null=True, blank=True, related_name='linked_pos')
     updated_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_pos')
     updated_at = models.DateTimeField(auto_now=True)
 

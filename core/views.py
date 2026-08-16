@@ -14,7 +14,7 @@ from .models import (
     CustomUser, Warehouse, WarehouseLocation, Material, Product,
     ProductRecipe, ProductionRun, ProductionConsumption, Batch,
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
-    Shipment, ShipmentItem, StockAudit, RegistryLog, OrderTimeline, Notification
+    Shipment, ShipmentItem, StockAudit, RegistryLog, OrderTimeline, Notification, Role
 )
 from .utils import generate_next_code
 
@@ -1451,11 +1451,7 @@ def sales_order_list_view(request):
             so.save()
             OrderTimeline.objects.create(sales_order=so, action=f"Status changed to '{new_status}'", user=request.user)
             
-            from .utils import allocate_stock, deduct_stock_from_allocation
-            if old_status != 'Pending' and new_status == 'Pending':
-                for item in so.items.all():
-                    allocate_stock('sales_order', so, item.product, item.quantity_ordered)
-                    
+            from .utils import deduct_stock_from_allocation
             if old_status not in ['Shipped', 'Delivered'] and new_status in ['Shipped', 'Delivered']:
                 deduct_stock_from_allocation('sales_order', so)
                 
@@ -1606,11 +1602,7 @@ def so_detail_view(request, pk):
             so.save()
             OrderTimeline.objects.create(sales_order=so, action=f"Status updated to '{new_status}'", user=request.user)
             
-            from .utils import allocate_stock, deduct_stock_from_allocation
-            if old_status != 'Pending' and new_status == 'Pending':
-                for item in so.items.all():
-                    allocate_stock('sales_order', so, item.product, item.quantity_ordered)
-                    
+            from .utils import deduct_stock_from_allocation
             if old_status not in ['Shipped', 'Delivered'] and new_status in ['Shipped', 'Delivered']:
                 deduct_stock_from_allocation('sales_order', so)
 
@@ -1751,6 +1743,10 @@ def po_detail_view(request, pk):
         action = request.POST.get('action')
 
         if action == 'add_po_item':
+            if po.linked_production_run:
+                messages.error(request, "Cannot modify items for a PO automatically generated from a Production Run shortage.")
+                return redirect('po_detail', pk=pk)
+                
             mat_id = request.POST.get('material_id')
             qty = request.POST.get('quantity_ordered', 0)
             unit_price = request.POST.get('unit_price', None)
@@ -1768,6 +1764,10 @@ def po_detail_view(request, pk):
                 messages.error(request, f"Error adding item: {e}")
 
         elif action == 'remove_po_item':
+            if po.linked_production_run:
+                messages.error(request, "Cannot modify items for a PO automatically generated from a Production Run shortage.")
+                return redirect('po_detail', pk=pk)
+                
             item_id = request.POST.get('item_id')
             try:
                 item = get_object_or_404(PurchaseOrderDetail, id=item_id, purchase_order=po)
@@ -1957,6 +1957,74 @@ def manufacturing_view(request):
                 messages.success(request, f"Production Run {run_number} scheduled for {prod.name}.")
             except Exception as e:
                 messages.error(request, f"Error scheduling run: {e}")
+        elif action == 'draft_po_from_shortage':
+            run_id = request.POST.get('run_id')
+            run = get_object_or_404(ProductionRun, id=run_id)
+            
+            if run.status != 'Awaiting Materials':
+                messages.error(request, "Run is not awaiting materials.")
+                return redirect('readiness')
+                
+            from .models import PurchaseOrder, PurchaseOrderDetail
+            from django.utils import timezone
+            from datetime import timedelta
+            
+            # Find shortages
+            shortages = []
+            for req in run.target_product.recipe_items.all():
+                needed = float(req.quantity_required) * float(run.expected_yield)
+                # Count allocated quantities for THIS run
+                allocated = sum(alloc.quantity for alloc in run.allocations.filter(batch__material=req.material))
+                short = max(0, needed - float(allocated))
+                if short > 0:
+                    shortages.append({
+                        'material': req.material,
+                        'qty': short
+                    })
+                    
+            if not shortages:
+                messages.info(request, "No shortages found.")
+                return redirect('readiness')
+                
+            # Create Draft PO
+            po_number = generate_next_code(PurchaseOrder, 'po_number', 'PO', 601, pad=3)
+            
+            # Try to auto-assign a purchaser
+            purchaser = CustomUser.objects.filter(roles__name__icontains='Purchasing').first()
+            if not purchaser:
+                 purchaser = CustomUser.objects.filter(role__icontains='purchas').first()
+                 
+            with transaction.atomic():
+                po = PurchaseOrder.objects.create(
+                    po_number=po_number,
+                    supplier="To Be Determined",
+                    destination_warehouse=run.manufacturing_plant,
+                    status='Draft',
+                    created_by=request.user,
+                    assigned_to=purchaser,
+                    linked_production_run=run
+                )
+                
+                for short in shortages:
+                    PurchaseOrderDetail.objects.create(
+                        purchase_order=po,
+                        material=short['material'],
+                        quantity_ordered=short['qty']
+                    )
+                    
+                # Link PO to run for UI display
+                run.linked_pos.add(po)
+                
+                # Notify purchaser
+                if purchaser:
+                    Notification.objects.create(
+                        user=purchaser,
+                        message=f"Draft PO {po.po_number} created for materials short in Production Run {run.run_number}. Please complete and submit for approval.",
+                        link=f"/operations/orders/po/{po.pk}/"
+                    )
+                    
+                messages.success(request, f"Draft PO {po.po_number} created successfully and assigned to Purchasing.")
+            return redirect('readiness')
 
         elif action == 'approve_run':
             if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
@@ -2069,7 +2137,10 @@ def manufacturing_view(request):
 
         return redirect('readiness')
 
+    loc_filter = request.GET.get('loc_filter', '')
     runs = ProductionRun.objects.select_related('target_product', 'supervisor', 'manufacturing_plant', 'sales_order').order_by('-id')
+    if loc_filter:
+        runs = runs.filter(manufacturing_plant_id=loc_filter)
     products = Product.objects.all()
     plants = Warehouse.objects.filter(location_type='Manufacturing')
     if not plants.exists():
@@ -2152,6 +2223,7 @@ def manufacturing_view(request):
         'runs': runs,
         'products': products,
         'plants': plants,
+        'loc_filter': loc_filter,
         'recipe_readiness': recipe_readiness,
         'so_queue': so_queue,
         'so_status_choices': SalesOrder.STATUS_CHOICES,
@@ -2388,6 +2460,7 @@ from .decorators import role_required
 
 @login_required
 @role_required(['Admin', 'Manager'])
+
 def approvals_inbox_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
@@ -2403,10 +2476,7 @@ def approvals_inbox_view(request):
                 so.approved_by = request.user
                 so.save()
                 OrderTimeline.objects.create(sales_order=so, action=f"Approved by Manager. Comment: {comment}" if comment else "Approved by Manager.", user=request.user)
-                from .utils import allocate_stock
-                if old_status != 'Pending':
-                    for item in so.items.all():
-                        allocate_stock('sales_order', so, item.product, item.quantity_ordered)
+                
                 messages.success(request, f"Sales Order {so.so_number} approved.")
             elif action == 'reject':
                 so.status = 'Draft'
@@ -2467,9 +2537,13 @@ def approvals_inbox_view(request):
     pending_pos = PurchaseOrder.objects.filter(status='Pending Approval', assigned_to=request.user).order_by('order_date').prefetch_related('items__material')
     pending_shipments = Shipment.objects.filter(status='Discrepant', assigned_manager=request.user).order_by('-id')
     
+    # Notifications
+    notifications = Notification.objects.filter(user=request.user, is_read=False).order_by('-created_at')
+    
     # History
     history_sos = SalesOrder.objects.filter(timeline__user=request.user, timeline__action__icontains='Approv').distinct().order_by('-order_date')
     history_pos = PurchaseOrder.objects.filter(timeline__user=request.user, timeline__action__icontains='Approv').distinct().order_by('-order_date')
+    followed_pos = request.user.followed_pos.all().order_by('-order_date')
 
     # Analytics
     pending_count = pending_sos.count() + pending_pos.count() + pending_runs.count() + pending_shipments.count()
@@ -2482,8 +2556,10 @@ def approvals_inbox_view(request):
         'pending_runs': pending_runs,
         'pending_pos': pending_pos,
         'pending_shipments': pending_shipments,
+        'notifications': notifications,
         'history_sos': history_sos,
         'history_pos': history_pos,
+        'followed_pos': followed_pos,
         'pending_count': pending_count,
         'approved_this_week': approved_this_week,
         'rejected_this_week': rejected_this_week,
@@ -2609,6 +2685,32 @@ def shipment_detail_view(request, pk):
                 shipment.status = 'Completed'
                 shipment.acknowledged_by = request.user
                 shipment.last_edited_by = request.user
+                                # Check if it was an inbound shipment for a PO linked to a Production Run
+                if shipment.direction == 'Inbound' and shipment.purchase_order and shipment.purchase_order.linked_production_run:
+                    run = shipment.purchase_order.linked_production_run
+                    # Check if all materials are sufficient now
+                    missing_materials = []
+                    for req in run.target_product.recipe_items.all():
+                        needed = float(req.quantity_required) * float(run.expected_yield)
+                        available = Batch.objects.filter(
+                            material=req.material, 
+                            location__warehouse=run.manufacturing_plant,
+                            status='Active'
+                        ).aggregate(total=Sum(F('quantity') - F('allocated_quantity')))['total'] or 0
+                        if float(available) < needed:
+                            missing_materials.append(req.material.name)
+                            
+                    if not missing_materials:
+                        msg = f"Materials have arrived for Production Run {run.run_number}. You have sufficient materials to allocate and start the run."
+                    else:
+                        msg = f"Partial materials have arrived for Production Run {run.run_number}, but you are still short on: {', '.join(missing_materials)}."
+                        
+                    Notification.objects.create(
+                        user=run.supervisor,
+                        message=msg,
+                        link=f"/operations/manufacture/run/{run.id}/allocate/"
+                    )
+
                 shipment.save()
                 
                 # Release lock and deduct stock
@@ -2875,3 +2977,262 @@ def mark_notifications_read(request):
         if request.headers.get('x-requested-with') == 'XMLHttpRequest':
             return JsonResponse({'status': 'ok'})
     return redirect(request.META.get('HTTP_REFERER', 'home'))
+
+
+@login_required
+def profile_view(request):
+    if request.method == 'POST':
+        user = request.user
+        user.first_name = request.POST.get('first_name', user.first_name)
+        user.last_name = request.POST.get('last_name', user.last_name)
+        user.email = request.POST.get('email', user.email)
+        user.save()
+        messages.success(request, "Profile updated successfully.")
+        return redirect('profile')
+    
+    return render(request, 'profile.html', {'user': request.user})
+
+@login_required
+def user_management_view(request):
+    is_admin = request.user.is_superuser or request.user.has_role('Admin') or request.user.role == 'Admin'
+    is_manager = request.user.has_role('Manager') or request.user.role == 'Manager'
+    
+    if not (is_admin or is_manager):
+        messages.error(request, "Permission Denied. Only Admins and Managers can manage users.")
+        return redirect('dashboard')
+
+    
+    users = CustomUser.objects.all().prefetch_related('roles', 'allowed_locations')
+    
+    query = request.GET.get('q', '')
+    if query:
+        from django.db.models import Q
+        users = users.filter(
+            Q(username__icontains=query) | 
+            Q(first_name__icontains=query) | 
+            Q(last_name__icontains=query) |
+            Q(email__icontains=query)
+        )
+        
+    roles = Role.objects.all()
+    warehouses = Warehouse.objects.all()
+    
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'add_location':
+            name = request.POST.get('name')
+            loc_type = request.POST.get('location_type')
+            if name and loc_type:
+                Warehouse.objects.create(
+                    name=name,
+                    location_type=loc_type,
+                    ownership_type='Internal'
+                )
+                messages.success(request, f"Location '{name}' added successfully.")
+            return redirect('user_management')
+
+        if action == 'update_user':
+            user_id = request.POST.get('user_id')
+            user_obj = get_object_or_404(CustomUser, id=user_id)
+            
+            user_obj.is_active = request.POST.get('is_active') == 'on'
+            
+            # Roles
+            role_ids = request.POST.getlist('roles')
+            user_obj.roles.set(Role.objects.filter(id__in=role_ids))
+            
+            # Locations
+            location_ids = request.POST.getlist('locations')
+            user_obj.allowed_locations.set(Warehouse.objects.filter(id__in=location_ids))
+            
+            user_obj.updated_by = request.user
+            user_obj.save()
+            messages.success(request, f"User {user_obj.username} updated successfully.")
+            return redirect('user_management')
+            
+    context = {
+        'users': users,
+        'roles': roles,
+        'warehouses': warehouses,
+        'query': query
+    }
+    return render(request, 'user_management.html', context)
+
+
+
+@login_required
+def so_allocate_view(request, pk):
+    from .models import StockAllocation, Batch
+    so = get_object_or_404(SalesOrder, pk=pk)
+    
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'allocate_manual':
+            from .models import Batch, StockAllocation, ProductionRun
+            from decimal import Decimal
+            
+            with transaction.atomic():
+                for item in so.items.all():
+                    qty_needed = Decimal(str(item.quantity_ordered))
+                    allocated = Decimal('0')
+                    
+                    # Read inputs like batch_qty_123 where 123 is batch ID
+                    for key, val in request.POST.items():
+                        if key.startswith(f'batch_qty_{item.id}_'):
+                            batch_id = key.split('_')[-1]
+                            allocate_amt = Decimal(val) if val else Decimal('0')
+                            
+                            if allocate_amt > 0:
+                                batch = Batch.objects.get(id=batch_id)
+                                available = batch.quantity - batch.allocated_quantity
+                                if allocate_amt > available:
+                                    messages.error(request, f"Cannot allocate {allocate_amt} from batch {batch.batch_number}. Only {available} available.")
+                                    return redirect('so_allocate', pk=so.pk)
+                                    
+                                StockAllocation.objects.create(
+                                    batch=batch,
+                                    sales_order=so,
+                                    quantity=allocate_amt
+                                )
+                                batch.allocated_quantity += allocate_amt
+                                batch.save()
+                                allocated += allocate_amt
+                                
+                    unfulfilled = qty_needed - allocated
+                    if unfulfilled > 0:
+                        # Push remaining to manufacturing queue
+                        # Check if a production run already exists for this SO and product
+                        pr = ProductionRun.objects.filter(sales_order=so, target_product=item.product).first()
+                        if not pr:
+                            run_number = f"PR-{so.so_number}-{item.product.sku}"
+                            from django.utils import timezone
+                            from datetime import timedelta
+                            ProductionRun.objects.create(
+                                run_number=run_number,
+                                target_product=item.product,
+                                expected_yield=unfulfilled,
+                                status='Pending Allocation',
+                                sales_order=so,
+                                start_time=timezone.now() + timedelta(days=1),
+                                end_time=timezone.now() + timedelta(days=1, hours=4)
+                            )
+                
+                so.status = 'Awaiting Acknowledgement'
+                so.save()
+                OrderTimeline.objects.create(sales_order=so, action=f"Manual allocation completed. Sent to manufacturing.", user=request.user)
+                messages.success(request, f"Allocation complete for {so.so_number}.")
+                return redirect('so_detail', pk=so.pk)
+
+    # Gather data for UI
+    from django.db.models import F
+    allocation_data = []
+    
+    # Existing allocations
+    existing = StockAllocation.objects.filter(sales_order=so)
+    allocated_by_item = {}
+    for alloc in existing:
+        prod_id = alloc.batch.product.id
+        allocated_by_item[prod_id] = allocated_by_item.get(prod_id, 0) + float(alloc.quantity)
+
+    for item in so.items.all():
+        needed = float(item.quantity_ordered) - allocated_by_item.get(item.product.id, 0)
+        
+        batches = Batch.objects.filter(product=item.product, status='Active')\
+                               .order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
+        
+        batch_list = []
+        for b in batches:
+            avail = float(b.quantity - b.allocated_quantity)
+            if avail > 0:
+                batch_list.append({
+                    'id': b.id,
+                    'number': b.batch_number,
+                    'warehouse': b.location.warehouse.name if b.location and b.location.warehouse else 'Unknown',
+                    'available': avail,
+                    'expiry': b.expiry_date
+                })
+                
+        allocation_data.append({
+            'item_id': item.id,
+            'product': item.product,
+            'needed': needed,
+            'batches': batch_list
+        })
+        
+    return render(request, 'so_allocate.html', {'so': so, 'allocation_data': allocation_data})
+
+
+
+@login_required
+def production_run_allocate_view(request, pk):
+    from .models import ProductionRun, Batch, StockAllocation
+    run = get_object_or_404(ProductionRun, pk=pk)
+    
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'allocate_run':
+            wh_id = request.POST.get('warehouse_id')
+            if not wh_id:
+                messages.error(request, "Please select a facility.")
+                return redirect('production_run_allocate', pk=pk)
+                
+            warehouse = get_object_or_404(Warehouse, id=wh_id)
+            
+            # Check permission
+            if not request.user.is_superuser and warehouse not in request.user.allowed_locations.all():
+                messages.error(request, "You do not have access to acknowledge orders for this facility.")
+                return redirect('production_run_allocate', pk=pk)
+                
+            run.manufacturing_plant = warehouse
+            
+            from .models import Batch, StockAllocation
+            from decimal import Decimal
+            
+            has_shortage = False
+            with transaction.atomic():
+                for req in run.target_product.recipe_items.all():
+                    needed = Decimal(str(req.quantity_required)) * Decimal(str(run.expected_yield))
+                    allocated = Decimal('0')
+                    
+                    # FIFO Auto-Allocate from the selected warehouse
+                    batches = Batch.objects.filter(material=req.material, status='Active', location__warehouse=warehouse).order_by('expiry_date')
+                    for b in batches:
+                        if allocated >= needed:
+                            break
+                        avail = b.quantity - b.allocated_quantity
+                        if avail > 0:
+                            take = min(avail, needed - allocated)
+                            StockAllocation.objects.create(batch=b, production_run=run, quantity=take)
+                            b.allocated_quantity += take
+                            b.save()
+                            allocated += take
+                            
+                    if allocated < needed:
+                        has_shortage = True
+                        
+                if has_shortage:
+                    run.status = 'Awaiting Materials'
+                    messages.warning(request, f"Order acknowledged, but materials are short. Please Draft a PO for the shortages.")
+                else:
+                    run.status = 'Planned'
+                    messages.success(request, f"Materials allocated successfully. Run {run.run_number} is Planned.")
+                    
+                run.save()
+            return redirect('readiness')
+
+    warehouses = request.user.allowed_locations.all() if not request.user.is_superuser else Warehouse.objects.all()
+    
+    # Calculate shortages for preview
+    preview = []
+    for req in run.target_product.recipe_items.all():
+        needed = float(req.quantity_required) * float(run.expected_yield)
+        avail = sum(b.quantity - b.allocated_quantity for b in Batch.objects.filter(material=req.material, status='Active'))
+        preview.append({
+            'material': req.material,
+            'needed': needed,
+            'avail': avail,
+            'shortage': max(0, needed - float(avail))
+        })
+        
+    return render(request, 'production_allocate.html', {'run': run, 'warehouses': warehouses, 'preview': preview})
+

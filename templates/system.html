@@ -215,6 +215,15 @@
         <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
             <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Database Entity Telemetry</h3>
             <div style="display:flex; flex-direction:column; gap:0.75rem;">
+                <div style="display:flex; justify-content:space-between; padding:0.6rem; background:#f8fafc; border-radius:6px; font-size:0.875rem; align-items:center;">
+                    <div>
+                        <span style="font-weight:600; color:var(--text-main);">Users (Staff)</span>
+                        {% if user.is_superuser %}
+                        <a href="{% url 'user_management' %}" style="margin-left:0.5rem; font-size:0.75rem; color:var(--primary); text-decoration:none; font-weight:600;">(Manage &rarr;)</a>
+                        {% endif %}
+                    </div>
+                    <span style="font-weight:700; color:var(--text-main); font-family:monospace;">{{ metrics.total_users }}</span>
+                </div>
                 <div style="display:flex; justify-content:space-between; padding:0.6rem; background:#f8fafc; border-radius:6px; font-size:0.875rem;">
                     <span style="font-weight:600; color:var(--text-main);">Sales Orders</span>
                     <span style="font-weight:700; color:var(--primary);">{{ metrics.total_sales_orders }} Orders</span>

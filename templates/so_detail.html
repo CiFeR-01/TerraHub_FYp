@@ -17,6 +17,8 @@
         </h1>
     </div>
     <div class="header-action-tray">
+
+        
         {% if user.is_superuser or user.role in 'Admin,Manager' %}
         <form method="post" style="margin:0; display:flex; gap:0.5rem; align-items:center;">
             {% csrf_token %}
@@ -143,6 +145,7 @@
     </div>
 
     <!-- Add Item Form (hidden by default) -->
+    {% if so.status == 'Draft' %}
     <div id="add-item-form" style="display:none; background:#f8fafc; border-radius:10px; border:1px solid var(--border-light); padding:1.25rem; margin-bottom:1.25rem;">
         <form method="post">
             {% csrf_token %}
@@ -169,6 +172,7 @@
             </div>
         </form>
     </div>
+    {% endif %}
 
     {% if line_items %}
     <div class="table-responsive" style="overflow-x: auto; width: 100%;">
@@ -259,6 +263,19 @@
         <div style="font-weight:600; margin-bottom:0.25rem;">No line items yet</div>
         <div style="font-size:0.85rem;">Click "Add Line Item" above to add products to this order.</div>
     </div>
+    {% endif %}
+</div>
+
+<!-- SO Fulfillment Section -->
+<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.08s;">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:0.75rem;">SO Fulfillment</h3>
+    <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.25rem;">Allocate finished goods from the warehouse to fulfill this Sales Order. You must allocate enough stock to meet the ordered quantity before this order can be shipped.</p>
+    {% if so.status == 'Pending' or so.status == 'Ready to Ship' %}
+        <a href="{% url 'so_allocate' so.pk %}" class="btn btn-primary" style="padding:0.5rem 1.25rem; font-size:0.9rem;">Allocate Finished Goods</a>
+    {% else %}
+        <p style="font-size:0.85rem; color:var(--text-muted); padding:1rem; background:#f8fafc; border-radius:8px; border:1px solid var(--border-light);">
+            Allocation is available when the order is in <strong>Pending</strong> status. Current status: <span style="font-weight:600;">{{ so.status }}</span>.
+        </p>
     {% endif %}
 </div>
 
