@@ -7,6 +7,7 @@ from django import forms
 from django.db import transaction
 from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q
 from django.db.models.functions import Coalesce
+from django.core.paginator import Paginator
 from datetime import date, timedelta
 import csv
 import io
@@ -1957,6 +1958,62 @@ def manufacturing_view(request):
                 messages.success(request, f"Production Run {run_number} scheduled for {prod.name}.")
             except Exception as e:
                 messages.error(request, f"Error scheduling run: {e}")
+        elif action == 'cancel_allocation':
+            run_id = request.POST.get('run_id')
+            run = get_object_or_404(ProductionRun, id=run_id)
+            
+            # Delete StockAllocation records for this run
+            from .models import StockAllocation
+            allocs = StockAllocation.objects.filter(production_run=run)
+            for alloc in allocs:
+                batch = alloc.batch
+                batch.allocated_quantity -= alloc.quantity
+                batch.save()
+                alloc.delete()
+                
+            # Revert to Pending Allocation
+            run.status = 'Pending Allocation'
+            run.save()
+            messages.success(request, f"Allocation for Run {run.run_number} has been cancelled.")
+            return redirect('readiness')
+
+        elif action == 'draft_transfer_from_shortage':
+            run_id = request.POST.get('run_id')
+            run = get_object_or_404(ProductionRun, id=run_id)
+            
+            if run.status != 'Awaiting Materials':
+                messages.error(request, "Run is not awaiting materials.")
+                return redirect('readiness')
+                
+            from .models import Shipment, ShipmentItem
+            target_warehouse = run.manufacturing_plant
+            
+            if not target_warehouse:
+                messages.error(request, "No manufacturing plant assigned to this run.")
+                return redirect('readiness')
+                
+            # Create a generic Internal Transfer to this warehouse
+            shipment = Shipment.objects.create(
+                tracking_number=generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4),
+                direction='Transfer',
+                status='Draft',
+                linked_production_run=run
+            )
+            
+            for req in run.target_product.recipe_items.all():
+                needed = float(req.quantity_required) * float(run.expected_yield)
+                allocated = float(sum(alloc.quantity for alloc in run.allocations.filter(batch__material=req.material)))
+                shortage = max(0, needed - allocated)
+                if shortage > 0:
+                    ShipmentItem.objects.create(
+                        shipment=shipment,
+                        material=req.material,
+                        quantity=shortage
+                    )
+                    
+            messages.success(request, f"Draft Logistics Transfer {shipment.tracking_number} created for shortages.")
+            return redirect('readiness')
+            
         elif action == 'draft_po_from_shortage':
             run_id = request.POST.get('run_id')
             run = get_object_or_404(ProductionRun, id=run_id)
@@ -2033,22 +2090,7 @@ def manufacturing_view(request):
             run_id = request.POST.get('run_id')
             run = get_object_or_404(ProductionRun, id=run_id)
 
-            missing_materials = []
-            for req in run.target_product.recipe_items.all():
-                needed = float(req.quantity_required) * float(run.expected_yield)
-                available = Batch.objects.filter(
-                    material=req.material, 
-                    location__warehouse=run.manufacturing_plant,
-                    status='Active'
-                ).aggregate(total=Sum(F('quantity') - F('allocated_quantity')))['total'] or 0
-                if float(available) < needed:
-                    missing_materials.append(f"{req.material.name} (Need {needed}, Have {available})")
-                    
-            if missing_materials:
-                messages.error(request, f"Cannot approve run. Insufficient materials at {run.manufacturing_plant.name}: {', '.join(missing_materials)}")
-                return redirect('readiness')
-
-            run.status = 'Planned'
+            run.status = 'Pending Allocation'
             run.save()
             messages.success(request, f"Production Run {run.run_number} approved. Please allocate materials to begin.")
 
@@ -2529,24 +2571,60 @@ def approvals_inbox_view(request):
                 po.save()
                 OrderTimeline.objects.create(purchase_order=po, action=f"Approval Rejected by Manager. Comment: {comment}" if comment else "Approval Rejected by Manager.", user=request.user)
                 messages.warning(request, f"Purchase Order {po.po_number} returned to Draft.")
+
+        elif item_type == 'shipment':
+            ship = get_object_or_404(Shipment, id=item_id)
+            if action == 'approve':
+                ship.status = 'Preparing'
+                ship.save()
+                OrderTimeline.objects.create(shipment=ship, action=f"Approved by Manager. Comment: {comment}" if comment else "Approved by Manager.", user=request.user)
+                messages.success(request, f"Shipment {ship.tracking_number} approved.")
+            elif action == 'reject':
+                ship.status = 'Logistics Review'
+                ship.assigned_to = None
+                ship.save()
+                OrderTimeline.objects.create(shipment=ship, action=f"Approval Rejected by Manager. Comment: {comment}" if comment else "Approval Rejected by Manager.", user=request.user)
+                messages.warning(request, f"Shipment {ship.tracking_number} returned to Logistics Review.")
                 
         return redirect('approvals_inbox')
 
     pending_sos = SalesOrder.objects.filter(status='Pending Approval', assigned_to=request.user).order_by('order_date').prefetch_related('items__product')
     pending_runs = ProductionRun.objects.filter(status='Pending Approval').order_by('start_time')
     pending_pos = PurchaseOrder.objects.filter(status='Pending Approval', assigned_to=request.user).order_by('order_date').prefetch_related('items__material')
+    pending_shipment_approvals = Shipment.objects.filter(status='Pending Approval', assigned_to=request.user).order_by('-id')
     pending_shipments = Shipment.objects.filter(status='Discrepant', assigned_manager=request.user).order_by('-id')
     
     # Notifications
     notifications = Notification.objects.filter(user=request.user, is_read=False).order_by('-created_at')
     
-    # History
-    history_sos = SalesOrder.objects.filter(timeline__user=request.user, timeline__action__icontains='Approv').distinct().order_by('-order_date')
-    history_pos = PurchaseOrder.objects.filter(timeline__user=request.user, timeline__action__icontains='Approv').distinct().order_by('-order_date')
+    # History - Unified
+    timelines = OrderTimeline.objects.filter(user=request.user, action__icontains='Approv').order_by('-timestamp')
+    seen = set()
+    unified_history = []
+    for t in timelines:
+        item = None
+        if t.sales_order and f"so_{t.sales_order.id}" not in seen:
+            item = {'type': 'so', 'obj': t.sales_order, 'timestamp': t.timestamp, 'status': t.sales_order.status}
+            seen.add(f"so_{t.sales_order.id}")
+        elif t.purchase_order and f"po_{t.purchase_order.id}" not in seen:
+            item = {'type': 'po', 'obj': t.purchase_order, 'timestamp': t.timestamp, 'status': t.purchase_order.status}
+            seen.add(f"po_{t.purchase_order.id}")
+        elif t.shipment and f"ship_{t.shipment.id}" not in seen:
+            item = {'type': 'shipment', 'obj': t.shipment, 'timestamp': t.timestamp, 'status': t.shipment.get_status_display()}
+            seen.add(f"ship_{t.shipment.id}")
+            
+        if item:
+            unified_history.append(item)
+            
+    paginator = Paginator(unified_history, 10)
+    page_number = request.GET.get('page')
+    history_page = paginator.get_page(page_number)
+
     followed_pos = request.user.followed_pos.all().order_by('-order_date')
+    followed_shipments = request.user.followed_shipments.all().order_by('-id')
 
     # Analytics
-    pending_count = pending_sos.count() + pending_pos.count() + pending_runs.count() + pending_shipments.count()
+    pending_count = pending_sos.count() + pending_pos.count() + pending_runs.count() + pending_shipments.count() + pending_shipment_approvals.count()
     start_of_week = date.today() - timedelta(days=date.today().weekday())
     approved_this_week = OrderTimeline.objects.filter(user=request.user, action__icontains='Approved by Manager', timestamp__gte=start_of_week).count()
     rejected_this_week = OrderTimeline.objects.filter(user=request.user, action__icontains='Approval Rejected', timestamp__gte=start_of_week).count()
@@ -2555,11 +2633,12 @@ def approvals_inbox_view(request):
         'pending_sos': pending_sos,
         'pending_runs': pending_runs,
         'pending_pos': pending_pos,
+        'pending_shipment_approvals': pending_shipment_approvals,
         'pending_shipments': pending_shipments,
         'notifications': notifications,
-        'history_sos': history_sos,
-        'history_pos': history_pos,
+        'history_page': history_page,
         'followed_pos': followed_pos,
+        'followed_shipments': followed_shipments,
         'pending_count': pending_count,
         'approved_this_week': approved_this_week,
         'rejected_this_week': rejected_this_week,
@@ -2571,6 +2650,7 @@ def approvals_inbox_view(request):
 def shipment_detail_view(request, pk):
     shipment = get_object_or_404(Shipment.objects.prefetch_related('items__material', 'items__product', 'items__batch'), pk=pk)
     
+    route_error = False
     if request.method == 'POST':
         action = request.POST.get('action')
         
@@ -2653,16 +2733,84 @@ def shipment_detail_view(request, pk):
             except Exception as e:
                 messages.error(request, f"Error removing item: {e}")
 
-        elif action == 'update_dates':
+        elif action == 'update_route':
             eta = request.POST.get('eta_date')
             arrival = request.POST.get('arrival_date')
+            origin_id = request.POST.get('origin_warehouse_id')
+            dest_id = request.POST.get('destination_warehouse_id')
+            
             if eta:
                 shipment.expected_eta_date = eta
             if arrival:
                 shipment.actual_arrival_date = arrival
+            if origin_id:
+                shipment.origin_warehouse_id = origin_id
+            if dest_id:
+                shipment.destination_warehouse_id = dest_id
+                
             shipment.last_edited_by = request.user
             shipment.save()
-            messages.success(request, "Shipment dates updated.")
+            messages.success(request, "Shipment route info saved.")
+            
+        elif action == 'submit_to_logistics':
+            shipment.status = 'Logistics Review'
+            shipment.save()
+            messages.success(request, "Shipment submitted to Logistics for review.")
+            
+        elif action == 'submit_for_approval':
+            approver_id = request.POST.get('approver_id')
+            if shipment.direction == 'Transfer' and (not shipment.origin_warehouse or not shipment.destination_warehouse):
+                messages.error(request, "Origin and Destination facilities MUST be selected before submitting for approval.")
+                route_error = True
+            elif not approver_id:
+                messages.error(request, "You must select a Manager for approval.")
+            else:
+                approver = CustomUser.objects.filter(id=approver_id).first()
+                if approver:
+                    shipment.status = 'Pending Approval'
+                    shipment.assigned_to = approver
+                    shipment.save()
+                    OrderTimeline.objects.create(shipment=shipment, action=f"Submitted to {approver.get_full_name() or approver.username} for approval.", user=request.user)
+                    
+                    from django.urls import reverse
+                    link = reverse('approvals_inbox')
+                    Notification.objects.create(
+                        user=approver,
+                        message=f"Shipment {shipment.tracking_number} requires your approval.",
+                        link=link
+                    )
+                    
+                    messages.success(request, f"Shipment submitted to {approver.get_full_name() or approver.username} for Approval.")
+                else:
+                    messages.error(request, "Invalid Manager selected.")
+            
+        elif action == 'return_to_manufacturing':
+            shipment.status = 'Draft'
+            shipment.save()
+            messages.warning(request, "Shipment returned to Manufacturing.")
+            
+        elif action == 'approve':
+            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
+                messages.error(request, "Only Managers can approve.")
+            else:
+                shipment.status = 'Preparing'
+                shipment.save()
+                messages.success(request, "Shipment Approved and is now Preparing.")
+                
+        elif action == 'reject':
+            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
+                messages.error(request, "Only Managers can reject.")
+            else:
+                shipment.status = 'Logistics Review'
+                shipment.save()
+                messages.warning(request, "Shipment Rejected and returned to Logistics.")
+                
+        elif action == 'update_operational_status':
+            new_st = request.POST.get('status')
+            if new_st in ['Preparing', 'Dispatched', 'Delayed', 'Arrived', 'Completed', 'Discrepant']:
+                shipment.status = new_st
+                shipment.save()
+                messages.success(request, f"Operational status updated to {new_st}.")
             
         elif action == 'complete_shipment':
             has_discrepancy = False
@@ -2872,21 +3020,68 @@ def shipment_detail_view(request, pk):
                 so.save()
             
             messages.success(request, f"Shipment {shipment.tracking_number} updated to {new_status}.")
+
+        elif action == 'toggle_follow':
+            if request.user in shipment.followers.all():
+                shipment.followers.remove(request.user)
+                messages.success(request, "You are no longer following this shipment.")
+            else:
+                shipment.followers.add(request.user)
+                messages.success(request, "You are now following this shipment.")
                 
-        return redirect('shipment_detail', pk=shipment.pk)
+        elif action == 'add_follower':
+            user_id = request.POST.get('user_id')
+            if user_id:
+                user_obj = CustomUser.objects.filter(id=user_id).first()
+                if user_obj and user_obj not in shipment.followers.all():
+                    shipment.followers.add(user_obj)
+                    from django.urls import reverse
+                    Notification.objects.create(
+                        user=user_obj,
+                        message=f"{request.user.get_full_name() or request.user.username} added you as a follower to Shipment {shipment.tracking_number}.",
+                        link=reverse('shipment_detail', args=[shipment.pk])
+                    )
+                    messages.success(request, f"Added {user_obj.get_full_name() or user_obj.username} as a follower.")
+                    
+        elif action == 'remove_follower':
+            user_id = request.POST.get('user_id')
+            if user_id:
+                user_obj = CustomUser.objects.filter(id=user_id).first()
+                if user_obj in shipment.followers.all():
+                    shipment.followers.remove(user_obj)
+                    messages.success(request, f"Removed {user_obj.get_full_name() or user_obj.username} from followers.")
+
+        if not route_error:
+            return redirect('shipment_detail', pk=shipment.pk)
         
     materials = Material.objects.all().order_by('name')
     products = Product.objects.all().order_by('name')
     batches = Batch.objects.filter(status='Active').order_by('batch_number')
     managers = CustomUser.objects.filter(role__in=['Admin', 'Manager'])
+    all_users = CustomUser.objects.all().order_by('username')
     
+    warehouses = Warehouse.objects.all()
+    
+    # Calculate extra info from timeline
+    timeline_events = shipment.timeline.all().order_by('timestamp')
+    first_event = timeline_events.first()
+    requested_by = first_event.user if first_event else shipment.last_edited_by
+    
+    submit_event = timeline_events.filter(action__icontains='Submitted to').last()
+    coordinator = submit_event.user if submit_event else None
+
     context = {
         'shipment': shipment,
         'materials': materials,
         'products': products,
         'batches': batches,
         'managers': managers,
+        'all_users': all_users,
         'status_choices': Shipment.STATUS_CHOICES,
+        'warehouses': warehouses,
+        'route_error': route_error,
+        'requested_by': requested_by,
+        'coordinator': coordinator,
     }
     return render(request, 'shipment_detail.html', context)
 
@@ -3178,10 +3373,7 @@ def production_run_allocate_view(request, pk):
                 
             warehouse = get_object_or_404(Warehouse, id=wh_id)
             
-            # Check permission
-            if not request.user.is_superuser and warehouse not in request.user.allowed_locations.all():
-                messages.error(request, "You do not have access to acknowledge orders for this facility.")
-                return redirect('production_run_allocate', pk=pk)
+            # Check permission (removed)
                 
             run.manufacturing_plant = warehouse
             
@@ -3220,18 +3412,33 @@ def production_run_allocate_view(request, pk):
                 run.save()
             return redirect('readiness')
 
-    warehouses = request.user.allowed_locations.all() if not request.user.is_superuser else Warehouse.objects.all()
+    warehouses = Warehouse.objects.all()
     
     # Calculate shortages for preview
     preview = []
     for req in run.target_product.recipe_items.all():
         needed = float(req.quantity_required) * float(run.expected_yield)
-        avail = sum(b.quantity - b.allocated_quantity for b in Batch.objects.filter(material=req.material, status='Active'))
+        batches = Batch.objects.filter(material=req.material, status='Active')
+        
+        loc_dict = {}
+        avail = 0.0
+        for b in batches:
+            qty = float(b.quantity - b.allocated_quantity)
+            avail += qty
+            if qty > 0 and getattr(b, 'location', None) and getattr(b.location, 'warehouse', None):
+                wh_name = b.location.warehouse.name
+                loc_dict[wh_name] = loc_dict.get(wh_name, 0.0) + qty
+                
+        location_breakdown = [{'warehouse_name': loc, 'quantity': qty} for loc, qty in loc_dict.items()]
+        
         preview.append({
             'material': req.material,
             'needed': needed,
             'avail': avail,
-            'shortage': max(0, needed - float(avail))
+            'shortage': max(0, needed - avail),
+            'available': avail,
+            'status': 'OK' if avail >= needed else 'SHORT',
+            'location_breakdown': location_breakdown
         })
         
     return render(request, 'production_allocate.html', {'run': run, 'warehouses': warehouses, 'preview': preview})

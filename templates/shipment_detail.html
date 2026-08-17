@@ -27,16 +27,185 @@
             Shipment: {{ shipment.tracking_number }}
         </h1>
         <div style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.35rem;">
-            Direction: {{ shipment.get_direction_display }} | Status: {{ shipment.get_status_display }}
             {% if shipment.purchase_order %}
-            | PO: <a href="{% url 'po_detail' shipment.purchase_order.id %}" style="color:var(--primary); font-weight:600; text-decoration:none;">{{ shipment.purchase_order.po_number }}</a>
+            PO: <a href="{% url 'po_detail' shipment.purchase_order.id %}" style="color:var(--primary); font-weight:600; text-decoration:none;">{{ shipment.purchase_order.po_number }}</a> | 
             {% endif %}
             {% if shipment.sales_order %}
-            | SO: <a href="{% url 'so_detail' shipment.sales_order.id %}" style="color:var(--primary); font-weight:600; text-decoration:none;">{{ shipment.sales_order.so_number }}</a>
+            SO: <a href="{% url 'so_detail' shipment.sales_order.id %}" style="color:var(--primary); font-weight:600; text-decoration:none;">{{ shipment.sales_order.so_number }}</a>
             {% endif %}
         </div>
     </div>
+    <div class="header-action-tray">
+        <form method="POST">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="toggle_follow">
+            {% if request.user in shipment.followers.all %}
+            <button type="submit" class="btn btn-secondary" style="display:flex; align-items:center; gap:0.5rem; padding:0.45rem 1rem;">
+                <i class="fas fa-star" style="color:var(--primary);"></i> Following
+            </button>
+            {% else %}
+            <button type="submit" class="btn btn-secondary" style="display:flex; align-items:center; gap:0.5rem; padding:0.45rem 1rem; color:var(--text-muted);">
+                <i class="far fa-star"></i> Follow
+            </button>
+            {% endif %}
+        </form>
+    </div>
 </header>
+
+<!-- Horizontal Stepper -->
+<div class="stepper-container animate-fade-in-up" style="display: flex; justify-content: space-between; align-items: center; background: #fff; padding: 1.5rem 2rem; border-radius: 8px; border: 1px solid var(--border-light); margin-bottom: 1.5rem;">
+    <style>
+        .step-item { flex: 1; text-align: center; position: relative; }
+        .step-item:not(:last-child)::after {
+            content: ''; position: absolute; top: 12px; left: 50%; width: 100%; height: 2px;
+            background: #e2e8f0; z-index: 1;
+        }
+        .step-item.active:not(:last-child)::after, .step-item.completed:not(:last-child)::after {
+            background: var(--primary);
+        }
+        .step-circle {
+            width: 24px; height: 24px; border-radius: 50%; background: #e2e8f0; color: #64748b;
+            display: flex; align-items: center; justify-content: center; margin: 0 auto 0.5rem;
+            font-size: 0.75rem; font-weight: bold; position: relative; z-index: 2;
+        }
+        .step-item.active .step-circle { background: var(--primary); color: #fff; box-shadow: 0 0 0 3px #bfdbfe; }
+        .step-item.completed .step-circle { background: var(--primary); color: #fff; }
+        .step-label { font-size: 0.75rem; font-weight: 600; color: #64748b; }
+        .step-item.active .step-label { color: var(--primary); }
+        .step-item.completed .step-label { color: var(--primary); }
+    </style>
+    
+    <div class="step-item {% if shipment.status == 'Draft' %}active{% elif shipment.status in 'Logistics Review,Pending Approval,Preparing,Dispatched,Delayed,Arrived,Completed,Discrepant' %}completed{% endif %}">
+        <div class="step-circle">1</div>
+        <div class="step-label">Requested</div>
+    </div>
+    <div class="step-item {% if shipment.status == 'Logistics Review' %}active{% elif shipment.status in 'Pending Approval,Preparing,Dispatched,Delayed,Arrived,Completed,Discrepant' %}completed{% endif %}">
+        <div class="step-circle">2</div>
+        <div class="step-label">Review</div>
+    </div>
+    <div class="step-item {% if shipment.status == 'Pending Approval' %}active{% elif shipment.status in 'Preparing,Dispatched,Delayed,Arrived,Completed,Discrepant' %}completed{% endif %}">
+        <div class="step-circle">3</div>
+        <div class="step-label">Approval</div>
+    </div>
+    <div class="step-item {% if shipment.status == 'Preparing' %}active{% elif shipment.status in 'Dispatched,Delayed,Arrived,Completed,Discrepant' %}completed{% endif %}">
+        <div class="step-circle">4</div>
+        <div class="step-label">Preparing</div>
+    </div>
+    <div class="step-item {% if shipment.status in 'Dispatched,Delayed' %}active{% elif shipment.status in 'Arrived,Completed,Discrepant' %}completed{% endif %}">
+        <div class="step-circle">5</div>
+        <div class="step-label">Transit</div>
+    </div>
+    <div class="step-item {% if shipment.status in 'Arrived,Discrepant' %}active{% elif shipment.status == 'Completed' %}completed{% endif %}">
+        <div class="step-circle">6</div>
+        <div class="step-label">Arrived</div>
+    </div>
+</div>
+
+<!-- Shipment Info Panel -->
+<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1.25rem;">
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Direction</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ shipment.get_direction_display }}</div>
+        </div>
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Status</div>
+            <div style="font-size:0.95rem; font-weight:600;">
+                <span class="badge {% if shipment.status == 'Draft' %}badge-sky{% elif shipment.status in 'Pending Approval,Logistics Review' %}badge-amber{% elif shipment.status == 'Discrepant' %}badge-rose{% else %}badge-emerald{% endif %}">
+                    {{ shipment.get_status_display }}
+                </span>
+            </div>
+        </div>
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Requested By</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ requested_by.get_full_name|default:requested_by.username|default:"System" }}</div>
+        </div>
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Coordinator</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ coordinator.get_full_name|default:coordinator.username|default:"—" }}</div>
+        </div>
+    </div>
+    
+    <hr style="border:0; border-top:1px solid var(--border-light); margin: 1.25rem 0;">
+    
+    {% if shipment.status in 'Draft,Logistics Review' %}
+    <form method="POST" style="display:grid; grid-template-columns:repeat(4,1fr); gap:1.25rem; align-items:end;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="update_route">
+        
+        <div>
+            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Origin</label>
+            <select name="origin_warehouse_id" class="form-select" style="width:100%; padding:0.4rem;">
+                <option value="">-- Select Origin --</option>
+                {% for w in warehouses %}
+                <option value="{{ w.id }}" {% if shipment.origin_warehouse_id == w.id %}selected{% endif %}>{{ w.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        
+        <div>
+            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Destination</label>
+            <select name="destination_warehouse_id" class="form-select" style="width:100%; padding:0.4rem;">
+                <option value="">-- Select Destination --</option>
+                {% for w in warehouses %}
+                <option value="{{ w.id }}" {% if shipment.destination_warehouse_id == w.id %}selected{% endif %}>{{ w.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        
+        <div>
+            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">ETA</label>
+            <input type="date" name="eta_date" value="{{ shipment.expected_eta_date|date:'Y-m-d' }}" class="form-input" style="width:100%; padding:0.4rem;">
+        </div>
+        
+        <div>
+            {% if shipment.status == 'Draft' %}
+            <button type="submit" class="btn btn-secondary" style="width:100%; padding:0.4rem; font-size:0.85rem;">Save Draft</button>
+            {% else %}
+            <button type="submit" class="btn btn-secondary" style="width:100%; padding:0.4rem; font-size:0.85rem;">Save Route</button>
+            {% endif %}
+        </div>
+    </form>
+    {% else %}
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1.25rem;">
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Origin</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ shipment.origin_warehouse.name|default:shipment.external_origin|default:"—" }}</div>
+        </div>
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Destination</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ shipment.destination_warehouse.name|default:"—" }}</div>
+        </div>
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Dispatch Date</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ shipment.dispatch_date|default:"—" }}</div>
+        </div>
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">ETA / Arrival</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ shipment.actual_arrival_date|default:shipment.expected_eta_date|default:"—" }}</div>
+        </div>
+    </div>
+    
+    {% if shipment.status in 'Preparing,Dispatched,Delayed' %}
+    <form method="POST" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px dashed var(--border-light); display:grid; grid-template-columns:repeat(4,1fr); gap:1.25rem; align-items:end;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="update_route">
+        <div style="grid-column: span 1;"></div> <!-- spacer -->
+        <div>
+            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Update ETA</label>
+            <input type="date" name="eta_date" value="{{ shipment.expected_eta_date|date:'Y-m-d' }}" class="form-input" style="width:100%; padding:0.4rem;">
+        </div>
+        <div>
+            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Update Arrival</label>
+            <input type="date" name="arrival_date" value="{{ shipment.actual_arrival_date|date:'Y-m-d' }}" class="form-input" style="width:100%; padding:0.4rem;">
+        </div>
+        <div>
+            <button type="submit" class="btn btn-secondary" style="width:100%; padding:0.4rem; font-size:0.85rem;">Save Dates</button>
+        </div>
+    </form>
+    {% endif %}
+    {% endif %}
+</div>
 
 <div style="display: grid; grid-template-columns: 2.5fr 1fr; gap: 1.5rem; align-items: start;" class="animate-fade-in-up">
     <!-- Left Column: Main Cargo List and Confirm Receipt -->
@@ -80,7 +249,7 @@
                         </td>
                         {% endif %}
                         <td style="padding:1rem 1.5rem; text-align:right;">
-                            {% if shipment.status != 'Completed' %}
+                            {% if shipment.status != 'Completed' and shipment.status not in 'Preparing,Dispatched,Delayed,Arrived,Discrepant' %}
                             <form method="POST" style="display:inline;">
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="remove_item">
@@ -103,7 +272,7 @@
         </div>
         
         <!-- Add Item Form -->
-        {% if shipment.status == 'Preparing' %}
+        {% if shipment.status in 'Draft,Logistics Review' %}
           <div style="padding: 1.5rem; background:#f8fafc; border-top: 1px solid var(--border-light);">
               <h4 style="margin-top:0; margin-bottom:1rem; font-size:0.95rem;">➕ Add Cargo Line Item</h4>
               <form method="POST" style="display:grid; grid-template-columns: auto 1fr 1.2fr 100px 100px; gap: 1rem; align-items:start;">
@@ -188,7 +357,7 @@
         {% endif %}
         </div> <!-- Close Cargo pane-card -->
 
-        <!-- Confirm Receipt Panel -->
+        <!-- Confirm Receipt Panel (Only if Arrived or Completed) -->
         {% if shipment.status in 'Arrived,Completed,Discrepant' %}
         <div class="pane-card" style="padding: 1.5rem; background:#f0fdf4; border: 1px solid var(--border-light); border-radius: 8px;">
             <h4 style="margin-top:0; margin-bottom:1rem; font-size:0.95rem; color:#166534;">✅ {% if shipment.status == 'Completed' %}Receipt Confirmed{% else %}Confirm Receipt & Complete Shipment{% endif %}</h4>
@@ -250,23 +419,73 @@
 
     <!-- Right Sidebar -->
     <div>
+        <!-- Status & Actions -->
         <div class="pane-card">
             <h3 style="margin-bottom: 1rem; border-bottom: 1px solid var(--border-light); padding-bottom: 0.75rem;">Status & Actions</h3>
+            
             {% if shipment.status != 'Completed' %}
+            
+            <!-- Manufacturing Actions -->
+            {% if shipment.status == 'Draft' %}
             <form method="POST">
                 {% csrf_token %}
-                <input type="hidden" name="action" value="update_status">
-                <input type="hidden" name="shipment_id" value="{{ shipment.id }}">
-                <div style="margin-bottom: 1rem;">
-                    <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-muted); margin-bottom:0.5rem;">Update Status</label>
-                    <select name="status" class="form-select" style="width: 100%; padding: 0.65rem 1rem;">
-                        {% for st_val, st_label in status_choices %}
-                        <option value="{{ st_val }}" {% if shipment.status == st_val %}selected{% endif %}>{{ st_label }}</option>
+                <input type="hidden" name="action" value="submit_to_logistics">
+                <button type="submit" class="btn btn-primary" style="width:100%; padding:0.65rem; margin-bottom:0.75rem;">Submit to Logistics</button>
+            </form>
+            {% endif %}
+        
+            <!-- Logistics Actions -->
+            {% if shipment.status == 'Logistics Review' %}
+            <form method="POST">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="submit_for_approval">
+                <div style="margin-bottom: 0.75rem;">
+                    <label style="display:block; font-size:0.8rem; font-weight:600; color:var(--text-muted); margin-bottom:0.25rem;">Assign Approver</label>
+                    <select name="approver_id" class="form-input" required>
+                        <option value="">-- Select Manager --</option>
+                        {% for mgr in managers %}
+                        <option value="{{ mgr.id }}">{{ mgr.get_full_name|default:mgr.username }}</option>
                         {% endfor %}
                     </select>
                 </div>
+                <button type="submit" class="btn btn-primary" style="width:100%; padding:0.65rem; margin-bottom:0.75rem;">Submit for Approval</button>
+            </form>
+            <form method="POST">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="return_to_manufacturing">
+                <button type="submit" class="btn" style="width:100%; padding:0.65rem; background:#fff; border:1px solid #dc2626; color:#dc2626; border-radius:6px; font-weight:600;">Return to Manufacturing</button>
+            </form>
+            {% endif %}
+        
+            <!-- Manager Actions -->
+            {% if shipment.status == 'Pending Approval' %}
+            <form method="POST">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="approve">
+                <button type="submit" class="btn btn-primary" style="width:100%; padding:0.65rem; background:#16a34a; border-color:#16a34a; margin-bottom:0.75rem;">Approve Shipment</button>
+            </form>
+            <form method="POST">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="reject">
+                <button type="submit" class="btn" style="width:100%; padding:0.65rem; background:#fff; border:1px solid #dc2626; color:#dc2626; border-radius:6px; font-weight:600;">Reject / Request Changes</button>
+            </form>
+            {% endif %}
+        
+            <!-- Operational Updates (Post-Approval) -->
+            {% if shipment.status in 'Preparing,Dispatched,Delayed,Arrived' %}
+            <form method="POST" style="margin-top: 1rem; border-top: 1px solid var(--border-light); padding-top: 1rem;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_operational_status">
+                <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-muted); margin-bottom:0.5rem;">Operational Status</label>
+                <select name="status" class="form-select" style="width: 100%; padding: 0.65rem 1rem; margin-bottom:0.75rem;">
+                    <option value="Preparing" {% if shipment.status == 'Preparing' %}selected{% endif %}>Preparing</option>
+                    <option value="Dispatched" {% if shipment.status == 'Dispatched' %}selected{% endif %}>Dispatched (In Transit)</option>
+                    <option value="Delayed" {% if shipment.status == 'Delayed' %}selected{% endif %}>Delayed</option>
+                    <option value="Arrived" {% if shipment.status == 'Arrived' %}selected{% endif %}>Arrived</option>
+                </select>
                 <button type="submit" class="btn btn-secondary" style="width:100%; padding: 0.65rem;">Save Status</button>
             </form>
+            {% endif %}
             
             {% if shipment.status == 'Discrepant' %}
                 {% if not shipment.assigned_manager or request.user != shipment.assigned_manager %}
@@ -312,6 +531,7 @@
                 </form>
                 {% endif %}
             {% endif %}
+            
             {% else %}
             <div style="padding: 1rem; background: #f8fafc; border-radius: 8px; border: 1px solid var(--border-light); text-align: center;">
                 <div style="font-size: 1.25rem; font-weight: 700; color: var(--primary);">✅ Completed</div>
@@ -333,46 +553,76 @@
             {% endif %}
         </div>
         
-        <div class="pane-card" style="margin-top: 1.5rem;">
-            <h3 style="margin-bottom: 1rem; border-bottom: 1px solid var(--border-light); padding-bottom: 0.75rem;">Route Info</h3>
-            <div style="font-size: 0.9rem; line-height: 1.6; color: var(--text-main);">
-                <div><strong>Origin:</strong> <br>{{ shipment.origin_warehouse.name|default:shipment.external_origin|default:"-" }}</div>
-                <div style="margin-top:0.75rem;"><strong>Destination:</strong> <br>{{ shipment.destination_warehouse.name|default:"-" }}</div>
-                <hr style="border:0; border-top:1px solid var(--border-light); margin: 1rem 0;">
-                <div><strong>Dispatch:</strong> {{ shipment.dispatch_date|default:"-" }}</div>
-                
-                {% if shipment.status != 'Completed' %}
-                <form method="POST" style="margin-top: 1rem;">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="update_dates">
-                    <div style="margin-bottom: 0.75rem;">
-                        <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.25rem;">ETA</label>
-                        <input type="date" name="eta_date" value="{{ shipment.expected_eta_date|date:'Y-m-d' }}" class="form-input" style="width:100%; padding:0.4rem;">
+        <!-- Route Info has been moved to the top panel -->
+        
+        <!-- Followers Panel -->
+        <div class="pane-card animate-fade-in-up" style="margin-top: 1.5rem; background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main); display:flex; justify-content:space-between; align-items:center;">
+                Followers
+                <span style="background:var(--primary); color:#fff; border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem;">{{ shipment.followers.count }}</span>
+            </h3>
+            
+            <div style="display:flex; flex-direction:column; gap:0.75rem; margin-bottom:1rem;">
+                {% for follower in shipment.followers.all %}
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:#f8fafc; border-radius:8px; border:1px solid var(--border-light);">
+                    <div style="display:flex; align-items:center; gap:0.5rem;">
+                        <div style="width:28px; height:28px; border-radius:50%; background:var(--primary); color:#fff; display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700;">
+                            {{ follower.username|make_list|first|upper }}
+                        </div>
+                        <span style="font-size:0.85rem; font-weight:600;">{{ follower.get_full_name|default:follower.username }}</span>
                     </div>
-                    <div style="margin-bottom: 0.75rem;">
-                        <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.25rem;">Arrival</label>
-                        <input type="date" name="arrival_date" value="{{ shipment.actual_arrival_date|date:'Y-m-d' }}" class="form-input" style="width:100%; padding:0.4rem;">
-                    </div>
-                    <button type="submit" class="btn btn-secondary" style="width:100%; padding:0.4rem; font-size:0.75rem;">Save Dates</button>
-                </form>
-                {% else %}
-                <div style="margin-top:0.75rem;"><strong>ETA:</strong> {{ shipment.expected_eta_date|default:"-" }}</div>
-                <div style="margin-top:0.75rem;"><strong>Arrival:</strong> {{ shipment.actual_arrival_date|default:"-" }}</div>
-                {% endif %}
-                
-                {% if shipment.last_edited_by %}
-                <hr style="border:0; border-top:1px dashed var(--border-light); margin: 1rem 0;">
-                <div style="margin-top:0.5rem; font-size:0.75rem; color:var(--text-muted);">
-                    <strong>Last Edited By:</strong> {{ shipment.last_edited_by.get_full_name|default:shipment.last_edited_by.username }}
+                    {% if follower == request.user %}
+                    <form method="post" style="margin:0;">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="remove_follower">
+                        <input type="hidden" name="user_id" value="{{ follower.id }}">
+                        <button type="submit" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:0.75rem; font-weight:600;">Unfollow</button>
+                    </form>
+                    {% endif %}
                 </div>
-                {% endif %}
-                {% if shipment.approved_by %}
-                <div style="margin-top:0.5rem; font-size:0.75rem; color:var(--text-muted);">
-                    <strong style="color:#b91c1c;">Force Closed By:</strong> {{ shipment.approved_by.get_full_name|default:shipment.approved_by.username }}
+                {% empty %}
+                <p style="font-size:0.85rem; color:var(--text-muted); text-align:center; padding:1rem 0;">No followers yet.</p>
+                {% endfor %}
+            </div>
+
+            <form method="post" style="display:flex; gap:0.5rem;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="add_follower">
+                <select name="user_id" required class="form-select" style="flex:1; padding:0.4rem 0.5rem; border-radius:6px; font-size:0.8rem; border:1px solid var(--border-light);">
+                    <option value="">-- Add Colleague --</option>
+                    {% for u in all_users %}
+                        {% if u not in shipment.followers.all %}
+                        <option value="{{ u.id }}">{{ u.get_full_name|default:u.username }}</option>
+                        {% endif %}
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-primary" style="padding:0.4rem 0.75rem; font-size:0.8rem; border-radius:6px;">Add</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Timeline -->
+<div class="animate-fade-in-up" style="margin-top:2rem; background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:700; margin-bottom:1.5rem; color:var(--text-main);">Order Timeline</h3>
+    <div style="display:flex; flex-direction:column; gap:1rem; position:relative;">
+        <div style="position:absolute; left:11px; top:10px; bottom:10px; width:2px; background:var(--border-light); z-index:0;"></div>
+        {% for event in shipment.timeline.all %}
+        <div style="display:flex; gap:1rem; position:relative; z-index:1;">
+            <div style="width:24px; height:24px; border-radius:50%; background:var(--primary); display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:2px;">
+                <div style="width:10px; height:10px; border-radius:50%; background:#fff;"></div>
+            </div>
+            <div>
+                <div style="font-weight:600; color:var(--text-main); font-size:0.95rem;">{{ event.action }}</div>
+                <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.25rem;">
+                    {{ event.timestamp|date:"M d, Y H:i" }} 
+                    {% if event.user %} &middot; by {{ event.user.get_full_name|default:event.user.username }}{% endif %}
                 </div>
-                {% endif %}
             </div>
         </div>
+        {% empty %}
+        <div style="color:var(--text-muted); font-size:0.9rem; padding-left:2.5rem;">No timeline events yet.</div>
+        {% endfor %}
     </div>
 </div>
 
@@ -385,83 +635,85 @@
     const selProd = document.getElementById('id_product');
     const selBatch = document.getElementById('id_batch');
 
-    function toggleCargoType() {
-        if (typeMat.checked) {
-            divMat.style.display = 'block';
-            divProd.style.display = 'none';
-            selProd.value = '';
-        } else {
-            divMat.style.display = 'none';
-            divProd.style.display = 'block';
-            selMat.value = '';
-        }
-        filterBatches();
-    }
-
-    function filterBatches() {
-        const selectedMat = selMat.value;
-        const selectedProd = selProd.value;
-        const options = selBatch.options;
-        
-        for(let i=0; i<options.length; i++) {
-            if(options[i].value === "") continue;
-            
-            const bMat = options[i].getAttribute('data-mat');
-            const bProd = options[i].getAttribute('data-prod');
-            
-            if(typeMat.checked && selectedMat && bMat !== selectedMat) {
-                options[i].style.display = 'none';
-            } else if (typeProd.checked && selectedProd && bProd !== selectedProd) {
-                options[i].style.display = 'none';
+    if(typeMat) {
+        function toggleCargoType() {
+            if (typeMat.checked) {
+                divMat.style.display = 'block';
+                divProd.style.display = 'none';
+                selProd.value = '';
             } else {
-                options[i].style.display = '';
+                divMat.style.display = 'none';
+                divProd.style.display = 'block';
+                selMat.value = '';
+            }
+            filterBatches();
+        }
+
+        function filterBatches() {
+            const selectedMat = selMat.value;
+            const selectedProd = selProd.value;
+            const options = selBatch.options;
+            
+            for(let i=0; i<options.length; i++) {
+                if(options[i].value === "") continue;
+                
+                const bMat = options[i].getAttribute('data-mat');
+                const bProd = options[i].getAttribute('data-prod');
+                
+                if(typeMat.checked && selectedMat && bMat !== selectedMat) {
+                    options[i].style.display = 'none';
+                } else if (typeProd.checked && selectedProd && bProd !== selectedProd) {
+                    options[i].style.display = 'none';
+                } else {
+                    options[i].style.display = '';
+                }
+            }
+
+            // Update the stock table
+            let matchCount = 0;
+            const stockRows = document.querySelectorAll('.stock-row');
+            for(let i=0; i<stockRows.length; i++) {
+                const bMat = stockRows[i].getAttribute('data-mat');
+                const bProd = stockRows[i].getAttribute('data-prod');
+                
+                if(typeMat.checked && selectedMat && bMat === selectedMat) {
+                    stockRows[i].style.display = 'table-row';
+                    matchCount++;
+                } else if (typeProd.checked && selectedProd && bProd === selectedProd) {
+                    stockRows[i].style.display = 'table-row';
+                    matchCount++;
+                } else {
+                    stockRows[i].style.display = 'none';
+                }
+            }
+            
+            const container = document.getElementById('stock_table_container');
+            const noMsg = document.getElementById('no_stock_msg');
+            
+            if ((typeMat.checked && selectedMat) || (typeProd.checked && selectedProd)) {
+                container.style.display = 'block';
+                noMsg.style.display = matchCount === 0 ? 'block' : 'none';
+            } else {
+                container.style.display = 'none';
             }
         }
 
-        // Update the stock table
-        let matchCount = 0;
-        const stockRows = document.querySelectorAll('.stock-row');
-        for(let i=0; i<stockRows.length; i++) {
-            const bMat = stockRows[i].getAttribute('data-mat');
-            const bProd = stockRows[i].getAttribute('data-prod');
-            
-            if(typeMat.checked && selectedMat && bMat === selectedMat) {
-                stockRows[i].style.display = 'table-row';
-                matchCount++;
-            } else if (typeProd.checked && selectedProd && bProd === selectedProd) {
-                stockRows[i].style.display = 'table-row';
-                matchCount++;
+        selBatch.addEventListener('change', function() {
+            const hint = document.getElementById('max_qty_hint');
+            const selectedOpt = this.options[this.selectedIndex];
+            if (this.value !== "") {
+                const qty = selectedOpt.getAttribute('data-qty');
+                hint.innerHTML = 'Max available: <strong>' + qty + '</strong>';
+                hint.style.display = 'block';
             } else {
-                stockRows[i].style.display = 'none';
+                hint.style.display = 'none';
             }
-        }
-        
-        const container = document.getElementById('stock_table_container');
-        const noMsg = document.getElementById('no_stock_msg');
-        
-        if ((typeMat.checked && selectedMat) || (typeProd.checked && selectedProd)) {
-            container.style.display = 'block';
-            noMsg.style.display = matchCount === 0 ? 'block' : 'none';
-        } else {
-            container.style.display = 'none';
-        }
+        });
+
+        typeMat.addEventListener('change', toggleCargoType);
+        typeProd.addEventListener('change', toggleCargoType);
+        selMat.addEventListener('change', filterBatches);
+        selProd.addEventListener('change', filterBatches);
     }
-
-    selBatch.addEventListener('change', function() {
-        const hint = document.getElementById('max_qty_hint');
-        const selectedOpt = this.options[this.selectedIndex];
-        if (this.value !== "") {
-            const qty = selectedOpt.getAttribute('data-qty');
-            hint.innerHTML = 'Max available: <strong>' + qty + '</strong>';
-            hint.style.display = 'block';
-        } else {
-            hint.style.display = 'none';
-        }
-    });
-
-    typeMat.addEventListener('change', toggleCargoType);
-    typeProd.addEventListener('change', toggleCargoType);
-    selMat.addEventListener('change', filterBatches);
-    selProd.addEventListener('change', filterBatches);
 </script>
 {% endblock %}

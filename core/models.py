@@ -272,7 +272,10 @@ class Shipment(models.Model):
         ('Transfer', 'Internal Transfer'),
     )
     STATUS_CHOICES = (
-        ('Preparing', 'Preparing'),
+        ('Draft', 'Draft (Manufacturing)'),
+        ('Logistics Review', 'Logistics Review'),
+        ('Pending Approval', 'Pending Approval'),
+        ('Preparing', 'Approved / Preparing'),
         ('Dispatched', 'Dispatched'),
         ('Arrived', 'Arrived'),
         ('Completed', 'Completed'),
@@ -281,10 +284,11 @@ class Shipment(models.Model):
     )
     tracking_number = models.CharField(max_length=255, unique=True, help_text="Internal Truck Fleet ID or tracking #")
     direction = models.CharField(max_length=50, choices=DIRECTION_CHOICES, default='Inbound')
-    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Preparing')
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Draft')
     
     purchase_order = models.ForeignKey('PurchaseOrder', on_delete=models.SET_NULL, null=True, blank=True, related_name='shipments')
     sales_order = models.ForeignKey('SalesOrder', on_delete=models.SET_NULL, null=True, blank=True, related_name='shipments')
+    linked_production_run = models.ForeignKey('ProductionRun', on_delete=models.SET_NULL, null=True, blank=True, related_name='linked_shipments')
     
     origin_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='outbound_shipments')
     destination_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='inbound_shipments')
@@ -301,6 +305,9 @@ class Shipment(models.Model):
     discrepancy_remarks = models.TextField(blank=True, null=True)
     assigned_manager = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_discrepancies')
     approved_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_discrepancies')
+
+    assigned_to = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_shipments')
+    followers = models.ManyToManyField(CustomUser, blank=True, related_name='followed_shipments')
 
     def __str__(self):
         return f"{self.tracking_number} ({self.status})"
@@ -358,6 +365,7 @@ class RegistryLog(models.Model):
 class OrderTimeline(models.Model):
     purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
     sales_order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
+    shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
     action = models.CharField(max_length=100)
     timestamp = models.DateTimeField(auto_now_add=True)
     user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)

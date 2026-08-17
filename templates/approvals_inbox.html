@@ -80,6 +80,52 @@ function switchTab(tabId) {
             </div>
             {% endfor %}
 
+            <!-- Discrepancy Approvals -->
+            {% for ship in pending_shipments %}
+            <div style="background:#fef2f2; border:1px solid rgba(239,68,68,0.2); border-radius:10px; padding:1.25rem;">
+                <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:#dc2626; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Discrepancy Escalation</div>
+                        <a href="{% url 'shipment_detail' ship.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ ship.tracking_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Direction: {{ ship.get_direction_display }}</div>
+                    </div>
+                    <span class="badge badge-amber" style="background:rgba(239,68,68,0.1); color:#dc2626;">Needs Force Close</span>
+                </div>
+                
+                <div style="background:#fff; border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">
+                    <strong>Remarks:</strong><br/>
+                    {{ ship.discrepancy_remarks|linebreaksbr }}
+                </div>
+
+                <div style="display:flex; gap:0.5rem; align-items:center;">
+                    <a href="{% url 'shipment_detail' ship.pk %}" class="btn btn-primary" style="padding:0.4rem 1rem;">View Details & Resolve</a>
+                </div>
+            </div>
+            {% endfor %}
+
+            <!-- Shipment Approvals -->
+            {% for ship in pending_shipment_approvals %}
+            <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
+                <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Logistics Approval</div>
+                        <a href="{% url 'shipment_detail' ship.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ ship.tracking_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Direction: {{ ship.get_direction_display }}</div>
+                    </div>
+                    <span class="badge badge-amber">Pending Approval</span>
+                </div>
+                
+                <form method="post" style="display:flex; gap:0.5rem; align-items:center;">
+                    {% csrf_token %}
+                    <input type="hidden" name="item_type" value="shipment">
+                    <input type="hidden" name="item_id" value="{{ ship.id }}">
+                    <input type="text" name="comment" placeholder="Add comment..." class="form-input" style="flex:1; padding:0.4rem 0.6rem; font-size:0.85rem; border-radius:6px; border:1px solid var(--border-light);">
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject</button>
+                    <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem;">Approve</button>
+                </form>
+            </div>
+            {% endfor %}
+
             <!-- Purchase Orders -->
             {% for po in pending_pos %}
             <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
@@ -149,6 +195,20 @@ function switchTab(tabId) {
                     <div style="font-size:0.85rem; margin-top:0.25rem;">Follow Purchase Orders to track their status here.</div>
                 </div>
                 {% endfor %}
+                
+                <!-- Followed Shipments -->
+                {% for ship in followed_shipments %}
+                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Shipment</div>
+                        <a href="{% url 'shipment_detail' ship.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ ship.tracking_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Direction: {{ ship.get_direction_display }}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <span class="badge {% if ship.status == 'Arrived' or ship.status == 'Completed' %}badge-green{% elif ship.status == 'Dispatched' %}badge-blue{% else %}badge-sky{% endif %}">{{ ship.get_status_display }}</span>
+                    </div>
+                </div>
+                {% endfor %}
             </div>
         </div>
     </div>
@@ -189,23 +249,44 @@ function switchTab(tabId) {
     <!-- History Section -->
     <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:1.5rem;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.2rem; font-weight:700; margin-bottom:1.5rem; border-bottom:1px solid var(--border-light); padding-bottom:0.75rem;">Your Approval History</h3>
-        <div style="display:flex; flex-direction:column; gap:0.75rem; max-height:400px; overflow-y:auto; padding-right:0.5rem;">
-            {% for so in history_sos %}
+        <div style="display:flex; flex-direction:column; gap:0.75rem; max-height:400px; overflow-y:auto; padding-right:0.5rem; margin-bottom:1rem;">
+            {% for item in history_page %}
             <div style="font-size:0.85rem; padding:0.75rem; border:1px solid var(--border-light); border-radius:8px;">
-                <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">SO: <a href="{% url 'so_detail' so.pk %}" style="color:var(--primary); text-decoration:none;">{{ so.so_number }}</a></div>
-                <div style="color:var(--text-muted); font-size:0.8rem;">Status: {{ so.status }}</div>
+                {% if item.type == 'so' %}
+                <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">SO: <a href="{% url 'so_detail' item.obj.pk %}" style="color:var(--primary); text-decoration:none;">{{ item.obj.so_number }}</a></div>
+                {% elif item.type == 'po' %}
+                <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">PO: <a href="{% url 'po_detail' item.obj.pk %}" style="color:var(--primary); text-decoration:none;">{{ item.obj.po_number }}</a></div>
+                {% elif item.type == 'shipment' %}
+                <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">Shipment: <a href="{% url 'shipment_detail' item.obj.pk %}" style="color:var(--primary); text-decoration:none;">{{ item.obj.tracking_number }}</a></div>
+                {% endif %}
+                <div style="display:flex; justify-content:space-between;">
+                    <span style="color:var(--text-muted); font-size:0.8rem;">Status: {{ item.status }}</span>
+                    <span style="color:var(--text-muted); font-size:0.75rem;">{{ item.timestamp|date:"M d, Y" }}</span>
+                </div>
             </div>
-            {% endfor %}
-            {% for po in history_pos %}
-            <div style="font-size:0.85rem; padding:0.75rem; border:1px solid var(--border-light); border-radius:8px;">
-                <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">PO: <a href="{% url 'po_detail' po.pk %}" style="color:var(--primary); text-decoration:none;">{{ po.po_number }}</a></div>
-                <div style="color:var(--text-muted); font-size:0.8rem;">Status: {{ po.status }}</div>
-            </div>
-            {% endfor %}
-            {% if not history_sos and not history_pos %}
+            {% empty %}
             <div style="text-align:center; padding:1rem; color:var(--text-muted); font-size:0.85rem;">No approval history found.</div>
+            {% endfor %}
+        </div>
+        
+        <!-- Pagination Controls -->
+        {% if history_page.has_other_pages %}
+        <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border-light); padding-top:0.75rem; font-size:0.85rem;">
+            {% if history_page.has_previous %}
+            <a href="?page={{ history_page.previous_page_number }}" style="color:var(--primary); text-decoration:none; font-weight:600;">&larr; Prev</a>
+            {% else %}
+            <span style="color:var(--text-muted); opacity:0.5;">&larr; Prev</span>
+            {% endif %}
+            
+            <span style="color:var(--text-muted); font-weight:600;">Page {{ history_page.number }} of {{ history_page.paginator.num_pages }}</span>
+            
+            {% if history_page.has_next %}
+            <a href="?page={{ history_page.next_page_number }}" style="color:var(--primary); text-decoration:none; font-weight:600;">Next &rarr;</a>
+            {% else %}
+            <span style="color:var(--text-muted); opacity:0.5;">Next &rarr;</span>
             {% endif %}
         </div>
+        {% endif %}
         </div>
 
         <div id="following-tab" style="display:none;">

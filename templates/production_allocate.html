@@ -36,6 +36,32 @@
             <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1.25rem;">Select Manufacturing Facility</h3>
             <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Choose the facility where this production run will take place. The system will automatically allocate materials from this facility based on FIFO.</p>
             
+            <div style="margin-bottom:2rem;">
+                <h4 style="font-size:0.9rem; font-weight:700; color:var(--text-main); margin-bottom:0.75rem;">Global Material Availability</h4>
+                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; padding:1rem; font-size:0.85rem;">
+                    {% for item in preview %}
+                    <div style="margin-bottom:{% if not forloop.last %}1rem{% else %}0{% endif %};">
+                        <div style="display:flex; justify-content:space-between; font-weight:600; margin-bottom:0.25rem;">
+                            <span>{{ item.material.name }}</span>
+                            <span style="color:{% if item.status == 'OK' %}#059669{% else %}#dc2626{% endif %};">{{ item.status }}</span>
+                        </div>
+                        <div style="color:var(--text-muted); font-size:0.8rem; margin-bottom:0.25rem;">
+                            Required: {{ item.needed|floatformat:2 }} {{ item.material.unit_of_measure }} | Total Global: {{ item.available|floatformat:2 }} {{ item.material.unit_of_measure }}
+                        </div>
+                        {% if item.location_breakdown %}
+                            <ul style="margin:0; padding-left:1.5rem; color:var(--text-muted); font-size:0.78rem;">
+                                {% for loc in item.location_breakdown %}
+                                <li>{{ loc.quantity|floatformat:2 }} {{ item.material.unit_of_measure }} in <strong>{{ loc.warehouse_name }}</strong></li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <div style="color:#dc2626; font-size:0.78rem;">No stock available globally.</div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            
             <form method="post" action="{% url 'production_run_allocate' run.pk %}">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="allocate_run">
@@ -45,8 +71,17 @@
                     <select name="warehouse_id" required class="form-select" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
                         <option value="">-- Select a facility --</option>
                         {% for w in warehouses %}
-                        <option value="{{ w.id }}">{{ w.name }} ({{ w.get_ownership_type_display|default:w.ownership_type }})</option>
+                        {% if w.location_type == 'Manufacturing' %}
+                        <option value="{{ w.id }}" selected>{{ w.name }} ({{ w.get_ownership_type_display|default:w.ownership_type }})</option>
+                        {% endif %}
                         {% endfor %}
+                        <optgroup label="Other Locations">
+                        {% for w in warehouses %}
+                        {% if w.location_type != 'Manufacturing' %}
+                        <option value="{{ w.id }}">{{ w.name }} ({{ w.get_ownership_type_display|default:w.ownership_type }})</option>
+                        {% endif %}
+                        {% endfor %}
+                        </optgroup>
                     </select>
                 </div>
                 

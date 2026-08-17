@@ -128,16 +128,32 @@
                             
                             {% elif si.existing_run.status == 'Awaiting Materials' %}
                                 <span class="badge badge-rose" style="margin-bottom:0.5rem;">Awaiting Materials</span>
-                                {% if si.existing_run.linked_pos.exists %}
-                                    <div style="font-size:0.7rem; color:var(--text-muted); margin-top:0.25rem;">Draft PO Created</div>
-                                {% else %}
+                                <div style="display:flex; flex-direction:column; gap:0.5rem; margin-top:0.5rem;">
+                                    {% if si.existing_run.linked_pos.exists %}
+                                        <div style="font-size:0.7rem; color:var(--text-muted);">Draft PO Created</div>
+                                    {% elif si.existing_run.linked_shipments.exists %}
+                                        <div style="font-size:0.7rem; color:var(--text-muted);">Draft Transfer Created</div>
+                                    {% else %}
+                                        <form method="post" action="{% url 'readiness' %}">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="run_id" value="{{ si.existing_run.id }}">
+                                            {% if si.bom_ready %}
+                                                <input type="hidden" name="action" value="draft_transfer_from_shortage">
+                                                <button type="submit" class="btn btn-secondary" style="width:100%; font-size:0.75rem; padding:0.4rem; border-color:#d97706; color:#d97706;">Request Internal Transfer</button>
+                                            {% else %}
+                                                <input type="hidden" name="action" value="draft_po_from_shortage">
+                                                <button type="submit" class="btn btn-secondary" style="width:100%; font-size:0.75rem; padding:0.4rem; border-color:#dc2626; color:#dc2626;">Draft PO for Shortage</button>
+                                            {% endif %}
+                                        </form>
+                                    {% endif %}
+                                    
                                     <form method="post" action="{% url 'readiness' %}">
                                         {% csrf_token %}
-                                        <input type="hidden" name="action" value="draft_po_from_shortage">
+                                        <input type="hidden" name="action" value="cancel_allocation">
                                         <input type="hidden" name="run_id" value="{{ si.existing_run.id }}">
-                                        <button type="submit" class="btn btn-secondary" style="width:100%; font-size:0.75rem; padding:0.4rem; border-color:#dc2626; color:#dc2626;">Draft PO for Shortage</button>
+                                        <button type="submit" class="btn btn-secondary" style="width:100%; font-size:0.75rem; padding:0.4rem;" onclick="return confirm('Cancel this allocation and start over?')">Cancel Allocation</button>
                                     </form>
-                                {% endif %}
+                                </div>
                                 
                             {% elif si.existing_run.status == 'Planned' %}
                                 <span class="badge badge-sky">Planned</span>
