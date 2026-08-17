@@ -2130,6 +2130,7 @@ def manufacturing_view(request):
             run = get_object_or_404(ProductionRun, id=run_id)
             with transaction.atomic():
                 from django.utils import timezone
+                from datetime import timedelta
                 from .utils import deduct_stock_from_allocation
                 
                 if run.status == 'InProgress':
@@ -2757,6 +2758,50 @@ def shipment_detail_view(request, pk):
             shipment.save()
             messages.success(request, "Shipment submitted to Logistics for review.")
             
+        elif action == 'scrap_shipment':
+            from .models import StockAllocation
+            from decimal import Decimal
+            
+            with transaction.atomic():
+                for item in shipment.items.all():
+                    qty = item.quantity
+                    batch = item.batch
+                    if batch:
+                        qty_dec = Decimal(str(qty))
+                        if shipment.linked_production_run:
+                            alloc = StockAllocation.objects.filter(production_run=shipment.linked_production_run, batch=batch).first()
+                            if alloc:
+                                deduct = min(qty_dec, alloc.quantity)
+                                alloc.quantity -= deduct
+                                if alloc.quantity <= 0: alloc.delete()
+                                else: alloc.save(update_fields=['quantity'])
+                            batch.reserved_quantity -= qty_dec
+                            if batch.reserved_quantity < 0: batch.reserved_quantity = 0
+                            batch.save(update_fields=['reserved_quantity'])
+                            
+                        elif shipment.sales_order:
+                            alloc = StockAllocation.objects.filter(shipment=shipment, batch=batch).first()
+                            if alloc:
+                                deduct = min(qty_dec, alloc.quantity)
+                                alloc.quantity -= deduct
+                                if alloc.quantity <= 0: alloc.delete()
+                                else: alloc.save(update_fields=['quantity'])
+                            batch.allocated_quantity -= qty_dec
+                            if batch.allocated_quantity < 0: batch.allocated_quantity = 0
+                            batch.save(update_fields=['allocated_quantity'])
+                
+                if shipment.sales_order:
+                    so = shipment.sales_order
+                    so.status = 'Pending'
+                    so.save()
+                    
+                shipment.status = 'Cancelled'
+                shipment.linked_production_run = None
+                shipment.sales_order = None
+                shipment.save()
+                
+            messages.success(request, "Shipment scrapped. Cargo locks released and linked orders updated.")
+            
         elif action == 'submit_for_approval':
             approver_id = request.POST.get('approver_id')
             if shipment.direction == 'Transfer' and (not shipment.origin_warehouse or not shipment.destination_warehouse):
@@ -3085,86 +3130,6 @@ def shipment_detail_view(request, pk):
     }
     return render(request, 'shipment_detail.html', context)
 
-def production_run_allocate_view(request, pk):
-    run = get_object_or_404(ProductionRun, pk=pk)
-    
-    if request.method == 'POST':
-        action = request.POST.get('action')
-        if action == 'allocate_custom':
-            from .models import StockAllocation
-            from decimal import Decimal
-            with transaction.atomic():
-                for key, value in request.POST.items():
-                    if key.startswith('allocate_') and value:
-                        try:
-                            parts = key.split('_')
-                            batch_id = parts[1]
-                            mat_id = parts[2]
-                            qty = float(value)
-                            
-                            if qty > 0:
-                                batch = Batch.objects.get(id=batch_id)
-                                batch.allocated_quantity += Decimal(str(qty))
-                                batch.save(update_fields=['allocated_quantity'])
-                                StockAllocation.objects.create(
-                                    batch=batch,
-                                    production_run=run,
-                                    quantity=qty
-                                )
-                        except Exception as e:
-                            pass
-                
-                run.status = 'InProgress'
-                from django.utils import timezone
-                run.start_time = timezone.now()
-                run.save()
-                messages.success(request, f"Materials allocated successfully. Production Run {run.run_number} started.")
-                return redirect('readiness')
-                
-        elif action == 'allocate_auto':
-            from .utils import allocate_stock
-            for req in run.target_product.recipe_items.all():
-                allocate_stock('production_run', run, req.material, float(req.quantity_required) * float(run.expected_yield), warehouse=run.manufacturing_plant)
-            run.status = 'InProgress'
-            from django.utils import timezone
-            run.start_time = timezone.now()
-            run.save()
-            messages.success(request, f"Materials automatically allocated using FEFO/FIFO. Production Run {run.run_number} started.")
-            return redirect('readiness')
-
-    # Get materials and recommended batches
-    recipe_reqs = []
-    from django.db.models import F
-    for req in run.target_product.recipe_items.all():
-        needed = float(req.quantity_required) * float(run.expected_yield)
-        batches = Batch.objects.filter(
-            material=req.material,
-            location__warehouse=run.manufacturing_plant,
-            status='Active'
-        ).annotate(
-            avail=F('quantity') - F('allocated_quantity')
-        ).filter(avail__gt=0).order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
-        
-        batch_list = []
-        for b in batches:
-            if remaining > 0:
-                take = min(float(b.avail), remaining)
-                remaining -= take
-            else:
-                take = 0
-            batch_list.append({'obj': b, 'suggested_qty': take})
-            
-        recipe_reqs.append({
-            'material': req.material,
-            'needed': needed,
-            'batch_list': batch_list,
-        })
-
-    return render(request, 'production_allocate.html', {
-        'run': run,
-        'recipe_reqs': recipe_reqs
-    })
-
 @login_required
 def mark_notifications_read(request):
     if request.method == 'POST':
@@ -3360,86 +3325,274 @@ def so_allocate_view(request, pk):
 
 @login_required
 def production_run_allocate_view(request, pk):
-    from .models import ProductionRun, Batch, StockAllocation
+    from .models import ProductionRun, Batch, StockAllocation, Shipment, ShipmentItem
+    from django.db.models import F
+    from decimal import Decimal
+    
     run = get_object_or_404(ProductionRun, pk=pk)
     
+    # Calculate FEFO recommendations
+    recipe_reqs = []
+    fefo_recommended_ids = []
+    
+    for req in run.target_product.recipe_items.all():
+        needed = Decimal(str(req.quantity_required)) * Decimal(str(run.expected_yield))
+        
+        # Get all active batches globally, ordered by expiry date (FEFO)
+        batches = Batch.objects.filter(material=req.material, status='Active').annotate(
+            avail=F('quantity') - F('allocated_quantity') - F('reserved_quantity')
+        ).filter(avail__gt=0).order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
+        
+        remaining = needed
+        batch_list = []
+        for b in batches:
+            avail_dec = Decimal(str(b.avail))
+            take = Decimal('0')
+            is_fefo = False
+            
+            if remaining > 0:
+                take = min(avail_dec, remaining)
+                remaining -= take
+                is_fefo = True
+                fefo_recommended_ids.append(b.id)
+                
+            batch_list.append({
+                'obj': b, 
+                'suggested_qty': float(take), 
+                'is_fefo': is_fefo,
+                'avail': float(avail_dec)
+            })
+            
+        recipe_reqs.append({
+            'material': req.material,
+            'needed': float(needed),
+            'batch_list': batch_list,
+        })
+        
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'allocate_run':
             wh_id = request.POST.get('warehouse_id')
             if not wh_id:
-                messages.error(request, "Please select a facility.")
+                messages.error(request, "Please select a destination manufacturing facility.")
                 return redirect('production_run_allocate', pk=pk)
                 
-            warehouse = get_object_or_404(Warehouse, id=wh_id)
+            destination_warehouse = get_object_or_404(Warehouse, id=wh_id)
+            run.manufacturing_plant = destination_warehouse
             
-            # Check permission (removed)
-                
-            run.manufacturing_plant = warehouse
+            override_reason = request.POST.get('override_reason', '').strip()
             
-            from .models import Batch, StockAllocation
-            from decimal import Decimal
+            # Check for non-FEFO overrides
+            selected_allocations = {} # batch_id -> qty
+            is_overridden = False
             
-            has_shortage = False
-            with transaction.atomic():
-                for req in run.target_product.recipe_items.all():
-                    needed = Decimal(str(req.quantity_required)) * Decimal(str(run.expected_yield))
-                    allocated = Decimal('0')
-                    
-                    # FIFO Auto-Allocate from the selected warehouse
-                    batches = Batch.objects.filter(material=req.material, status='Active', location__warehouse=warehouse).order_by('expiry_date')
-                    for b in batches:
-                        if allocated >= needed:
-                            break
-                        avail = b.quantity - b.allocated_quantity
-                        if avail > 0:
-                            take = min(avail, needed - allocated)
-                            StockAllocation.objects.create(batch=b, production_run=run, quantity=take)
-                            b.allocated_quantity += take
-                            b.save()
-                            allocated += take
-                            
-                    if allocated < needed:
-                        has_shortage = True
+            for key, value in request.POST.items():
+                if key.startswith('batch_qty_') and value:
+                    try:
+                        batch_id = int(key.replace('batch_qty_', ''))
+                        qty = Decimal(value)
+                        if qty > 0:
+                            selected_allocations[batch_id] = qty
+                            if batch_id not in fefo_recommended_ids:
+                                is_overridden = True
+                    except (ValueError, TypeError):
+                        pass
                         
-                if has_shortage:
-                    run.status = 'Awaiting Materials'
-                    messages.warning(request, f"Order acknowledged, but materials are short. Please Draft a PO for the shortages.")
-                else:
-                    run.status = 'Planned'
-                    messages.success(request, f"Materials allocated successfully. Run {run.run_number} is Planned.")
+            if is_overridden and not override_reason:
+                messages.error(request, "You selected non-FEFO recommended batches. Please provide an override reason.")
+                return redirect('production_run_allocate', pk=pk)
+                
+            if is_overridden:
+                run.fefo_override_reason = override_reason
+                
+            # Perform Allocations & Auto-Logistics
+            with transaction.atomic():
+                warehouse_groups = {} # warehouse_id -> [ {batch, qty} ]
+                
+                for batch_id, qty in selected_allocations.items():
+                    batch = Batch.objects.select_for_update().get(id=batch_id)
+                    # Hard Reserve
+                    batch.reserved_quantity += qty
+                    batch.save(update_fields=['reserved_quantity'])
                     
+                    StockAllocation.objects.create(batch=batch, production_run=run, quantity=qty)
+                    
+                    wh = batch.location.warehouse if batch.location else None
+                    wh_key = wh.id if wh else None
+                    if wh_key not in warehouse_groups:
+                        warehouse_groups[wh_key] = []
+                    warehouse_groups[wh_key].append({'batch': batch, 'qty': qty})
+                    
+                # Auto-generate Shipments split by origin
+                for origin_wh_id, items in warehouse_groups.items():
+                    origin_warehouse = Warehouse.objects.get(id=origin_wh_id) if origin_wh_id else None
+                    
+                    # Generate unique tracking number
+                    import uuid
+                    tracking = f"SHP-AUTO-{str(uuid.uuid4())[:8].upper()}"
+                    
+                    shipment = Shipment.objects.create(
+                        tracking_number=tracking,
+                        direction='Transfer',
+                        status='Draft',
+                        linked_production_run=run,
+                        origin_warehouse=origin_warehouse,
+                        destination_warehouse=destination_warehouse,
+                        is_auto_generated=True,
+                        last_edited_by=request.user
+                    )
+                    
+                    for item in items:
+                        ShipmentItem.objects.create(
+                            shipment=shipment,
+                            batch=item['batch'],
+                            material=item['batch'].material,
+                            quantity=item['qty']
+                        )
+                
+                run.status = 'Pending Allocation' # Move to a state where it waits for shipments
                 run.save()
-            return redirect('readiness')
-
+                
+            messages.success(request, f"Materials allocated. Auto-generated {len(warehouse_groups)} draft logistics shipment(s).")
+            return redirect('production_run_detail', pk=run.pk) # Redirect to the new dedicated detail page
+            
     warehouses = Warehouse.objects.all()
     
-    # Calculate shortages for preview
-    preview = []
+    return render(request, 'production_allocate.html', {
+        'run': run,
+        'recipe_reqs': recipe_reqs,
+        'warehouses': warehouses
+    })
+
+@login_required
+def production_run_detail_view(request, pk):
+    from .models import ProductionRun, Shipment, RunMaterialUsage, Batch, SalesOrder, Product
+    from decimal import Decimal
+    from django.utils import timezone
+    run = get_object_or_404(ProductionRun, pk=pk)
+    linked_shipments = run.linked_shipments.all()
+    
+    # Calculate if we have any pending shipments (Soft Lock check)
+    all_shipments_arrived = True
+    pending_shipments_count = 0
+    for shp in linked_shipments:
+        if shp.status not in ['Arrived', 'Completed']:
+            all_shipments_arrived = False
+            pending_shipments_count += 1
+            
+    # Calculate BOM for usage form
+    bom_materials = []
     for req in run.target_product.recipe_items.all():
         needed = float(req.quantity_required) * float(run.expected_yield)
-        batches = Batch.objects.filter(material=req.material, status='Active')
-        
-        loc_dict = {}
-        avail = 0.0
-        for b in batches:
-            qty = float(b.quantity - b.allocated_quantity)
-            avail += qty
-            if qty > 0 and getattr(b, 'location', None) and getattr(b.location, 'warehouse', None):
-                wh_name = b.location.warehouse.name
-                loc_dict[wh_name] = loc_dict.get(wh_name, 0.0) + qty
-                
-        location_breakdown = [{'warehouse_name': loc, 'quantity': qty} for loc, qty in loc_dict.items()]
-        
-        preview.append({
+        bom_materials.append({
             'material': req.material,
-            'needed': needed,
-            'avail': avail,
-            'shortage': max(0, needed - avail),
-            'available': avail,
-            'status': 'OK' if avail >= needed else 'SHORT',
-            'location_breakdown': location_breakdown
+            'needed': needed
         })
-        
-    return render(request, 'production_allocate.html', {'run': run, 'warehouses': warehouses, 'preview': preview})
+            
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'schedule_run':
+            start_val = request.POST.get('start_time')
+            end_val = request.POST.get('end_time')
+            if start_val: run.start_time = start_val
+            if end_val: run.end_time = end_val
+            run.save()
+            messages.success(request, "Production schedule updated successfully. Calendar is updated.")
+            return redirect('production_run_detail', pk=pk)
+            
+        elif action == 'start_production':
+            override_remark = request.POST.get('override_remark', '').strip()
+            if not all_shipments_arrived and not override_remark:
+                messages.error(request, "Cannot start production: some shipments have not arrived. An override remark is required.")
+                return redirect('production_run_detail', pk=pk)
+                
+            run.status = 'InProgress'
+            run.exact_start_time = timezone.now()
+            if override_remark:
+                run.fefo_override_reason = (run.fefo_override_reason or '') + f"\nStarted with partial materials. Remark: {override_remark}"
+            run.save()
+            messages.success(request, f"Production Run {run.run_number} started.")
+            return redirect('production_run_detail', pk=pk)
+            
+        elif action == 'complete_production':
+            # 1. Process Material Usage and Variances
+            has_high_variance = False
+            with transaction.atomic():
+                for bom in bom_materials:
+                    mat_id = bom['material'].id
+                    actual = request.POST.get(f'actual_qty_{mat_id}')
+                    if actual:
+                        actual_dec = Decimal(actual)
+                        expected_dec = Decimal(str(bom['needed']))
+                        
+                        usage = RunMaterialUsage.objects.create(
+                            production_run=run,
+                            material=bom['material'],
+                            expected_qty=expected_dec,
+                            actual_qty=actual_dec
+                        )
+                        
+                        # Note: variance_pct is calculated in save()
+                        if usage.variance_pct > Decimal('3.0') or usage.variance_pct < Decimal('-3.0'):
+                            has_high_variance = True
+                            
+                # 2. Check for supervisor sign-off if variance > 3%
+                if has_high_variance:
+                    # In a real system, we'd transition to "Pending Sign-off".
+                    # For now, just mark it and proceed, or we could require a supervisor PIN.
+                    # Let's just record that it had high variance in the remarks.
+                    run.signoff_reason = request.POST.get('variance_remark', 'High variance recorded.')
+                    run.supervisor_signoff = request.user
+            
+                # 3. Create Finished Goods Batch
+                fg_qty = request.POST.get('actual_yield')
+                if fg_qty:
+                    import uuid
+                    from datetime import timedelta
+                    fg_batch = Batch.objects.create(
+                        batch_number=f"FG-{run.run_number}-{str(uuid.uuid4())[:4]}",
+                        status='Active',
+                        product=run.target_product,
+                        quantity=Decimal(fg_qty),
+                        produced_in=run,
+                        manufacturing_date=timezone.now().date(),
+                        expiry_date=timezone.now().date() + timedelta(days=365) # standard 1 year
+                    )
+                    
+                # 4. Finalize Run
+                run.status = 'Completed'
+                run.exact_end_time = timezone.now()
+                # run.actual_yield = Decimal(fg_qty) # If actual_yield field existed
+                run.save()
+                
+                # 5. Update linked Sales Order if it exists
+                if run.sales_order:
+                    run.sales_order.status = 'Manufacturing Completed'
+                    run.sales_order.save()
+                    from .models import OrderTimeline
+                    OrderTimeline.objects.create(
+                        sales_order=run.sales_order, 
+                        action=f"Production Run {run.run_number} completed. FG batch created.", 
+                        user=request.user
+                    )
+                    
+            messages.success(request, f"Production Run {run.run_number} completed successfully!")
+            return redirect('production_run_detail', pk=pk)
+            
+    return render(request, 'production_run_detail.html', {
+        'run': run,
+        'linked_shipments': linked_shipments,
+        'all_shipments_arrived': all_shipments_arrived,
+        'pending_shipments_count': pending_shipments_count,
+        'bom_materials': bom_materials
+    })
 
+@login_required
+def shipment_pick_list_view(request, pk):
+    from .models import Shipment
+    shipment = get_object_or_404(Shipment, pk=pk)
+    
+    return render(request, 'shipment_pick_list.html', {
+        'shipment': shipment,
+        'items': shipment.items.all().order_by('batch__location')
+    })

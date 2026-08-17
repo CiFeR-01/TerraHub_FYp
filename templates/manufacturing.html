@@ -224,33 +224,21 @@
     </div>
 </section>
 
-<!-- SECTION 2.5: Production Run Calendar -->
-<section class="animate-fade-in-up" style="margin-bottom:2rem; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
-    <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Production Schedule</h3>
-    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
-    <div id="calendar" style="min-height: 400px; font-size:0.85rem;"></div>
-</section>
-
 <!-- SECTION 3: Production Runs Ledger -->
-<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:2rem;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700;">Production Runs Ledger</h3>
-        <select id="run-status-filter" onchange="filterRuns()" class="form-select" style="padding:0.4rem 0.6rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.82rem;">
-            <option value="">All Statuses</option>
-            <option value="Planned">Planned</option>
-            <option value="InProgress">In Progress</option>
-            <option value="Completed">Completed</option>
-        </select>
+        <button id="open-run-modal-btn" class="btn btn-primary" style="padding:0.4rem 1rem; font-size:0.85rem;">+ New Production Run</button>
     </div>
     <div class="table-responsive">
-        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+        <table class="data-table" style="width:100%; border-collapse:collapse;">
             <thead>
-                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.78rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em;">
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
                     <th style="padding:0.75rem 1rem;">Run #</th>
-                    <th style="padding:0.75rem 1rem;">Target Product</th>
-                    <th style="padding:0.75rem 1rem;">Yield</th>
-                    <th style="padding:0.75rem 1rem;">Linked SO</th>
-                    <th style="padding:0.75rem 1rem;">Site</th>
+                    <th style="padding:0.75rem 1rem;">Product</th>
+                    <th style="padding:0.75rem 1rem;">Expected Yield</th>
+                    <th style="padding:0.75rem 1rem;">Sales Order</th>
+                    <th style="padding:0.75rem 1rem;">Plant</th>
                     <th style="padding:0.75rem 1rem;">Supervisor</th>
                     <th style="padding:0.75rem 1rem;">Status</th>
                     <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
@@ -259,7 +247,9 @@
             <tbody id="runs-tbody">
                 {% for run in runs %}
                 <tr class="run-row" data-status="{{ run.status }}" style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
-                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ run.run_number }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:700;">
+                        <a href="{% url 'production_run_detail' run.pk %}" style="color:var(--primary); text-decoration:none;">{{ run.run_number }}</a>
+                    </td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{{ run.target_product.name }}</td>
                     <td style="padding:0.85rem 1rem;">{{ run.expected_yield|floatformat:0 }} {{ run.target_product.unit_of_measure }}</td>
                     <td style="padding:0.85rem 1rem;">
@@ -270,13 +260,15 @@
                     <td style="padding:0.85rem 1rem;">{{ run.manufacturing_plant.name|default:"Site Alpha" }}</td>
                     <td style="padding:0.85rem 1rem;">{{ run.supervisor.username|default:"System" }}</td>
                     <td style="padding:0.85rem 1rem;">
-                        {% if run.status == 'Pending Approval' %}<span class="badge badge-amber">Pending Approval</span>
-                        {% elif run.status == 'Planned' %}<span class="badge badge-sky">Planned</span>
-                        {% elif run.status == 'InProgress' %}<span class="badge badge-amber">In Progress</span>
-                        {% elif run.status == 'Completed' %}<span class="badge badge-emerald">Completed</span>
-                        {% else %}<span class="badge badge-rose">{{ run.status }}</span>{% endif %}
+                        <span class="badge" style="
+                            {% if run.status == 'Pending Approval' %}background:#fef3c7;color:#b45309;
+                            {% elif run.status == 'Planned' or run.status == 'Pending Allocation' or run.status == 'Awaiting Materials' %}background:#e0f2fe;color:#0369a1;
+                            {% elif run.status == 'InProgress' %}background:#dbeafe;color:#1e40af;
+                            {% elif run.status == 'Completed' %}background:#dcfce7;color:#15803d;
+                            {% else %}background:#f1f5f9;color:#475569;{% endif %}
+                        ">{{ run.status }}</span>
                     </td>
-                    <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
+                    <td style="padding:0.85rem 1rem; text-align:right;">
                         {% if run.status == 'Pending Approval' %}
                         {% if user.is_superuser or user.role in 'Admin,Manager' %}
                         <form method="post" style="display:inline;">
@@ -311,6 +303,13 @@
         </table>
     </div>
 </div>
+
+<!-- SECTION 2.5: Production Run Calendar -->
+<section class="animate-fade-in-up" style="margin-bottom:2rem; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Production Schedule</h3>
+    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
+    <div id="calendar" style="min-height: 400px; font-size:0.85rem;"></div>
+</section>
 
 <!-- Modal: Schedule Run -->
 <div id="run-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); backdrop-filter:blur(4px); z-index:1000; align-items:center; justify-content:center;">
@@ -371,7 +370,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var calendarEl = document.getElementById('calendar');
     if(calendarEl) {
         var calendar = new FullCalendar.Calendar(calendarEl, {
-            initialView: 'timeGridWeek',
+            initialView: 'dayGridMonth',
             headerToolbar: {
                 left: 'prev,next today',
                 center: 'title',
@@ -384,7 +383,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 {% if run.start_time %}
                 {
                     id: '{{ run.id }}',
-                    title: '{{ run.run_number }} ({{ run.target_product.sku }})',
+                    title: '{{ run.run_number }}',
                     start: '{{ run.start_time|date:"c" }}',
                     {% if run.end_time %}end: '{{ run.end_time|date:"c" }}',{% endif %}
                     color: '{% if run.status == "Pending Approval" %}#f59e0b{% elif run.status == "Planned" %}#0ea5e9{% elif run.status == "InProgress" %}#10b981{% else %}#94a3b8{% endif %}'

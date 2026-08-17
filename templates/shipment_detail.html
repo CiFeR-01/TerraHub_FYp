@@ -35,7 +35,21 @@
             {% endif %}
         </div>
     </div>
-    <div class="header-action-tray">
+      <div class="header-action-tray">
+          {% if shipment.status not in 'Cancelled,Completed,Arrived,Delivered' %}
+          <form method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to scrap this shipment? This will unlink it from manufacturing.');">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="scrap_shipment">
+              <button type="submit" class="btn btn-secondary" style="color: var(--rose-600); border-color: var(--rose-200); background: var(--rose-50);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin-right:0.4rem;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                  Scrap Shipment
+              </button>
+          </form>
+          {% endif %}
+          <a href="{% url 'shipment_pick_list' shipment.pk %}" target="_blank" class="btn btn-secondary">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin-right:0.4rem;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+            Print Pick List
+        </a>
         <form method="POST">
             {% csrf_token %}
             <input type="hidden" name="action" value="toggle_follow">
@@ -111,18 +125,22 @@
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Status</div>
             <div style="font-size:0.95rem; font-weight:600;">
-                <span class="badge {% if shipment.status == 'Draft' %}badge-sky{% elif shipment.status in 'Pending Approval,Logistics Review' %}badge-amber{% elif shipment.status == 'Discrepant' %}badge-rose{% else %}badge-emerald{% endif %}">
+                <span class="badge {% if shipment.status in 'Draft,Logistics Review' %}badge-slate{% elif shipment.status in 'Pending Approval,Delayed' %}badge-amber{% elif shipment.status in 'Preparing,Dispatched' %}badge-sky{% elif shipment.status in 'Arrived,Completed' %}badge-emerald{% elif shipment.status in 'Cancelled,Discrepant,Rejected' %}badge-rose{% else %}badge-slate{% endif %}">
                     {{ shipment.get_status_display }}
                 </span>
             </div>
         </div>
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Requested By</div>
-            <div style="font-size:0.95rem; font-weight:600;">{{ requested_by.get_full_name|default:requested_by.username|default:"System" }}</div>
+            <div style="font-size:0.95rem; font-weight:600;">
+                {% if requested_by %}{{ requested_by.get_full_name|default:requested_by.username }}{% else %}System{% endif %}
+            </div>
         </div>
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Coordinator</div>
-            <div style="font-size:0.95rem; font-weight:600;">{{ coordinator.get_full_name|default:coordinator.username|default:"—" }}</div>
+            <div style="font-size:0.95rem; font-weight:600;">
+                {% if coordinator %}{{ coordinator.get_full_name|default:coordinator.username }}{% else %}—{% endif %}
+            </div>
         </div>
     </div>
     

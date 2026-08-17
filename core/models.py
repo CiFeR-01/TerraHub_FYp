@@ -118,9 +118,32 @@ class ProductionRun(models.Model):
     manufacturing_plant = models.ForeignKey('Warehouse', on_delete=models.SET_NULL, null=True, blank=True, related_name='production_runs')
     start_time = models.DateTimeField(null=True, blank=True)
     end_time = models.DateTimeField(null=True, blank=True)
+    
+    # New MES Tracking Fields
+    fefo_override_reason = models.TextField(blank=True, null=True)
+    supervisor_signoff = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='signed_off_runs')
+    signoff_reason = models.TextField(blank=True, null=True)
+    exact_start_time = models.DateTimeField(null=True, blank=True)
+    exact_end_time = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"Run {self.run_number} - {self.target_product.sku}"
+
+class RunMaterialUsage(models.Model):
+    production_run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, related_name='material_usages')
+    material = models.ForeignKey(Material, on_delete=models.CASCADE)
+    expected_qty = models.DecimalField(max_digits=12, decimal_places=2)
+    actual_qty = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    variance_pct = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    wastage_reason = models.TextField(blank=True, null=True)
+
+    def save(self, *args, **kwargs):
+        if self.expected_qty and self.expected_qty > 0:
+            self.variance_pct = ((self.actual_qty - self.expected_qty) / self.expected_qty) * 100
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.production_run.run_number} - {self.material.sku} Usage"
 
 class ProductionConsumption(models.Model):
     production_run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, related_name='consumptions')
@@ -148,10 +171,11 @@ class Batch(models.Model):
     expiry_date = models.DateField()
     location = models.ForeignKey(WarehouseLocation, on_delete=models.SET_NULL, null=True, blank=True)
     allocated_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    reserved_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
     @property
     def available_quantity(self):
-        return self.quantity - self.allocated_quantity
+        return self.quantity - self.allocated_quantity - self.reserved_quantity
 
     @property
     def days_until_expiry(self):
@@ -281,6 +305,7 @@ class Shipment(models.Model):
         ('Completed', 'Completed'),
         ('Delayed', 'Delayed'),
         ('Discrepant', 'Discrepant (Shortage)'),
+        ('Cancelled', 'Cancelled / Scrapped'),
     )
     tracking_number = models.CharField(max_length=255, unique=True, help_text="Internal Truck Fleet ID or tracking #")
     direction = models.CharField(max_length=50, choices=DIRECTION_CHOICES, default='Inbound')
@@ -308,6 +333,8 @@ class Shipment(models.Model):
 
     assigned_to = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_shipments')
     followers = models.ManyToManyField(CustomUser, blank=True, related_name='followed_shipments')
+    
+    is_auto_generated = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.tracking_number} ({self.status})"
