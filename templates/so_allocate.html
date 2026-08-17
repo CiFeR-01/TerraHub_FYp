@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Allocate Finished Goods - {{ so.so_number }}{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <a href="{% url 'so_list' %}">Sales Orders</a>
+            <span class="separator">/</span>
+            <a href="{% url 'so_detail' so.pk %}">{{ so.so_number }}</a>
+            <span class="separator">/</span>
+            <span class="current-page">Allocate Finished Goods</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Allocate Finished Goods
+        </h1>
+        <p style="font-size:0.9rem; color:var(--text-muted);">Client: {{ so.client_name }}</p>
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:#d97706;{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<form method="post" action="{% url 'so_allocate' so.pk %}" class="animate-fade-in-up" style="max-width:1100px;">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="allocate_manual">
+    
+    <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-bottom:1.5rem;">
+        <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem;">Finished Goods Allocation (FIFO)</h3>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Select available finished goods batches across facilities to fulfill this order. Any unfulfilled quantities will be sent to the Manufacturing queue.</p>
+        
+        {% for row in allocation_data %}
+        <div style="margin-bottom:2rem; padding:1.25rem; background:#f8fafc; border:1px solid var(--border-light); border-radius:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; border-bottom:1px solid #e2e8f0; padding-bottom:0.75rem;">
+                <div style="font-weight:700; font-size:1rem; color:var(--primary);">{{ row.product.name }} ({{ row.product.sku }})</div>
+                <div style="font-size:0.9rem; font-weight:600; color:var(--text-main);">Needed to Allocate: <span style="color:#ef4444;" id="needed_{{ row.item_id }}">{{ row.needed }}</span></div>
+            </div>
+            
+            {% if row.batches %}
+            <div class="table-responsive">
+                <table class="modern-table" style="width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--border-light); border-radius:6px; overflow:hidden;">
+                    <thead>
+                        <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                            <th style="padding:0.6rem 1rem;">Batch</th>
+                            <th style="padding:0.6rem 1rem;">Location</th>
+                            <th style="padding:0.6rem 1rem;">Available Qty</th>
+                            <th style="padding:0.6rem 1rem;">Expiry Date (FIFO)</th>
+                            <th style="padding:0.6rem 1rem; text-align:right;">Allocate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for b in row.batches %}
+                        <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                            <td style="padding:0.6rem 1rem; font-weight:600;">{{ b.number }}</td>
+                            <td style="padding:0.6rem 1rem;">{{ b.warehouse }}</td>
+                            <td style="padding:0.6rem 1rem;">{{ b.available }}</td>
+                            <td style="padding:0.6rem 1rem;">{{ b.expiry|date:"M d, Y" }}</td>
+                            <td style="padding:0.6rem 1rem; text-align:right;">
+                                <input type="number" name="batch_qty_{{ row.item_id }}_{{ b.id }}" max="{{ b.available }}" min="0" step="0.01" class="form-input allocate-input" data-item="{{ row.item_id }}" style="width:100px; padding:0.4rem; border-radius:4px; text-align:right;">
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div style="font-size:0.85rem; color:var(--text-muted); font-style:italic; text-align:center; padding:1rem;">No active finished goods available for this product. The entire quantity will be sent to manufacturing.</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+        
+        <div style="display:flex; justify-content:flex-end; gap:1rem; margin-top:1.5rem;">
+            <a href="{% url 'so_detail' so.pk %}" class="btn btn-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary" style="padding-left:1.5rem; padding-right:1.5rem;">Confirm Allocation & Send to Manufacturing</button>
+        </div>
+    </div>
+</form>
+
+<script>
+    document.querySelectorAll('.allocate-input').forEach(input => {
+        input.addEventListener('input', function() {
+            let itemId = this.getAttribute('data-item');
+            let neededSpan = document.getElementById('needed_' + itemId);
+            let originalNeeded = parseFloat(neededSpan.getAttribute('data-original-needed'));
+            if (isNaN(originalNeeded)) {
+                originalNeeded = parseFloat(neededSpan.innerText);
+                neededSpan.setAttribute('data-original-needed', originalNeeded);
+            }
+            
+            let totalAllocated = 0;
+            document.querySelectorAll('.allocate-input[data-item="'+itemId+'"]').forEach(inp => {
+                let val = parseFloat(inp.value);
+                if (!isNaN(val) && val > 0) {
+                    totalAllocated += val;
+                }
+            });
+            
+            let remaining = originalNeeded - totalAllocated;
+            if (remaining < 0) remaining = 0;
+            
+            neededSpan.innerText = remaining.toFixed(2);
+            if (remaining === 0) {
+                neededSpan.style.color = '#059669'; // Green when fulfilled
+            } else {
+                neededSpan.style.color = '#ef4444'; // Red when short
+            }
+        });
+    });
+</script>
+{% endblock %}

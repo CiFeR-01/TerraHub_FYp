@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+
+{% block title %}Batch {{ batch.batch_number }} - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'warehouse_inventory' %}">Warehouse Inventory</a>
+            <span class="separator">/</span>
+            <span class="current-page">Batch Details</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Batch {{ batch.batch_number }}
+        </h1>
+    </div>
+
+    <div class="header-action-tray">
+        <a href="{% url 'stock_audit' %}?batch={{ batch.batch_number }}" class="btn btn-secondary">
+            Adjust Stock
+        </a>
+        <a href="{% url 'qa_dashboard' %}" class="btn btn-primary">
+            QA Actions
+        </a>
+    </div>
+</header>
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; margin-top: 1.5rem;" class="animate-fade-in-up">
+    <!-- Left Column: Core Details & Ledger -->
+    <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+        
+        <!-- Core Info -->
+        <div class="pane-card">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+                <div>
+                    <h3 style="margin-bottom: 0.25rem;">
+                        {% if batch.material %}{{ batch.material.name }}{% else %}{{ batch.product.name }}{% endif %}
+                    </h3>
+                    <p style="color: var(--text-muted); font-family: monospace; font-size: 0.85rem;">
+                        SKU: {% if batch.material %}{{ batch.material.sku }}{% else %}{{ batch.product.sku }}{% endif %}
+                    </p>
+                </div>
+                <div>
+                    {% if batch.status == 'Active' %}
+                        <span class="badge badge-emerald">Active</span>
+                    {% elif batch.status == 'Quarantined' %}
+                        <span class="badge badge-amber">Quarantined</span>
+                    {% else %}
+                        <span class="badge badge-rose">{{ batch.status }}</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.5rem;">
+                <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
+                    <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Current Quantity</span>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: var(--text-main); margin-top: 0.25rem;">
+                        {{ batch.quantity }} <span style="font-size: 0.85rem; color: var(--text-muted);">
+                        {% if batch.material %}{{ batch.material.unit_of_measure }}{% else %}{{ batch.product.unit_of_measure }}{% endif %}
+                        </span>
+                    </div>
+                </div>
+                <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
+                    <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Expiry Date</span>
+                    <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-main); margin-top: 0.25rem;">
+                        {{ batch.expiry_date|date:"Y-m-d"|default:"-" }}
+                    </div>
+                </div>
+                <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
+                    <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Days Remaining</span>
+                    <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-main); margin-top: 0.25rem;">
+                        {{ batch.days_until_expiry|default:"-" }} Days
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ledger Audit Trail -->
+        <div class="pane-card" style="flex-grow: 1;">
+            <h3 style="margin-bottom: 1.5rem;">📝 Batch Ledger Trail</h3>
+            
+            {% if logs %}
+            <div class="data-table-container">
+                <table class="custom-table">
+                    <thead>
+                        <tr>
+                            <th>Date / Time</th>
+                            <th>Action</th>
+                            <th>Item Details</th>
+                            <th style="text-align: right;">Qty Changed</th>
+                            <th>User</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for log in logs %}
+                        <tr>
+                            <td style="font-size: 0.85rem; color: var(--text-muted);">{{ log.timestamp|date:"Y-m-d H:i" }}</td>
+                            <td>
+                                {% if log.action_type == 'Inbound' or log.action_type == 'Produced' %}
+                                    <span class="badge badge-emerald">{{ log.get_action_type_display }}</span>
+                                {% elif log.action_type == 'Outbound' or log.action_type == 'Consumed_For_Manufacturing' %}
+                                    <span class="badge badge-sky">{{ log.get_action_type_display }}</span>
+                                {% elif log.action_type == 'Adjusted' %}
+                                    <span class="badge badge-amber">{{ log.get_action_type_display }}</span>
+                                {% else %}
+                                    <span class="badge badge-slate">{{ log.get_action_type_display }}</span>
+                                {% endif %}
+                            </td>
+                            <td style="font-size: 0.85rem;">{{ log.item_name }}</td>
+                            <td style="text-align: right; font-family: monospace; font-weight: 600;">
+                                {% if log.action_type in 'Inbound,Produced' %}+{% endif %}{{ log.quantity_changed }}
+                            </td>
+                            <td style="font-size: 0.85rem; color: var(--text-muted);">
+                                {{ log.user.get_full_name|default:log.user.username|default:"System" }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+                <p>No ledger events found for this batch.</p>
+            </div>
+            {% endif %}
+        </div>
+
+    </div>
+
+    <!-- Right Column: Traceability & Location -->
+    <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+        
+        <!-- Location -->
+        <div class="pane-card">
+            <h3 style="margin-bottom: 1rem;">📍 Current Location</h3>
+            {% if batch.location %}
+            <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+                <div style="width: 40px; height: 40px; background: rgba(59, 130, 246, 0.1); color: var(--primary); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 1.25rem;">
+                    🏢
+                </div>
+                <div>
+                    <div style="font-weight: 600; color: var(--text-main);">{{ batch.location.warehouse.name }}</div>
+                    <div style="font-size: 0.85rem; color: var(--text-muted);">{{ batch.location.warehouse.get_ownership_type_display }}</div>
+                </div>
+            </div>
+            <div style="padding-top: 1rem; border-top: 1px solid var(--border-light); margin-top: 1rem;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                    <span style="font-size: 0.85rem; color: var(--text-muted);">Zone</span>
+                    <span style="font-weight: 600;">{{ batch.location.zone_name }}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span style="font-size: 0.85rem; color: var(--text-muted);">Aisle</span>
+                    <span style="font-weight: 600;">{{ batch.location.aisle }}</span>
+                </div>
+            </div>
+            {% else %}
+            <p style="color: var(--text-muted); font-size: 0.85rem;">No physical location assigned.</p>
+            {% endif %}
+        </div>
+
+        <!-- Genealogy -->
+        <div class="pane-card">
+            <h3 style="margin-bottom: 1rem;">🔍 Genealogy</h3>
+            
+            {% if batch.purchase_order %}
+            <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
+                <span class="badge badge-sky" style="margin-bottom: 0.5rem;">Received via Purchase Order</span>
+                <div style="font-weight: 600; color: var(--text-main);">{{ batch.purchase_order.po_number }}</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">Supplier: {{ batch.purchase_order.supplier_name }}</div>
+                <a href="{% url 'po_detail' batch.purchase_order.id %}" class="btn btn-secondary" style="width: 100%; margin-top: 1rem; padding: 0.4rem; font-size: 0.85rem;">View PO Details</a>
+            </div>
+            {% elif batch.produced_in %}
+            <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
+                <span class="badge badge-emerald" style="margin-bottom: 0.5rem;">Manufactured In-House</span>
+                <div style="font-weight: 600; color: var(--text-main);">Run #{{ batch.produced_in.run_number }}</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">Plant: {{ batch.produced_in.manufacturing_plant.name }}</div>
+            </div>
+            {% else %}
+            <p style="color: var(--text-muted); font-size: 0.85rem;">Origin data not available (possibly imported).</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

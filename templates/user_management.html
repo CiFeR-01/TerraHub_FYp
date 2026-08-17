@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+
+{% block title %}User Management - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <a href="{% url 'system' %}">System Settings</a>
+            <span class="separator">/</span>
+            <span class="current-page">User Management</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            User Management &amp; Permissions
+        </h1>
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:#d97706;{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<section class="animate-fade-in-up" style="margin-bottom:2rem; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
+        <div style="display:flex; align-items:center; gap:1.5rem;">
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700;">System Users</h3>
+            <button onclick="openLocationModal()" class="btn btn-primary" style="padding:0.4rem 0.85rem; font-size:0.8rem; border-radius:6px; display:flex; align-items:center; gap:0.4rem;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                Add Location
+            </button>
+        </div>
+        <form method="get" style="display:flex; gap:0.5rem; align-items:center;">
+            <input type="text" name="q" value="{{ query }}" placeholder="Search by name, email, or username..." class="form-input" style="padding:0.4rem 0.75rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem; width:250px;">
+            <button type="submit" class="btn btn-secondary" style="padding:0.4rem 0.75rem; font-size:0.85rem;">Search</button>
+            {% if query %}
+            <a href="{% url 'user_management' %}" class="btn" style="padding:0.4rem 0.75rem; font-size:0.85rem; color:var(--text-muted);">Clear</a>
+            {% endif %}
+        </form>
+    </div>
+
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.78rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em;">
+                    <th style="padding:0.75rem 1rem;">User</th>
+                    <th style="padding:0.75rem 1rem;">Roles</th>
+                    <th style="padding:0.75rem 1rem;">Locations Allowed</th>
+                    <th style="padding:0.75rem 1rem;">Status</th>
+                    <th style="padding:0.75rem 1rem;">Last Updated</th>
+                    <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
+                    <td style="padding:0.85rem 1rem;">
+                        <div style="font-weight:700; color:var(--primary);">{{ u.username }}</div>
+                        <div style="font-size:0.78rem; color:var(--text-muted);">{{ u.get_full_name }} &middot; {{ u.email }}</div>
+                    </td>
+                    <td style="padding:0.85rem 1rem;">
+                        <div style="display:flex; flex-wrap:wrap; gap:0.25rem;">
+                            {% for r in u.roles.all %}
+                            <span class="badge" style="background:var(--primary-light); color:var(--primary); font-size:0.7rem; padding:0.2rem 0.4rem;">{{ r.name }}</span>
+                            {% empty %}
+                            <span style="font-size:0.75rem; color:var(--text-muted); font-style:italic;">None</span>
+                            {% endfor %}
+                        </div>
+                    </td>
+                    <td style="padding:0.85rem 1rem;">
+                        <div style="display:flex; flex-wrap:wrap; gap:0.25rem;">
+                            {% for wh in u.allowed_locations.all %}
+                            <span class="badge" style="background:#f1f5f9; color:var(--text-main); font-size:0.7rem; padding:0.2rem 0.4rem; border:1px solid var(--border-light);">{{ wh.name }}</span>
+                            {% empty %}
+                            <span style="font-size:0.75rem; color:var(--text-muted); font-style:italic;">All / None</span>
+                            {% endfor %}
+                        </div>
+                    </td>
+                    <td style="padding:0.85rem 1rem;">
+                        {% if u.is_active %}
+                        <span class="badge badge-emerald">Active</span>
+                        {% else %}
+                        <span class="badge badge-rose">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:0.85rem 1rem;">
+                        <div style="font-size:0.82rem;">{{ u.updated_at|date:"M d, Y"|default:"-" }}</div>
+                        <div style="font-size:0.75rem; color:var(--text-muted);">by {{ u.updated_by.username|default:"System" }}</div>
+                    </td>
+                    <td style="padding:0.85rem 1rem; text-align:right;">
+                        <button onclick="openUserModal('{{ u.id }}', '{{ u.username }}', '{{ u.is_active|yesno:'true,false' }}', [{% for r in u.roles.all %}'{{ r.id }}'{% if not forloop.last %},{% endif %}{% endfor %}], [{% for w in u.allowed_locations.all %}'{{ w.id }}'{% if not forloop.last %},{% endif %}{% endfor %}])" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem;">Edit</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<!-- Edit User Modal -->
+<div id="user-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); z-index:999; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
+    <div class="animate-fade-in-up" style="background:#fff; border-radius:12px; width:90%; max-width:600px; padding:2rem; box-shadow:0 10px 25px rgba(0,0,0,0.1); position:relative; max-height:90vh; overflow-y:auto;">
+        <button onclick="closeUserModal()" style="position:absolute; top:1.25rem; right:1.25rem; background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        <h3 style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:700; margin-bottom:0.5rem;" id="modal-user-name">Edit User</h3>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Modify roles and facility access for this user.</p>
+
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="update_user">
+            <input type="hidden" name="user_id" id="modal-user-id">
+
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.9rem; font-weight:600; cursor:pointer;">
+                    <input type="checkbox" name="is_active" id="modal-is-active" style="width:1.1rem; height:1.1rem;">
+                    Account Active
+                </label>
+            </div>
+
+            <div style="margin-bottom:1.5rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:0.75rem;">Assigned Roles</label>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
+                    {% for r in roles %}
+                    <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; cursor:pointer; padding:0.5rem; border:1px solid var(--border-light); border-radius:6px; background:#f8fafc;">
+                        <input type="checkbox" name="roles" value="{{ r.id }}" class="role-checkbox">
+                        {{ r.name }}
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div style="margin-bottom:2rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:0.75rem;">Allowed Facilities</label>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; max-height:200px; overflow-y:auto; padding-right:0.5rem;">
+                    {% for w in warehouses %}
+                    <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; cursor:pointer; padding:0.5rem; border:1px solid var(--border-light); border-radius:6px; background:#f8fafc;">
+                        <input type="checkbox" name="locations" value="{{ w.id }}" class="location-checkbox">
+                        {{ w.name }} <span style="font-size:0.7rem; color:var(--text-muted);">({{ w.get_location_type_display|default:w.location_type }})</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div style="display:flex; gap:1rem; justify-content:flex-end; border-top:1px solid var(--border-light); padding-top:1.5rem;">
+                <button type="button" class="btn btn-secondary" onclick="closeUserModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add Location Modal -->
+<div id="location-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); z-index:999; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
+    <div class="animate-fade-in-up" style="background:#fff; border-radius:12px; width:90%; max-width:400px; padding:2rem; box-shadow:0 10px 25px rgba(0,0,0,0.1); position:relative;">
+        <button onclick="closeLocationModal()" style="position:absolute; top:1.25rem; right:1.25rem; background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        <h3 style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:700; margin-bottom:0.5rem;">Add New Location</h3>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Register a new Warehouse or Manufacturing Facility in the system.</p>
+
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="add_location">
+
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">Location Name</label>
+                <input type="text" name="name" required class="form-input" placeholder="e.g. Facility Alpha" style="width:100%; padding:0.6rem 0.8rem; font-size:0.9rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
+
+            <div style="margin-bottom:2rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">Location Type</label>
+                <select name="location_type" required class="form-select" style="width:100%; padding:0.6rem 0.8rem; font-size:0.9rem; border-radius:6px; border:1px solid var(--border-light);">
+                    <option value="Storage">Storage (Warehouse)</option>
+                    <option value="Manufacturing">Manufacturing</option>
+                </select>
+            </div>
+
+            <div style="display:flex; gap:1rem; justify-content:flex-end;">
+                <button type="button" class="btn btn-secondary" onclick="closeLocationModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add Location</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    function openUserModal(userId, username, isActive, roles, locations) {
+        document.getElementById('modal-user-id').value = userId;
+        document.getElementById('modal-user-name').innerText = 'Edit User: ' + username;
+        document.getElementById('modal-is-active').checked = (isActive === 'true');
+        
+        // Check roles
+        document.querySelectorAll('.role-checkbox').forEach(cb => {
+            cb.checked = roles.includes(cb.value);
+        });
+        
+        // Check locations
+        document.querySelectorAll('.location-checkbox').forEach(cb => {
+            cb.checked = locations.includes(cb.value);
+        });
+        
+        document.getElementById('user-modal').style.display = 'flex';
+    }
+    
+    function closeUserModal() {
+        document.getElementById('user-modal').style.display = 'none';
+    }
+
+    function openLocationModal() {
+        document.getElementById('location-modal').style.display = 'flex';
+    }
+
+    function closeLocationModal() {
+        document.getElementById('location-modal').style.display = 'none';
+    }
+</script>
+{% endblock %}

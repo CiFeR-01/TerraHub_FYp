@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}Acknowledge & Allocate - {{ run.run_number }}{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <a href="{% url 'readiness' %}">Manufacturing</a>
+            <span class="separator">/</span>
+            <span class="current-page">Acknowledge Order</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Acknowledge &amp; Allocate Materials
+        </h1>
+        <p style="font-size:0.9rem; color:var(--text-muted);">Run {{ run.run_number }} ({{ run.target_product.name }})</p>
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:#d97706;{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="animate-fade-in-up" style="display:grid; grid-template-columns:1fr 1fr; gap:2rem; max-width:1200px;">
+    <!-- Left Column: Location Selection & Confirmation -->
+    <div>
+        <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1.25rem;">Select Manufacturing Facility</h3>
+            <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Choose the facility where this production run will take place. The system will automatically allocate materials from this facility based on FIFO.</p>
+            
+            <div style="margin-bottom:2rem;">
+                <h4 style="font-size:0.9rem; font-weight:700; color:var(--text-main); margin-bottom:0.75rem;">Global Material Availability</h4>
+                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; padding:1rem; font-size:0.85rem;">
+                    {% for item in preview %}
+                    <div style="margin-bottom:{% if not forloop.last %}1rem{% else %}0{% endif %};">
+                        <div style="display:flex; justify-content:space-between; font-weight:600; margin-bottom:0.25rem;">
+                            <span>{{ item.material.name }}</span>
+                            <span style="color:{% if item.status == 'OK' %}#059669{% else %}#dc2626{% endif %};">{{ item.status }}</span>
+                        </div>
+                        <div style="color:var(--text-muted); font-size:0.8rem; margin-bottom:0.25rem;">
+                            Required: {{ item.needed|floatformat:2 }} {{ item.material.unit_of_measure }} | Total Global: {{ item.available|floatformat:2 }} {{ item.material.unit_of_measure }}
+                        </div>
+                        {% if item.location_breakdown %}
+                            <ul style="margin:0; padding-left:1.5rem; color:var(--text-muted); font-size:0.78rem;">
+                                {% for loc in item.location_breakdown %}
+                                <li>{{ loc.quantity|floatformat:2 }} {{ item.material.unit_of_measure }} in <strong>{{ loc.warehouse_name }}</strong></li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <div style="color:#dc2626; font-size:0.78rem;">No stock available globally.</div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            
+            <form method="post" action="{% url 'production_run_allocate' run.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="allocate_run">
+                
+                <div style="margin-bottom:2rem;">
+                    <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase;">Facility</label>
+                    <select name="warehouse_id" required class="form-select" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
+                        <option value="">-- Select a facility --</option>
+                        {% for w in warehouses %}
+                        {% if w.location_type == 'Manufacturing' %}
+                        <option value="{{ w.id }}" selected>{{ w.name }} ({{ w.get_ownership_type_display|default:w.ownership_type }})</option>
+                        {% endif %}
+                        {% endfor %}
+                        <optgroup label="Other Locations">
+                        {% for w in warehouses %}
+                        {% if w.location_type != 'Manufacturing' %}
+                        <option value="{{ w.id }}">{{ w.name }} ({{ w.get_ownership_type_display|default:w.ownership_type }})</option>
+                        {% endif %}
+                        {% endfor %}
+                        </optgroup>
+                    </select>
+                </div>
+                
+                <div style="display:flex; justify-content:flex-end; gap:1rem;">
+                    <a href="{% url 'readiness' %}" class="btn btn-secondary">Cancel</a>
+                    <button type="submit" class="btn btn-primary">Acknowledge &amp; Allocate</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Right Column: Materials Preview -->
+    <div>
+        <div style="background:#f8fafc; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem;">
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:0.5rem;">Material Requirements</h3>
+            <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.25rem;">Preview of required materials across all facilities.</p>
+            
+            <table class="modern-table" style="width:100%; border-collapse:collapse; background:#fff; border-radius:8px; overflow:hidden; border:1px solid var(--border-light);">
+                <thead>
+                    <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                        <th style="padding:0.75rem 1rem; text-align:left;">Material</th>
+                        <th style="padding:0.75rem 1rem; text-align:right;">Needed</th>
+                        <th style="padding:0.75rem 1rem; text-align:right;">Total Available</th>
+                        <th style="padding:0.75rem 1rem; text-align:right;">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in preview %}
+                    <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                        <td style="padding:0.75rem 1rem; font-weight:600;">{{ item.material.name }}</td>
+                        <td style="padding:0.75rem 1rem; text-align:right;">{{ item.needed|floatformat:2 }} {{ item.material.unit_of_measure }}</td>
+                        <td style="padding:0.75rem 1rem; text-align:right;">{{ item.avail|floatformat:2 }} {{ item.material.unit_of_measure }}</td>
+                        <td style="padding:0.75rem 1rem; text-align:right;">
+                            {% if item.shortage > 0 %}
+                            <span style="color:#dc2626; font-weight:700;">Short ({{ item.shortage|floatformat:2 }})</span>
+                            {% else %}
+                            <span style="color:#059669; font-weight:700;">OK</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

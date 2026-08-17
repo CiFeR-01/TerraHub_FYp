@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+
+{% block title %}Action Center - TerraHub
+<script>
+function switchTab(tabId) {
+    document.getElementById('tasks-tab').style.display = 'none';
+    document.getElementById('following-tab').style.display = 'none';
+    document.getElementById('btn-tasks').style.borderBottom = 'none';
+    document.getElementById('btn-tasks').style.color = 'var(--text-muted)';
+    document.getElementById('btn-following').style.borderBottom = 'none';
+    document.getElementById('btn-following').style.color = 'var(--text-muted)';
+    
+    document.getElementById(tabId + '-tab').style.display = 'block';
+    document.getElementById('btn-' + tabId).style.borderBottom = '2px solid var(--primary)';
+    document.getElementById('btn-' + tabId).style.color = 'var(--primary)';
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">Action Center</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Action Center
+        </h1>
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:#d97706;{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div style="display:grid; grid-template-columns: 2fr 1fr; gap:1.5rem; margin-bottom:2rem;" class="animate-fade-in-up">
+    <!-- Tasks Section -->
+    <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+        <div style="display:flex; gap:1.5rem; margin-bottom:1.5rem; border-bottom:1px solid var(--border-light);">
+            <button id="btn-tasks" onclick="switchTab('tasks')" style="background:none; border:none; border-bottom:2px solid var(--primary); padding-bottom:0.75rem; font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; color:var(--primary); cursor:pointer;">Assigned Tasks & Approvals</button>
+            <button id="btn-following" onclick="switchTab('following')" style="background:none; border:none; padding-bottom:0.75rem; font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:600; color:var(--text-muted); cursor:pointer;">Following</button>
+        </div>
+        
+        <div id="tasks-tab" style="display:block;">
+        <div style="display:flex; flex-direction:column; gap:1rem;">
+            <!-- Sales Orders -->
+            {% for so in pending_sos %}
+            <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
+                <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Sales Order Approval</div>
+                        <a href="{% url 'so_detail' so.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ so.so_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Client: {{ so.client_name }} &middot; Revenue: ${{ so.total_revenue|floatformat:2 }}</div>
+                    </div>
+                    <span class="badge badge-amber">Pending Approval</span>
+                </div>
+                
+                {% if so.approval_remarks %}
+                <div style="background:#fff; border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">
+                    "{{ so.approval_remarks }}"
+                </div>
+                {% endif %}
+
+                <form method="post" style="display:flex; gap:0.5rem; align-items:center;">
+                    {% csrf_token %}
+                    <input type="hidden" name="item_type" value="sales_order">
+                    <input type="hidden" name="item_id" value="{{ so.id }}">
+                    <input type="text" name="comment" placeholder="Add comment..." class="form-input" style="flex:1; padding:0.4rem 0.6rem; font-size:0.85rem; border-radius:6px; border:1px solid var(--border-light);">
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject</button>
+                    <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem;">Approve</button>
+                </form>
+            </div>
+            {% endfor %}
+
+            <!-- Discrepancy Approvals -->
+            {% for ship in pending_shipments %}
+            <div style="background:#fef2f2; border:1px solid rgba(239,68,68,0.2); border-radius:10px; padding:1.25rem;">
+                <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:#dc2626; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Discrepancy Escalation</div>
+                        <a href="{% url 'shipment_detail' ship.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ ship.tracking_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Direction: {{ ship.get_direction_display }}</div>
+                    </div>
+                    <span class="badge badge-amber" style="background:rgba(239,68,68,0.1); color:#dc2626;">Needs Force Close</span>
+                </div>
+                
+                <div style="background:#fff; border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">
+                    <strong>Remarks:</strong><br/>
+                    {{ ship.discrepancy_remarks|linebreaksbr }}
+                </div>
+
+                <div style="display:flex; gap:0.5rem; align-items:center;">
+                    <a href="{% url 'shipment_detail' ship.pk %}" class="btn btn-primary" style="padding:0.4rem 1rem;">View Details & Resolve</a>
+                </div>
+            </div>
+            {% endfor %}
+
+            <!-- Shipment Approvals -->
+            {% for ship in pending_shipment_approvals %}
+            <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
+                <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Logistics Approval</div>
+                        <a href="{% url 'shipment_detail' ship.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ ship.tracking_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Direction: {{ ship.get_direction_display }}</div>
+                    </div>
+                    <span class="badge badge-amber">Pending Approval</span>
+                </div>
+                
+                <form method="post" style="display:flex; gap:0.5rem; align-items:center;">
+                    {% csrf_token %}
+                    <input type="hidden" name="item_type" value="shipment">
+                    <input type="hidden" name="item_id" value="{{ ship.id }}">
+                    <input type="text" name="comment" placeholder="Add comment..." class="form-input" style="flex:1; padding:0.4rem 0.6rem; font-size:0.85rem; border-radius:6px; border:1px solid var(--border-light);">
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject</button>
+                    <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem;">Approve</button>
+                </form>
+            </div>
+            {% endfor %}
+
+            <!-- Purchase Orders -->
+            {% for po in pending_pos %}
+            <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
+                <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:#059669; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Purchase Order Approval / Action</div>
+                        <a href="{% url 'po_detail' po.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ po.po_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Supplier: {{ po.supplier }} &middot; Cost: ${{ po.total_cost|floatformat:2 }}</div>
+                        {% if po.linked_production_run %}
+                        <div style="font-size:0.75rem; color:var(--primary); margin-top:0.25rem; font-weight:600;">Drafted for Run: {{ po.linked_production_run.run_number }}</div>
+                        {% endif %}
+                    </div>
+                    <span class="badge badge-amber">{{ po.status }}</span>
+                </div>
+                
+                {% if po.approval_remarks %}
+                <div style="background:#fff; border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">
+                    "{{ po.approval_remarks }}"
+                </div>
+                {% endif %}
+                
+                {% if po.status == 'Draft' %}
+                <!-- It's assigned to a purchaser to fill out -->
+                <div style="display:flex; gap:0.5rem;">
+                    <a href="{% url 'po_detail' po.pk %}" class="btn btn-primary" style="padding:0.4rem 1rem;">Open PO to Complete</a>
+                </div>
+                {% else %}
+                <form method="post" style="display:flex; gap:0.5rem; align-items:center;">
+                    {% csrf_token %}
+                    <input type="hidden" name="item_type" value="purchase_order">
+                    <input type="hidden" name="item_id" value="{{ po.id }}">
+                    <input type="text" name="comment" placeholder="Add comment..." class="form-input" style="flex:1; padding:0.4rem 0.6rem; font-size:0.85rem; border-radius:6px; border:1px solid var(--border-light);">
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject</button>
+                    <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem;">Approve</button>
+                </form>
+                {% endif %}
+            </div>
+            {% endfor %}
+            
+            {% if not pending_sos and not pending_pos %}
+            <div style="text-align:center; padding:3rem 1rem; color:var(--text-muted);">
+                <div style="font-size:2rem; margin-bottom:0.5rem;">&#127881;</div>
+                <div style="font-weight:600; font-size:1rem;">You're all caught up!</div>
+                <div style="font-size:0.85rem; margin-top:0.25rem;">No pending approvals assigned to you.</div>
+            </div>
+            {% endif %}
+        </div>
+        </div>
+
+        <div id="following-tab" style="display:none;">
+            <div style="display:grid; gap:1rem;">
+                {% for po in followed_pos %}
+                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <a href="{% url 'po_detail' po.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ po.po_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Supplier: {{ po.supplier_name|default:po.supplier|default:"-" }} &middot; Created: {{ po.order_date }}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <span class="badge badge-sky">{{ po.status }}</span>
+                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.5rem;">Assigned to: {{ po.assigned_to.get_full_name|default:po.assigned_to.username|default:"Unassigned" }}</div>
+                    </div>
+                </div>
+                {% empty %}
+                <div style="text-align:center; padding:3rem 1rem; color:var(--text-muted);">
+                    <div style="font-size:2rem; margin-bottom:0.5rem;">&#128065;</div>
+                    <div style="font-weight:600; font-size:1rem;">You aren't following any orders.</div>
+                    <div style="font-size:0.85rem; margin-top:0.25rem;">Follow Purchase Orders to track their status here.</div>
+                </div>
+                {% endfor %}
+                
+                <!-- Followed Shipments -->
+                {% for ship in followed_shipments %}
+                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Shipment</div>
+                        <a href="{% url 'shipment_detail' ship.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ ship.tracking_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Direction: {{ ship.get_direction_display }}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <span class="badge {% if ship.status == 'Arrived' or ship.status == 'Completed' %}badge-green{% elif ship.status == 'Dispatched' %}badge-blue{% else %}badge-sky{% endif %}">{{ ship.get_status_display }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Notifications Section -->
+    <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem; border-bottom:1px solid var(--border-light); padding-bottom:0.75rem;">
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.2rem; font-weight:700;">Notifications</h3>
+            {% if notifications %}
+            <form action="{% url 'mark_notifications_read' %}" method="post">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.75rem;">Mark All Read</button>
+            </form>
+            {% endif %}
+        </div>
+        
+        <div style="display:flex; flex-direction:column; gap:0.75rem;">
+            {% for note in notifications %}
+            <div style="background:#f0f9ff; border-left:3px solid var(--primary); padding:1rem; border-radius:0 8px 8px 0;">
+                <div style="font-size:0.85rem; font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">
+                    {{ note.message }}
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.5rem;">
+                    <span style="font-size:0.7rem; color:var(--text-muted);">{{ note.created_at|timesince }} ago</span>
+                    {% if note.link %}
+                    <a href="{{ note.link }}" style="font-size:0.75rem; font-weight:600; color:var(--primary); text-decoration:none;">View &rarr;</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% empty %}
+            <div style="text-align:center; padding:2rem 1rem; color:var(--text-muted); font-size:0.85rem;">
+                No new notifications.
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- History Section -->
+    <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:1.5rem;">
+        <h3 style="font-family:'Outfit',sans-serif; font-size:1.2rem; font-weight:700; margin-bottom:1.5rem; border-bottom:1px solid var(--border-light); padding-bottom:0.75rem;">Your Approval History</h3>
+        <div style="display:flex; flex-direction:column; gap:0.75rem; max-height:400px; overflow-y:auto; padding-right:0.5rem; margin-bottom:1rem;">
+            {% for item in history_page %}
+            <div style="font-size:0.85rem; padding:0.75rem; border:1px solid var(--border-light); border-radius:8px;">
+                {% if item.type == 'so' %}
+                <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">SO: <a href="{% url 'so_detail' item.obj.pk %}" style="color:var(--primary); text-decoration:none;">{{ item.obj.so_number }}</a></div>
+                {% elif item.type == 'po' %}
+                <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">PO: <a href="{% url 'po_detail' item.obj.pk %}" style="color:var(--primary); text-decoration:none;">{{ item.obj.po_number }}</a></div>
+                {% elif item.type == 'shipment' %}
+                <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">Shipment: <a href="{% url 'shipment_detail' item.obj.pk %}" style="color:var(--primary); text-decoration:none;">{{ item.obj.tracking_number }}</a></div>
+                {% endif %}
+                <div style="display:flex; justify-content:space-between;">
+                    <span style="color:var(--text-muted); font-size:0.8rem;">Status: {{ item.status }}</span>
+                    <span style="color:var(--text-muted); font-size:0.75rem;">{{ item.timestamp|date:"M d, Y" }}</span>
+                </div>
+            </div>
+            {% empty %}
+            <div style="text-align:center; padding:1rem; color:var(--text-muted); font-size:0.85rem;">No approval history found.</div>
+            {% endfor %}
+        </div>
+        
+        <!-- Pagination Controls -->
+        {% if history_page.has_other_pages %}
+        <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border-light); padding-top:0.75rem; font-size:0.85rem;">
+            {% if history_page.has_previous %}
+            <a href="?page={{ history_page.previous_page_number }}" style="color:var(--primary); text-decoration:none; font-weight:600;">&larr; Prev</a>
+            {% else %}
+            <span style="color:var(--text-muted); opacity:0.5;">&larr; Prev</span>
+            {% endif %}
+            
+            <span style="color:var(--text-muted); font-weight:600;">Page {{ history_page.number }} of {{ history_page.paginator.num_pages }}</span>
+            
+            {% if history_page.has_next %}
+            <a href="?page={{ history_page.next_page_number }}" style="color:var(--primary); text-decoration:none; font-weight:600;">Next &rarr;</a>
+            {% else %}
+            <span style="color:var(--text-muted); opacity:0.5;">Next &rarr;</span>
+            {% endif %}
+        </div>
+        {% endif %}
+        </div>
+
+        <div id="following-tab" style="display:none;">
+            <div style="display:grid; gap:1rem;">
+                {% for po in followed_pos %}
+                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <a href="{% url 'po_detail' po.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ po.po_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Supplier: {{ po.supplier_name|default:po.supplier|default:"-" }} &middot; Created: {{ po.order_date }}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <span class="badge badge-sky">{{ po.status }}</span>
+                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.5rem;">Assigned to: {{ po.assigned_to.get_full_name|default:po.assigned_to.username|default:"Unassigned" }}</div>
+                    </div>
+                </div>
+                {% empty %}
+                <div style="text-align:center; padding:3rem 1rem; color:var(--text-muted);">
+                    <div style="font-size:2rem; margin-bottom:0.5rem;">&#128065;</div>
+                    <div style="font-weight:600; font-size:1rem;">You aren't following any orders.</div>
+                    <div style="font-size:0.85rem; margin-top:0.25rem;">Follow Purchase Orders to track their status here.</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<script>
+function switchTab(tabId) {
+    document.getElementById('tasks-tab').style.display = 'none';
+    document.getElementById('following-tab').style.display = 'none';
+    document.getElementById('btn-tasks').style.borderBottom = 'none';
+    document.getElementById('btn-tasks').style.color = 'var(--text-muted)';
+    document.getElementById('btn-following').style.borderBottom = 'none';
+    document.getElementById('btn-following').style.color = 'var(--text-muted)';
+    
+    document.getElementById(tabId + '-tab').style.display = 'block';
+    document.getElementById('btn-' + tabId).style.borderBottom = '2px solid var(--primary)';
+    document.getElementById('btn-' + tabId).style.color = 'var(--primary)';
+}
+</script>
+{% endblock %}

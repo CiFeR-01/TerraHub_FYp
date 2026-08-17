@@ -23,9 +23,9 @@
         </a>
         {% endif %}
         {% if can_adjust %}
-        <a href="#" class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;" onclick="alert('Stock intake module is coming soon!')">
-            Register Brand New Stock
-        </a>
+        <button class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;" onclick="document.getElementById('manual-stock-modal').style.display='flex';">
+            ✚ Manually Receive Stock
+        </button>
         {% endif %}
     </div>
 </header>
@@ -53,34 +53,37 @@
     </form>
 </div>
 
-{% if selected_warehouse %}
-    <!-- Summary stats for selected warehouse -->
+    <!-- Summary stats -->
     <section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay: 0.1s;">
         <div class="kpi-item-card">
-            <span class="kpi-label">Warehouse Capacity</span>
+            <span class="kpi-label">{% if selected_warehouse %}Warehouse Capacity{% else %}Global Capacity (MT){% endif %}</span>
             <div class="kpi-value-row">
-                <span class="kpi-value">{{ selected_warehouse.total_capacity_mt|floatformat:1 }}</span>
+                <span class="kpi-value">{% if selected_warehouse %}{{ selected_warehouse.total_capacity_mt|floatformat:1 }}{% else %}{{ global_kpis.total_capacity|floatformat:1 }}{% endif %}</span>
                 <span class="badge badge-sky">MT Limit</span>
             </div>
         </div>
         <div class="kpi-item-card">
             <span class="kpi-label">Active Batches</span>
             <div class="kpi-value-row">
-                <span class="kpi-value">{{ batches|length }}</span>
+                <span class="kpi-value">{% if selected_warehouse %}{{ batches|length }}{% else %}{{ global_kpis.total_batches }}{% endif %}</span>
                 <span class="badge badge-emerald">In Stock</span>
             </div>
         </div>
         <div class="kpi-item-card">
-            <span class="kpi-label">Billing Mode</span>
+            <span class="kpi-label">{% if selected_warehouse %}Billing Mode{% else %}Total Facilities{% endif %}</span>
             <div class="kpi-value-row">
                 <span class="kpi-value" style="font-size: 1.5rem; line-height: 2.25rem;">
-                    {% if selected_warehouse.ownership_type == 'Internal' %}
-                        Free (Owned)
+                    {% if selected_warehouse %}
+                        {% if selected_warehouse.ownership_type == 'Internal' %}
+                            Free (Owned)
+                        {% else %}
+                            RM{{ selected_warehouse.rental_cost_per_mt }}/MT
+                        {% endif %}
                     {% else %}
-                        RM{{ selected_warehouse.rental_cost_per_mt }}/MT
+                        {{ global_kpis.total_warehouses }}
                     {% endif %}
                 </span>
-                <span class="badge badge-amber">{{ selected_warehouse.rental_billing_method }}</span>
+                {% if selected_warehouse %}<span class="badge badge-amber">{{ selected_warehouse.rental_billing_method }}</span>{% else %}<span class="badge badge-sky">Active</span>{% endif %}
             </div>
         </div>
     </section>
@@ -88,18 +91,22 @@
     {% if batches %}
     <div class="pane-card animate-fade-in-up" style="animation-delay: 0.15s; margin-top: 1rem;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
-            <h3 style="margin-bottom: 0;">📋 Physical Stock Ledger: {{ selected_warehouse.name }}</h3>
-            {% if perms.core.change_warehouse %}
+            <h3 style="margin-bottom: 0;">📋 {% if selected_warehouse %}Physical Stock Ledger: {{ selected_warehouse.name }}{% else %}Global Physical Stock Ledger{% endif %}</h3>
+            {% if selected_warehouse and perms.core.change_warehouse %}
             <a href="{% url 'warehouse_edit' selected_warehouse.id %}" class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 0.4rem;">
                 ⚙️ Edit Constraints
             </a>
             {% endif %}
         </div>
+        <div style="margin-bottom: 1rem;">
+            <input type="text" id="batchSearch" placeholder="Search by Batch Number, SKU, or Item Name..." style="width: 100%; max-width: 400px; padding: 0.65rem 1rem; border-radius: 8px; border: 1px solid var(--border-light); font-size: 0.95rem; background: #f8fafc;" onkeyup="filterTable()">
+        </div>
         
         <div class="data-table-container">
-            <table class="custom-table">
+            <table class="custom-table" id="batchTable">
                 <thead>
                     <tr>
+                        {% if not selected_warehouse %}<th>Facility</th>{% endif %}
                         <th>Zone/Aisle</th>
                         <th>Batch Number</th>
                         <th>Item Type</th>
@@ -110,9 +117,12 @@
                         {% if can_adjust %}<th style="text-align: right;">Action</th>{% endif %}
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="batchTableBody">
                     {% for b in batches %}
-                    <tr>
+                    <tr class="batch-row" style="cursor: pointer; transition: background-color 0.2s;" onmouseover="this.style.backgroundColor='#f8fafc';" onmouseout="this.style.backgroundColor='transparent';" onclick="window.location.href='{% url 'batch_detail' b.batch_number %}'">
+                        {% if not selected_warehouse %}
+                        <td style="font-weight: 600;">{{ b.location.warehouse.name }}</td>
+                        {% endif %}
                         <td style="font-weight: 600; color: var(--text-muted);">
                             Zone {{ b.location.zone_name }} / Aisle {{ b.location.aisle }}
                         </td>
@@ -158,7 +168,7 @@
                         </td>
                         {% if can_adjust %}
                         <td style="text-align: right;">
-                            <a href="#" class="btn btn-secondary" style="background: rgba(245, 158, 11, 0.08); color: #b45309; border: 1px solid rgba(245, 158, 11, 0.2); padding: 0.35rem 0.75rem; font-size: 0.8rem; border-radius: 6px;" onclick="alert('Audit Stock action is coming soon!')">
+                            <a href="{% url 'stock_audit' %}?batch={{ b.batch_number }}" class="btn btn-secondary" style="background: rgba(245, 158, 11, 0.08); color: #b45309; border: 1px solid rgba(245, 158, 11, 0.2); padding: 0.35rem 0.75rem; font-size: 0.8rem; border-radius: 6px;" onclick="event.stopPropagation();">
                                 Adjust Stock
                             </a>
                         </td>
@@ -172,24 +182,89 @@
     {% else %}
     <div class="pane-card animate-fade-in-up" style="text-align: center; padding: 3rem; animation-delay: 0.15s;">
         <div style="font-size: 3rem; margin-bottom: 1rem;">🛡️</div>
-        <h4 style="font-weight: 600; color: var(--text-main); margin-bottom: 0.25rem;">Empty Facility Ledger</h4>
+        <h4 style="font-weight: 600; color: var(--text-main); margin-bottom: 0.25rem;">Empty Ledger</h4>
         <p style="font-size: 0.85rem; color: var(--text-muted);">
-            No active stock batches were found assigned to {{ selected_warehouse.name }}.
+            No active stock batches were found.
         </p>
     </div>
     {% endif %}
-{% else %}
-<div class="pane-card animate-fade-in-up" style="text-align: center; padding: 4rem 2rem; color: var(--text-muted); animation-delay: 0.1s;">
-    <div style="font-size: 3.5rem; margin-bottom: 1.5rem; background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">
-        🏭
+
+<script>
+function filterTable() {
+    let input = document.getElementById("batchSearch");
+    let filter = input.value.toUpperCase();
+    let table = document.getElementById("batchTableBody");
+    let tr = table.getElementsByClassName("batch-row");
+    
+    for (let i = 0; i < tr.length; i++) {
+        let textContent = tr[i].textContent || tr[i].innerText;
+        if (textContent.toUpperCase().indexOf(filter) > -1) {
+            tr[i].style.display = "";
+        } else {
+            tr[i].style.display = "none";
+        }
+    }
+}
+</script>
+{% if can_adjust %}
+<!-- Manual Stock Entry Modal -->
+<div id="manual-stock-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.4); backdrop-filter:blur(4px); z-index:9999; align-items:center; justify-content:center;">
+    <div class="animate-fade-in-up" style="background:#fff; width:100%; max-width:500px; border-radius:16px; box-shadow:0 12px 32px rgba(15,23,42,0.1); overflow:hidden;">
+        <div style="padding:1.5rem 2rem; border-bottom:1px solid var(--border-light); display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:700; color:var(--text-main); margin:0;">Receive Manual Stock</h3>
+            <button type="button" onclick="document.getElementById('manual-stock-modal').style.display='none';" style="background:none; border:none; font-size:1.5rem; color:var(--text-muted); cursor:pointer; padding:0; line-height:1;">&times;</button>
+        </div>
+        <form method="POST" style="padding:2rem;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="manual_receive">
+            
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-main); margin-bottom:0.5rem;">Target Warehouse</label>
+                <select name="warehouse_id" required class="form-select" style="width:100%; padding:0.65rem 1rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
+                    <option value="">-- Select Warehouse --</option>
+                    {% for w in warehouses %}
+                    <option value="{{ w.id }}">{{ w.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-main); margin-bottom:0.5rem;">Material (Raw)</label>
+                <select name="material_id" class="form-select" style="width:100%; padding:0.65rem 1rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
+                    <option value="">-- Select Material (Or choose Product below) --</option>
+                    {% for m in materials %}
+                    <option value="{{ m.id }}">{{ m.sku }} - {{ m.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-main); margin-bottom:0.5rem;">Product (Finished)</label>
+                <select name="product_id" class="form-select" style="width:100%; padding:0.65rem 1rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
+                    <option value="">-- Select Product (Or choose Material above) --</option>
+                    {% for p in products %}
+                    <option value="{{ p.id }}">{{ p.sku }} - {{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-main); margin-bottom:0.5rem;">Quantity Received</label>
+                <input type="number" step="0.01" name="quantity" required class="form-input" placeholder="e.g., 50.5" style="width:100%; padding:0.65rem 1rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
+            </div>
+
+            <div style="margin-bottom:2rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-main); margin-bottom:0.5rem;">Expiry Date (Optional)</label>
+                <input type="date" name="expiry_date" class="form-input" style="width:100%; padding:0.65rem 1rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
+                <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.35rem;">Defaults to 1 year from today if left blank.</div>
+            </div>
+            
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
+                <button type="button" onclick="document.getElementById('manual-stock-modal').style.display='none';" class="btn btn-secondary" style="padding:0.65rem 1.5rem; font-size:0.9rem;">Cancel</button>
+                <button type="submit" class="btn btn-primary" style="padding:0.65rem 1.5rem; font-size:0.9rem;">Save Stock Batch</button>
+            </div>
+        </form>
     </div>
-    <h3 style="font-family: 'Outfit', sans-serif; font-size: 1.35rem; font-weight: 600; color: var(--text-main); margin-bottom: 0.5rem;">
-        Generate Physical Stock Reports
-    </h3>
-    <p style="font-size: 0.9rem; max-width: 480px; margin: 0 auto; line-height: 1.5;">
-        Select an active facility from the list above to retrieve its zone/aisle mappings, stock ledger counts, and predictive expiry warnings.
-    </p>
 </div>
 {% endif %}
-
 {% endblock %}
