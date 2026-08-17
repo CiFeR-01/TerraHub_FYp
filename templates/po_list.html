@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+
+{% block title %}Order Management - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">Order Management</span>
+        </nav>
+        <h1
+            style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            Purchase Orders
+        </h1>
+    </div>
+    <div class="header-action-tray" style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
+        <form method="get" action="{% url 'po_list' %}" style="display:flex; gap:0.5rem; margin:0;">
+            <select name="status" class="form-select" style="padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.85rem;" onchange="this.form.submit()">
+                <option value="">All Statuses</option>
+                <option value="Draft" {% if status_filter == 'Draft' %}selected{% endif %}>Draft</option>
+                <option value="Pending" {% if status_filter == 'Pending' %}selected{% endif %}>Pending</option>
+                <option value="Partially Received" {% if status_filter == 'Partially Received' %}selected{% endif %}>Partially Received</option>
+                <option value="Completed" {% if status_filter == 'Completed' %}selected{% endif %}>Completed</option>
+                <option value="Cancelled" {% if status_filter == 'Cancelled' %}selected{% endif %}>Cancelled</option>
+            </select>
+            <input type="text" name="q" value="{{ search_query }}" placeholder="Search orders, clients, suppliers..."
+                style="padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.85rem; min-width:250px;">
+            <button type="submit" class="btn btn-secondary"
+                style="padding: 0.5rem 1rem; font-size: 0.85rem;">Search</button>
+            {% if search_query or status_filter %}
+            <a href="{% url 'po_list' %}" class="btn btn-secondary"
+                style="padding: 0.5rem; font-size: 1rem; text-decoration:none; display:flex; align-items:center; justify-content:center; line-height:1;"
+                title="Clear Search">&times;</a>
+            {% endif %}
+        </form>
+        <button class="btn btn-secondary" onclick="document.getElementById('po-modal').style.display='flex'"
+            style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+            ✚ New Purchase Order (PO)
+        </button>
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags|default:'info' }}"
+        style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: #d97706;{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: #059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Tabs Navigation -->
+
+
+<!-- Purchase Orders Section -->
+<div id="po-section" class="table-card-wrapper animate-fade-in-up"
+    style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+    <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Purchase
+        Orders (Supplier Procurement)</h3>
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr
+                    style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
+                    <th style="padding:0.75rem 1rem;">PO Number</th>
+                    <th style="padding:0.75rem 1rem;">Supplier Name</th>
+                    <th style="padding:0.75rem 1rem;">Target Facility</th>
+                    <th style="padding:0.75rem 1rem;">Order Date</th>
+                    <th style="padding:0.75rem 1rem;">Items</th>
+                    <th style="padding:0.75rem 1rem;">Status</th>
+                    <th style="padding:0.75rem 1rem;">Timeline &amp; Logs</th>
+                    <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for po in purchase_orders %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ po.po_number }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600;">{{ po.supplier_name }}</td>
+                    <td style="padding:0.85rem 1rem;">{{ po.target_warehouse.name }}</td>
+                    <td style="padding:0.85rem 1rem;">{{ po.order_date }}</td>
+                    <td style="padding:0.85rem 1rem;">
+                        <span style="font-size:0.82rem; font-weight:600;">{{ po.items.count }}</span>
+                        <span style="font-size:0.75rem; color:var(--text-muted);"> material(s)</span>
+                    </td>
+                    <td style="padding:0.85rem 1rem;">
+                        {% if po.status == 'Draft' %}<span class="badge badge-sky">Draft</span>
+                        {% elif po.status == 'Pending' or po.status == 'Pending Approval' %}<span
+                            class="badge badge-amber">Pending</span>
+                        {% elif po.status == 'Partially Received' %}<span class="badge badge-amber">Partially
+                            Received</span>
+                        {% elif po.status == 'Completed' %}<span class="badge badge-emerald">Completed</span>
+                        {% else %}<span class="badge badge-rose">{{ po.status }}</span>{% endif %}
+                    </td>
+                    <td style="padding:0.85rem 1rem;">
+                        {% for event in po.timeline.all|slice:":2" %}
+                        <div style="font-size:0.75rem; color:var(--text-muted);">• {{ event.action }} ({{
+                            event.timestamp|date:"m/d H:i" }})</div>
+                        {% empty %}
+                        <span style="font-size:0.78rem; color:var(--text-muted);">No timeline logs</span>
+                        {% endfor %}
+                    </td>
+                    <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
+                        <a href="{% url 'po_detail' po.pk %}" class="btn btn-secondary"
+                            style="padding:0.3rem 0.7rem; font-size:0.78rem; text-decoration:none; display:inline-block;">View
+                            →</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="padding:2rem; text-align:center; color:var(--text-muted);">No purchase orders
+                        found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal: New PO -->
+<div id="po-modal"
+    style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
+    <div
+        style="background:#fff; border-radius:12px; width:100%; max-width:480px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+            <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Create Purchase Order</h3>
+            <button onclick="document.getElementById('po-modal').style.display='none'"
+                style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        </div>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="create_po">
+            <div style="margin-bottom:0.85rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.3rem;">
+                    <label style="font-size:0.85rem; font-weight:600;">PO Number</label>
+                    <label
+                        style="font-size:0.75rem; color:var(--text-muted); cursor:pointer; display:flex; align-items:center; gap:0.35rem;">
+                        <input type="checkbox" id="po_number_auto" name="po_number_auto" value="1" checked
+                            onchange="toggleIdMode('po_number', 'po_number_auto', '{{ next_po_number }}')"
+                            style="accent-color:var(--primary);">
+                        Auto-generate
+                    </label>
+                </div>
+                <input type="text" id="po_number" name="po_number" value="{{ next_po_number }}" required
+                    class="form-input"
+                    style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background:#f8fafc;"
+                    readonly>
+            </div>
+            <div style="margin-bottom:0.85rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Supplier
+                    Name</label>
+                <input type="text" name="supplier_name" required placeholder="e.g. Chemical Global Industries"
+                    class="form-input"
+                    style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Destination
+                    Warehouse</label>
+                <select name="target_warehouse_id" required class="form-select"
+                    style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                    {% for w in warehouses %}
+                    <option value="{{ w.id }}">{{ w.name }} ({{ w.ownership_type }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
+                <button type="button" class="btn btn-secondary"
+                    onclick="document.getElementById('po-modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Purchase Order</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    function toggleIdMode(inputId, toggleId, autoVal) {
+        var input = document.getElementById(inputId);
+        var toggle = document.getElementById(toggleId);
+        if (toggle.checked) {
+            input.value = autoVal;
+            input.readOnly = true;
+            input.style.background = '#f8fafc';
+        } else {
+            input.readOnly = false;
+            input.style.background = '#ffffff';
+            input.focus();
+        }
+    }
+
+</script>
+{% endblock %}

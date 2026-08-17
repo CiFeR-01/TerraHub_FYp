@@ -8,13 +8,18 @@
         <nav class="breadcrumb-nav">
             <a href="{% url 'dashboard' %}">Dashboard</a>
             <span class="separator">/</span>
-            <a href="{% url 'order_list' %}">Orders</a>
+            <a href="{% url 'po_list' %}">Purchase Orders</a>
             <span class="separator">/</span>
             <span class="current-page">{{ po.po_number }}</span>
         </nav>
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
             Purchase Order Detail
         </h1>
+        {% if po.linked_production_run %}
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem; display:flex; align-items:center; gap:0.5rem;">
+            <span class="badge badge-indigo">Linked to Production Run {{ po.linked_production_run.run_number }}</span>
+        </p>
+        {% endif %}
     </div>
     <div class="header-action-tray">
         <form method="post" style="display:inline-flex; gap:0.5rem; align-items:center;">
@@ -78,6 +83,25 @@
                     <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Total Value</div>
                     <div style="font-size:0.95rem; font-weight:700; color:var(--primary);">RM {{ po_total|floatformat:2 }}</div>
                 </div>
+                {% if po.assigned_to and po.status == 'Pending Approval' %}
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Pending Approval</div>
+                    <div style="font-size:0.95rem; font-weight:600; color:var(--primary);">{{ po.assigned_to.get_full_name|default:po.assigned_to.username }}</div>
+                </div>
+                {% endif %}
+                {% if po.approved_by %}
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Approved By</div>
+                    <div style="font-size:0.95rem; font-weight:600; color:#059669;">{{ po.approved_by.get_full_name|default:po.approved_by.username }}</div>
+                </div>
+                {% endif %}
+                {% if po.updated_by %}
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Last Edited By</div>
+                    <div style="font-size:0.95rem; font-weight:600;">{{ po.updated_by.get_full_name|default:po.updated_by.username }}<span style="font-size:0.75rem; color:var(--text-muted); font-weight:400; margin-left:0.25rem;">({{ po.updated_at|date:"d M Y, H:i" }})</span></div>
+                </div>
+                {% endif %}
+
             </div>
         </div>
         <!-- Edit header panel -->
@@ -108,7 +132,9 @@
     </div>
 </div>
 
-<!-- Line Items Table -->
+
+
+        <!-- Line Items Table -->
 <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.05s;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700;">Material Line Items</h3>
@@ -146,7 +172,7 @@
     </div>
 
     {% if po_items_data %}
-    <div class="table-responsive">
+    <div class="table-responsive" style="overflow-x: auto; width: 100%;">
         <table style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">
@@ -224,7 +250,11 @@
     {% endif %}
 </div>
 
-<!-- Audit Timeline -->
+
+        
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; align-items: start; margin-bottom: 1.5rem;">
+    <div style="display: flex; flex-direction: column; gap: 1.5rem; min-width: 0;">
+        <!-- Audit Timeline -->
 <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem;">Order Timeline</h3>
     {% if po.timeline.all %}
@@ -242,4 +272,91 @@
     <p style="color:var(--text-muted); font-size:0.875rem;">No timeline events recorded yet.</p>
     {% endif %}
 </div>
+
+
+        
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+        <!-- Request Approval Panel -->
+{% if po.status == 'Draft' %}
+<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem; color:var(--text-main);">Request Manager Approval</h3>
+    <form method="post" style="display:flex; flex-direction:column; gap:1rem; max-width:500px;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="request_approval">
+        
+        <div class="form-group" style="margin:0;">
+            <label style="display:block; font-size:0.8rem; font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">Assign to Manager</label>
+            <select name="manager_id" class="form-select" required style="width:100%; padding:0.6rem 0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.9rem;">
+                <option value="">-- Select Manager --</option>
+                {% for mgr in managers %}
+                <option value="{{ mgr.id }}">{{ mgr.get_full_name|default:mgr.username }} ({{ mgr.role }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        
+        <div class="form-group" style="margin:0;">
+            <label style="display:block; font-size:0.8rem; font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">Remarks (Optional)</label>
+            <textarea name="remarks" rows="2" class="form-input" style="width:100%; padding:0.6rem 0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.9rem; resize:vertical; font-family:inherit;" placeholder="e.g. Need to expedite these materials"></textarea>
+        </div>
+        
+        <div>
+            <button type="submit" class="btn btn-primary" style="padding:0.6rem 1.2rem; font-size:0.9rem;">
+                Send Request
+            </button>
+        </div>
+    </form>
+</div>
+{% endif %}
+
+
+        
+<!-- Followers Panel -->
+<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main); display:flex; justify-content:space-between; align-items:center;">
+        Followers
+        <span style="background:var(--primary); color:#fff; border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem;">{{ po.followers.count }}</span>
+    </h3>
+    
+    <div style="display:flex; flex-direction:column; gap:0.75rem; margin-bottom:1rem;">
+        {% for follower in po.followers.all %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:#f8fafc; border-radius:8px; border:1px solid var(--border-light);">
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+                <div style="width:28px; height:28px; border-radius:50%; background:var(--primary); color:#fff; display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700;">
+                    {{ follower.username|make_list|first|upper }}
+                </div>
+                <span style="font-size:0.85rem; font-weight:600;">{{ follower.get_full_name|default:follower.username }}</span>
+            </div>
+            {% if follower == request.user %}
+            <form method="post" style="margin:0;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="remove_follower">
+                <input type="hidden" name="user_id" value="{{ follower.id }}">
+                <button type="submit" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:0.75rem; font-weight:600;">Unfollow</button>
+            </form>
+            {% endif %}
+        </div>
+        {% empty %}
+        <p style="font-size:0.85rem; color:var(--text-muted); text-align:center; padding:1rem 0;">No followers yet.</p>
+        {% endfor %}
+    </div>
+
+    <form method="post" style="display:flex; gap:0.5rem;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="add_follower">
+        <select name="user_id" required class="form-select" style="flex:1; padding:0.4rem 0.5rem; border-radius:6px; font-size:0.8rem; border:1px solid var(--border-light);">
+            <option value="">-- Add Colleague --</option>
+            {% for u in all_users %}
+                {% if u not in po.followers.all %}
+                <option value="{{ u.id }}">{{ u.get_full_name|default:u.username }}</option>
+                {% endif %}
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-primary" style="padding:0.4rem 0.75rem; font-size:0.8rem; border-radius:6px;">Add</button>
+    </form>
+</div>
+
+    
 {% endblock %}
+    </div>
+</div>

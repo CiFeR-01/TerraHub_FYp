@@ -8,7 +8,7 @@
         <nav class="breadcrumb-nav">
             <a href="{% url 'dashboard' %}">Dashboard</a>
             <span class="separator">/</span>
-            <a href="{% url 'order_list' %}">Orders</a>
+            <a href="{% url 'so_list' %}">Sales Orders</a>
             <span class="separator">/</span>
             <span class="current-page">{{ so.so_number }}</span>
         </nav>
@@ -17,7 +17,10 @@
         </h1>
     </div>
     <div class="header-action-tray">
-        <form method="post" style="display:inline-flex; gap:0.5rem; align-items:center;">
+
+        
+        {% if user.is_superuser or user.role in 'Admin,Manager' %}
+        <form method="post" style="margin:0; display:flex; gap:0.5rem; align-items:center;">
             {% csrf_token %}
             <input type="hidden" name="action" value="update_so_status">
             <select name="status" class="form-select" style="padding:0.45rem 0.75rem; border-radius:6px; font-size:0.85rem; border:1px solid var(--border-light);">
@@ -27,6 +30,7 @@
             </select>
             <button type="submit" class="btn btn-primary" style="padding:0.45rem 1rem; font-size:0.85rem;">Update Status</button>
         </form>
+        {% endif %}
     </div>
 </header>
 
@@ -80,6 +84,25 @@
                     <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Line Items</div>
                     <div style="font-size:0.95rem; font-weight:600;">{{ so.items.count }} product(s)</div>
                 </div>
+                {% if so.assigned_to and so.status == 'Pending Approval' %}
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Pending Approval</div>
+                    <div style="font-size:0.95rem; font-weight:600; color:var(--primary);">{{ so.assigned_to.get_full_name|default:so.assigned_to.username }}</div>
+                </div>
+                {% endif %}
+                {% if so.approved_by %}
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Approved By</div>
+                    <div style="font-size:0.95rem; font-weight:600; color:#059669;">{{ so.approved_by.get_full_name|default:so.approved_by.username }}</div>
+                </div>
+                {% endif %}
+                {% if so.updated_by %}
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Last Edited By</div>
+                    <div style="font-size:0.95rem; font-weight:600;">{{ so.updated_by.get_full_name|default:so.updated_by.username }}<span style="font-size:0.75rem; color:var(--text-muted); font-weight:400; margin-left:0.25rem;">({{ so.updated_at|date:"d M Y, H:i" }})</span></div>
+                </div>
+                {% endif %}
+
             </div>
         </div>
         <!-- Edit header panel -->
@@ -110,7 +133,9 @@
     </div>
 </div>
 
-<!-- Line Items Table -->
+
+
+        <!-- Line Items Table -->
 <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.05s;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700;">Product Line Items</h3>
@@ -120,6 +145,7 @@
     </div>
 
     <!-- Add Item Form (hidden by default) -->
+    {% if so.status == 'Draft' %}
     <div id="add-item-form" style="display:none; background:#f8fafc; border-radius:10px; border:1px solid var(--border-light); padding:1.25rem; margin-bottom:1.25rem;">
         <form method="post">
             {% csrf_token %}
@@ -146,9 +172,10 @@
             </div>
         </form>
     </div>
+    {% endif %}
 
-    {% if line_items_with_bom %}
-    <div class="table-responsive">
+    {% if line_items %}
+    <div class="table-responsive" style="overflow-x: auto; width: 100%;">
         <table style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">
@@ -156,21 +183,24 @@
                     <th style="padding:0.6rem 1rem;">Product</th>
                     <th style="padding:0.6rem 1rem;">SKU</th>
                     <th style="padding:0.6rem 1rem;">Qty Ordered</th>
+                    <th style="padding:0.6rem 1rem;">Allocated</th>
+                    <th style="padding:0.6rem 1rem;">Deficit</th>
                     <th style="padding:0.6rem 1rem;">Qty Shipped</th>
                     <th style="padding:0.6rem 1rem;">Unit Price</th>
                     <th style="padding:0.6rem 1rem;">Subtotal</th>
                     <th style="padding:0.6rem 1rem;">BOM Status</th>
-                    <th style="padding:0.6rem 1rem;">Can Make</th>
                     <th style="padding:0.6rem 1rem; text-align:right;">Actions</th>
                 </tr>
             </thead>
             <tbody>
-                {% for row in line_items_with_bom %}
+                {% for row in line_items %}
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
                     <td style="padding:0.85rem 1rem; color:var(--text-muted); font-size:0.78rem;">{{ forloop.counter }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:700;">{{ row.item.product.name }}</td>
                     <td style="padding:0.85rem 1rem; font-family:monospace; font-size:0.8rem; color:var(--text-muted);">{{ row.item.product.sku }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{{ row.item.quantity_ordered|floatformat:1 }} {{ row.item.product.unit_of_measure }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600; color:{% if row.allocated > 0 %}#059669{% else %}var(--text-muted){% endif %};">{{ row.allocated|floatformat:1 }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600; color:{% if row.deficit > 0 %}#dc2626{% else %}var(--text-muted){% endif %};">{{ row.deficit|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem;">{{ row.item.quantity_shipped|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem;">{% if row.item.unit_price %}RM {{ row.item.unit_price|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">
@@ -180,12 +210,9 @@
                     </td>
                     <td style="padding:0.85rem 1rem;">
                         {% if row.bom_rows %}
-                            {% if row.bom_ready %}<span class="badge badge-emerald">BOM Ready</span>
+                            {% if row.bom_ready %}<span class="badge badge-emerald">BOM Ready ({{ row.can_make_units }} units)</span>
                             {% else %}<span class="badge badge-rose">Shortage</span>{% endif %}
                         {% else %}<span style="font-size:0.78rem; color:var(--text-muted);">No BOM</span>{% endif %}
-                    </td>
-                    <td style="padding:0.85rem 1rem; font-weight:700; color:{% if row.bom_ready %}#059669{% else %}#dc2626{% endif %};">
-                        {{ row.can_make_units }} units
                     </td>
                     <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
                         <button onclick="(function(){var el=document.getElementById('bom-{{ row.item.id }}');el.style.display=el.style.display==='none'?'table-row':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--text-muted); margin-right:0.3rem;">⚗ BOM</button>
@@ -239,7 +266,24 @@
     {% endif %}
 </div>
 
-<!-- Audit Timeline -->
+<!-- SO Fulfillment Section -->
+<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.08s;">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:0.75rem;">SO Fulfillment</h3>
+    <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.25rem;">Allocate finished goods from the warehouse to fulfill this Sales Order. You must allocate enough stock to meet the ordered quantity before this order can be shipped.</p>
+    {% if so.status == 'Pending' or so.status == 'Ready to Ship' %}
+        <a href="{% url 'so_allocate' so.pk %}" class="btn btn-primary" style="padding:0.5rem 1.25rem; font-size:0.9rem;">Allocate Finished Goods</a>
+    {% else %}
+        <p style="font-size:0.85rem; color:var(--text-muted); padding:1rem; background:#f8fafc; border-radius:8px; border:1px solid var(--border-light);">
+            Allocation is available when the order is in <strong>Pending</strong> status. Current status: <span style="font-weight:600;">{{ so.status }}</span>.
+        </p>
+    {% endif %}
+</div>
+
+
+        
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; align-items: start; margin-bottom: 1.5rem;">
+    <div style="display: flex; flex-direction: column; gap: 1.5rem; min-width: 0;">
+        <!-- Audit Timeline -->
 <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem;">Order Timeline</h3>
     {% if so.timeline.all %}
@@ -257,4 +301,91 @@
     <p style="color:var(--text-muted); font-size:0.875rem;">No timeline events recorded yet.</p>
     {% endif %}
 </div>
+
+
+        
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+        <!-- Request Approval Panel -->
+{% if so.status == 'Draft' %}
+<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem; color:var(--text-main);">Request Manager Approval</h3>
+    <form method="post" style="display:flex; flex-direction:column; gap:1rem; max-width:500px;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="request_approval">
+        
+        <div class="form-group" style="margin:0;">
+            <label style="display:block; font-size:0.8rem; font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">Assign to Manager</label>
+            <select name="manager_id" class="form-select" required style="width:100%; padding:0.6rem 0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.9rem;">
+                <option value="">-- Select Manager --</option>
+                {% for mgr in managers %}
+                <option value="{{ mgr.id }}">{{ mgr.get_full_name|default:mgr.username }} ({{ mgr.role }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        
+        <div class="form-group" style="margin:0;">
+            <label style="display:block; font-size:0.8rem; font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">Remarks (Optional)</label>
+            <textarea name="remarks" rows="2" class="form-input" style="width:100%; padding:0.6rem 0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.9rem; resize:vertical; font-family:inherit;" placeholder="e.g. Expedite this for VIP client"></textarea>
+        </div>
+        
+        <div>
+            <button type="submit" class="btn btn-primary" style="padding:0.6rem 1.2rem; font-size:0.9rem;">
+                Send Request
+            </button>
+        </div>
+    </form>
+</div>
+{% endif %}
+
+
+        
+<!-- Followers Panel -->
+<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main); display:flex; justify-content:space-between; align-items:center;">
+        Followers
+        <span style="background:var(--primary); color:#fff; border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem;">{{ so.followers.count }}</span>
+    </h3>
+    
+    <div style="display:flex; flex-direction:column; gap:0.75rem; margin-bottom:1rem;">
+        {% for follower in so.followers.all %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:#f8fafc; border-radius:8px; border:1px solid var(--border-light);">
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+                <div style="width:28px; height:28px; border-radius:50%; background:var(--primary); color:#fff; display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700;">
+                    {{ follower.username|make_list|first|upper }}
+                </div>
+                <span style="font-size:0.85rem; font-weight:600;">{{ follower.get_full_name|default:follower.username }}</span>
+            </div>
+            {% if follower == request.user %}
+            <form method="post" style="margin:0;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="remove_follower">
+                <input type="hidden" name="user_id" value="{{ follower.id }}">
+                <button type="submit" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:0.75rem; font-weight:600;">Unfollow</button>
+            </form>
+            {% endif %}
+        </div>
+        {% empty %}
+        <p style="font-size:0.85rem; color:var(--text-muted); text-align:center; padding:1rem 0;">No followers yet.</p>
+        {% endfor %}
+    </div>
+
+    <form method="post" style="display:flex; gap:0.5rem;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="add_follower">
+        <select name="user_id" required class="form-select" style="flex:1; padding:0.4rem 0.5rem; border-radius:6px; font-size:0.8rem; border:1px solid var(--border-light);">
+            <option value="">-- Add Colleague --</option>
+            {% for u in all_users %}
+                {% if u not in so.followers.all %}
+                <option value="{{ u.id }}">{{ u.get_full_name|default:u.username }}</option>
+                {% endif %}
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-primary" style="padding:0.4rem 0.75rem; font-size:0.8rem; border-radius:6px;">Add</button>
+    </form>
+</div>
+
+    
 {% endblock %}
+    </div>
+</div>

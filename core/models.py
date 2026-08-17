@@ -2,6 +2,13 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from datetime import date
 
+class Role(models.Model):
+    name = models.CharField(max_length=50, unique=True)
+    description = models.CharField(max_length=255, blank=True, null=True)
+
+    def __str__(self):
+        return self.name
+
 class CustomUser(AbstractUser):
     ROLE_CHOICES = (
         ('Admin', 'Admin'),
@@ -12,6 +19,14 @@ class CustomUser(AbstractUser):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='Staff_View')
     branch = models.CharField(max_length=100, default='HQ', help_text="Department / Division mapping")
     can_adjust_physical_stock = models.BooleanField(default=False, help_text="Explicit permission to adjust warehouse stock")
+
+    roles = models.ManyToManyField(Role, blank=True, related_name='users')
+    allowed_locations = models.ManyToManyField('Warehouse', blank=True, related_name='allowed_users')
+    updated_by = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_users')
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def has_role(self, role_name):
+        return self.roles.filter(name=role_name).exists()
 
     @property
     def unread_notifications_count(self):
@@ -86,6 +101,9 @@ class ProductRecipe(models.Model):
 
 class ProductionRun(models.Model):
     STATUS_CHOICES = (
+        ('Pending Approval', 'Pending Approval'),
+        ('Pending Allocation', 'Pending Allocation'),
+        ('Awaiting Materials', 'Awaiting Materials'),
         ('Planned', 'Planned'),
         ('InProgress', 'In Progress'),
         ('Completed', 'Completed'),
@@ -129,6 +147,11 @@ class Batch(models.Model):
     manufacturing_date = models.DateField()
     expiry_date = models.DateField()
     location = models.ForeignKey(WarehouseLocation, on_delete=models.SET_NULL, null=True, blank=True)
+    allocated_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    @property
+    def available_quantity(self):
+        return self.quantity - self.allocated_quantity
 
     @property
     def days_until_expiry(self):
@@ -168,8 +191,13 @@ class PurchaseOrder(models.Model):
     created_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_pos')
     approved_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_pos')
     assigned_to = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_pos')
+    approval_remarks = models.TextField(blank=True, null=True)
     rejection_reason = models.TextField(blank=True, null=True)
     revision_count = models.IntegerField(default=0)
+    followers = models.ManyToManyField(CustomUser, blank=True, related_name='followed_pos')
+    linked_production_run = models.ForeignKey('ProductionRun', on_delete=models.SET_NULL, null=True, blank=True, related_name='linked_pos')
+    updated_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_pos')
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"PO {self.po_number} - {self.supplier_name}"
@@ -212,8 +240,12 @@ class SalesOrder(models.Model):
     approved_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_sos')
     assigned_to = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_sos')
     manufacturing_plant = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='manufacturing_sos')
+    approval_remarks = models.TextField(blank=True, null=True)
     rejection_reason = models.TextField(blank=True, null=True)
     revision_count = models.IntegerField(default=0)
+    followers = models.ManyToManyField(CustomUser, blank=True, related_name='followed_sos')
+    updated_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_sos')
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"SO {self.so_number} - {self.client_name}"
@@ -240,34 +272,58 @@ class Shipment(models.Model):
         ('Transfer', 'Internal Transfer'),
     )
     STATUS_CHOICES = (
-        ('Preparing', 'Preparing'),
+        ('Draft', 'Draft (Manufacturing)'),
+        ('Logistics Review', 'Logistics Review'),
+        ('Pending Approval', 'Pending Approval'),
+        ('Preparing', 'Approved / Preparing'),
         ('Dispatched', 'Dispatched'),
         ('Arrived', 'Arrived'),
+        ('Completed', 'Completed'),
         ('Delayed', 'Delayed'),
+        ('Discrepant', 'Discrepant (Shortage)'),
     )
     tracking_number = models.CharField(max_length=255, unique=True, help_text="Internal Truck Fleet ID or tracking #")
     direction = models.CharField(max_length=50, choices=DIRECTION_CHOICES, default='Inbound')
-    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Preparing')
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Draft')
     
     purchase_order = models.ForeignKey('PurchaseOrder', on_delete=models.SET_NULL, null=True, blank=True, related_name='shipments')
     sales_order = models.ForeignKey('SalesOrder', on_delete=models.SET_NULL, null=True, blank=True, related_name='shipments')
-    
-    batch = models.ForeignKey(Batch, on_delete=models.SET_NULL, null=True, blank=True, related_name='shipments')
-    material = models.ForeignKey(Material, on_delete=models.CASCADE, null=True, blank=True)
-    product = models.ForeignKey(Product, on_delete=models.CASCADE, null=True, blank=True)
-    quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    linked_production_run = models.ForeignKey('ProductionRun', on_delete=models.SET_NULL, null=True, blank=True, related_name='linked_shipments')
     
     origin_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='outbound_shipments')
     destination_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='inbound_shipments')
+    external_origin = models.CharField(max_length=255, null=True, blank=True, help_text="For inbound from supplier")
     
     dispatch_date = models.DateField(null=True, blank=True)
     expected_eta_date = models.DateField(null=True, blank=True)
     actual_arrival_date = models.DateField(null=True, blank=True)
-    external_origin = models.CharField(max_length=255, null=True, blank=True, help_text="Manual supplier or external origin name")
+    
+    acknowledged_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='acknowledged_shipments')
+    last_edited_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='last_edited_shipments')
+    
+    has_discrepancy = models.BooleanField(default=False)
+    discrepancy_remarks = models.TextField(blank=True, null=True)
+    assigned_manager = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_discrepancies')
+    approved_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_discrepancies')
+
+    assigned_to = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_shipments')
+    followers = models.ManyToManyField(CustomUser, blank=True, related_name='followed_shipments')
 
     def __str__(self):
-        origin = self.origin_warehouse.name if self.origin_warehouse else (self.external_origin or "Supplier")
-        return f"Shipment {self.tracking_number} ({self.direction} from {origin} - {self.status})"
+        return f"{self.tracking_number} ({self.status})"
+
+class ShipmentItem(models.Model):
+    shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, related_name='items')
+    batch = models.ForeignKey(Batch, on_delete=models.SET_NULL, null=True, blank=True, related_name='shipment_items')
+    material = models.ForeignKey(Material, on_delete=models.CASCADE, null=True, blank=True)
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, null=True, blank=True)
+    quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    received_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    date_confirmed = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        item_name = self.material.sku if self.material else (self.product.sku if self.product else 'Unknown')
+        return f"{self.shipment.tracking_number} - {item_name} (Qty: {self.quantity})"
 
 class StockAudit(models.Model):
     STATUS_CHOICES = (
@@ -309,6 +365,7 @@ class RegistryLog(models.Model):
 class OrderTimeline(models.Model):
     purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
     sales_order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
+    shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
     action = models.CharField(max_length=100)
     timestamp = models.DateTimeField(auto_now_add=True)
     user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)
@@ -326,3 +383,15 @@ class Notification(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+class StockAllocation(models.Model):
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='allocations')
+    sales_order = models.ForeignKey(SalesOrder, on_delete=models.SET_NULL, null=True, blank=True, related_name='allocations')
+    production_run = models.ForeignKey(ProductionRun, on_delete=models.SET_NULL, null=True, blank=True, related_name='allocations')
+    shipment = models.ForeignKey(Shipment, on_delete=models.SET_NULL, null=True, blank=True, related_name='allocations')
+    quantity = models.DecimalField(max_digits=12, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Allocated {self.quantity} from {self.batch.batch_number}"
+
