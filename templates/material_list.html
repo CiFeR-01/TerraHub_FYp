@@ -60,7 +60,12 @@
             <tbody>
                 {% for item in material_data %}
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
-                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ item.material.sku }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">
+                        {{ item.material.sku }}
+                        {% if not item.material.is_active %}
+                        <span style="display:inline-block; font-size:0.65rem; background:#fee2e2; color:#ef4444; padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">Deactivated</span>
+                        {% endif %}
+                    </td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{{ item.material.name }}</td>
                     <td style="padding:0.85rem 1rem;"><span class="badge badge-sky">{{ item.material.category }}</span></td>
                     <td style="padding:0.85rem 1rem;">{{ item.material.unit_of_measure }}</td>
@@ -74,9 +79,25 @@
                     <td style="padding:0.85rem 1rem; font-weight:600; color:var(--primary);">{{ item.total_mt|floatformat:2 }} MT</td>
                     <td style="padding:0.85rem 1rem; font-weight:700; color:#059669;">RM{{ item.total_value|floatformat:2 }}</td>
                     <td style="padding:0.85rem 1rem; text-align:right;">
-                        <button class="btn btn-secondary" onclick="openEditMaterialModal({{ item.material.id }}, '{{ item.material.name|escapejs }}', '{{ item.material.sku|escapejs }}', '{{ item.material.category|escapejs }}', '{{ item.material.unit_of_measure|escapejs }}', {{ item.material.safe_storage_days }}, {{ item.material.weight_mt_per_unit }}, {{ item.material.cost_per_unit }})" style="padding:0.35rem 0.65rem; font-size:0.775rem;">
-                            ✏️ Edit
-                        </button>
+                        <div style="display:flex; justify-content:flex-end; gap:0.5rem; align-items:center;">
+                            {% if request.user.role == 'Admin' or request.user.role == 'Manager' %}
+                            <form method="post" style="display:inline; margin:0;">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="toggle_active">
+                                <input type="hidden" name="material_id" value="{{ item.material.id }}">
+                                <button type="submit" class="btn btn-secondary" style="padding:0.35rem 0.65rem; font-size:0.775rem;">
+                                    {% if item.material.is_active %}Archive{% else %}Restore{% endif %}
+                                </button>
+                            </form>
+                            <button class="btn btn-secondary" onclick="openEditMaterialModal({{ item.material.id }}, '{{ item.material.name|escapejs }}', '{{ item.material.sku|escapejs }}', '{{ item.material.category|escapejs }}', '{{ item.material.unit_of_measure|escapejs }}', {{ item.material.safe_storage_days }}, {{ item.material.weight_mt_per_unit }}, {{ item.material.cost_per_unit }})" style="padding:0.35rem 0.65rem; font-size:0.775rem;">
+                                ✏️ Edit
+                            </button>
+                            {% else %}
+                            <button class="btn btn-secondary" disabled style="padding:0.35rem 0.65rem; font-size:0.775rem; opacity:0.5; cursor:not-allowed;" title="Only Managers can edit">
+                                ✏️ Edit
+                            </button>
+                            {% endif %}
+                        </div>
                     </td>
                 </tr>
                 {% empty %}

@@ -72,6 +72,7 @@ class Material(models.Model):
     category = models.CharField(max_length=100)
     UNIT_CHOICES = (('MT', 'Metric Ton'), ('kg', 'Kilograms'), ('L', 'Litres'), ('g', 'Grams'), ('pcs', 'Pieces'))
     unit_of_measure = models.CharField(max_length=20, choices=UNIT_CHOICES, default='MT')
+    is_active = models.BooleanField(default=True)
     safe_storage_days = models.IntegerField(help_text="Days until predictive degradation alert")
     weight_mt_per_unit = models.DecimalField(max_digits=10, decimal_places=4, default=1.0000, help_text="Weight in MT per unit")
     cost_per_unit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
@@ -87,6 +88,7 @@ class Product(models.Model):
     unit_of_measure = models.CharField(max_length=20, choices=UNIT_CHOICES, default='pcs')
     weight_mt_per_unit = models.DecimalField(max_digits=10, decimal_places=4, default=1.0000)
     price_per_unit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    is_active = models.BooleanField(default=True)
 
     def __str__(self):
         return f"{self.sku} - {self.name}"
@@ -112,12 +114,17 @@ class ProductionRun(models.Model):
     run_number = models.CharField(max_length=100, unique=True)
     target_product = models.ForeignKey(Product, on_delete=models.CASCADE)
     expected_yield = models.DecimalField(max_digits=12, decimal_places=2)
+    actual_yield = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Planned')
     supervisor = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)
     sales_order = models.ForeignKey('SalesOrder', on_delete=models.SET_NULL, null=True, blank=True, related_name='production_runs')
     manufacturing_plant = models.ForeignKey('Warehouse', on_delete=models.SET_NULL, null=True, blank=True, related_name='production_runs')
     start_time = models.DateTimeField(null=True, blank=True)
     end_time = models.DateTimeField(null=True, blank=True)
+    
+    # Workflow & Approval Fields
+    assigned_to = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_runs')
+    followers = models.ManyToManyField(CustomUser, related_name='following_runs', blank=True)
     
     # New MES Tracking Fields
     fefo_override_reason = models.TextField(blank=True, null=True)
@@ -393,6 +400,7 @@ class OrderTimeline(models.Model):
     purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
     sales_order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
     shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
+    production_run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
     action = models.CharField(max_length=100)
     timestamp = models.DateTimeField(auto_now_add=True)
     user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)

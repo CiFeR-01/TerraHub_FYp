@@ -11,6 +11,8 @@ from django.core.paginator import Paginator
 from datetime import date, timedelta
 import csv
 import io
+import uuid
+from django.utils import timezone
 from .models import (
     CustomUser, Warehouse, WarehouseLocation, Material, Product,
     ProductRecipe, ProductionRun, ProductionConsumption, Batch,
@@ -1224,6 +1226,16 @@ def product_list_view(request):
             except Exception as e:
                 messages.error(request, f"Error adding recipe item: {e}")
 
+        elif action == 'toggle_active':
+            if request.user.role in ['Admin', 'Manager']:
+                product_id = request.POST.get('product_id')
+                prod = get_object_or_404(Product, id=product_id)
+                prod.is_active = not prod.is_active
+                prod.save()
+                messages.success(request, f"Product {prod.sku} is now {'Active' if prod.is_active else 'Deactivated'}.")
+            else:
+                messages.error(request, "Permission denied. Only Managers and Admins can toggle status.")
+
         return redirect('product_list')
 
     products = Product.objects.prefetch_related('recipe_items__material').order_by('name')
@@ -1303,6 +1315,18 @@ def product_detail_view(request, pk):
 @login_required
 def material_list_view(request):
     if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'toggle_active':
+            if request.user.role in ['Admin', 'Manager']:
+                material_id = request.POST.get('material_id')
+                mat = get_object_or_404(Material, id=material_id)
+                mat.is_active = not mat.is_active
+                mat.save()
+                messages.success(request, f"Material {mat.sku} is now {'Active' if mat.is_active else 'Deactivated'}.")
+            else:
+                messages.error(request, "Permission denied. Only Managers and Admins can toggle status.")
+            return redirect('material_list')
+
         name = request.POST.get('name')
         sku_auto = request.POST.get('sku_auto') == '1'
         sku = request.POST.get('sku')
@@ -1793,7 +1817,6 @@ def po_detail_view(request, pk):
                 OrderTimeline.objects.create(purchase_order=po, action=f"Received {new_qty} of {item.material.name}", user=request.user)
                 
                 if delta > 0:
-                    from datetime import date, timedelta
                     from .models import Batch, WarehouseLocation
                     loc = WarehouseLocation.objects.filter(warehouse=po.target_warehouse).first()
                     Batch.objects.create(
@@ -1933,7 +1956,6 @@ def manufacturing_view(request):
                 plant = get_object_or_404(Warehouse, id=plant_id)
                 so = SalesOrder.objects.filter(id=so_id).first() if so_id else None
 
-                from django.utils import timezone
                 tomorrow = timezone.now().replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=1)
                 
                 run = ProductionRun.objects.create(
@@ -2023,8 +2045,6 @@ def manufacturing_view(request):
                 return redirect('readiness')
                 
             from .models import PurchaseOrder, PurchaseOrderDetail
-            from django.utils import timezone
-            from datetime import timedelta
             
             # Find shortages
             shortages = []
@@ -2117,7 +2137,6 @@ def manufacturing_view(request):
             run = get_object_or_404(ProductionRun, id=run_id)
             if run.status == 'Planned':
                 run.status = 'InProgress'
-                from django.utils import timezone
                 run.start_time = timezone.now()
                 run.save()
                 messages.success(request, f"Production Run {run.run_number} started.")
@@ -2129,8 +2148,6 @@ def manufacturing_view(request):
             run_id = request.POST.get('run_id')
             run = get_object_or_404(ProductionRun, id=run_id)
             with transaction.atomic():
-                from django.utils import timezone
-                from datetime import timedelta
                 from .utils import deduct_stock_from_allocation
                 
                 if run.status == 'InProgress':
@@ -2532,31 +2549,68 @@ def approvals_inbox_view(request):
         elif item_type == 'production_run':
             run = get_object_or_404(ProductionRun, id=item_id)
             if action == 'approve':
-                missing_materials = []
-                for req in run.target_product.recipe_items.all():
-                    needed = float(req.quantity_required) * float(run.expected_yield)
-                    available = Batch.objects.filter(
-                        material=req.material, 
-                        location__warehouse=run.manufacturing_plant,
-                        status='Active'
-                    ).aggregate(total=Sum(F('quantity') - F('allocated_quantity')))['total'] or 0
-                    if float(available) < needed:
-                        missing_materials.append(f"{req.material.name} (Need {needed}, Have {available})")
-                        
-                if missing_materials:
-                    messages.error(request, f"Cannot approve run {run.run_number}. Insufficient materials at {run.manufacturing_plant.name}: {', '.join(missing_materials)}")
-                    return redirect('approvals_inbox')
-                
-                run.status = 'Planned'
-                run.save()
-                from .utils import allocate_stock
-                for req in run.target_product.recipe_items.all():
-                    allocate_stock('production_run', run, req.material, float(req.quantity_required) * float(run.expected_yield), warehouse=run.manufacturing_plant)
-                messages.success(request, f"Production Run {run.run_number} approved and allocated.")
+                if run.actual_yield is not None:
+                    # Variance Approval
+                    fg_batch = Batch.objects.create(
+                        batch_number=f"FG-{run.run_number}-{str(uuid.uuid4())[:4]}",
+                        status='Active',
+                        product=run.target_product,
+                        quantity=run.actual_yield,
+                        produced_in=run,
+                        manufacturing_date=timezone.now().date(),
+                        expiry_date=timezone.now().date() + timedelta(days=365)
+                    )
+                    run.status = 'Completed'
+                    run.save()
+                    OrderTimeline.objects.create(production_run=run, action=f"Variance Approved by Manager. FG Batch created.", user=request.user)
+                    
+                    if run.sales_order:
+                        run.sales_order.status = 'Manufacturing Completed'
+                        run.sales_order.save()
+                        OrderTimeline.objects.create(sales_order=run.sales_order, action=f"Production Run {run.run_number} variance approved and completed.", user=request.user)
+                    
+                    # Notify followers
+                    if run.supervisor:
+                        Notification.objects.create(user=run.supervisor, title=f"Approved: {run.run_number}", message=f"Variance approved for {run.run_number}.", link=f"/operations/manufacture/run/{run.id}/", notification_type='Alert')
+                    for f in run.followers.all():
+                        Notification.objects.create(user=f, title=f"Approved: {run.run_number}", message=f"Variance approved for {run.run_number}.", link=f"/operations/manufacture/run/{run.id}/", notification_type='Alert')
+                    
+                    messages.success(request, f"Production Run {run.run_number} variance approved and completed.")
+                else:
+                    # Pre-production Approval
+                    missing_materials = []
+                    for req in run.target_product.recipe_items.all():
+                        needed = float(req.quantity_required) * float(run.expected_yield)
+                        available = Batch.objects.filter(
+                            material=req.material, 
+                            location__warehouse=run.manufacturing_plant,
+                            status='Active'
+                        ).aggregate(total=Sum(F('quantity') - F('allocated_quantity')))['total'] or 0
+                        if float(available) < needed:
+                            missing_materials.append(f"{req.material.name} (Need {needed}, Have {available})")
+                            
+                    if missing_materials:
+                        messages.error(request, f"Cannot approve run {run.run_number}. Insufficient materials at {run.manufacturing_plant.name}: {', '.join(missing_materials)}")
+                        return redirect('approvals_inbox')
+                    
+                    run.status = 'Planned'
+                    run.save()
+                    from .utils import allocate_stock
+                    for req in run.target_product.recipe_items.all():
+                        allocate_stock('production_run', run, req.material, float(req.quantity_required) * float(run.expected_yield), warehouse=run.manufacturing_plant)
+                    messages.success(request, f"Production Run {run.run_number} approved and allocated.")
             elif action == 'reject':
-                run.status = 'Cancelled'
-                run.save()
-                messages.warning(request, f"Production Run {run.run_number} rejected.")
+                if run.actual_yield is not None:
+                    run.status = 'InProgress'
+                    run.save()
+                    OrderTimeline.objects.create(production_run=run, action=f"Variance Approval Rejected.", user=request.user)
+                    if run.supervisor:
+                        Notification.objects.create(user=run.supervisor, title=f"Rejected: {run.run_number}", message=f"Variance rejected for {run.run_number}. Rework required.", link=f"/operations/manufacture/run/{run.id}/", notification_type='Alert')
+                    messages.warning(request, f"Production Run {run.run_number} variance rejected. Returned to In Progress.")
+                else:
+                    run.status = 'Cancelled'
+                    run.save()
+                    messages.warning(request, f"Production Run {run.run_number} rejected.")
                 
         elif item_type == 'purchase_order':
             po = get_object_or_404(PurchaseOrder, id=item_id)
@@ -2613,6 +2667,9 @@ def approvals_inbox_view(request):
         elif t.shipment and f"ship_{t.shipment.id}" not in seen:
             item = {'type': 'shipment', 'obj': t.shipment, 'timestamp': t.timestamp, 'status': t.shipment.get_status_display()}
             seen.add(f"ship_{t.shipment.id}")
+        elif t.production_run and f"run_{t.production_run.id}" not in seen:
+            item = {'type': 'production_run', 'obj': t.production_run, 'timestamp': t.timestamp, 'status': t.production_run.status}
+            seen.add(f"run_{t.production_run.id}")
             
         if item:
             unified_history.append(item)
@@ -2864,7 +2921,6 @@ def shipment_detail_view(request, pk):
                 if req_qty_str:
                     rcv = float(req_qty_str)
                     item.received_quantity = rcv
-                    from django.utils import timezone
                     item.date_confirmed = timezone.now()
                     item.save()
                     if rcv != float(item.quantity):
@@ -3265,8 +3321,6 @@ def so_allocate_view(request, pk):
                         pr = ProductionRun.objects.filter(sales_order=so, target_product=item.product).first()
                         if not pr:
                             run_number = f"PR-{so.so_number}-{item.product.sku}"
-                            from django.utils import timezone
-                            from datetime import timedelta
                             ProductionRun.objects.create(
                                 run_number=run_number,
                                 target_product=item.product,
@@ -3428,7 +3482,6 @@ def production_run_allocate_view(request, pk):
                     origin_warehouse = Warehouse.objects.get(id=origin_wh_id) if origin_wh_id else None
                     
                     # Generate unique tracking number
-                    import uuid
                     tracking = f"SHP-AUTO-{str(uuid.uuid4())[:8].upper()}"
                     
                     shipment = Shipment.objects.create(
@@ -3466,9 +3519,8 @@ def production_run_allocate_view(request, pk):
 
 @login_required
 def production_run_detail_view(request, pk):
-    from .models import ProductionRun, Shipment, RunMaterialUsage, Batch, SalesOrder, Product
+    from .models import ProductionRun, Shipment, RunMaterialUsage, Batch, SalesOrder, Product, CustomUser
     from decimal import Decimal
-    from django.utils import timezone
     run = get_object_or_404(ProductionRun, pk=pk)
     linked_shipments = run.linked_shipments.all()
     
@@ -3538,17 +3590,50 @@ def production_run_detail_view(request, pk):
                             
                 # 2. Check for supervisor sign-off if variance > 3%
                 if has_high_variance:
-                    # In a real system, we'd transition to "Pending Sign-off".
-                    # For now, just mark it and proceed, or we could require a supervisor PIN.
-                    # Let's just record that it had high variance in the remarks.
+                    approver_id = request.POST.get('approver_id')
+                    if approver_id:
+                        run.assigned_to_id = approver_id
+                    follower_ids = request.POST.getlist('follower_ids')
                     run.signoff_reason = request.POST.get('variance_remark', 'High variance recorded.')
-                    run.supervisor_signoff = request.user
+                    run.status = 'Pending Approval'
+                    fg_qty = request.POST.get('actual_yield')
+                    if fg_qty:
+                        run.actual_yield = Decimal(fg_qty)
+                    run.save()
+                    
+                    if follower_ids:
+                        run.followers.set(follower_ids)
+                        
+                    if run.assigned_to:
+                        Notification.objects.create(
+                            user=run.assigned_to,
+                            title=f"Variance Approval Required: {run.run_number}",
+                            message=f"Production Run {run.run_number} exceeded 3% material variance. Review required.",
+                            link=f"/operations/approvals/",
+                            notification_type='Approval'
+                        )
+                    for follower_id in follower_ids:
+                        Notification.objects.create(
+                            user_id=follower_id,
+                            title=f"Following: {run.run_number}",
+                            message=f"Production Run {run.run_number} is pending variance approval.",
+                            link=f"/operations/manufacture/run/{run.id}/",
+                            notification_type='Alert'
+                        )
+                    
+                    from .models import OrderTimeline
+                    OrderTimeline.objects.create(
+                        production_run=run, 
+                        action=f"Production Run {run.run_number} submitted for Variance Approval.", 
+                        user=request.user
+                    )
+                        
+                    messages.info(request, f"Production Run {run.run_number} submitted for Variance Approval.")
+                    return redirect('production_run_detail', pk=pk)
             
                 # 3. Create Finished Goods Batch
                 fg_qty = request.POST.get('actual_yield')
                 if fg_qty:
-                    import uuid
-                    from datetime import timedelta
                     fg_batch = Batch.objects.create(
                         batch_number=f"FG-{run.run_number}-{str(uuid.uuid4())[:4]}",
                         status='Active',
@@ -3562,7 +3647,8 @@ def production_run_detail_view(request, pk):
                 # 4. Finalize Run
                 run.status = 'Completed'
                 run.exact_end_time = timezone.now()
-                # run.actual_yield = Decimal(fg_qty) # If actual_yield field existed
+                if fg_qty:
+                    run.actual_yield = Decimal(fg_qty)
                 run.save()
                 
                 # 5. Update linked Sales Order if it exists
@@ -3575,6 +3661,11 @@ def production_run_detail_view(request, pk):
                         action=f"Production Run {run.run_number} completed. FG batch created.", 
                         user=request.user
                     )
+                    OrderTimeline.objects.create(
+                        production_run=run, 
+                        action=f"Production Run {run.run_number} completed.", 
+                        user=request.user
+                    )
                     
             messages.success(request, f"Production Run {run.run_number} completed successfully!")
             return redirect('production_run_detail', pk=pk)
@@ -3584,7 +3675,9 @@ def production_run_detail_view(request, pk):
         'linked_shipments': linked_shipments,
         'all_shipments_arrived': all_shipments_arrived,
         'pending_shipments_count': pending_shipments_count,
-        'bom_materials': bom_materials
+        'bom_materials': bom_materials,
+        'managers': CustomUser.objects.filter(role__in=['Admin', 'Manager']),
+        'all_users': CustomUser.objects.all()
     })
 
 @login_required
