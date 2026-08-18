@@ -186,44 +186,6 @@
     {% endif %}
 </section>
 
-<!-- SECTION 2: BOM Readiness Cards with Max Producible -->
-<section style="margin-bottom:2rem;" class="animate-fade-in-up">
-    <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700; margin-bottom:1rem;">Bill of Materials - Raw Material Inventory</h3>
-    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:1.25rem;">
-        {% for r in recipe_readiness %}
-        <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.25rem;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
-                <h4 style="font-family:'Outfit',sans-serif; font-size:1rem; font-weight:700;">{{ r.product.name }}</h4>
-                {% if r.is_ready %}<span class="badge badge-emerald">BOM Ready</span>
-                {% else %}<span class="badge badge-rose">Shortage</span>{% endif %}
-            </div>
-            <p style="font-size:0.78rem; color:var(--text-muted); margin-bottom:0.75rem;">SKU: {{ r.product.sku }}</p>
-            <div style="background:{% if r.is_ready %}rgba(16,185,129,0.07){% else %}rgba(239,68,68,0.06){% endif %}; border-radius:8px; padding:0.6rem 0.85rem; margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem;">
-                <div>
-                    <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em;">Max Producible</div>
-                    <div style="font-size:1.1rem; font-weight:800; color:{% if r.is_ready %}#059669{% else %}#dc2626{% endif %};">{{ r.max_producible }} units</div>
-                </div>
-            </div>
-            <div style="background:#f8fafc; border-radius:8px; padding:0.75rem;">
-                <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); margin-bottom:0.4rem; text-transform:uppercase; letter-spacing:0.04em;">Materials (per unit)</div>
-                {% for item in r.items %}
-                <div style="display:flex; justify-content:space-between; font-size:0.82rem; margin-bottom:0.3rem; align-items:center;">
-                    <span>{{ item.material.name }}</span>
-                    <span style="display:flex; align-items:center; gap:0.35rem;">
-                        <span style="color:var(--text-muted);">{{ item.available|floatformat:1 }} / {{ item.required|floatformat:1 }} {{ item.material.unit_of_measure }}</span>
-                        {% if item.sufficient %}<span style="color:#059669; font-weight:700;">OK</span>
-                        {% else %}<span style="color:#ef4444; font-weight:700;">Low</span>{% endif %}
-                    </span>
-                </div>
-                {% empty %}
-                <div style="font-size:0.8rem; color:var(--text-muted);">No materials in recipe.</div>
-                {% endfor %}
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-</section>
-
 <!-- SECTION 3: Production Runs Ledger -->
 <div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:2rem;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
@@ -234,13 +196,13 @@
         <table class="data-table" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
-                    <th style="padding:0.75rem 1rem;">Run #</th>
-                    <th style="padding:0.75rem 1rem;">Product</th>
+                    <th style="padding:0.75rem 1rem;"><a href="?sort={% if sort_by == 'run_number' %}-run_number{% else %}run_number{% endif %}&page_size={{ page_size }}" style="color:inherit; text-decoration:none;">Run # {% if sort_by == 'run_number' %}▲{% elif sort_by == '-run_number' %}▼{% endif %}</a></th>
+                    <th style="padding:0.75rem 1rem;"><a href="?sort={% if sort_by == 'target_product__name' %}-target_product__name{% else %}target_product__name{% endif %}&page_size={{ page_size }}" style="color:inherit; text-decoration:none;">Product {% if sort_by == 'target_product__name' %}▲{% elif sort_by == '-target_product__name' %}▼{% endif %}</a></th>
                     <th style="padding:0.75rem 1rem;">Expected Yield</th>
                     <th style="padding:0.75rem 1rem;">Sales Order</th>
                     <th style="padding:0.75rem 1rem;">Plant</th>
                     <th style="padding:0.75rem 1rem;">Supervisor</th>
-                    <th style="padding:0.75rem 1rem;">Status</th>
+                    <th style="padding:0.75rem 1rem;"><a href="?sort={% if sort_by == 'status' %}-status{% else %}status{% endif %}&page_size={{ page_size }}" style="color:inherit; text-decoration:none;">Status {% if sort_by == 'status' %}▲{% elif sort_by == '-status' %}▼{% endif %}</a></th>
                     <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
                 </tr>
             </thead>
@@ -302,7 +264,75 @@
             </tbody>
         </table>
     </div>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem; padding:0 0.5rem; font-size:0.85rem; color:var(--text-muted);">
+        <div>
+            Showing {{ runs.start_index }} to {{ runs.end_index }} of {{ runs.paginator.count }} entries
+        </div>
+        <div style="display:flex; align-items:center; gap:1rem;">
+            <form method="get" style="display:inline-block;">
+                <input type="hidden" name="sort" value="{{ sort_by }}">
+                <label>Rows per page:</label>
+                <select name="page_size" onchange="this.form.submit()" class="form-select" style="padding:0.2rem 0.5rem; border-radius:4px; border:1px solid var(--border-light); font-size:0.85rem;">
+                    <option value="15" {% if page_size == 15 %}selected{% endif %}>15</option>
+                    <option value="30" {% if page_size == 30 %}selected{% endif %}>30</option>
+                    <option value="50" {% if page_size == 50 %}selected{% endif %}>50</option>
+                    <option value="1000" {% if page_size == 1000 %}selected{% endif %}>All</option>
+                </select>
+            </form>
+            <div style="display:flex; gap:0.5rem;">
+                {% if runs.has_previous %}
+                    <a href="?page={{ runs.previous_page_number }}&sort={{ sort_by }}&page_size={{ page_size }}" class="btn btn-secondary" style="padding:0.2rem 0.5rem;">Prev</a>
+                {% else %}
+                    <span class="btn btn-secondary" style="padding:0.2rem 0.5rem; opacity:0.5; cursor:not-allowed;">Prev</span>
+                {% endif %}
+                
+                {% if runs.has_next %}
+                    <a href="?page={{ runs.next_page_number }}&sort={{ sort_by }}&page_size={{ page_size }}" class="btn btn-secondary" style="padding:0.2rem 0.5rem;">Next</a>
+                {% else %}
+                    <span class="btn btn-secondary" style="padding:0.2rem 0.5rem; opacity:0.5; cursor:not-allowed;">Next</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
 </div>
+
+<!-- SECTION 2: BOM Readiness Cards with Max Producible -->
+<section style="margin-bottom:2rem;" class="animate-fade-in-up">
+    <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700; margin-bottom:1rem;">Bill of Materials - Raw Material Inventory</h3>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:1.25rem;">
+        {% for r in recipe_readiness %}
+        <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.25rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+                <h4 style="font-family:'Outfit',sans-serif; font-size:1rem; font-weight:700;">{{ r.product.name }}</h4>
+                {% if r.is_ready %}<span class="badge badge-emerald">BOM Ready</span>
+                {% else %}<span class="badge badge-rose">Shortage</span>{% endif %}
+            </div>
+            <p style="font-size:0.78rem; color:var(--text-muted); margin-bottom:0.75rem;">SKU: {{ r.product.sku }}</p>
+            <div style="background:{% if r.is_ready %}rgba(16,185,129,0.07){% else %}rgba(239,68,68,0.06){% endif %}; border-radius:8px; padding:0.6rem 0.85rem; margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem;">
+                <div>
+                    <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em;">Max Producible</div>
+                    <div style="font-size:1.1rem; font-weight:800; color:{% if r.is_ready %}#059669{% else %}#dc2626{% endif %};">{{ r.max_producible }} units</div>
+                </div>
+            </div>
+            <div style="background:#f8fafc; border-radius:8px; padding:0.75rem;">
+                <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); margin-bottom:0.4rem; text-transform:uppercase; letter-spacing:0.04em;">Materials (per unit)</div>
+                {% for item in r.items %}
+                <div style="display:flex; justify-content:space-between; font-size:0.82rem; margin-bottom:0.3rem; align-items:center;">
+                    <span>{{ item.material.name }}</span>
+                    <span style="display:flex; align-items:center; gap:0.35rem;">
+                        <span style="color:var(--text-muted);">{{ item.available|floatformat:1 }} / {{ item.required|floatformat:1 }} {{ item.material.unit_of_measure }}</span>
+                        {% if item.sufficient %}<span style="color:#059669; font-weight:700;">OK</span>
+                        {% else %}<span style="color:#ef4444; font-weight:700;">Low</span>{% endif %}
+                    </span>
+                </div>
+                {% empty %}
+                <div style="font-size:0.8rem; color:var(--text-muted);">No materials in recipe.</div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
 
 <!-- SECTION 2.5: Production Run Calendar -->
 <section class="animate-fade-in-up" style="margin-bottom:2rem; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">

@@ -52,7 +52,7 @@
         {% for item in items %}
         <tr>
             <td style="text-align:center;"><div class="checkbox"></div></td>
-            <td>{{ item.batch.location.warehouse.name }} - {{ item.batch.location.name|default:"-" }}</td>
+            <td>{{ item.batch.location|default:"-" }}</td>
             <td>{{ item.material.name }}<br><small>{{ item.material.sku }}</small></td>
             <td><strong>{{ item.batch.batch_number }}</strong><br><small>Exp: {{ item.batch.expiry_date }}</small></td>
             <td style="text-align:right; font-weight:bold;">{{ item.quantity|floatformat:2 }} {{ item.material.unit_of_measure }}</td>

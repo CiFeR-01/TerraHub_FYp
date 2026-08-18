@@ -341,16 +341,57 @@ def warehouse_inventory_view(request):
 
 @login_required
 def batch_detail_view(request, batch_number):
-    from django.shortcuts import get_object_or_404
+    from django.shortcuts import get_object_or_404, redirect
     batch = get_object_or_404(Batch.objects.select_related(
-        'material', 'product', 'location', 'location__warehouse', 'purchase_order', 'produced_in', 'produced_in__manufacturing_plant'
+        'material', 'product', 'purchase_order', 'produced_in', 'produced_in__manufacturing_plant'
     ), batch_number=batch_number)
     
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'update_batch':
+            new_status = request.POST.get('status')
+            new_expiry = request.POST.get('expiry_date')
+            new_location_id = request.POST.get('location_id')
+            
+            changes = []
+            if new_status and batch.status != new_status:
+                changes.append(f"Status changed to {new_status}")
+                batch.status = new_status
+            
+            if new_expiry:
+                from datetime import datetime
+                parsed_expiry = datetime.strptime(new_expiry, '%Y-%m-%d').date()
+                if batch.expiry_date != parsed_expiry:
+                    changes.append(f"Expiry updated to {new_expiry}")
+                    batch.expiry_date = parsed_expiry
+                    
+            new_location = request.POST.get('location')
+            if new_location is not None:
+                new_location = new_location.strip()
+                if batch.location != new_location:
+                    batch.location = new_location
+                    changes.append("Location updated")
+                    
+            if changes:
+                batch.save()
+                RegistryLog.objects.create(
+                    action_type='Adjusted',
+                    item_name=batch.batch_number,
+                    quantity_changed=0,
+                    user=request.user,
+                    notes=", ".join(changes)
+                )
+                messages.success(request, "Batch details updated successfully.")
+            return redirect('batch_detail', batch_number=batch.batch_number)
+
     logs = RegistryLog.objects.filter(item_name__icontains=batch.batch_number).select_related('user', 'warehouse').order_by('-timestamp')
+    locations = WarehouseLocation.objects.all().select_related('warehouse').order_by('warehouse__name', 'zone_name')
     
     context = {
         'batch': batch,
         'logs': logs,
+        'locations': locations,
+        'statuses': Batch.STATUS_CHOICES,
     }
     return render(request, 'batch_detail.html', context)
 
@@ -2201,6 +2242,30 @@ def manufacturing_view(request):
     runs = ProductionRun.objects.select_related('target_product', 'supervisor', 'manufacturing_plant', 'sales_order').order_by('-id')
     if loc_filter:
         runs = runs.filter(manufacturing_plant_id=loc_filter)
+
+    sort_by = request.GET.get('sort', '-id')
+    if sort_by in ['run_number', '-run_number', 'target_product__name', '-target_product__name', 'status', '-status', 'start_time', '-start_time']:
+        runs = runs.order_by(sort_by)
+
+    from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
+    page_size = request.GET.get('page_size', 15)
+    try:
+        page_size = int(page_size)
+    except ValueError:
+        page_size = 15
+
+    if page_size > 0:
+        paginator = Paginator(runs, page_size)
+        page = request.GET.get('page', 1)
+        try:
+            runs_page = paginator.page(page)
+        except PageNotAnInteger:
+            runs_page = paginator.page(1)
+        except EmptyPage:
+            runs_page = paginator.page(paginator.num_pages)
+    else:
+        runs_page = runs
+
     products = Product.objects.all()
     plants = Warehouse.objects.filter(location_type='Manufacturing')
     if not plants.exists():
@@ -2273,17 +2338,20 @@ def manufacturing_view(request):
                 'bom_ready': all(r['sufficient'] for r in bom_rows),
                 'existing_run': existing_run,
             })
-        so_queue.append({
-            'so': so,
-            'items': so_items,
-            'all_ready': all(i['bom_ready'] for i in so_items),
-        })
+        if any(not i['existing_run'] for i in so_items):
+            so_queue.append({
+                'so': so,
+                'items': so_items,
+                'all_ready': all(i['bom_ready'] for i in so_items),
+            })
 
     context = {
-        'runs': runs,
+        'runs': runs_page,
         'products': products,
         'plants': plants,
         'loc_filter': loc_filter,
+        'sort_by': sort_by,
+        'page_size': page_size,
         'recipe_readiness': recipe_readiness,
         'so_queue': so_queue,
         'so_status_choices': SalesOrder.STATUS_CHOICES,
@@ -2739,6 +2807,8 @@ def shipment_detail_view(request, pk):
                             batch=batch,
                             quantity=qty_val
                         )
+                        OrderTimeline.objects.create(shipment=shipment, action=f"Added item {mat.sku if mat else prod.sku} (Qty: {qty_val}).", user=request.user)
+                        messages.success(request, "Item added to shipment.")
                         # Allocation Logic (Lock Stock)
                         from .models import StockAllocation
                         qty_dec = Decimal(str(qty_val))
@@ -2756,6 +2826,7 @@ def shipment_detail_view(request, pk):
                             batch.allocated_quantity += qty_dec
                             batch.save(update_fields=['allocated_quantity'])
                             StockAllocation.objects.create(batch=batch, shipment=shipment, quantity=qty_dec)
+                        OrderTimeline.objects.create(shipment=shipment, action=f"Added item {mat.sku if mat else prod.sku} (Qty: {qty_val}) and locked stock.", user=request.user)
                         messages.success(request, "Item added and stock locked.")
                 else:
                     ShipmentItem.objects.create(
@@ -2787,6 +2858,7 @@ def shipment_detail_view(request, pk):
                             batch.allocated_quantity -= deduct
                             batch.save(update_fields=['allocated_quantity'])
                     item.delete()
+                    OrderTimeline.objects.create(shipment=shipment, action=f"Removed item from shipment.", user=request.user)
                     messages.success(request, "Item removed and stock lock released.")
             except Exception as e:
                 messages.error(request, f"Error removing item: {e}")
@@ -2797,18 +2869,47 @@ def shipment_detail_view(request, pk):
             origin_id = request.POST.get('origin_warehouse_id')
             dest_id = request.POST.get('destination_warehouse_id')
             
-            if eta:
-                shipment.expected_eta_date = eta
-            if arrival:
-                shipment.actual_arrival_date = arrival
-            if origin_id:
-                shipment.origin_warehouse_id = origin_id
-            if dest_id:
-                shipment.destination_warehouse_id = dest_id
+            # New Logistics Fields
+            client_address = request.POST.get('client_address')
+            client_contact = request.POST.get('client_contact')
+            external_tracking_id = request.POST.get('external_tracking_id')
+            departure_datetime = request.POST.get('departure_datetime')
+            
+            core_changed = False
+            
+            # Check string fields
+            if client_address is not None and (shipment.client_address or "") != client_address.strip(): core_changed = True
+            if client_contact is not None and (shipment.client_contact or "") != client_contact.strip(): core_changed = True
+            if external_tracking_id is not None and (shipment.external_tracking_id or "") != external_tracking_id.strip(): core_changed = True
+            
+            # Check FK fields
+            if origin_id is not None and str(shipment.origin_warehouse_id or "") != origin_id: core_changed = True
+            if dest_id is not None and str(shipment.destination_warehouse_id or "") != dest_id: core_changed = True
+            
+            # Check departure_datetime
+            if departure_datetime:
+                current_dep = shipment.departure_datetime.strftime('%Y-%m-%dT%H:%M') if shipment.departure_datetime else ""
+                if current_dep != departure_datetime: core_changed = True
+                shipment.departure_datetime = departure_datetime
+            
+            if eta: shipment.expected_eta_date = eta
+            if arrival: shipment.actual_arrival_date = arrival
+            if origin_id: shipment.origin_warehouse_id = origin_id
+            if dest_id: shipment.destination_warehouse_id = dest_id
+            if client_address is not None: shipment.client_address = client_address
+            if client_contact is not None: shipment.client_contact = client_contact
+            if external_tracking_id is not None: shipment.external_tracking_id = external_tracking_id
+                
+            if core_changed and shipment.status in ['Preparing', 'Dispatched', 'Delayed']:
+                shipment.status = 'Logistics Review'
+                messages.warning(request, "Core logistics details were modified. The shipment has been returned to Logistics Review and must be re-approved.")
+                OrderTimeline.objects.create(shipment=shipment, action="Core logistics details modified. Status reverted to Logistics Review.", user=request.user)
+            else:
+                messages.success(request, "Shipment route info saved.")
+                OrderTimeline.objects.create(shipment=shipment, action="Updated shipment logistics tracking details.", user=request.user)
                 
             shipment.last_edited_by = request.user
             shipment.save()
-            messages.success(request, "Shipment route info saved.")
             
         elif action == 'submit_to_logistics':
             shipment.status = 'Logistics Review'
@@ -2837,12 +2938,22 @@ def shipment_detail_view(request, pk):
                             batch.save(update_fields=['reserved_quantity'])
                             
                         elif shipment.sales_order:
+                            # If we moved allocations to the shipment
                             alloc = StockAllocation.objects.filter(shipment=shipment, batch=batch).first()
                             if alloc:
                                 deduct = min(qty_dec, alloc.quantity)
                                 alloc.quantity -= deduct
                                 if alloc.quantity <= 0: alloc.delete()
                                 else: alloc.save(update_fields=['quantity'])
+                            
+                            # For auto-drafted SO shipments, the allocations might still be on the sales order
+                            so_alloc = StockAllocation.objects.filter(sales_order=shipment.sales_order, batch=batch).first()
+                            if so_alloc:
+                                deduct = min(qty_dec, so_alloc.quantity)
+                                so_alloc.quantity -= deduct
+                                if so_alloc.quantity <= 0: so_alloc.delete()
+                                else: so_alloc.save(update_fields=['quantity'])
+                            
                             batch.allocated_quantity -= qty_dec
                             if batch.allocated_quantity < 0: batch.allocated_quantity = 0
                             batch.save(update_fields=['allocated_quantity'])
@@ -2863,6 +2974,9 @@ def shipment_detail_view(request, pk):
             approver_id = request.POST.get('approver_id')
             if shipment.direction == 'Transfer' and (not shipment.origin_warehouse or not shipment.destination_warehouse):
                 messages.error(request, "Origin and Destination facilities MUST be selected before submitting for approval.")
+                route_error = True
+            elif shipment.direction == 'Outbound' and (not shipment.client_address or not shipment.client_contact):
+                messages.error(request, "Client Address and Contact MUST be completed before submitting an outbound shipment for approval.")
                 route_error = True
             elif not approver_id:
                 messages.error(request, "You must select a Manager for approval.")
@@ -2909,6 +3023,10 @@ def shipment_detail_view(request, pk):
                 
         elif action == 'update_operational_status':
             new_st = request.POST.get('status')
+            if new_st == 'Dispatched' and shipment.direction == 'Outbound':
+                if not shipment.external_tracking_id or not shipment.departure_datetime:
+                    messages.error(request, "Tracking ID and Departure Date/Time MUST be provided before marking this shipment as Dispatched.")
+                    return redirect('shipment_detail', pk=shipment.pk)
             if new_st in ['Preparing', 'Dispatched', 'Delayed', 'Arrived', 'Completed', 'Discrepant']:
                 shipment.status = new_st
                 shipment.save()
@@ -3288,9 +3406,14 @@ def so_allocate_view(request, pk):
             from decimal import Decimal
             
             with transaction.atomic():
+                total_unfulfilled_across_so = Decimal('0')
                 for item in so.items.all():
                     qty_needed = Decimal(str(item.quantity_ordered))
-                    allocated = Decimal('0')
+                    
+                    prev_allocs = StockAllocation.objects.filter(sales_order=so, batch__product=item.product)
+                    prev_allocated = sum(a.quantity for a in prev_allocs) if prev_allocs else Decimal('0')
+                    
+                    allocated_now = Decimal('0')
                     
                     # Read inputs like batch_qty_123 where 123 is batch ID
                     for key, val in request.POST.items():
@@ -3312,9 +3435,12 @@ def so_allocate_view(request, pk):
                                 )
                                 batch.allocated_quantity += allocate_amt
                                 batch.save()
-                                allocated += allocate_amt
+                                allocated_now += allocate_amt
                                 
-                    unfulfilled = qty_needed - allocated
+                    total_allocated = prev_allocated + allocated_now
+                    unfulfilled = qty_needed - total_allocated
+                    total_unfulfilled_across_so += unfulfilled
+                    
                     if unfulfilled > 0:
                         # Push remaining to manufacturing queue
                         # Check if a production run already exists for this SO and product
@@ -3331,9 +3457,14 @@ def so_allocate_view(request, pk):
                                 end_time=timezone.now() + timedelta(days=1, hours=4)
                             )
                 
-                so.status = 'Awaiting Acknowledgement'
+                if total_unfulfilled_across_so <= Decimal('0'):
+                    so.status = 'Ready to Ship'
+                    OrderTimeline.objects.create(sales_order=so, action="Allocation completed. Status updated to Ready to Ship.", user=request.user)
+                else:
+                    so.status = 'Awaiting Acknowledgement'
+                    OrderTimeline.objects.create(sales_order=so, action="Partial allocation completed. Shortages sent to manufacturing.", user=request.user)
                 so.save()
-                OrderTimeline.objects.create(sales_order=so, action=f"Manual allocation completed. Sent to manufacturing.", user=request.user)
+                
                 messages.success(request, f"Allocation complete for {so.so_number}.")
                 return redirect('so_detail', pk=so.pk)
 
@@ -3375,7 +3506,53 @@ def so_allocate_view(request, pk):
         
     return render(request, 'so_allocate.html', {'so': so, 'allocation_data': allocation_data})
 
+@login_required
+def so_create_shipment_view(request, pk):
+    so = get_object_or_404(SalesOrder, pk=pk)
+    if request.method == 'POST':
+        from .models import Shipment, ShipmentItem
+        if so.status != 'Ready to Ship':
+            messages.error(request, "Order is not ready to ship.")
+            return redirect('so_detail', pk=so.pk)
+            
+        with transaction.atomic():
+            tracking_number = generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4)
+            
+            origin_wh = None
+            allocations = so.allocations.select_related('batch__product').all()
+            if so.origin_warehouse:
+                origin_wh = so.origin_warehouse
 
+            shipment = Shipment.objects.create(
+                tracking_number=tracking_number,
+                sales_order=so,
+                direction='Outbound',
+                status='Draft',
+                origin_warehouse=origin_wh
+            )
+            
+            # Create shipment items based on allocated stock
+            for alloc in allocations:
+                ShipmentItem.objects.create(
+                    shipment=shipment,
+                    product=alloc.batch.product,
+                    batch=alloc.batch,
+                    quantity=alloc.quantity
+                )
+            
+            # Note: We do NOT change so.status to 'Shipped' here.
+            # It remains 'Ready to Ship' until logistics dispatches it.
+            
+            OrderTimeline.objects.create(
+                sales_order=so, 
+                action=f"Auto-drafted logistics shipment {tracking_number}.", 
+                user=request.user
+            )
+            
+            messages.success(request, f"Logistics Order {tracking_number} drafted successfully.")
+            return redirect('shipment_detail', pk=shipment.pk)
+            
+    return redirect('so_detail', pk=so.pk)
 
 @login_required
 def production_run_allocate_view(request, pk):

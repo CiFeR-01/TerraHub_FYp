@@ -214,7 +214,7 @@
         <div class="table-container" style="max-height: 200px; margin-bottom: 1.5rem;">
             {% for batch in active_batches %}
             <div class="list-item">
-                <span><strong style="color: #38bdf8;">{{ batch.batch_number }}</strong> @ {{ batch.location.warehouse.name|default:"Unassigned" }}</span>
+                <span><strong style="color: #38bdf8;">{{ batch.batch_number }}</strong> @ {{ batch.location|default:"Unassigned" }}</span>
                 <span>
                     <strong>{{ batch.quantity|floatformat:2 }}</strong>
                     {% if batch.days_until_expiry %}

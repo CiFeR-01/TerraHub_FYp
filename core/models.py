@@ -176,7 +176,7 @@ class Batch(models.Model):
     produced_in = models.ForeignKey(ProductionRun, on_delete=models.SET_NULL, null=True, blank=True, related_name='produced_batches')
     manufacturing_date = models.DateField()
     expiry_date = models.DateField()
-    location = models.ForeignKey(WarehouseLocation, on_delete=models.SET_NULL, null=True, blank=True)
+    location = models.CharField(max_length=255, null=True, blank=True, help_text='Manual location entry')
     allocated_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     reserved_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
@@ -325,6 +325,12 @@ class Shipment(models.Model):
     origin_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='outbound_shipments')
     destination_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='inbound_shipments')
     external_origin = models.CharField(max_length=255, null=True, blank=True, help_text="For inbound from supplier")
+    
+    # Logistics Tracking Details
+    client_address = models.TextField(null=True, blank=True, help_text="Destination address for outbound shipments")
+    client_contact = models.CharField(max_length=255, null=True, blank=True, help_text="Contact person and phone/email")
+    external_tracking_id = models.CharField(max_length=255, null=True, blank=True, help_text="Real logistics company tracking ID")
+    departure_datetime = models.DateTimeField(null=True, blank=True)
     
     dispatch_date = models.DateField(null=True, blank=True)
     expected_eta_date = models.DateField(null=True, blank=True)

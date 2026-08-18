@@ -37,6 +37,7 @@ urlpatterns = [
     path('operations/sales-orders/', views.sales_order_list_view, name='so_list'),
     path('operations/orders/so/<int:pk>/', views.so_detail_view, name='so_detail'),
     path('operations/orders/so/<int:pk>/allocate/', views.so_allocate_view, name='so_allocate'),
+    path('operations/orders/so/<int:pk>/create_shipment/', views.so_create_shipment_view, name='so_create_shipment'),
     path('operations/purchase-orders/', views.purchase_order_list_view, name='po_list'),
     path('operations/orders/po/<int:pk>/', views.po_detail_view, name='po_detail'),
     path('operations/shipments/', views.shipments_view, name='shipments'),
