@@ -35,7 +35,21 @@
             {% endif %}
         </div>
     </div>
-    <div class="header-action-tray">
+      <div class="header-action-tray">
+          {% if shipment.status not in 'Cancelled,Completed,Arrived,Delivered' %}
+          <form method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to scrap this shipment? This will unlink it from manufacturing.');">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="scrap_shipment">
+              <button type="submit" class="btn btn-secondary" style="color: var(--rose-600); border-color: var(--rose-200); background: var(--rose-50);">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin-right:0.4rem;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                  Scrap Shipment
+              </button>
+          </form>
+          {% endif %}
+          <a href="{% url 'shipment_pick_list' shipment.pk %}" target="_blank" class="btn btn-secondary">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin-right:0.4rem;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+            Print Pick List
+        </a>
         <form method="POST">
             {% csrf_token %}
             <input type="hidden" name="action" value="toggle_follow">
@@ -111,24 +125,29 @@
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Status</div>
             <div style="font-size:0.95rem; font-weight:600;">
-                <span class="badge {% if shipment.status == 'Draft' %}badge-sky{% elif shipment.status in 'Pending Approval,Logistics Review' %}badge-amber{% elif shipment.status == 'Discrepant' %}badge-rose{% else %}badge-emerald{% endif %}">
+                <span class="badge {% if shipment.status not in 'Cancelled,Completed,Arrived,Delivered' %}badge-slate{% elif shipment.status in 'Pending Approval,Delayed' %}badge-amber{% elif shipment.status in 'Preparing,Dispatched' %}badge-sky{% elif shipment.status in 'Arrived,Completed' %}badge-emerald{% elif shipment.status in 'Cancelled,Discrepant,Rejected' %}badge-rose{% else %}badge-slate{% endif %}">
                     {{ shipment.get_status_display }}
                 </span>
             </div>
         </div>
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Requested By</div>
-            <div style="font-size:0.95rem; font-weight:600;">{{ requested_by.get_full_name|default:requested_by.username|default:"System" }}</div>
+            <div style="font-size:0.95rem; font-weight:600;">
+                {% if requested_by %}{{ requested_by.get_full_name|default:requested_by.username }}{% else %}System{% endif %}
+            </div>
         </div>
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Coordinator</div>
-            <div style="font-size:0.95rem; font-weight:600;">{{ coordinator.get_full_name|default:coordinator.username|default:"—" }}</div>
+            <div style="font-size:0.95rem; font-weight:600;">
+                {% if coordinator %}{{ coordinator.get_full_name|default:coordinator.username }}{% else %}—{% endif %}
+            </div>
         </div>
     </div>
     
     <hr style="border:0; border-top:1px solid var(--border-light); margin: 1.25rem 0;">
     
-    {% if shipment.status in 'Draft,Logistics Review' %}
+    {% if shipment.status not in 'Cancelled,Completed,Arrived,Delivered' %}
+
     <form method="POST" style="display:grid; grid-template-columns:repeat(4,1fr); gap:1.25rem; align-items:end;">
         {% csrf_token %}
         <input type="hidden" name="action" value="update_route">
@@ -143,7 +162,11 @@
             </select>
         </div>
         
-        <div>
+        <div id="dest-container">
+            {% if shipment.direction == 'Outbound' %}
+            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Address</label>
+            <textarea name="client_address" class="form-input" style="width:100%; padding:0.4rem; resize:none;" rows="1">{{ shipment.client_address|default:"" }}</textarea>
+            {% else %}
             <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Destination</label>
             <select name="destination_warehouse_id" class="form-select" style="width:100%; padding:0.4rem;">
                 <option value="">-- Select Destination --</option>
@@ -151,8 +174,24 @@
                 <option value="{{ w.id }}" {% if shipment.destination_warehouse_id == w.id %}selected{% endif %}>{{ w.name }}</option>
                 {% endfor %}
             </select>
+            {% endif %}
         </div>
         
+        <div>
+            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Contact</label>
+            <input type="text" name="client_contact" value="{{ shipment.client_contact|default:'' }}" placeholder="Phone/Email" class="form-input" style="width:100%; padding:0.4rem;">
+        </div>
+        
+        <div>
+            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">External Tracking ID</label>
+            <input type="text" name="external_tracking_id" value="{{ shipment.external_tracking_id|default:'' }}" class="form-input" style="width:100%; padding:0.4rem;">
+        </div>
+
+        <div>
+            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Departure Date & Time</label>
+            <input type="datetime-local" name="departure_datetime" value="{{ shipment.departure_datetime|date:'Y-m-d\TH:i' }}" class="form-input" style="width:100%; padding:0.4rem;">
+        </div>
+
         <div>
             <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">ETA</label>
             <input type="date" name="eta_date" value="{{ shipment.expected_eta_date|date:'Y-m-d' }}" class="form-input" style="width:100%; padding:0.4rem;">
@@ -162,23 +201,43 @@
             {% if shipment.status == 'Draft' %}
             <button type="submit" class="btn btn-secondary" style="width:100%; padding:0.4rem; font-size:0.85rem;">Save Draft</button>
             {% else %}
-            <button type="submit" class="btn btn-secondary" style="width:100%; padding:0.4rem; font-size:0.85rem;">Save Route</button>
+            <button type="submit" class="btn" style="width:100%; padding:0.4rem; font-size:0.85rem; background:transparent; border:1px solid var(--primary); color:var(--primary); border-radius:6px; font-weight:600;">Update Info</button>
             {% endif %}
         </div>
     </form>
+    {% if shipment.status in 'Preparing,Dispatched,Delayed' %}
+    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.75rem; text-align:left;">
+        <em>Note: Modifying core details will require re-approval from a manager.</em>
+    </div>
+    {% endif %}
     {% else %}
-    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1.25rem;">
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1.25rem; margin-bottom: 1.25rem;">
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Origin</div>
             <div style="font-size:0.95rem; font-weight:600;">{{ shipment.origin_warehouse.name|default:shipment.external_origin|default:"—" }}</div>
         </div>
         <div>
+            {% if shipment.direction == 'Outbound' %}
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Address</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ shipment.client_address|default:"—" }}</div>
+            {% else %}
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Destination</div>
             <div style="font-size:0.95rem; font-weight:600;">{{ shipment.destination_warehouse.name|default:"—" }}</div>
+            {% endif %}
         </div>
         <div>
-            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Dispatch Date</div>
-            <div style="font-size:0.95rem; font-weight:600;">{{ shipment.dispatch_date|default:"—" }}</div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Contact</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ shipment.client_contact|default:"—" }}</div>
+        </div>
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">External Tracking ID</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ shipment.external_tracking_id|default:"—" }}</div>
+        </div>
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1.25rem;">
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Departure Date & Time</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ shipment.departure_datetime|default:"—" }}</div>
         </div>
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">ETA / Arrival</div>
@@ -249,7 +308,7 @@
                         </td>
                         {% endif %}
                         <td style="padding:1rem 1.5rem; text-align:right;">
-                            {% if shipment.status != 'Completed' and shipment.status not in 'Preparing,Dispatched,Delayed,Arrived,Discrepant' %}
+                            {% if shipment.status not in 'Preparing,Dispatched,Delayed,Arrived,Discrepant,Completed' %}
                             <form method="POST" style="display:inline;">
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="remove_item">
@@ -272,7 +331,7 @@
         </div>
         
         <!-- Add Item Form -->
-        {% if shipment.status in 'Draft,Logistics Review' %}
+        {% if shipment.status not in 'Cancelled,Completed,Arrived,Delivered' %}
           <div style="padding: 1.5rem; background:#f8fafc; border-top: 1px solid var(--border-light);">
               <h4 style="margin-top:0; margin-bottom:1rem; font-size:0.95rem;">➕ Add Cargo Line Item</h4>
               <form method="POST" style="display:grid; grid-template-columns: auto 1fr 1.2fr 100px 100px; gap: 1rem; align-items:start;">
@@ -345,7 +404,7 @@
                         {% for b in batches %}
                         <tr class="stock-row" data-mat="{{ b.material.id|default:'' }}" data-prod="{{ b.product.id|default:'' }}" style="border-bottom:1px solid #e2e8f0; display:none;">
                             <td style="padding:0.35rem 0.25rem; font-family:monospace; color:var(--primary);">{{ b.batch_number }}</td>
-                            <td style="padding:0.35rem 0.25rem;">{{ b.location.name|default:"-" }} ({{ b.location.warehouse.name|default:"-" }})</td>
+                            <td style="padding:0.35rem 0.25rem;">{{ b.location.name|default:"-" }} ({{ b.location|default:"Unassigned" }})</td>
                             <td style="padding:0.35rem 0.25rem; text-align:right; font-weight:600;">{{ b.quantity|floatformat:1 }}</td>
                         </tr>
                         {% endfor %}

@@ -72,6 +72,7 @@ class Material(models.Model):
     category = models.CharField(max_length=100)
     UNIT_CHOICES = (('MT', 'Metric Ton'), ('kg', 'Kilograms'), ('L', 'Litres'), ('g', 'Grams'), ('pcs', 'Pieces'))
     unit_of_measure = models.CharField(max_length=20, choices=UNIT_CHOICES, default='MT')
+    is_active = models.BooleanField(default=True)
     safe_storage_days = models.IntegerField(help_text="Days until predictive degradation alert")
     weight_mt_per_unit = models.DecimalField(max_digits=10, decimal_places=4, default=1.0000, help_text="Weight in MT per unit")
     cost_per_unit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
@@ -87,6 +88,7 @@ class Product(models.Model):
     unit_of_measure = models.CharField(max_length=20, choices=UNIT_CHOICES, default='pcs')
     weight_mt_per_unit = models.DecimalField(max_digits=10, decimal_places=4, default=1.0000)
     price_per_unit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    is_active = models.BooleanField(default=True)
 
     def __str__(self):
         return f"{self.sku} - {self.name}"
@@ -112,15 +114,43 @@ class ProductionRun(models.Model):
     run_number = models.CharField(max_length=100, unique=True)
     target_product = models.ForeignKey(Product, on_delete=models.CASCADE)
     expected_yield = models.DecimalField(max_digits=12, decimal_places=2)
+    actual_yield = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Planned')
     supervisor = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)
     sales_order = models.ForeignKey('SalesOrder', on_delete=models.SET_NULL, null=True, blank=True, related_name='production_runs')
     manufacturing_plant = models.ForeignKey('Warehouse', on_delete=models.SET_NULL, null=True, blank=True, related_name='production_runs')
     start_time = models.DateTimeField(null=True, blank=True)
     end_time = models.DateTimeField(null=True, blank=True)
+    
+    # Workflow & Approval Fields
+    assigned_to = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_runs')
+    followers = models.ManyToManyField(CustomUser, related_name='following_runs', blank=True)
+    
+    # New MES Tracking Fields
+    fefo_override_reason = models.TextField(blank=True, null=True)
+    supervisor_signoff = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='signed_off_runs')
+    signoff_reason = models.TextField(blank=True, null=True)
+    exact_start_time = models.DateTimeField(null=True, blank=True)
+    exact_end_time = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"Run {self.run_number} - {self.target_product.sku}"
+
+class RunMaterialUsage(models.Model):
+    production_run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, related_name='material_usages')
+    material = models.ForeignKey(Material, on_delete=models.CASCADE)
+    expected_qty = models.DecimalField(max_digits=12, decimal_places=2)
+    actual_qty = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    variance_pct = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    wastage_reason = models.TextField(blank=True, null=True)
+
+    def save(self, *args, **kwargs):
+        if self.expected_qty and self.expected_qty > 0:
+            self.variance_pct = ((self.actual_qty - self.expected_qty) / self.expected_qty) * 100
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.production_run.run_number} - {self.material.sku} Usage"
 
 class ProductionConsumption(models.Model):
     production_run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, related_name='consumptions')
@@ -146,12 +176,13 @@ class Batch(models.Model):
     produced_in = models.ForeignKey(ProductionRun, on_delete=models.SET_NULL, null=True, blank=True, related_name='produced_batches')
     manufacturing_date = models.DateField()
     expiry_date = models.DateField()
-    location = models.ForeignKey(WarehouseLocation, on_delete=models.SET_NULL, null=True, blank=True)
+    location = models.CharField(max_length=255, null=True, blank=True, help_text='Manual location entry')
     allocated_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    reserved_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
     @property
     def available_quantity(self):
-        return self.quantity - self.allocated_quantity
+        return self.quantity - self.allocated_quantity - self.reserved_quantity
 
     @property
     def days_until_expiry(self):
@@ -281,6 +312,7 @@ class Shipment(models.Model):
         ('Completed', 'Completed'),
         ('Delayed', 'Delayed'),
         ('Discrepant', 'Discrepant (Shortage)'),
+        ('Cancelled', 'Cancelled / Scrapped'),
     )
     tracking_number = models.CharField(max_length=255, unique=True, help_text="Internal Truck Fleet ID or tracking #")
     direction = models.CharField(max_length=50, choices=DIRECTION_CHOICES, default='Inbound')
@@ -293,6 +325,12 @@ class Shipment(models.Model):
     origin_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='outbound_shipments')
     destination_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='inbound_shipments')
     external_origin = models.CharField(max_length=255, null=True, blank=True, help_text="For inbound from supplier")
+    
+    # Logistics Tracking Details
+    client_address = models.TextField(null=True, blank=True, help_text="Destination address for outbound shipments")
+    client_contact = models.CharField(max_length=255, null=True, blank=True, help_text="Contact person and phone/email")
+    external_tracking_id = models.CharField(max_length=255, null=True, blank=True, help_text="Real logistics company tracking ID")
+    departure_datetime = models.DateTimeField(null=True, blank=True)
     
     dispatch_date = models.DateField(null=True, blank=True)
     expected_eta_date = models.DateField(null=True, blank=True)
@@ -308,6 +346,8 @@ class Shipment(models.Model):
 
     assigned_to = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_shipments')
     followers = models.ManyToManyField(CustomUser, blank=True, related_name='followed_shipments')
+    
+    is_auto_generated = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.tracking_number} ({self.status})"
@@ -366,6 +406,7 @@ class OrderTimeline(models.Model):
     purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
     sales_order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
     shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
+    production_run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
     action = models.CharField(max_length=100)
     timestamp = models.DateTimeField(auto_now_add=True)
     user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)

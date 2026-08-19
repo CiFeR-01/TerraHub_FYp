@@ -249,7 +249,7 @@
                         {% endif %}
                     </div>
                     <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
-                        Stored at: {{ batch.location.warehouse.name|default:"N/A" }}
+                        Stored at: {{ batch.location|default:"Unassigned" }}
                     </div>
                 </div>
 
