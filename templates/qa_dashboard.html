@@ -71,7 +71,7 @@
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ b.batch_number }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{% if b.material %}{{ b.material.name }}{% elif b.product %}{{ b.product.name }}{% else %}Batch Item{% endif %}</td>
-                    <td style="padding:0.85rem 1rem;">{% if b.location and b.location.warehouse %}{{ b.location.warehouse.name }}{% else %}Unassigned{% endif %}</td>
+                    <td style="padding:0.85rem 1rem;">{% if b.location and b.location.warehouse %}{{ b.location|default:"Unassigned" }}{% else %}Unassigned{% endif %}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{{ b.quantity|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem;">{{ b.expiry_date }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:700; color:#d97706;">
@@ -134,7 +134,7 @@
                     <td style="padding:0.85rem 1rem; font-weight:700; color:#dc2626;">{{ b.batch_number }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{% if b.material %}{{ b.material.name }}{% elif b.product %}{{ b.product.name }}{% else %}Batch Item{% endif %}</td>
                     <td style="padding:0.85rem 1rem;">{{ b.quantity|floatformat:1 }}</td>
-                    <td style="padding:0.85rem 1rem;">{% if b.location and b.location.warehouse %}{{ b.location.warehouse.name }}{% else %}Unassigned{% endif %}</td>
+                    <td style="padding:0.85rem 1rem;">{% if b.location and b.location.warehouse %}{{ b.location|default:"Unassigned" }}{% else %}Unassigned{% endif %}</td>
                     <td style="padding:0.85rem 1rem;">
                         <form method="post" style="display:inline;">
                             {% csrf_token %}

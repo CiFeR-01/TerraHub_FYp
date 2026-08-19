@@ -80,6 +80,32 @@ function switchTab(tabId) {
             </div>
             {% endfor %}
 
+            <!-- Production Runs (Variance Approvals) -->
+            {% for run in pending_runs %}
+            <div style="background:#fefce8; border:1px solid #fde047; border-radius:10px; padding:1.25rem; margin-bottom:1rem;">
+                <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:#a16207; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Variance Approval</div>
+                        <a href="{% url 'production_run_detail' run.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ run.run_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Product: {{ run.target_product.name }} &middot; Expected: {{ run.expected_yield }} {{ run.target_product.unit_of_measure }} &middot; Actual Yield: {{ run.actual_yield }}</div>
+                    </div>
+                    <span class="badge badge-amber" style="background:#fde047; color:#854d0e;">Pending Approval</span>
+                </div>
+                
+                <div style="background:#fff; border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">
+                    <strong>Variance Remark:</strong> "{{ run.signoff_reason }}"
+                </div>
+                
+                <form method="post" style="display:flex; gap:0.5rem; align-items:center;">
+                    {% csrf_token %}
+                    <input type="hidden" name="item_type" value="production_run">
+                    <input type="hidden" name="item_id" value="{{ run.id }}">
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject (Rework)</button>
+                    <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem; background:#854d0e; border-color:#854d0e;">Approve & Complete</button>
+                </form>
+            </div>
+            {% endfor %}
+
             <!-- Discrepancy Approvals -->
             {% for ship in pending_shipments %}
             <div style="background:#fef2f2; border:1px solid rgba(239,68,68,0.2); border-radius:10px; padding:1.25rem;">
@@ -258,6 +284,8 @@ function switchTab(tabId) {
                 <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">PO: <a href="{% url 'po_detail' item.obj.pk %}" style="color:var(--primary); text-decoration:none;">{{ item.obj.po_number }}</a></div>
                 {% elif item.type == 'shipment' %}
                 <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">Shipment: <a href="{% url 'shipment_detail' item.obj.pk %}" style="color:var(--primary); text-decoration:none;">{{ item.obj.tracking_number }}</a></div>
+                {% elif item.type == 'production_run' %}
+                <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">Production Run: <a href="{% url 'production_run_detail' item.obj.pk %}" style="color:var(--primary); text-decoration:none;">{{ item.obj.run_number }}</a></div>
                 {% endif %}
                 <div style="display:flex; justify-content:space-between;">
                     <span style="color:var(--text-muted); font-size:0.8rem;">Status: {{ item.status }}</span>

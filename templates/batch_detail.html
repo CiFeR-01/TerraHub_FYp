@@ -139,18 +139,7 @@
                     🏢
                 </div>
                 <div>
-                    <div style="font-weight: 600; color: var(--text-main);">{{ batch.location.warehouse.name }}</div>
-                    <div style="font-size: 0.85rem; color: var(--text-muted);">{{ batch.location.warehouse.get_ownership_type_display }}</div>
-                </div>
-            </div>
-            <div style="padding-top: 1rem; border-top: 1px solid var(--border-light); margin-top: 1rem;">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                    <span style="font-size: 0.85rem; color: var(--text-muted);">Zone</span>
-                    <span style="font-weight: 600;">{{ batch.location.zone_name }}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between;">
-                    <span style="font-size: 0.85rem; color: var(--text-muted);">Aisle</span>
-                    <span style="font-weight: 600;">{{ batch.location.aisle }}</span>
+                    <div style="font-weight: 600; color: var(--text-main);">{{ batch.location }}</div>
                 </div>
             </div>
             {% else %}
@@ -179,6 +168,37 @@
             <p style="color: var(--text-muted); font-size: 0.85rem;">Origin data not available (possibly imported).</p>
             {% endif %}
         </div>
+
+        <!-- Edit Details -->
+        <div class="pane-card">
+            <h3 style="margin-bottom: 1rem;">✏️ Edit Details</h3>
+            <form method="POST">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_batch">
+                
+                <div style="margin-bottom: 1rem;">
+                    <label style="display:block; font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Status</label>
+                    <select name="status" class="form-select" style="width:100%; padding:0.5rem;">
+                        {% for st in statuses %}
+                        <option value="{{ st.0 }}" {% if batch.status == st.0 %}selected{% endif %}>{{ st.1 }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div style="margin-bottom: 1rem;">
+                    <label style="display:block; font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Expiry Date</label>
+                    <input type="date" name="expiry_date" value="{{ batch.expiry_date|date:'Y-m-d' }}" class="form-input" style="width:100%; padding:0.5rem;">
+                </div>
+                
+                <div style="margin-bottom: 1rem;">
+                    <label style="display:block; font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Location</label>
+                    <input type="text" name="location" value="{{ batch.location|default:'' }}" class="form-input" style="width:100%; padding:0.5rem;" placeholder="e.g. Port Klang Hub B - Zone A">
+                </div>
+                
+                <button type="submit" class="btn" style="width:100%; padding:0.6rem; background:transparent; border:1px solid var(--primary); color:var(--primary); font-weight:600; border-radius:6px;">Update Details</button>
+            </form>
+        </div>
+
     </div>
 </div>
 {% endblock %}

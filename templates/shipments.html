@@ -97,7 +97,7 @@
                 {% for s in shipments %}
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ s.tracking_number }}</td>
-                    <td style="padding:0.85rem 1rem;"><span class="badge badge-sky">{{ s.get_direction_display }}</span> - <span class="badge badge-emerald">{{ s.status }}</span></td>
+                    <td style="padding:0.85rem 1rem;"><span class="badge badge-sky" style="margin-right:0.3rem;">{{ s.get_direction_display }}</span> <span class="badge {% if s.status in 'Draft,Logistics Review' %}badge-slate{% elif s.status in 'Pending Approval,Delayed' %}badge-amber{% elif s.status in 'Preparing,Dispatched' %}badge-sky{% elif s.status in 'Arrived,Completed' %}badge-emerald{% elif s.status in 'Cancelled,Discrepant,Rejected' %}badge-rose{% else %}badge-slate{% endif %}">{{ s.status|upper }}</span></td>
                     <td style="padding:1rem 1.5rem; font-weight:500;">
                         {{ s.items.count }} Item(s)
                     </td>

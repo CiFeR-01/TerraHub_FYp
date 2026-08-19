@@ -64,7 +64,12 @@
             <tbody>
                 {% for prod in products %}
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
-                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ prod.sku }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">
+                        {{ prod.sku }}
+                        {% if not prod.is_active %}
+                        <span style="display:inline-block; font-size:0.65rem; background:#fee2e2; color:#ef4444; padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">Deactivated</span>
+                        {% endif %}
+                    </td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{{ prod.name }}</td>
                     <td style="padding:0.85rem 1rem; color:var(--text-muted);">{{ prod.description|default:"—" }}</td>
                     <td style="padding:0.85rem 1rem;"><span class="badge badge-sky">{{ prod.get_unit_of_measure_display }}</span></td>
@@ -80,9 +85,21 @@
                         {% endfor %}
                     </td>
                     <td style="padding:0.85rem 1rem; text-align:right;">
-                        <a href="{% url 'product_detail' prod.id %}" class="btn btn-secondary" style="padding:0.35rem 0.65rem; font-size:0.775rem; text-decoration:none; display:inline-block;">
-                            👁 View Details
-                        </a>
+                        <div style="display:flex; justify-content:flex-end; gap:0.5rem; align-items:center;">
+                            {% if request.user.role == 'Admin' or request.user.role == 'Manager' %}
+                            <form method="post" style="display:inline; margin:0;">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="toggle_active">
+                                <input type="hidden" name="product_id" value="{{ prod.id }}">
+                                <button type="submit" class="btn btn-secondary" style="padding:0.35rem 0.65rem; font-size:0.775rem;">
+                                    {% if prod.is_active %}Archive{% else %}Restore{% endif %}
+                                </button>
+                            </form>
+                            {% endif %}
+                            <a href="{% url 'product_detail' prod.id %}" class="btn btn-secondary" style="padding:0.35rem 0.65rem; font-size:0.775rem; text-decoration:none;">
+                                👁 View Details
+                            </a>
+                        </div>
                     </td>
                 </tr>
                 {% empty %}

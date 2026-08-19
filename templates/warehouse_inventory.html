@@ -121,10 +121,10 @@
                     {% for b in batches %}
                     <tr class="batch-row" style="cursor: pointer; transition: background-color 0.2s;" onmouseover="this.style.backgroundColor='#f8fafc';" onmouseout="this.style.backgroundColor='transparent';" onclick="window.location.href='{% url 'batch_detail' b.batch_number %}'">
                         {% if not selected_warehouse %}
-                        <td style="font-weight: 600;">{{ b.location.warehouse.name }}</td>
+                        <td style="font-weight: 600;">{{ b.location|default:"Unassigned" }}</td>
                         {% endif %}
                         <td style="font-weight: 600; color: var(--text-muted);">
-                            Zone {{ b.location.zone_name }} / Aisle {{ b.location.aisle }}
+                            {{ b.location|default:"-" }}
                         </td>
                         <td style="font-family: monospace; font-weight: 700; color: var(--primary);">
                             {{ b.batch_number }}
