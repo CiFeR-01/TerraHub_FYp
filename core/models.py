@@ -125,6 +125,7 @@ class ProductionRun(models.Model):
     # Workflow & Approval Fields
     assigned_to = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_runs')
     followers = models.ManyToManyField(CustomUser, related_name='following_runs', blank=True)
+    created_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_runs')
     
     # New MES Tracking Fields
     fefo_override_reason = models.TextField(blank=True, null=True)
@@ -176,13 +177,13 @@ class Batch(models.Model):
     produced_in = models.ForeignKey(ProductionRun, on_delete=models.SET_NULL, null=True, blank=True, related_name='produced_batches')
     manufacturing_date = models.DateField()
     expiry_date = models.DateField()
-    location = models.CharField(max_length=255, null=True, blank=True, help_text='Manual location entry')
+    warehouse = models.ForeignKey('Warehouse', on_delete=models.PROTECT, null=True, blank=True, related_name='batches', help_text='Facility')
+    location = models.CharField(max_length=255, null=True, blank=True, help_text='Zone/Aisle (Free Text)')
     allocated_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    reserved_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
     @property
     def available_quantity(self):
-        return self.quantity - self.allocated_quantity - self.reserved_quantity
+        return self.quantity - self.allocated_quantity
 
     @property
     def days_until_expiry(self):
@@ -407,7 +408,7 @@ class OrderTimeline(models.Model):
     sales_order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
     shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
     production_run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, null=True, blank=True, related_name='timeline')
-    action = models.CharField(max_length=100)
+    action = models.CharField(max_length=255)
     timestamp = models.DateTimeField(auto_now_add=True)
     user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)
     notes = models.TextField(blank=True, null=True)

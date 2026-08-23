@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Info - {{ batch.batch_number }}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --primary-dark: #2563eb;
+            --bg-body: #f8fafc;
+            --surface: #ffffff;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --border-light: #e2e8f0;
+            --emerald: #10b981;
+            --amber: #f59e0b;
+            --rose: #f43f5e;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-body);
+            color: var(--text-main);
+            margin: 0;
+            padding: 0;
+            -webkit-font-smoothing: antialiased;
+        }
+        .header {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            color: white;
+            padding: 2rem 1.5rem;
+            text-align: center;
+            border-bottom: 4px solid var(--primary);
+        }
+        .header-logo {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.05em;
+            margin-bottom: 1.5rem;
+            display: inline-block;
+        }
+        .header-logo span {
+            color: var(--primary);
+        }
+        .batch-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 0 0 0.5rem 0;
+            word-break: break-all;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 0.35rem 1rem;
+            border-radius: 999px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .status-Active { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+        .status-Quarantined { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+        .status-Spoiled { background: rgba(244, 63, 94, 0.2); color: #fb7185; }
+        .status-Depleted { background: rgba(100, 116, 139, 0.2); color: #94a3b8; }
+        
+        .container {
+            max-width: 600px;
+            margin: -2rem auto 2rem auto;
+            padding: 0 1rem;
+            position: relative;
+            z-index: 10;
+        }
+        .card {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+            margin-bottom: 1.5rem;
+            border: 1px solid rgba(226, 232, 240, 0.8);
+        }
+        .card h3 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.25rem;
+            margin: 0 0 1.25rem 0;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1rem;
+        }
+        @media (min-width: 480px) {
+            .info-grid { grid-template-columns: 1fr 1fr; }
+        }
+        .info-item {
+            background: #f8fafc;
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border-light);
+        }
+        .info-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+        .info-value {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+        .origin-badge {
+            display: inline-block;
+            background: #e0f2fe;
+            color: #0369a1;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+        .footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="header-logo">Terra<span>Hub</span></div>
+        <h1 class="batch-title">{{ batch.batch_number }}</h1>
+        <div class="status-badge status-{{ batch.status }}">{{ batch.status }}</div>
+    </div>
+
+    <div class="container">
+        
+        <!-- Product / Material Details -->
+        <div class="card">
+            <h3>📦 Item Details</h3>
+            <div class="info-grid">
+                <div class="info-item" style="grid-column: 1 / -1;">
+                    <div class="info-label">Item Name</div>
+                    <div class="info-value" style="font-size: 1.25rem;">
+                        {% if batch.material %}{{ batch.material.name }}{% else %}{{ batch.product.name }}{% endif %}
+                    </div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">SKU</div>
+                    <div class="info-value">
+                        {% if batch.material %}{{ batch.material.sku }}{% else %}{{ batch.product.sku }}{% endif %}
+                    </div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Category</div>
+                    <div class="info-value">
+                        {% if batch.material %}{{ batch.material.category }}{% else %}{{ batch.product.category }}{% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lifecycle & Location -->
+        <div class="card">
+            <h3>⏱️ Lifecycle & Location</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Manufacturing Date</div>
+                    <div class="info-value">{{ batch.manufacturing_date|date:"F j, Y" }}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Expiry Date</div>
+                    <div class="info-value">{{ batch.expiry_date|date:"F j, Y" }}</div>
+                </div>
+                <div class="info-item" style="grid-column: 1 / -1;">
+                    <div class="info-label">Current Location</div>
+                    <div class="info-value">
+                        {% if batch.warehouse %}
+                            {{ batch.warehouse.name }}
+                            {% if batch.location %}
+                                <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: normal; margin-top: 0.25rem;">Zone/Aisle: {{ batch.location }}</div>
+                            {% endif %}
+                        {% elif batch.location %}
+                            Unknown Facility
+                            <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: normal; margin-top: 0.25rem;">Zone/Aisle: {{ batch.location }}</div>
+                        {% else %}
+                            <span style="color: var(--text-muted); font-weight: normal;">In Transit / Unassigned</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Origin -->
+        <div class="card">
+            <h3>🔗 Traceability</h3>
+            <div class="info-item">
+                {% if batch.purchase_order %}
+                    <span class="origin-badge">External Supplier</span>
+                    <div class="info-label">Received From</div>
+                    <div class="info-value">{{ batch.purchase_order.supplier_name }}</div>
+                {% elif batch.produced_in %}
+                    <span class="origin-badge">In-House Manufacturing</span>
+                    <div class="info-label">Produced At</div>
+                    <div class="info-value">{{ batch.produced_in.manufacturing_plant.name }}</div>
+                {% else %}
+                    <div class="info-value" style="color: var(--text-muted); font-weight: normal;">Origin data not available.</div>
+                {% endif %}
+            </div>
+        </div>
+        
+    </div>
+
+    <div class="footer">
+        Powered by TerraHub Public Tracking &copy; 2026
+    </div>
+
+</body>
+</html>
