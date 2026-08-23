@@ -16,6 +16,9 @@
     </div>
 
     <div class="header-action-tray">
+        <a href="{% url 'batch_print_label' batch.batch_number %}" target="_blank" class="btn" style="background:#fff; color:var(--text-main); border:1px solid var(--border-main);">
+            🖨️ Print QR Label
+        </a>
         <a href="{% url 'stock_audit' %}?batch={{ batch.batch_number }}" class="btn btn-secondary">
             Adjust Stock
         </a>
@@ -40,7 +43,16 @@
                         SKU: {% if batch.material %}{{ batch.material.sku }}{% else %}{{ batch.product.sku }}{% endif %}
                     </p>
                 </div>
-                <div>
+                <div style="text-align: right;">
+                    <div style="margin-bottom: 0.5rem;">
+                        <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Facility</div>
+                        <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-main);">
+                            {% if batch.warehouse %}{{ batch.warehouse.name }}{% else %}<span style="color:var(--text-muted); font-weight:normal;">Unassigned</span>{% endif %}
+                        </div>
+                        {% if batch.location %}
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">{{ batch.location }}</div>
+                        {% endif %}
+                    </div>
                     {% if batch.status == 'Active' %}
                         <span class="badge badge-emerald">Active</span>
                     {% elif batch.status == 'Quarantined' %}
@@ -133,13 +145,24 @@
         <!-- Location -->
         <div class="pane-card">
             <h3 style="margin-bottom: 1rem;">📍 Current Location</h3>
-            {% if batch.location %}
+            {% if batch.warehouse %}
             <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
                 <div style="width: 40px; height: 40px; background: rgba(59, 130, 246, 0.1); color: var(--primary); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 1.25rem;">
                     🏢
                 </div>
                 <div>
-                    <div style="font-weight: 600; color: var(--text-main);">{{ batch.location }}</div>
+                    <div style="font-weight: 600; color: var(--text-main);">{{ batch.warehouse.name }}</div>
+                    <div style="font-size: 0.85rem; color: var(--text-muted);">{{ batch.location|default:"No specific zone/aisle assigned" }}</div>
+                </div>
+            </div>
+            {% elif batch.location %}
+            <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+                <div style="width: 40px; height: 40px; background: rgba(59, 130, 246, 0.1); color: var(--primary); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 1.25rem;">
+                    📍
+                </div>
+                <div>
+                    <div style="font-weight: 600; color: var(--text-main);">Unknown Facility</div>
+                    <div style="font-size: 0.85rem; color: var(--text-muted);">{{ batch.location }}</div>
                 </div>
             </div>
             {% else %}
@@ -191,8 +214,8 @@
                 </div>
                 
                 <div style="margin-bottom: 1rem;">
-                    <label style="display:block; font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Location</label>
-                    <input type="text" name="location" value="{{ batch.location|default:'' }}" class="form-input" style="width:100%; padding:0.5rem;" placeholder="e.g. Port Klang Hub B - Zone A">
+                    <label style="display:block; font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Location (Zone / Aisle)</label>
+                    <input type="text" name="location" value="{{ batch.location|default:'' }}" class="form-input" style="width:100%; padding:0.5rem;" placeholder="e.g. Zone A, Aisle 3">
                 </div>
                 
                 <button type="submit" class="btn" style="width:100%; padding:0.6rem; background:transparent; border:1px solid var(--primary); color:var(--primary); font-weight:600; border-radius:6px;">Update Details</button>
