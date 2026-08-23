@@ -3,6 +3,11 @@ from django.urls import reverse
 from django.contrib.auth import get_user_model
 from core.db_tracker import get_db_status, DB_QUERY_LOGS
 from django.db import connection
+from core.models import (
+    Warehouse, WarehouseLocation, Material, Product, ProductRecipe,
+    Batch, SalesOrder, SalesOrderDetail, StockAllocation,
+)
+from core.utils import allocate_stock, deduct_stock_from_allocation
 
 User = get_user_model()
 
@@ -317,5 +322,51 @@ class BulkImportExportTests(TestCase):
         self.assertEqual(self.m1.safe_storage_days, 120)
         self.assertEqual(float(self.m1.cost_per_unit), 85.00)
 
+
+class StockAllocationTests(TestCase):
+    def setUp(self):
+        self.warehouse = Warehouse.objects.create(name='Test Warehouse', location_type='Storage')
+        self.location = WarehouseLocation.objects.create(
+            warehouse=self.warehouse, zone_name='A', aisle='1'
+        )
+        self.material = Material.objects.create(
+            name='Test Material X', sku='MAT-X', category='Test', unit_of_measure='kg',
+            safe_storage_days=365,
+        )
+        self.product = Product.objects.create(
+            name='Test Product Y', sku='PRD-Y', unit_of_measure='pcs', price_per_unit=10.0
+        )
+        ProductRecipe.objects.create(product=self.product, material=self.material, quantity_required=2.0)
+
+        self.batch = Batch.objects.create(
+            batch_number='B-PRD-Y-1', product=self.product, quantity=50.0, status='Active',
+            manufacturing_date='2025-01-01', expiry_date='2026-01-01',
+            warehouse=self.warehouse, location='Zone A Aisle 1',
+        )
+
+        self.sales_order = SalesOrder.objects.create(
+            so_number='SO-TEST-1', client_name='Test Client',
+            origin_warehouse=self.warehouse, status='Draft'
+        )
+        SalesOrderDetail.objects.create(
+            sales_order=self.sales_order, product=self.product, quantity_ordered=30.0
+        )
+
+    def test_allocate_stock_reserves_batch_quantity(self):
+        allocated = allocate_stock('sales_order', self.sales_order, self.product, 30.0)
+        self.batch.refresh_from_db()
+
+        self.assertEqual(float(allocated), 30.0)
+        self.assertEqual(float(self.batch.allocated_quantity), 30.0)
+        self.assertEqual(StockAllocation.objects.filter(sales_order=self.sales_order).count(), 1)
+
+    def test_deduct_stock_from_allocation_reduces_batch_quantity(self):
+        allocate_stock('sales_order', self.sales_order, self.product, 30.0)
+        deduct_stock_from_allocation('sales_order', self.sales_order)
+        self.batch.refresh_from_db()
+
+        self.assertEqual(float(self.batch.quantity), 20.0)
+        self.assertEqual(float(self.batch.allocated_quantity), 0.0)
+        self.assertFalse(StockAllocation.objects.filter(sales_order=self.sales_order).exists())
 
 
