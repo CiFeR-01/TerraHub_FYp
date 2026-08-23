@@ -17,26 +17,26 @@ from .models import (
     CustomUser, Warehouse, WarehouseLocation, Material, Product,
     ProductRecipe, ProductionRun, ProductionConsumption, Batch,
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
-    Shipment, ShipmentItem, StockAudit, RegistryLog, OrderTimeline, Notification, Role
+    Shipment, ShipmentItem, StockAudit, RegistryLog, OrderTimeline, Notification, Role,
+    StockAllocation
 )
 from .utils import generate_next_code
 
 
 @login_required
 def dashboard_view(request):
-    # 1. Warehouse Space & Cost Optimization Metrics (used_mt sum of total_weight_mt for active batches)
     used_mt_annotation = Coalesce(
         Sum(
             Case(
                 When(
-                    locations__batch__status='Active',
-                    locations__batch__material__isnull=False,
-                    then=F('locations__batch__quantity') * F('locations__batch__material__weight_mt_per_unit')
+                    batches__status='Active',
+                    batches__material__isnull=False,
+                    then=F('batches__quantity') * F('batches__material__weight_mt_per_unit')
                 ),
                 When(
-                    locations__batch__status='Active',
-                    locations__batch__product__isnull=False,
-                    then=F('locations__batch__quantity') * F('locations__batch__product__weight_mt_per_unit')
+                    batches__status='Active',
+                    batches__product__isnull=False,
+                    then=F('batches__quantity') * F('batches__product__weight_mt_per_unit')
                 ),
                 default=Value(0),
                 output_field=DecimalField()
@@ -45,10 +45,7 @@ def dashboard_view(request):
         Value(0, output_field=DecimalField())
     )
 
-
-    warehouses = Warehouse.objects.annotate(
-        used_mt=used_mt_annotation
-    ).order_by('name')
+    warehouses = Warehouse.objects.annotate(used_mt=used_mt_annotation).order_by('name')
 
     warehouse_stats = []
     total_capacity = 0.0
@@ -121,7 +118,7 @@ def dashboard_view(request):
     ).prefetch_related('items').order_by('expected_eta_date')
 
     # 5. Degrading batches (active batches, <= 30 days remaining shelf life OR less than material.safe_storage_days)
-    active_batches = Batch.objects.filter(status='Active').select_related('material', 'product', 'location__warehouse')
+    active_batches = Batch.objects.filter(status='Active').select_related('material', 'product', 'warehouse')
     today = date.today()
     degrading_batches = []
     for b in active_batches:
@@ -212,7 +209,6 @@ def db_clear_logs_view(request):
 def db_test_op_view(request):
     op_type = request.GET.get('type', 'read')
     if op_type == 'write':
-        from .models import Notification
         Notification.objects.create(
             user=request.user,
             message=f"DB Write Telemetry Test at {datetime.datetime.now().strftime('%H:%M:%S')}",
@@ -221,7 +217,6 @@ def db_test_op_view(request):
         )
         msg = "Write query (INSERT Notification) executed successfully."
     else:
-        from .models import CustomUser
         _ = list(CustomUser.objects.filter(id=request.user.id))
         msg = "Read query (SELECT CustomUser) executed successfully."
         
@@ -253,11 +248,6 @@ def warehouse_inventory_view(request):
                 return redirect('warehouse_inventory')
                 
             try:
-                loc = WarehouseLocation.objects.filter(warehouse_id=wh_id).first()
-                if not loc:
-                    messages.error(request, "Target warehouse has no defined locations.")
-                    return redirect('warehouse_inventory')
-                
                 if material_id:
                     mat = get_object_or_404(Material, id=material_id)
                     b = Batch.objects.create(
@@ -267,7 +257,8 @@ def warehouse_inventory_view(request):
                         quantity=float(qty),
                         manufacturing_date=date.today(),
                         expiry_date=expiry if expiry else date.today() + timedelta(days=365),
-                        location=loc
+                        warehouse_id=wh_id,
+                        location="Receiving Bay"
                     )
                     log_item = mat.name
                 elif product_id:
@@ -279,7 +270,8 @@ def warehouse_inventory_view(request):
                         quantity=float(qty),
                         manufacturing_date=date.today(),
                         expiry_date=expiry if expiry else date.today() + timedelta(days=365),
-                        location=loc
+                        warehouse_id=wh_id,
+                        location="Receiving Bay"
                     )
                     log_item = prod.name
                 else:
@@ -290,7 +282,7 @@ def warehouse_inventory_view(request):
                     action_type='Adjusted',
                     item_name=f"Manual Receipt of {log_item}",
                     quantity_changed=float(qty),
-                    warehouse=loc.warehouse,
+                    warehouse_id=wh_id,
                     user=request.user
                 )
                 messages.success(request, f"Successfully received {qty} of {log_item}.")
@@ -307,15 +299,16 @@ def warehouse_inventory_view(request):
     if warehouse_id:
         try:
             selected_warehouse = Warehouse.objects.get(id=warehouse_id)
-            batches = Batch.objects.filter(location__warehouse=selected_warehouse, status='Active').select_related(
-                'material', 'product', 'location', 'location__warehouse'
-            ).order_by('location__zone_name', 'location__aisle')
+            batches = Batch.objects.filter(warehouse=selected_warehouse, 
+status='Active').select_related('warehouse', 
+                'material', 'product'
+            ).order_by('location', '-manufacturing_date')
         except Warehouse.DoesNotExist:
             pass
 
     if not selected_warehouse:
         batches = Batch.objects.filter(status='Active').select_related(
-            'material', 'product', 'location', 'location__warehouse'
+            'material', 'product'
         ).order_by('-manufacturing_date')
         
         from django.db.models import Sum
@@ -385,12 +378,10 @@ def batch_detail_view(request, batch_number):
             return redirect('batch_detail', batch_number=batch.batch_number)
 
     logs = RegistryLog.objects.filter(item_name__icontains=batch.batch_number).select_related('user', 'warehouse').order_by('-timestamp')
-    locations = WarehouseLocation.objects.all().select_related('warehouse').order_by('warehouse__name', 'zone_name')
     
     context = {
         'batch': batch,
         'logs': logs,
-        'locations': locations,
         'statuses': Batch.STATUS_CHOICES,
     }
     return render(request, 'batch_detail.html', context)
@@ -461,31 +452,23 @@ def warehouse_edit_view(request, pk):
 @login_required
 def facility_management_view(request):
     """Facility Management — overview of all warehouse facilities with capacity, cost, and zone data."""
-    used_mt_annotation = Coalesce(
-        Sum(
-            Case(
-                When(
-                    locations__batch__status='Active',
-                    locations__batch__material__isnull=False,
-                    then=F('locations__batch__quantity') * F('locations__batch__material__weight_mt_per_unit')
-                ),
-                When(
-                    locations__batch__status='Active',
-                    locations__batch__product__isnull=False,
-                    then=F('locations__batch__quantity') * F('locations__batch__product__weight_mt_per_unit')
-                ),
-                default=Value(0),
-                output_field=DecimalField()
-            )
-        ),
-        Value(0, output_field=DecimalField())
-    )
-
-    warehouses = Warehouse.objects.annotate(
-        used_mt=used_mt_annotation,
-        zone_count=Count('locations', distinct=True),
-        batch_count=Count('locations__batch', distinct=True, filter=Q(locations__batch__status='Active')),
-    ).order_by('name')
+    warehouses = list(Warehouse.objects.annotate(zone_count=Count('locations', distinct=True)).order_by('name'))
+    active_batches = Batch.objects.filter(status='Active').select_related('material', 'product', 'warehouse')
+    
+    for w in warehouses:
+        w.used_mt = 0
+        w.batch_count = 0
+        
+    for b in active_batches:
+        if b.location:
+            for w in warehouses:
+                if w.name.lower() in b.location.lower():
+                    w.batch_count += 1
+                    if b.material:
+                        w.used_mt += b.quantity * b.material.weight_mt_per_unit
+                    elif b.product:
+                        w.used_mt += b.quantity * b.product.weight_mt_per_unit
+                    break
 
     facility_list = []
     total_capacity = 0.0
@@ -572,7 +555,7 @@ def stock_audit_view(request):
                     b.quantity = audit.actual_quantity
                     b.save()
 
-                    wh = b.location.warehouse if b.location else None
+                    wh = b.warehouse if b.warehouse else None
                     RegistryLog.objects.create(
                         action_type='Adjusted',
                         item_name=f"Batch {b.batch_number} ({b.material or b.product})",
@@ -584,8 +567,8 @@ def stock_audit_view(request):
 
         return redirect('stock_audit')
 
-    audits = StockAudit.objects.select_related('batch', 'auditor', 'batch__location__warehouse').order_by('-audit_date')
-    active_batches = Batch.objects.filter(status='Active').select_related('material', 'product', 'location')
+    audits = StockAudit.objects.select_related('batch', 'auditor').order_by('-audit_date')
+    active_batches = Batch.objects.filter(status='Active').select_related('material', 'product', 'warehouse')
     
     pending_count = audits.filter(status='Pending').count()
     resolved_count = audits.filter(status='Resolved').count()
@@ -1311,7 +1294,7 @@ def product_detail_view(request, pk):
         return redirect('product_detail', pk=pk)
 
     # Inventory Overview
-    active_batches = Batch.objects.filter(product=product, status='Active').select_related('location__warehouse').order_by('expiry_date')
+    active_batches = Batch.objects.filter(product=product, status='Active').select_related().order_by('expiry_date')
     total_stock = sum(b.quantity for b in active_batches)
 
     # Manufacturing History
@@ -1714,6 +1697,28 @@ def so_detail_view(request, pk):
                     link=reverse('approvals_inbox')
                 )
                 messages.success(request, f"Approval requested from {mgr.get_full_name() or mgr.username}.")
+                
+        elif action == 'send_to_manufacturing':
+            from django.utils import timezone
+            from datetime import timedelta
+            from decimal import Decimal
+            
+            plant_id = request.POST.get('manufacturing_plant_id')
+            plant = None
+            if plant_id:
+                plant = Warehouse.objects.filter(id=plant_id).first()
+
+            from .utils import create_shortage_production_runs
+            created_any = create_shortage_production_runs(so, plant, request.user)
+
+            so.status = 'Awaiting Acknowledgement'
+            so.save()
+            OrderTimeline.objects.create(sales_order=so, action="Shortages sent to manufacturing queue.", user=request.user)
+            if created_any:
+                messages.success(request, f"Manufacturing orders created for shortages on {so.so_number}.")
+            else:
+                messages.success(request, f"Status updated. No new manufacturing orders were needed.")
+                
         elif action == 'add_follower':
             user_id = request.POST.get('user_id')
             user_to_add = CustomUser.objects.filter(id=user_id).first()
@@ -1735,10 +1740,23 @@ def so_detail_view(request, pk):
     # BOM readiness and Allocation logic
     line_items_with_bom = []
     from django.db.models import Sum, F
-    from .models import StockAllocation
     
     for item in so.items.select_related('product').all():
-        allocated = float(StockAllocation.objects.filter(sales_order=so, batch__product=item.product).aggregate(s=Sum('quantity'))['s'] or 0)
+        allocations_qs = StockAllocation.objects.filter(sales_order=so, batch__product=item.product).select_related('batch', 'batch__produced_in', 'batch__purchase_order')
+        allocated = float(allocations_qs.aggregate(s=Sum('quantity'))['s'] or 0)
+
+        allocation_rows = []
+        for a in allocations_qs:
+            if a.batch.produced_in_id:
+                source = f"Newly Manufactured (Run {a.batch.produced_in.run_number})"
+            elif a.batch.purchase_order_id:
+                source = f"Existing Stock (PO {a.batch.purchase_order.po_number})"
+            else:
+                source = "Existing Stock"
+            allocation_rows.append({'batch': a.batch, 'quantity': a.quantity, 'source': source})
+
+        fulfilled = (allocated + float(item.quantity_shipped)) >= float(item.quantity_ordered)
+
         global_avail = float(Batch.objects.filter(product=item.product, status='Active').annotate(avail=F('quantity')-F('allocated_quantity')).aggregate(s=Sum('avail'))['s'] or 0)
         
         incoming_production = float(ProductionRun.objects.filter(
@@ -1782,13 +1800,20 @@ def so_detail_view(request, pk):
             'bom_ready': all(row['sufficient'] for row in bom_rows),
             'allocated': allocated,
             'deficit': deficit,
+            'fulfilled': fulfilled,
+            'allocation_rows': allocation_rows,
         })
+
+    has_deficit = any(row['deficit'] > 0 for row in line_items_with_bom)
+    manufacturing_plants = Warehouse.objects.filter(location_type='Manufacturing').order_by('name')
 
     context = {
         'so': so,
         'line_items': line_items_with_bom,
+        'has_deficit': has_deficit,
         'products': products,
         'warehouses': warehouses,
+        'manufacturing_plants': manufacturing_plants,
         'so_status_choices': SalesOrder.STATUS_CHOICES,
         'managers': CustomUser.objects.filter(role__in=['Admin', 'Manager']).order_by('username'),
         'all_users': CustomUser.objects.all().order_by('username'),
@@ -1858,7 +1883,6 @@ def po_detail_view(request, pk):
                 OrderTimeline.objects.create(purchase_order=po, action=f"Received {new_qty} of {item.material.name}", user=request.user)
                 
                 if delta > 0:
-                    from .models import Batch, WarehouseLocation
                     loc = WarehouseLocation.objects.filter(warehouse=po.target_warehouse).first()
                     Batch.objects.create(
                         batch_number=f"B-{po.po_number}-{item.material.sku}-{int(new_qty)}",
@@ -1867,7 +1891,9 @@ def po_detail_view(request, pk):
                         quantity=delta,
                         manufacturing_date=date.today(),
                         expiry_date=date.today() + timedelta(days=365),
-                        location=loc
+                        warehouse=po.target_warehouse,
+                        purchase_order=po,
+                        location=f"Zone {loc.zone_name} Aisle {loc.aisle}" if loc else None
                     )
                 
                 # Auto update PO status
@@ -2003,10 +2029,12 @@ def manufacturing_view(request):
                     run_number=run_number, target_product=prod,
                     expected_yield=yield_qty, manufacturing_plant=plant,
                     status='Pending Approval', supervisor=request.user,
+                    created_by=request.user,
                     sales_order=so,
                     start_time=tomorrow,
                     end_time=tomorrow + timedelta(hours=4)
                 )
+                OrderTimeline.objects.create(production_run=run, action="Manufacturing Order created.", user=request.user)
 
                 # Auto-update SO status to "In Production" if linked
                 if so and so.status not in ['In Production', 'Ready to Ship', 'Shipped', 'Delivered']:
@@ -2024,16 +2052,22 @@ def manufacturing_view(request):
         elif action == 'cancel_allocation':
             run_id = request.POST.get('run_id')
             run = get_object_or_404(ProductionRun, id=run_id)
-            
+
             # Delete StockAllocation records for this run
-            from .models import StockAllocation
             allocs = StockAllocation.objects.filter(production_run=run)
             for alloc in allocs:
                 batch = alloc.batch
                 batch.allocated_quantity -= alloc.quantity
+                if batch.allocated_quantity < 0:
+                    batch.allocated_quantity = 0
                 batch.save()
                 alloc.delete()
-                
+
+            # Cancel any auto-generated Draft transfer shipments left over from this allocation
+            Shipment.objects.filter(
+                linked_production_run=run, is_auto_generated=True, status='Draft'
+            ).update(status='Cancelled')
+
             # Revert to Pending Allocation
             run.status = 'Pending Allocation'
             run.save()
@@ -2048,7 +2082,6 @@ def manufacturing_view(request):
                 messages.error(request, "Run is not awaiting materials.")
                 return redirect('readiness')
                 
-            from .models import Shipment, ShipmentItem
             target_warehouse = run.manufacturing_plant
             
             if not target_warehouse:
@@ -2085,8 +2118,6 @@ def manufacturing_view(request):
                 messages.error(request, "Run is not awaiting materials.")
                 return redirect('readiness')
                 
-            from .models import PurchaseOrder, PurchaseOrderDetail
-            
             # Find shortages
             shortages = []
             for req in run.target_product.recipe_items.all():
@@ -2151,8 +2182,8 @@ def manufacturing_view(request):
             run_id = request.POST.get('run_id')
             run = get_object_or_404(ProductionRun, id=run_id)
 
-            run.status = 'Pending Allocation'
-            run.save()
+            from .utils import approve_production_run
+            approve_production_run(run, request.user)
             messages.success(request, f"Production Run {run.run_number} approved. Please allocate materials to begin.")
 
         elif action == 'update_run_schedule':
@@ -2189,51 +2220,14 @@ def manufacturing_view(request):
             run_id = request.POST.get('run_id')
             run = get_object_or_404(ProductionRun, id=run_id)
             with transaction.atomic():
-                from .utils import deduct_stock_from_allocation
-                
                 if run.status == 'InProgress':
+                    from decimal import Decimal
                     actual_yield = request.POST.get('actual_yield')
-                    run.actual_yield = float(actual_yield) if actual_yield else run.expected_yield
-                    run.status = 'Completed'
-                    run.end_time = timezone.now()
-                    run.save()
-                    
-                    # Permanently deduct the allocated raw materials
-                    deduct_stock_from_allocation('production_run', run)
+                    run.actual_yield = Decimal(actual_yield) if actual_yield else run.expected_yield
 
-                    # Find warehouse location for storing finished product
-                    loc = WarehouseLocation.objects.filter(warehouse=run.manufacturing_plant).first()
-                    batch = Batch.objects.create(
-                        batch_number=f"B-PROD-{run.run_number}",
-                        status='Active',
-                        product=run.target_product,
-                        quantity=run.actual_yield,
-                        produced_in=run,
-                        manufacturing_date=date.today(),
-                        expiry_date=date.today() + timedelta(days=365),
-                        location=loc
-                    )
-                    RegistryLog.objects.create(
-                        action_type='Produced',
-                        item_name=f"{run.target_product.name} (Batch {batch.batch_number})",
-                        quantity_changed=run.actual_yield,
-                        warehouse=run.manufacturing_plant,
-                        user=request.user
-                    )
+                    from .utils import finalize_production_run
+                    finalize_production_run(run, request.user)
 
-                    # Auto-check if all runs for a linked SO are complete
-                    if run.sales_order:
-                        so = run.sales_order
-                        so_runs = ProductionRun.objects.filter(sales_order=so)
-                        all_complete = all(r.status == 'Completed' for r in so_runs)
-                        if all_complete:
-                            so.status = 'Ready to Ship'
-                            so.save()
-                            OrderTimeline.objects.create(
-                                sales_order=so,
-                                action="All production runs completed ➔ status auto-updated to 'Ready to Ship'",
-                                user=request.user
-                            )
                     messages.success(request, f"Production Run {run.run_number} completed. Produced {run.actual_yield} units of {run.target_product.sku}.")
 
         return redirect('readiness')
@@ -2520,7 +2514,7 @@ def qa_dashboard_view(request):
                     action_type='QA_Extension',
                     item_name=f"Batch {batch.batch_number} (+{days} days)",
                     quantity_changed=batch.quantity,
-                    warehouse=batch.location.warehouse if batch.location else None,
+                    warehouse=batch.warehouse if batch.warehouse else None,
                     user=request.user
                 )
                 messages.success(request, f"Expiry date for batch {batch.batch_number} extended by {days} days.")
@@ -2544,7 +2538,7 @@ def qa_dashboard_view(request):
                 action_type='Spoiled_Disposal',
                 item_name=f"Batch {batch.batch_number} Disposed",
                 quantity_changed=batch.quantity,
-                warehouse=batch.location.warehouse if batch.location else None,
+                warehouse=batch.warehouse if batch.warehouse else None,
                 user=request.user
             )
             messages.error(request, f"Batch {batch.batch_number} marked as Spoiled / Disposed.")
@@ -2552,7 +2546,7 @@ def qa_dashboard_view(request):
         return redirect('qa_dashboard')
 
     today = date.today()
-    batches = Batch.objects.select_related('material', 'product', 'location__warehouse').order_by('expiry_date')
+    batches = Batch.objects.select_related('material', 'product').order_by('expiry_date')
     
     near_expiry = []
     quarantined = []
@@ -2619,61 +2613,36 @@ def approvals_inbox_view(request):
             if action == 'approve':
                 if run.actual_yield is not None:
                     # Variance Approval
-                    fg_batch = Batch.objects.create(
-                        batch_number=f"FG-{run.run_number}-{str(uuid.uuid4())[:4]}",
-                        status='Active',
-                        product=run.target_product,
-                        quantity=run.actual_yield,
-                        produced_in=run,
-                        manufacturing_date=timezone.now().date(),
-                        expiry_date=timezone.now().date() + timedelta(days=365)
+                    from .utils import finalize_production_run
+                    fg_batch = finalize_production_run(run, request.user)
+                    OrderTimeline.objects.create(
+                        production_run=run,
+                        action=f"Variance Approved by Manager." + (f" FG Batch {fg_batch.batch_number} created." if fg_batch else ""),
+                        user=request.user
                     )
-                    run.status = 'Completed'
-                    run.save()
-                    OrderTimeline.objects.create(production_run=run, action=f"Variance Approved by Manager. FG Batch created.", user=request.user)
-                    
-                    if run.sales_order:
-                        run.sales_order.status = 'Manufacturing Completed'
-                        run.sales_order.save()
-                        OrderTimeline.objects.create(sales_order=run.sales_order, action=f"Production Run {run.run_number} variance approved and completed.", user=request.user)
-                    
+
                     # Notify followers
                     if run.supervisor:
-                        Notification.objects.create(user=run.supervisor, title=f"Approved: {run.run_number}", message=f"Variance approved for {run.run_number}.", link=f"/operations/manufacture/run/{run.id}/", notification_type='Alert')
+                        Notification.objects.create(user=run.supervisor, message=f"Approved: Variance approved for {run.run_number}.", link=f"/operations/manufacture/run/{run.id}/")
                     for f in run.followers.all():
-                        Notification.objects.create(user=f, title=f"Approved: {run.run_number}", message=f"Variance approved for {run.run_number}.", link=f"/operations/manufacture/run/{run.id}/", notification_type='Alert')
+                        Notification.objects.create(user=f, message=f"Approved: Variance approved for {run.run_number}.", link=f"/operations/manufacture/run/{run.id}/")
                     
                     messages.success(request, f"Production Run {run.run_number} variance approved and completed.")
                 else:
-                    # Pre-production Approval
-                    missing_materials = []
-                    for req in run.target_product.recipe_items.all():
-                        needed = float(req.quantity_required) * float(run.expected_yield)
-                        available = Batch.objects.filter(
-                            material=req.material, 
-                            location__warehouse=run.manufacturing_plant,
-                            status='Active'
-                        ).aggregate(total=Sum(F('quantity') - F('allocated_quantity')))['total'] or 0
-                        if float(available) < needed:
-                            missing_materials.append(f"{req.material.name} (Need {needed}, Have {available})")
-                            
-                    if missing_materials:
-                        messages.error(request, f"Cannot approve run {run.run_number}. Insufficient materials at {run.manufacturing_plant.name}: {', '.join(missing_materials)}")
-                        return redirect('approvals_inbox')
-                    
-                    run.status = 'Planned'
-                    run.save()
-                    from .utils import allocate_stock
-                    for req in run.target_product.recipe_items.all():
-                        allocate_stock('production_run', run, req.material, float(req.quantity_required) * float(run.expected_yield), warehouse=run.manufacturing_plant)
-                    messages.success(request, f"Production Run {run.run_number} approved and allocated.")
+                    # Pre-production Approval — clears the run for material allocation via
+                    # the FEFO allocation screen, which handles both local and cross-warehouse
+                    # sourcing (a local-only availability check here would block runs that
+                    # genuinely need a transfer from another warehouse).
+                    from .utils import approve_production_run
+                    approve_production_run(run, request.user)
+                    messages.success(request, f"Production Run {run.run_number} approved. Please allocate materials to begin.")
             elif action == 'reject':
                 if run.actual_yield is not None:
                     run.status = 'InProgress'
                     run.save()
                     OrderTimeline.objects.create(production_run=run, action=f"Variance Approval Rejected.", user=request.user)
                     if run.supervisor:
-                        Notification.objects.create(user=run.supervisor, title=f"Rejected: {run.run_number}", message=f"Variance rejected for {run.run_number}. Rework required.", link=f"/operations/manufacture/run/{run.id}/", notification_type='Alert')
+                        Notification.objects.create(user=run.supervisor, message=f"Rejected: Variance rejected for {run.run_number}. Rework required.", link=f"/operations/manufacture/run/{run.id}/")
                     messages.warning(request, f"Production Run {run.run_number} variance rejected. Returned to In Progress.")
                 else:
                     run.status = 'Cancelled'
@@ -2683,7 +2652,8 @@ def approvals_inbox_view(request):
         elif item_type == 'purchase_order':
             po = get_object_or_404(PurchaseOrder, id=item_id)
             if action == 'approve':
-                po.status = 'Sent'
+                po.status = 'Pending'
+                po.approved_by = request.user
                 po.save()
                 OrderTimeline.objects.create(purchase_order=po, action=f"Approved by Manager. Comment: {comment}" if comment else "Approved by Manager.", user=request.user)
                 messages.success(request, f"Purchase Order {po.po_number} approved.")
@@ -2746,7 +2716,9 @@ def approvals_inbox_view(request):
     page_number = request.GET.get('page')
     history_page = paginator.get_page(page_number)
 
+    followed_sos = request.user.followed_sos.all().order_by('-order_date')
     followed_pos = request.user.followed_pos.all().order_by('-order_date')
+    followed_runs = request.user.following_runs.all().order_by('-id')
     followed_shipments = request.user.followed_shipments.all().order_by('-id')
 
     # Analytics
@@ -2763,7 +2735,9 @@ def approvals_inbox_view(request):
         'pending_shipments': pending_shipments,
         'notifications': notifications,
         'history_page': history_page,
+        'followed_sos': followed_sos,
         'followed_pos': followed_pos,
+        'followed_runs': followed_runs,
         'followed_shipments': followed_shipments,
         'pending_count': pending_count,
         'approved_this_week': approved_this_week,
@@ -2778,6 +2752,7 @@ def shipment_detail_view(request, pk):
     
     route_error = False
     if request.method == 'POST':
+        old_status = shipment.status
         action = request.POST.get('action')
         
         if action == 'add_item':
@@ -2810,7 +2785,6 @@ def shipment_detail_view(request, pk):
                         OrderTimeline.objects.create(shipment=shipment, action=f"Added item {mat.sku if mat else prod.sku} (Qty: {qty_val}).", user=request.user)
                         messages.success(request, "Item added to shipment.")
                         # Allocation Logic (Lock Stock)
-                        from .models import StockAllocation
                         qty_dec = Decimal(str(qty_val))
                         if shipment.sales_order:
                             so_alloc = StockAllocation.objects.filter(sales_order=shipment.sales_order, batch=batch).first()
@@ -2848,7 +2822,6 @@ def shipment_detail_view(request, pk):
                     qty = item.quantity
                     batch = item.batch
                     if batch and shipment.direction in ['Outbound', 'Transfer']:
-                        from .models import StockAllocation
                         alloc = StockAllocation.objects.filter(shipment=shipment, batch=batch).first()
                         if alloc:
                             deduct = min(Decimal(str(qty)), alloc.quantity)
@@ -2917,7 +2890,6 @@ def shipment_detail_view(request, pk):
             messages.success(request, "Shipment submitted to Logistics for review.")
             
         elif action == 'scrap_shipment':
-            from .models import StockAllocation
             from decimal import Decimal
             
             with transaction.atomic():
@@ -2927,15 +2899,15 @@ def shipment_detail_view(request, pk):
                     if batch:
                         qty_dec = Decimal(str(qty))
                         if shipment.linked_production_run:
-                            alloc = StockAllocation.objects.filter(production_run=shipment.linked_production_run, batch=batch).first()
+                            alloc = StockAllocation.objects.filter(production_run=shipment.linked_production_run, shipment=shipment, batch=batch).first()
                             if alloc:
                                 deduct = min(qty_dec, alloc.quantity)
                                 alloc.quantity -= deduct
                                 if alloc.quantity <= 0: alloc.delete()
                                 else: alloc.save(update_fields=['quantity'])
-                            batch.reserved_quantity -= qty_dec
-                            if batch.reserved_quantity < 0: batch.reserved_quantity = 0
-                            batch.save(update_fields=['reserved_quantity'])
+                            batch.allocated_quantity -= qty_dec
+                            if batch.allocated_quantity < 0: batch.allocated_quantity = 0
+                            batch.save(update_fields=['allocated_quantity'])
                             
                         elif shipment.sales_order:
                             # If we moved allocations to the shipment
@@ -3061,7 +3033,7 @@ def shipment_detail_view(request, pk):
                         needed = float(req.quantity_required) * float(run.expected_yield)
                         available = Batch.objects.filter(
                             material=req.material, 
-                            location__warehouse=run.manufacturing_plant,
+                            warehouse=run.manufacturing_plant,
                             status='Active'
                         ).aggregate(total=Sum(F('quantity') - F('allocated_quantity')))['total'] or 0
                         if float(available) < needed:
@@ -3161,7 +3133,6 @@ def shipment_detail_view(request, pk):
             
             # Manually handle discrepancy deduction and lock release
             if shipment.direction in ['Outbound', 'Transfer']:
-                from .models import StockAllocation
                 allocs = StockAllocation.objects.filter(shipment=shipment)
                 for alloc in allocs:
                     batch = alloc.batch
@@ -3269,6 +3240,16 @@ def shipment_detail_view(request, pk):
                 if user_obj in shipment.followers.all():
                     shipment.followers.remove(user_obj)
                     messages.success(request, f"Removed {user_obj.get_full_name() or user_obj.username} from followers.")
+
+        if old_status not in ['Arrived', 'Completed'] and shipment.status in ['Arrived', 'Completed']:
+            run = shipment.linked_production_run
+            if run:
+                msg = f"Shipment {shipment.tracking_number} linked to Production Run {run.run_number} has arrived."
+                OrderTimeline.objects.create(production_run=run, action=f"Linked shipment {shipment.tracking_number} arrived.", user=request.user)
+                if run.created_by:
+                    Notification.objects.create(user=run.created_by, message=msg, link=f"/operations/manufacture/run/{run.id}/")
+                for f in run.followers.all():
+                    Notification.objects.create(user=f, message=msg, link=f"/operations/manufacture/run/{run.id}/")
 
         if not route_error:
             return redirect('shipment_detail', pk=shipment.pk)
@@ -3396,13 +3377,11 @@ def user_management_view(request):
 
 @login_required
 def so_allocate_view(request, pk):
-    from .models import StockAllocation, Batch
     so = get_object_or_404(SalesOrder, pk=pk)
     
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'allocate_manual':
-            from .models import Batch, StockAllocation, ProductionRun
             from decimal import Decimal
             
             with transaction.atomic():
@@ -3440,36 +3419,36 @@ def so_allocate_view(request, pk):
                     total_allocated = prev_allocated + allocated_now
                     unfulfilled = qty_needed - total_allocated
                     total_unfulfilled_across_so += unfulfilled
-                    
-                    if unfulfilled > 0:
-                        # Push remaining to manufacturing queue
-                        # Check if a production run already exists for this SO and product
-                        pr = ProductionRun.objects.filter(sales_order=so, target_product=item.product).first()
-                        if not pr:
-                            run_number = f"PR-{so.so_number}-{item.product.sku}"
-                            ProductionRun.objects.create(
-                                run_number=run_number,
-                                target_product=item.product,
-                                expected_yield=unfulfilled,
-                                status='Pending Allocation',
-                                sales_order=so,
-                                start_time=timezone.now() + timedelta(days=1),
-                                end_time=timezone.now() + timedelta(days=1, hours=4)
-                            )
                 
-                if total_unfulfilled_across_so <= Decimal('0'):
+                send_to_mfg = request.POST.get('send_to_manufacturing') == 'true'
+                plant_id = request.POST.get('manufacturing_plant_id')
+                
+                if send_to_mfg and total_unfulfilled_across_so > 0:
+                    plant = None
+                    if plant_id:
+                        plant = Warehouse.objects.filter(id=plant_id).first()
+
+                    from .utils import create_shortage_production_runs
+                    create_shortage_production_runs(so, plant, request.user)
+
+                    so.status = 'Awaiting Acknowledgement'
+                    OrderTimeline.objects.create(sales_order=so, action="Shortages sent to manufacturing queue.", user=request.user)
+                elif total_unfulfilled_across_so <= Decimal('0'):
                     so.status = 'Ready to Ship'
                     OrderTimeline.objects.create(sales_order=so, action="Allocation completed. Status updated to Ready to Ship.", user=request.user)
                 else:
-                    so.status = 'Awaiting Acknowledgement'
-                    OrderTimeline.objects.create(sales_order=so, action="Partial allocation completed. Shortages sent to manufacturing.", user=request.user)
+                    if so.status != 'Pending':
+                        so.status = 'Pending'
+                    OrderTimeline.objects.create(sales_order=so, action="Partial allocation completed. Shortages remain.", user=request.user)
                 so.save()
                 
-                messages.success(request, f"Allocation complete for {so.so_number}.")
+                messages.success(request, f"Allocation saved for {so.so_number}.")
                 return redirect('so_detail', pk=so.pk)
 
     # Gather data for UI
     from django.db.models import F
+    manufacturing_plants = Warehouse.objects.filter(location_type='Manufacturing').order_by('name')
+    
     allocation_data = []
     
     # Existing allocations
@@ -3492,7 +3471,7 @@ def so_allocate_view(request, pk):
                 batch_list.append({
                     'id': b.id,
                     'number': b.batch_number,
-                    'warehouse': b.location.warehouse.name if b.location and b.location.warehouse else 'Unknown',
+                    'warehouse': b.warehouse.name if b.warehouse else 'Unknown',
                     'available': avail,
                     'expiry': b.expiry_date
                 })
@@ -3504,13 +3483,16 @@ def so_allocate_view(request, pk):
             'batches': batch_list
         })
         
-    return render(request, 'so_allocate.html', {'so': so, 'allocation_data': allocation_data})
+    return render(request, 'so_allocate.html', {
+        'so': so, 
+        'allocation_data': allocation_data,
+        'manufacturing_plants': manufacturing_plants
+    })
 
 @login_required
 def so_create_shipment_view(request, pk):
     so = get_object_or_404(SalesOrder, pk=pk)
     if request.method == 'POST':
-        from .models import Shipment, ShipmentItem
         if so.status != 'Ready to Ship':
             messages.error(request, "Order is not ready to ship.")
             return redirect('so_detail', pk=so.pk)
@@ -3556,7 +3538,6 @@ def so_create_shipment_view(request, pk):
 
 @login_required
 def production_run_allocate_view(request, pk):
-    from .models import ProductionRun, Batch, StockAllocation, Shipment, ShipmentItem
     from django.db.models import F
     from decimal import Decimal
     
@@ -3571,7 +3552,7 @@ def production_run_allocate_view(request, pk):
         
         # Get all active batches globally, ordered by expiry date (FEFO)
         batches = Batch.objects.filter(material=req.material, status='Active').annotate(
-            avail=F('quantity') - F('allocated_quantity') - F('reserved_quantity')
+            avail=F('quantity') - F('allocated_quantity')
         ).filter(avail__gt=0).order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
         
         remaining = needed
@@ -3639,28 +3620,22 @@ def production_run_allocate_view(request, pk):
             # Perform Allocations & Auto-Logistics
             with transaction.atomic():
                 warehouse_groups = {} # warehouse_id -> [ {batch, qty} ]
-                
+
                 for batch_id, qty in selected_allocations.items():
                     batch = Batch.objects.select_for_update().get(id=batch_id)
-                    # Hard Reserve
-                    batch.reserved_quantity += qty
-                    batch.save(update_fields=['reserved_quantity'])
-                    
-                    StockAllocation.objects.create(batch=batch, production_run=run, quantity=qty)
-                    
-                    wh = batch.location.warehouse if batch.location else None
+                    wh = batch.warehouse if batch.warehouse else None
                     wh_key = wh.id if wh else None
                     if wh_key not in warehouse_groups:
                         warehouse_groups[wh_key] = []
                     warehouse_groups[wh_key].append({'batch': batch, 'qty': qty})
-                    
-                # Auto-generate Shipments split by origin
+
+                # Auto-generate Shipments split by origin, then lock stock against each shipment
                 for origin_wh_id, items in warehouse_groups.items():
                     origin_warehouse = Warehouse.objects.get(id=origin_wh_id) if origin_wh_id else None
-                    
+
                     # Generate unique tracking number
                     tracking = f"SHP-AUTO-{str(uuid.uuid4())[:8].upper()}"
-                    
+
                     shipment = Shipment.objects.create(
                         tracking_number=tracking,
                         direction='Transfer',
@@ -3671,16 +3646,24 @@ def production_run_allocate_view(request, pk):
                         is_auto_generated=True,
                         last_edited_by=request.user
                     )
-                    
+
                     for item in items:
+                        batch = item['batch']
+                        qty = item['qty']
+
                         ShipmentItem.objects.create(
                             shipment=shipment,
-                            batch=item['batch'],
-                            material=item['batch'].material,
-                            quantity=item['qty']
+                            batch=batch,
+                            material=batch.material,
+                            quantity=qty
                         )
-                
-                run.status = 'Pending Allocation' # Move to a state where it waits for shipments
+
+                        batch.allocated_quantity += qty
+                        batch.save(update_fields=['allocated_quantity'])
+
+                        StockAllocation.objects.create(batch=batch, production_run=run, shipment=shipment, quantity=qty)
+
+                run.status = 'Awaiting Materials' # Move to a state where it waits for shipments
                 run.save()
                 
             messages.success(request, f"Materials allocated. Auto-generated {len(warehouse_groups)} draft logistics shipment(s).")
@@ -3696,7 +3679,7 @@ def production_run_allocate_view(request, pk):
 
 @login_required
 def production_run_detail_view(request, pk):
-    from .models import ProductionRun, Shipment, RunMaterialUsage, Batch, SalesOrder, Product, CustomUser
+    from .models import RunMaterialUsage
     from decimal import Decimal
     run = get_object_or_404(ProductionRun, pk=pk)
     linked_shipments = run.linked_shipments.all()
@@ -3754,11 +3737,10 @@ def production_run_detail_view(request, pk):
                         actual_dec = Decimal(actual)
                         expected_dec = Decimal(str(bom['needed']))
                         
-                        usage = RunMaterialUsage.objects.create(
+                        usage, _ = RunMaterialUsage.objects.update_or_create(
                             production_run=run,
                             material=bom['material'],
-                            expected_qty=expected_dec,
-                            actual_qty=actual_dec
+                            defaults={'expected_qty': expected_dec, 'actual_qty': actual_dec}
                         )
                         
                         # Note: variance_pct is calculated in save()
@@ -3784,69 +3766,124 @@ def production_run_detail_view(request, pk):
                     if run.assigned_to:
                         Notification.objects.create(
                             user=run.assigned_to,
-                            title=f"Variance Approval Required: {run.run_number}",
-                            message=f"Production Run {run.run_number} exceeded 3% material variance. Review required.",
+                            message=f"Variance Approval Required: Production Run {run.run_number} exceeded 3% material variance. Review required.",
                             link=f"/operations/approvals/",
-                            notification_type='Approval'
                         )
                     for follower_id in follower_ids:
                         Notification.objects.create(
                             user_id=follower_id,
-                            title=f"Following: {run.run_number}",
-                            message=f"Production Run {run.run_number} is pending variance approval.",
+                            message=f"Following: Production Run {run.run_number} is pending variance approval.",
                             link=f"/operations/manufacture/run/{run.id}/",
-                            notification_type='Alert'
                         )
                     
-                    from .models import OrderTimeline
                     OrderTimeline.objects.create(
-                        production_run=run, 
-                        action=f"Production Run {run.run_number} submitted for Variance Approval.", 
+                        production_run=run,
+                        action=f"Production Run {run.run_number} submitted for Variance Approval.",
                         user=request.user
                     )
                         
                     messages.info(request, f"Production Run {run.run_number} submitted for Variance Approval.")
                     return redirect('production_run_detail', pk=pk)
             
-                # 3. Create Finished Goods Batch
+                # 3. Finalize Run: create FG batch, allocate it to the linked SO, advance SO status
                 fg_qty = request.POST.get('actual_yield')
                 if fg_qty:
-                    fg_batch = Batch.objects.create(
-                        batch_number=f"FG-{run.run_number}-{str(uuid.uuid4())[:4]}",
-                        status='Active',
-                        product=run.target_product,
-                        quantity=Decimal(fg_qty),
-                        produced_in=run,
-                        manufacturing_date=timezone.now().date(),
-                        expiry_date=timezone.now().date() + timedelta(days=365) # standard 1 year
-                    )
-                    
-                # 4. Finalize Run
-                run.status = 'Completed'
-                run.exact_end_time = timezone.now()
-                if fg_qty:
                     run.actual_yield = Decimal(fg_qty)
-                run.save()
-                
-                # 5. Update linked Sales Order if it exists
-                if run.sales_order:
-                    run.sales_order.status = 'Manufacturing Completed'
-                    run.sales_order.save()
-                    from .models import OrderTimeline
-                    OrderTimeline.objects.create(
-                        sales_order=run.sales_order, 
-                        action=f"Production Run {run.run_number} completed. FG batch created.", 
-                        user=request.user
-                    )
-                    OrderTimeline.objects.create(
-                        production_run=run, 
-                        action=f"Production Run {run.run_number} completed.", 
-                        user=request.user
-                    )
-                    
+
+                from .utils import finalize_production_run
+                fg_batch = finalize_production_run(run, request.user)
+
+                OrderTimeline.objects.create(
+                    production_run=run,
+                    action=f"Production Run {run.run_number} completed."
+                           + (f" FG batch {fg_batch.batch_number} created." if fg_batch else ""),
+                    user=request.user
+                )
+
             messages.success(request, f"Production Run {run.run_number} completed successfully!")
             return redirect('production_run_detail', pk=pk)
             
+        elif action == 'add_follower':
+            user_id = request.POST.get('user_id')
+            if user_id:
+                user_obj = get_object_or_404(CustomUser, id=user_id)
+                if user_obj not in run.followers.all():
+                    run.followers.add(user_obj)
+                    OrderTimeline.objects.create(production_run=run, action=f"Added {user_obj.get_full_name() or user_obj.username} as a follower.", user=request.user)
+                    messages.success(request, f"Added {user_obj.get_full_name() or user_obj.username} as a follower.")
+            return redirect('production_run_detail', pk=pk)
+
+        elif action == 'remove_follower':
+            user_id = request.POST.get('user_id')
+            if user_id:
+                user_obj = get_object_or_404(CustomUser, id=user_id)
+                if user_obj in run.followers.all():
+                    run.followers.remove(user_obj)
+                    OrderTimeline.objects.create(production_run=run, action=f"Removed {user_obj.get_full_name() or user_obj.username} from followers.", user=request.user)
+                    messages.success(request, f"Removed {user_obj.get_full_name() or user_obj.username} from followers.")
+            return redirect('production_run_detail', pk=pk)
+            
+        elif action == 'update_allocations':
+            from decimal import Decimal
+            alloc_id = request.POST.get('alloc_id')
+            new_qty = request.POST.get('quantity')
+            if alloc_id and new_qty is not None:
+                try:
+                    alloc = get_object_or_404(StockAllocation, id=alloc_id, production_run=run)
+
+                    if alloc.shipment and alloc.shipment.status != 'Draft':
+                        messages.error(request, f"This allocation is already in shipment {alloc.shipment.tracking_number} ({alloc.shipment.status}). Edit or cancel the shipment instead.")
+                        return redirect('production_run_detail', pk=pk)
+
+                    qty_dec = Decimal(new_qty)
+                    if qty_dec < 0:
+                        qty_dec = Decimal('0.0')
+
+                    diff = alloc.quantity - qty_dec
+                    batch = alloc.batch
+                    shipment = alloc.shipment
+
+                    if qty_dec == 0:
+                        alloc.delete()
+                    else:
+                        alloc.quantity = qty_dec
+                        alloc.save()
+
+                    if shipment:
+                        ship_item = ShipmentItem.objects.filter(shipment=shipment, batch=batch).first()
+                        if ship_item:
+                            if qty_dec == 0:
+                                ship_item.delete()
+                            else:
+                                ship_item.quantity = qty_dec
+                                ship_item.save(update_fields=['quantity'])
+
+                    if diff != 0:
+                        batch.allocated_quantity -= diff
+                        if batch.allocated_quantity < 0:
+                            batch.allocated_quantity = 0
+                        batch.save()
+
+                    OrderTimeline.objects.create(production_run=run, action=f"Updated allocation for {batch.batch_number} to {qty_dec}.", user=request.user)
+                    messages.success(request, f"Allocation updated to {qty_dec}.")
+                except Exception as e:
+                    messages.error(request, f"Error updating allocation: {str(e)}")
+            return redirect('production_run_detail', pk=pk)
+            
+    material_usage_rows = []
+    total_material_cost = Decimal('0')
+    for usage in run.material_usages.select_related('material').all():
+        consumptions = run.consumptions.filter(
+            consumed_batch__material=usage.material
+        ).select_related('consumed_batch')
+        row_cost = sum((c.quantity_used * c.consumed_batch.material.cost_per_unit for c in consumptions), Decimal('0'))
+        total_material_cost += row_cost
+        material_usage_rows.append({'usage': usage, 'consumptions': consumptions, 'cost': row_cost})
+
+    yield_efficiency = None
+    if run.actual_yield is not None and run.expected_yield:
+        yield_efficiency = (Decimal(str(run.actual_yield)) / Decimal(str(run.expected_yield))) * 100
+
     return render(request, 'production_run_detail.html', {
         'run': run,
         'linked_shipments': linked_shipments,
@@ -3854,15 +3891,35 @@ def production_run_detail_view(request, pk):
         'pending_shipments_count': pending_shipments_count,
         'bom_materials': bom_materials,
         'managers': CustomUser.objects.filter(role__in=['Admin', 'Manager']),
-        'all_users': CustomUser.objects.all()
+        'all_users': CustomUser.objects.all(),
+        'timeline_events': run.timeline.all().order_by('-timestamp'),
+        'allocations': run.allocations.all(),
+        'material_usage_rows': material_usage_rows,
+        'total_material_cost': total_material_cost,
+        'produced_batches': run.produced_batches.all(),
+        'yield_efficiency': yield_efficiency,
     })
 
 @login_required
 def shipment_pick_list_view(request, pk):
-    from .models import Shipment
     shipment = get_object_or_404(Shipment, pk=pk)
     
     return render(request, 'shipment_pick_list.html', {
         'shipment': shipment,
         'items': shipment.items.all().order_by('batch__location')
     })
+
+def batch_public_info_view(request, batch_number):
+    """ Public tracking page for a batch. No login required. """
+    batch = get_object_or_404(Batch.objects.select_related(
+        'material', 'product', 'purchase_order', 'produced_in', 'produced_in__manufacturing_plant'
+    ), batch_number=batch_number)
+    return render(request, 'batch_public_info.html', {'batch': batch})
+
+@login_required
+def batch_print_label_view(request, batch_number):
+    """ View dedicated for printing the QR label """
+    batch = get_object_or_404(Batch.objects.select_related(
+        'material', 'product'
+    ), batch_number=batch_number)
+    return render(request, 'batch_print_label.html', {'batch': batch})

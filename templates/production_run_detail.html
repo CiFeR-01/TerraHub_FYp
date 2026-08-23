@@ -22,6 +22,9 @@
     </div>
     
     <div style="display:flex; align-items:center; gap:1rem;">
+        {% if run.status == 'Pending Allocation' or run.status == 'Planned' %}
+        <a href="{% url 'production_run_allocate' run.id %}" class="btn btn-primary" style="padding:0.4rem 1rem; font-size:0.85rem;">Allocate Materials</a>
+        {% endif %}
         <span class="badge" style="font-size:0.85rem; padding:0.4rem 1rem;
             {% if run.status == 'InProgress' %}background:#dbeafe; color:#1e40af; border:1px solid #bfdbfe;
             {% elif run.status == 'Completed' %}background:#dcfce7; color:#166534; border:1px solid #bbf7d0;
@@ -66,6 +69,18 @@
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Production Started</div>
             <div style="font-size:0.95rem; font-weight:600;">{{ run.exact_start_time|date:"M d, H:i"|default:"Not Started" }}</div>
         </div>
+        {% if run.status == 'Completed' %}
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Actual Completion Date</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ run.exact_end_time|date:"M d, H:i"|default:"—" }}</div>
+        </div>
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Yield Efficiency</div>
+            <div style="font-size:0.95rem; font-weight:600; {% if yield_efficiency < 95 %}color:#d97706;{% elif yield_efficiency > 105 %}color:#2563eb;{% else %}color:#059669;{% endif %}">
+                {% if yield_efficiency %}{{ yield_efficiency|floatformat:1 }}%{% else %}—{% endif %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 
@@ -211,11 +226,185 @@
                       {% endif %}
                   </div>
             {% elif run.status == 'Completed' %}
-                <div style="background:#f8fafc; border:1px solid #bbf7d0; border-radius:8px; padding:1.5rem; text-align:center;">
+                <div style="background:#f8fafc; border:1px solid #bbf7d0; border-radius:8px; padding:1.5rem; text-align:center; margin-bottom: 1.5rem;">
                     <svg width="48" height="48" fill="none" stroke="#166534" viewBox="0 0 24 24" style="margin:0 auto 1rem;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                     <h4 style="font-size:1.1rem; font-weight:700; color:#166534; margin-bottom:0.5rem;">Production Completed</h4>
                     <p style="font-size:0.85rem; color:#15803d;">Started: {{ run.exact_start_time|date:"M d, H:i" }} | Ended: {{ run.exact_end_time|date:"M d, H:i" }}</p>
                 </div>
+                
+                <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+                        <h4 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; color:var(--text-main);">Material Usage History</h4>
+                        {% if total_material_cost %}
+                        <span style="font-size:0.85rem; color:var(--text-muted);">Total Material Cost: <strong style="color:var(--text-main);">RM {{ total_material_cost|floatformat:2 }}</strong></span>
+                        {% endif %}
+                    </div>
+
+                    <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden; margin-bottom:1.5rem;">
+                        <table style="width:100%; border-collapse:collapse; background:#fff;">
+                            <thead>
+                                <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                                    <th style="padding:0.75rem; text-align:left;">Material</th>
+                                    <th style="padding:0.75rem; text-align:right;">Expected</th>
+                                    <th style="padding:0.75rem; text-align:right;">Actual Poured</th>
+                                    <th style="padding:0.75rem; text-align:right;">Variance</th>
+                                    <th style="padding:0.75rem; text-align:right;">Cost</th>
+                                    <th style="padding:0.75rem; text-align:right;">Batches Used</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in material_usage_rows %}
+                                <tr style="border-bottom:1px solid var(--border-light);">
+                                    <td style="padding:0.75rem; font-size:0.85rem; font-weight:600;">{{ row.usage.material.name }}</td>
+                                    <td style="padding:0.75rem; font-size:0.85rem; text-align:right; color:var(--text-muted);">{{ row.usage.expected_qty|floatformat:2 }} {{ row.usage.material.unit_of_measure }}</td>
+                                    <td style="padding:0.75rem; font-size:0.85rem; text-align:right;">{{ row.usage.actual_qty|floatformat:2 }} {{ row.usage.material.unit_of_measure }}</td>
+                                    <td style="padding:0.75rem; font-size:0.85rem; text-align:right; font-weight:600; {% if row.usage.variance_pct > 3 or row.usage.variance_pct < -3 %}color:#dc2626;{% elif row.usage.variance_pct != 0 %}color:#d97706;{% else %}color:#059669;{% endif %}">
+                                        {% if row.usage.variance_pct > 0 %}+{% endif %}{{ row.usage.variance_pct|floatformat:2 }}%
+                                    </td>
+                                    <td style="padding:0.75rem; font-size:0.85rem; text-align:right; color:var(--text-muted);">RM {{ row.cost|floatformat:2 }}</td>
+                                    <td style="padding:0.75rem; text-align:right;">
+                                        {% if row.consumptions %}
+                                        <button onclick="(function(){var el=document.getElementById('consumed-{{ row.usage.id }}');el.style.display=el.style.display==='none'?'table-row':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--text-muted);">📦 {{ row.consumptions|length }} batch{{ row.consumptions|length|pluralize }}</button>
+                                        {% else %}
+                                        <span style="font-size:0.75rem; color:var(--text-muted);">—</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% if row.consumptions %}
+                                <tr id="consumed-{{ row.usage.id }}" style="display:none; background:#f8fafc;">
+                                    <td colspan="6" style="padding:0.75rem 1.5rem 1rem 2rem;">
+                                        <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">Batches Consumed — {{ row.usage.material.name }}</div>
+                                        <table style="width:100%; border-collapse:collapse; font-size:0.82rem; max-width:700px;">
+                                            <tr style="color:var(--text-muted); font-weight:600; border-bottom:1px solid var(--border-light);">
+                                                <td style="padding:0.3rem 0.75rem;">Batch</td>
+                                                <td style="padding:0.3rem 0.75rem;">Quantity Used</td>
+                                                <td style="padding:0.3rem 0.75rem;">Expiry</td>
+                                            </tr>
+                                            {% for c in row.consumptions %}
+                                            <tr style="border-bottom:1px solid #f1f5f9;">
+                                                <td style="padding:0.4rem 0.75rem; font-weight:600;">
+                                                    <a href="{% url 'batch_detail' c.consumed_batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ c.consumed_batch.batch_number }}</a>
+                                                </td>
+                                                <td style="padding:0.4rem 0.75rem;">{{ c.quantity_used|floatformat:2 }} {{ row.usage.material.unit_of_measure }}</td>
+                                                <td style="padding:0.4rem 0.75rem;">{{ c.consumed_batch.expiry_date|date:"M d, Y"|default:"—" }}</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </table>
+                                    </td>
+                                </tr>
+                                {% endif %}
+                                {% empty %}
+                                <tr>
+                                    <td colspan="6" style="padding:1rem; text-align:center; font-size:0.85rem; color:var(--text-muted);">No material usage records found.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {% if run.supervisor_signoff or run.fefo_override_reason %}
+                    <div style="background:#fefce8; border:1px solid #fde047; border-radius:8px; padding:1.25rem;">
+                        <h5 style="font-size:0.95rem; font-weight:700; color:#854d0e; margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem;">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            Approvals & Overrides
+                        </h5>
+                        {% if run.fefo_override_reason %}
+                        <div style="margin-bottom:0.75rem;">
+                            <span style="font-size:0.75rem; font-weight:700; color:#a16207; text-transform:uppercase;">Startup Override</span>
+                            <p style="font-size:0.85rem; color:#854d0e; margin-top:0.25rem; white-space:pre-wrap;">{{ run.fefo_override_reason }}</p>
+                        </div>
+                        {% endif %}
+                        {% if run.supervisor_signoff %}
+                        <div>
+                            <span style="font-size:0.75rem; font-weight:700; color:#a16207; text-transform:uppercase;">Variance Sign-off By: {{ run.supervisor_signoff.get_full_name|default:run.supervisor_signoff.username }}</span>
+                            <p style="font-size:0.85rem; color:#854d0e; margin-top:0.25rem;">{{ run.signoff_reason|default:"Approved without remark" }}</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+
+                {% if produced_batches %}
+                <!-- Finished Goods Batch Panel -->
+                <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:1.5rem;">
+                    <h4 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main);">Finished Goods Batch</h4>
+                    <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
+                        <table style="width:100%; border-collapse:collapse; background:#fff;">
+                            <thead>
+                                <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                                    <th style="padding:0.75rem; text-align:left;">Batch</th>
+                                    <th style="padding:0.75rem; text-align:right;">Quantity</th>
+                                    <th style="padding:0.75rem; text-align:left;">Warehouse</th>
+                                    <th style="padding:0.75rem; text-align:left;">Status</th>
+                                    <th style="padding:0.75rem; text-align:left;">Expiry</th>
+                                    <th style="padding:0.75rem; text-align:right;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for batch in produced_batches %}
+                                <tr style="border-bottom:1px solid var(--border-light);">
+                                    <td style="padding:0.75rem; font-size:0.85rem; font-weight:600;">
+                                        <a href="{% url 'batch_detail' batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ batch.batch_number }}</a>
+                                    </td>
+                                    <td style="padding:0.75rem; font-size:0.85rem; text-align:right;">{{ batch.quantity|floatformat:2 }} {{ run.target_product.unit_of_measure }}</td>
+                                    <td style="padding:0.75rem; font-size:0.85rem;">{{ batch.warehouse.name|default:"Unassigned" }}</td>
+                                    <td style="padding:0.75rem;">
+                                        {% if batch.status == 'Active' %}<span class="badge badge-emerald">Active</span>
+                                        {% elif batch.status == 'Quarantined' %}<span class="badge badge-amber">Quarantined</span>
+                                        {% else %}<span class="badge badge-rose">{{ batch.status }}</span>{% endif %}
+                                    </td>
+                                    <td style="padding:0.75rem; font-size:0.85rem;">{{ batch.expiry_date|date:"M d, Y"|default:"—" }}</td>
+                                    <td style="padding:0.75rem; text-align:right;">
+                                        <a href="{% url 'batch_print_label' batch.batch_number %}" target="_blank" style="font-size:0.75rem; color:var(--text-muted); text-decoration:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem;">🖨️ QR Label</a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
+            {% endif %}
+
+            {% if run.status != 'Completed' and allocations %}
+            <!-- Allocated Goods Panel -->
+            <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
+                <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1.5rem;">Allocated Goods</h3>
+                <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
+                    <table style="width:100%; border-collapse:collapse; background:#fff;">
+                        <thead>
+                            <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                                <th style="padding:0.75rem; text-align:left;">Material</th>
+                                <th style="padding:0.75rem; text-align:left;">Batch</th>
+                                <th style="padding:0.75rem; text-align:right;">Quantity</th>
+                                {% if run.status == 'Pending Allocation' or run.status == 'Planned' or run.status == 'Awaiting Materials' %}
+                                <th style="padding:0.75rem; text-align:right;">Actions</th>
+                                {% endif %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for alloc in allocations %}
+                            <tr style="border-bottom:1px solid var(--border-light);">
+                                <td style="padding:0.75rem; font-size:0.85rem; font-weight:600;">{{ alloc.batch.material.name }}</td>
+                                <td style="padding:0.75rem; font-size:0.85rem; color:var(--text-muted);">{{ alloc.batch.batch_number }}</td>
+                                <td style="padding:0.75rem; font-size:0.85rem; text-align:right;">{{ alloc.quantity|floatformat:2 }}</td>
+                                {% if run.status == 'Pending Allocation' or run.status == 'Planned' or run.status == 'Awaiting Materials' %}
+                                <td style="padding:0.75rem; text-align:right;">
+                                    <form method="post" style="display:inline-flex; align-items:center; gap:0.5rem;" onsubmit="return confirm('Update allocation? This will release or reserve stock.')">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="update_allocations">
+                                        <input type="hidden" name="alloc_id" value="{{ alloc.id }}">
+                                        <input type="number" step="0.01" name="quantity" value="{{ alloc.quantity|floatformat:2 }}" style="width:70px; padding:0.25rem; font-size:0.8rem; border:1px solid var(--border-light); border-radius:4px;" required>
+                                        <button type="submit" class="btn btn-primary" style="padding:0.25rem 0.5rem; font-size:0.75rem;">Update</button>
+                                    </form>
+                                </td>
+                                {% endif %}
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
             {% endif %}
         </div>
     </div>
@@ -254,6 +443,70 @@
                 <div style="text-align:center; padding:2rem 0; color:var(--text-muted); font-size:0.85rem; background:#f8fafc; border-radius:8px;">
                     No shipments linked to this run.
                 </div>
+            {% endif %}
+        </div>
+        
+        <!-- Followers Panel -->
+        <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main); display:flex; justify-content:space-between; align-items:center;">
+                Followers
+                <span style="background:var(--primary); color:#fff; border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem;">{{ run.followers.count }}</span>
+            </h3>
+            
+            <div style="display:flex; flex-direction:column; gap:0.75rem; margin-bottom:1rem;">
+                {% for follower in run.followers.all %}
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:#f8fafc; border-radius:8px; border:1px solid var(--border-light);">
+                    <div style="display:flex; align-items:center; gap:0.5rem;">
+                        <div style="width:28px; height:28px; border-radius:50%; background:var(--primary); color:#fff; display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700;">
+                            {{ follower.username|make_list|first|upper }}
+                        </div>
+                        <span style="font-size:0.85rem; font-weight:600;">{{ follower.get_full_name|default:follower.username }}</span>
+                    </div>
+                    {% if follower == request.user %}
+                    <form method="post" style="margin:0;">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="remove_follower">
+                        <input type="hidden" name="user_id" value="{{ follower.id }}">
+                        <button type="submit" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:0.75rem; font-weight:600;">Unfollow</button>
+                    </form>
+                    {% endif %}
+                </div>
+                {% empty %}
+                <p style="font-size:0.85rem; color:var(--text-muted); text-align:center; padding:1rem 0;">No followers yet.</p>
+                {% endfor %}
+            </div>
+
+            <form method="post" style="display:flex; gap:0.5rem;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="add_follower">
+                <select name="user_id" required class="form-select" style="flex:1; padding:0.4rem 0.5rem; border-radius:6px; font-size:0.8rem; border:1px solid var(--border-light);">
+                    <option value="">-- Add Colleague --</option>
+                    {% for u in all_users %}
+                        {% if u not in run.followers.all %}
+                        <option value="{{ u.id }}">{{ u.get_full_name|default:u.username }} ({{ u.role }})</option>
+                        {% endif %}
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-secondary" style="padding:0.4rem 0.75rem; font-size:0.8rem;">Add</button>
+            </form>
+        </div>
+
+        <!-- Audit Timeline -->
+        <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem;">Run Timeline</h3>
+            {% if timeline_events %}
+            <div style="position:relative; padding-left:1.5rem;">
+                <div style="position:absolute; left:0.45rem; top:0.35rem; bottom:0; width:2px; background:var(--border-light);"></div>
+                {% for event in timeline_events %}
+                <div style="position:relative; margin-bottom:1rem;">
+                    <div style="position:absolute; left:-1.5rem; top:0.25rem; width:10px; height:10px; border-radius:50%; background:var(--primary); border:2px solid #fff; box-shadow:0 0 0 2px var(--primary);"></div>
+                    <div style="font-size:0.875rem; font-weight:600; color:var(--text-main);">{{ event.action }}</div>
+                    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.1rem;">{{ event.timestamp|date:"d M Y, H:i" }}{% if event.user %} · {{ event.user.username }}{% endif %}</div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p style="color:var(--text-muted); font-size:0.875rem;">No timeline events recorded yet.</p>
             {% endif %}
         </div>
     </div>

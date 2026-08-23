@@ -242,7 +242,7 @@
                         {% else %}
                         <span style="font-size:0.75rem; color:var(--text-muted); font-style:italic;">Requires Manager Approval</span>
                         {% endif %}
-                        {% elif run.status == 'Planned' %}
+                        {% elif run.status == 'Planned' or run.status == 'Pending Allocation' %}
                         <a href="{% url 'production_run_allocate' run.id %}" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem; border-color:var(--primary); color:var(--primary); text-decoration:none;">Allocate Materials</a>
                         {% elif run.status == 'InProgress' %}
                         <form method="post" style="display:inline;">
@@ -252,7 +252,7 @@
                             <button type="submit" class="btn btn-primary" style="padding:0.3rem 0.6rem; font-size:0.78rem; background:#059669;">Complete &amp; Yield</button>
                         </form>
                         {% else %}
-                        <span style="font-size:0.78rem; color:var(--text-muted);">Completed</span>
+                        <span style="font-size:0.78rem; color:var(--text-muted);">-</span>
                         {% endif %}
                     </td>
                 </tr>

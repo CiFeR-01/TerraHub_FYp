@@ -83,7 +83,11 @@
                     <td style="padding:0.85rem 1rem; font-weight:600;">#{{ audit.id }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ audit.batch.batch_number }}</td>
                     <td style="padding:0.85rem 1rem;">{% if audit.batch.material %}{{ audit.batch.material.name }}{% elif audit.batch.product %}{{ audit.batch.product.name }}{% else %}Batch Item{% endif %}</td>
-                    <td style="padding:0.85rem 1rem;">{% if audit.batch.location and audit.batch.location.warehouse %}{{ audit.batch.location.warehouse.name }}{% else %}Unassigned{% endif %}</td>
+                    <td style="padding:0.85rem 1rem;">
+                        {% if audit.batch.warehouse %}{{ audit.batch.warehouse.name }}{% if audit.batch.location %} ({{ audit.batch.location }}){% endif %}
+                        {% elif audit.batch.location %}{{ audit.batch.location }}
+                        {% else %}Unassigned{% endif %}
+                    </td>
                     <td style="padding:0.85rem 1rem;">{{ audit.expected_quantity|floatformat:2 }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{{ audit.actual_quantity|floatformat:2 }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:700; {% if audit.variance < 0 %}color:#ef4444;{% elif audit.variance > 0 %}color:#10b981;{% else %}color:var(--text-muted);{% endif %}">
@@ -136,7 +140,7 @@
                 <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.4rem;">Select Active Batch</label>
                 <select name="batch_id" required class="form-select" style="width:100%; padding:0.6rem; border-radius:6px; border:1px solid var(--border-light);">
                     {% for b in active_batches %}
-                    <option value="{{ b.id }}">Batch {{ b.batch_number }} — {% if b.material %}{{ b.material.name }}{% elif b.product %}{{ b.product.name }}{% else %}Batch Item{% endif %} (Current: {{ b.quantity|floatformat:1 }})</option>
+                    <option value="{{ b.id }}" data-batch-number="{{ b.batch_number }}">Batch {{ b.batch_number }} — {% if b.material %}{{ b.material.name }}{% elif b.product %}{{ b.product.name }}{% else %}Batch Item{% endif %} (Current: {{ b.quantity|floatformat:1 }})</option>
                     {% endfor %}
                 </select>
             </div>
@@ -151,4 +155,27 @@
         </form>
     </div>
 </div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const batchNum = urlParams.get('batch');
+        if (batchNum) {
+            // Open the modal
+            document.getElementById('audit-modal').style.display = 'flex';
+            
+            // Find and select the correct option
+            const selectEl = document.querySelector('select[name="batch_id"]');
+            if (selectEl) {
+                const options = selectEl.options;
+                for (let i = 0; i < options.length; i++) {
+                    if (options[i].getAttribute('data-batch-number') === batchNum) {
+                        selectEl.selectedIndex = i;
+                        break;
+                    }
+                }
+            }
+        }
+    });
+</script>
 {% endblock %}

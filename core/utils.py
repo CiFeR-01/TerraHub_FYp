@@ -44,7 +44,7 @@ def allocate_stock(order_type, order, material_or_product, required_qty, warehou
         batches = Batch.objects.filter(material=material_or_product, status='Active')
         
     if warehouse:
-        batches = batches.filter(location__warehouse=warehouse)
+        batches = batches.filter(warehouse=warehouse)
         
     from django.db.models import F
     batches = batches.order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
@@ -82,6 +82,240 @@ def allocate_stock(order_type, order, material_or_product, required_qty, warehou
             total_allocated += qty_to_take
             
     return total_allocated
+
+def create_shortage_production_runs(so, plant, user):
+    """
+    For each line item on `so` not yet fully covered by StockAllocations, create a
+    Production Run to manufacture the shortfall (unless one already exists for that
+    SO+product). Runs are created as 'Pending Approval' — same as every other manual
+    production run — so a manager reviews them in the Approvals Inbox before anyone
+    can start allocating materials against them. Returns True if any run was created.
+    """
+    from django.utils import timezone
+    from datetime import timedelta
+    from django.db.models import Sum
+    from .models import ProductionRun, StockAllocation, OrderTimeline
+
+    created_any = False
+    for item in so.items.all():
+        qty_needed = Decimal(str(item.quantity_ordered))
+        prev_allocated = StockAllocation.objects.filter(
+            sales_order=so, batch__product=item.product
+        ).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+        unfulfilled = qty_needed - Decimal(str(prev_allocated))
+
+        if unfulfilled > 0:
+            pr = ProductionRun.objects.filter(sales_order=so, target_product=item.product).exclude(status='Cancelled').first()
+            if not pr:
+                run_number = f"PR-{so.so_number}-{item.product.sku}"
+                pr_new = ProductionRun.objects.create(
+                    run_number=run_number,
+                    target_product=item.product,
+                    expected_yield=unfulfilled,
+                    status='Pending Approval',
+                    sales_order=so,
+                    manufacturing_plant=plant,
+                    start_time=timezone.now() + timedelta(days=1),
+                    end_time=timezone.now() + timedelta(days=1, hours=4),
+                    created_by=user
+                )
+                OrderTimeline.objects.create(production_run=pr_new, action="Manufacturing Order created. Pending Approval.", user=user)
+                created_any = True
+
+    return created_any
+
+
+def consume_materials_for_run(run, user):
+    """
+    Physically deducts the raw materials a completed run used. For each material
+    in the run's recipe: consumes from whatever's still allocated to this run
+    (releasing any unused portion back to availability), then — for materials
+    whose allocation was already resolved by an arrived transfer shipment, or
+    where actual usage exceeded what was allocated — draws the remainder from
+    the plant's current stock via FEFO. Uses RunMaterialUsage.actual_qty when
+    available (the detailed completion form), otherwise assumes the allocated
+    amount was used as planned (the quick-complete path). Records a
+    ProductionConsumption row per batch drawn from and a RegistryLog entry per
+    material.
+    """
+    from django.db.models import F
+    from .models import Batch, StockAllocation, ProductionConsumption, RunMaterialUsage, Material, RegistryLog
+
+    usage_by_material = {
+        u.material_id: Decimal(str(u.actual_qty))
+        for u in RunMaterialUsage.objects.filter(production_run=run)
+    }
+
+    material_ids = set(usage_by_material.keys())
+    material_ids.update(
+        StockAllocation.objects.filter(production_run=run, batch__material__isnull=False)
+        .values_list('batch__material_id', flat=True)
+    )
+
+    for material_id in material_ids:
+        material = Material.objects.get(id=material_id)
+        allocations = list(
+            StockAllocation.objects.filter(production_run=run, batch__material=material).select_related('batch')
+        )
+        allocated_total = sum((a.quantity for a in allocations), Decimal('0'))
+        actual_used = usage_by_material.get(material_id, allocated_total)
+
+        remaining = actual_used
+        allocations.sort(key=lambda a: (a.batch.expiry_date is None, a.batch.expiry_date, a.batch.manufacturing_date))
+
+        for alloc in allocations:
+            batch = alloc.batch
+            take = min(alloc.quantity, remaining) if remaining > 0 else Decimal('0')
+
+            if take > 0:
+                batch.quantity -= take
+                ProductionConsumption.objects.create(production_run=run, consumed_batch=batch, quantity_used=take)
+                remaining -= take
+
+            # Release the full hold this allocation had — whatever wasn't consumed becomes available again
+            batch.allocated_quantity -= alloc.quantity
+            if batch.allocated_quantity < 0:
+                batch.allocated_quantity = 0
+            batch.save(update_fields=['quantity', 'allocated_quantity'])
+            alloc.delete()
+
+        if remaining > 0 and run.manufacturing_plant:
+            extra_batches = Batch.objects.filter(
+                material=material, status='Active', warehouse=run.manufacturing_plant
+            ).annotate(avail=F('quantity') - F('allocated_quantity')).filter(avail__gt=0).order_by(
+                F('expiry_date').asc(nulls_last=True), 'manufacturing_date'
+            )
+            for batch in extra_batches:
+                if remaining <= 0:
+                    break
+                take = min(Decimal(str(batch.avail)), remaining)
+                if take <= 0:
+                    continue
+                batch.quantity -= take
+                batch.save(update_fields=['quantity'])
+                ProductionConsumption.objects.create(production_run=run, consumed_batch=batch, quantity_used=take)
+                remaining -= take
+
+        consumed = actual_used - remaining
+        if consumed > 0:
+            RegistryLog.objects.create(
+                action_type='Consumed_For_Manufacturing',
+                item_name=f"{material.name} (Run {run.run_number})",
+                quantity_changed=consumed,
+                warehouse=run.manufacturing_plant,
+                user=user
+            )
+
+        if remaining > 0:
+            from .models import OrderTimeline
+            OrderTimeline.objects.create(
+                production_run=run,
+                action=f"Warning: {material.sku} usage exceeded available stock by {remaining}.",
+                user=user
+            )
+
+
+def approve_production_run(run, user):
+    """
+    Approves a 'Pending Approval' production run, clearing it for material
+    allocation via the FEFO allocation screen (production_run_allocate_view),
+    which already handles both local and cross-warehouse sourcing correctly —
+    so approval itself doesn't need its own separate material check.
+    """
+    from .models import OrderTimeline
+    run.status = 'Pending Allocation'
+    run.save()
+    OrderTimeline.objects.create(
+        production_run=run,
+        action=f"Production Run {run.run_number} approved. Ready for material allocation.",
+        user=user
+    )
+
+
+def finalize_production_run(run, user):
+    """
+    Completes a production run: creates the finished-goods batch, marks the run
+    Completed, and — if the run is linked to a SalesOrder — allocates the new
+    batch directly against that order's matching line item (not a generic FEFO
+    sweep, since this stock was produced specifically for it) and advances the
+    order's status. Returns the created batch (or None if there was no yield).
+    """
+    import uuid
+    from django.utils import timezone
+    from datetime import timedelta
+    from django.db.models import Sum
+    from .models import Batch, StockAllocation, OrderTimeline, RegistryLog
+
+    consume_materials_for_run(run, user)
+
+    fg_batch = None
+    if run.actual_yield:
+        fg_batch = Batch.objects.create(
+            batch_number=f"FG-{run.run_number}-{str(uuid.uuid4())[:4]}",
+            status='Active',
+            product=run.target_product,
+            quantity=run.actual_yield,
+            produced_in=run,
+            warehouse=run.manufacturing_plant,
+            manufacturing_date=timezone.now().date(),
+            expiry_date=timezone.now().date() + timedelta(days=365)
+        )
+        RegistryLog.objects.create(
+            action_type='Produced',
+            item_name=f"{run.target_product.name} (Batch {fg_batch.batch_number})",
+            quantity_changed=run.actual_yield,
+            warehouse=run.manufacturing_plant,
+            user=user
+        )
+
+    run.status = 'Completed'
+    run.exact_end_time = timezone.now()
+    run.save()
+
+    if run.sales_order and fg_batch:
+        so = run.sales_order
+        item = so.items.filter(product=run.target_product).first()
+
+        if item:
+            already_allocated = StockAllocation.objects.filter(
+                sales_order=so, batch__product=item.product
+            ).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+            outstanding = Decimal(str(item.quantity_ordered)) - Decimal(str(already_allocated)) - Decimal(str(item.quantity_shipped))
+
+            if outstanding > 0:
+                take = min(fg_batch.quantity - fg_batch.allocated_quantity, outstanding)
+                if take > 0:
+                    fg_batch.allocated_quantity += take
+                    fg_batch.save(update_fields=['allocated_quantity'])
+                    StockAllocation.objects.create(batch=fg_batch, sales_order=so, quantity=take)
+                    OrderTimeline.objects.create(
+                        sales_order=so,
+                        action=f"Auto-allocated {take} {item.product.unit_of_measure} of {item.product.sku} from newly produced batch {fg_batch.batch_number} (Run {run.run_number}).",
+                        user=user
+                    )
+
+        fully_covered = True
+        for it in so.items.all():
+            alloc_sum = StockAllocation.objects.filter(
+                sales_order=so, batch__product=it.product
+            ).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+            if Decimal(str(alloc_sum)) + Decimal(str(it.quantity_shipped)) < Decimal(str(it.quantity_ordered)):
+                fully_covered = False
+                break
+
+        if so.status not in ['Shipped', 'Delivered', 'Cancelled', 'Rejected', 'Draft']:
+            so.status = 'Ready to Ship' if fully_covered else 'Pending'
+            so.save()
+
+        OrderTimeline.objects.create(
+            sales_order=so,
+            action=f"Production Run {run.run_number} completed. FG batch {fg_batch.batch_number} created."
+                   + (" Order fully covered — moved to Ready to Ship." if fully_covered else " Order still has outstanding items."),
+            user=user
+        )
+
+    return fg_batch
+
 
 def deallocate_stock(order_type, order):
     """

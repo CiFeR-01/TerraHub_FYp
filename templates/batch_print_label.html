@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Print Label - {{ batch.batch_number }}</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f4f4f5;
+            display: flex;
+            justify-content: center;
+        }
+        .label-container {
+            width: 100mm;
+            height: 50mm;
+            background: #fff;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 10px;
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        #qrcode {
+            width: 40mm;
+            height: 40mm;
+            flex-shrink: 0;
+            background: #fff;
+        }
+        #qrcode img {
+            width: 100%;
+            height: 100%;
+        }
+        .label-info {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .label-title {
+            font-size: 14px;
+            font-weight: bold;
+            color: #111827;
+            margin: 0 0 4px 0;
+            text-transform: uppercase;
+        }
+        .label-batch {
+            font-size: 18px;
+            font-weight: 900;
+            color: #000;
+            margin: 0 0 6px 0;
+            word-break: break-all;
+        }
+        .label-detail {
+            font-size: 11px;
+            color: #374151;
+            margin: 0 0 2px 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        /* Print Styles */
+        @media print {
+            body {
+                background: #fff;
+                padding: 0;
+                margin: 0;
+            }
+            .label-container {
+                border: none;
+                box-shadow: none;
+                border-radius: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="label-container">
+        <div id="qrcode"></div>
+        <div class="label-info">
+            <h3 class="label-title">TerraHub Tracker</h3>
+            <h2 class="label-batch">{{ batch.batch_number }}</h2>
+            <p class="label-detail"><strong>Item:</strong> {% if batch.material %}{{ batch.material.name }}{% else %}{{ batch.product.name }}{% endif %}</p>
+            <p class="label-detail"><strong>SKU:</strong> {% if batch.material %}{{ batch.material.sku }}{% else %}{{ batch.product.sku }}{% endif %}</p>
+            <p class="label-detail"><strong>Mfg:</strong> {{ batch.manufacturing_date|date:"Y-m-d" }}</p>
+            <p class="label-detail"><strong>Exp:</strong> {{ batch.expiry_date|date:"Y-m-d" }}</p>
+        </div>
+    </div>
+
+    <script>
+        var publicUrl = window.location.origin + "{% url 'batch_public_info' batch.batch_number %}";
+        
+        // Build the raw offline text payload
+        var itemName = "{% if batch.material %}{{ batch.material.name|escapejs }}{% else %}{{ batch.product.name|escapejs }}{% endif %}";
+        var sku = "{% if batch.material %}{{ batch.material.sku|escapejs }}{% else %}{{ batch.product.sku|escapejs }}{% endif %}";
+        
+        var offlineText = "Batch: {{ batch.batch_number }}\\n" +
+                          "Item: " + itemName + "\\n" +
+                          "SKU: " + sku + "\\n" +
+                          "Mfg Date: {{ batch.manufacturing_date|date:'Y-m-d' }}\\n" +
+                          "Exp Date: {{ batch.expiry_date|date:'Y-m-d' }}\\n\\n" +
+                          "Live Tracker:\\n" + publicUrl;
+
+        new QRCode(document.getElementById("qrcode"), {
+            text: offlineText,
+            width: 256,
+            height: 256,
+            colorDark : "#000000",
+            colorLight : "#ffffff",
+            correctLevel : QRCode.CorrectLevel.M
+        });
+
+        window.onload = function() {
+            setTimeout(function() {
+                window.print();
+            }, 500);
+        }
+    </script>
+</body>
+</html>

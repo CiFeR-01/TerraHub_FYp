@@ -1,21 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Action Center - TerraHub
-<script>
-function switchTab(tabId) {
-    document.getElementById('tasks-tab').style.display = 'none';
-    document.getElementById('following-tab').style.display = 'none';
-    document.getElementById('btn-tasks').style.borderBottom = 'none';
-    document.getElementById('btn-tasks').style.color = 'var(--text-muted)';
-    document.getElementById('btn-following').style.borderBottom = 'none';
-    document.getElementById('btn-following').style.color = 'var(--text-muted)';
-    
-    document.getElementById(tabId + '-tab').style.display = 'block';
-    document.getElementById('btn-' + tabId).style.borderBottom = '2px solid var(--primary)';
-    document.getElementById('btn-' + tabId).style.color = 'var(--primary)';
-}
-</script>
-{% endblock %}
+{% block title %}Action Center - TerraHub{% endblock %}
 
 {% block content %}
 <header class="dashboard-header-row animate-fade-in-up">
@@ -203,9 +188,32 @@ function switchTab(tabId) {
 
         <div id="following-tab" style="display:none;">
             <div style="display:grid; gap:1rem;">
+                {% if not followed_sos and not followed_pos and not followed_runs and not followed_shipments %}
+                <div style="text-align:center; padding:3rem 1rem; color:var(--text-muted);">
+                    <div style="font-size:2rem; margin-bottom:0.5rem;">&#128065;</div>
+                    <div style="font-weight:600; font-size:1rem;">You aren't following any orders.</div>
+                    <div style="font-size:0.85rem; margin-top:0.25rem;">Follow Sales Orders, Purchase Orders, Production Runs, or Shipments to track their status here.</div>
+                </div>
+                {% else %}
+                <!-- Followed Sales Orders -->
+                {% for so in followed_sos %}
+                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Sales Order</div>
+                        <a href="{% url 'so_detail' so.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ so.so_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Client: {{ so.client_name }}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <span class="badge badge-sky">{{ so.status }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+
+                <!-- Followed Purchase Orders -->
                 {% for po in followed_pos %}
                 <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
                     <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Purchase Order</div>
                         <a href="{% url 'po_detail' po.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ po.po_number }}</a>
                         <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Supplier: {{ po.supplier_name|default:po.supplier|default:"-" }} &middot; Created: {{ po.order_date }}</div>
                     </div>
@@ -214,14 +222,22 @@ function switchTab(tabId) {
                         <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.5rem;">Assigned to: {{ po.assigned_to.get_full_name|default:po.assigned_to.username|default:"Unassigned" }}</div>
                     </div>
                 </div>
-                {% empty %}
-                <div style="text-align:center; padding:3rem 1rem; color:var(--text-muted);">
-                    <div style="font-size:2rem; margin-bottom:0.5rem;">&#128065;</div>
-                    <div style="font-weight:600; font-size:1rem;">You aren't following any orders.</div>
-                    <div style="font-size:0.85rem; margin-top:0.25rem;">Follow Purchase Orders to track their status here.</div>
+                {% endfor %}
+
+                <!-- Followed Production Runs -->
+                {% for run in followed_runs %}
+                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Production Run</div>
+                        <a href="{% url 'production_run_detail' run.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ run.run_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Product: {{ run.target_product.name }}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <span class="badge badge-sky">{{ run.status }}</span>
+                    </div>
                 </div>
                 {% endfor %}
-                
+
                 <!-- Followed Shipments -->
                 {% for ship in followed_shipments %}
                 <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
@@ -235,6 +251,7 @@ function switchTab(tabId) {
                     </div>
                 </div>
                 {% endfor %}
+                {% endif %}
             </div>
         </div>
     </div>
@@ -316,32 +333,7 @@ function switchTab(tabId) {
         </div>
         {% endif %}
         </div>
-
-        <div id="following-tab" style="display:none;">
-            <div style="display:grid; gap:1rem;">
-                {% for po in followed_pos %}
-                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
-                    <div>
-                        <a href="{% url 'po_detail' po.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ po.po_number }}</a>
-                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Supplier: {{ po.supplier_name|default:po.supplier|default:"-" }} &middot; Created: {{ po.order_date }}</div>
-                    </div>
-                    <div style="text-align:right;">
-                        <span class="badge badge-sky">{{ po.status }}</span>
-                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.5rem;">Assigned to: {{ po.assigned_to.get_full_name|default:po.assigned_to.username|default:"Unassigned" }}</div>
-                    </div>
-                </div>
-                {% empty %}
-                <div style="text-align:center; padding:3rem 1rem; color:var(--text-muted);">
-                    <div style="font-size:2rem; margin-bottom:0.5rem;">&#128065;</div>
-                    <div style="font-weight:600; font-size:1rem;">You aren't following any orders.</div>
-                    <div style="font-size:0.85rem; margin-top:0.25rem;">Follow Purchase Orders to track their status here.</div>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
     </div>
-</div>
-
 
 <script>
 function switchTab(tabId) {
