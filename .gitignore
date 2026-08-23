@@ -18,7 +18,8 @@ staticfiles/
 # IDEs
 .vscode/
 .idea/
-.claude/settings.local.json
+.claude/
+launch.json
 *.suo
 *.ntvs*
 *.njsproj

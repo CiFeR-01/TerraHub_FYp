@@ -82,6 +82,7 @@ body::after {
     left: 0;
     z-index: 100;
     box-shadow: 4px 0 24px rgba(15, 23, 42, 0.02);
+    transition: width 0.2s ease;
 }
 
 .sidebar-header {
@@ -90,6 +91,39 @@ body::after {
     display: flex;
     align-items: center;
     border-bottom: 1px solid var(--border-light);
+}
+
+.sidebar-collapse-btn {
+    background: none;
+    border: none;
+    appearance: none;
+    -webkit-appearance: none;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 0.4rem;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    transition: var(--transition-smooth);
+}
+
+.sidebar-collapse-btn:hover {
+    background: #f1f5f9;
+    color: var(--primary);
+}
+
+button.sidebar-toggle-btn {
+    display: none;
+}
+
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.4);
+    z-index: 90;
 }
 
 .sidebar-brand {
@@ -138,6 +172,7 @@ body::after {
 .nav-btn {
     display: flex;
     align-items: center;
+    width: 100%;
     padding: 0.75rem 1rem;
     border-radius: 8px;
     color: #475569; /* Slate 600 */
@@ -147,6 +182,21 @@ body::after {
     transition: var(--transition-smooth);
     position: relative;
     gap: 0.75rem;
+}
+
+button.nav-btn {
+    background: none;
+    border: none;
+    appearance: none;
+    -webkit-appearance: none;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+button.nav-btn:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
 }
 
 .nav-btn:hover {
@@ -231,6 +281,22 @@ body::after {
     background: rgba(239, 68, 68, 0.05);
 }
 
+.submenu-link.has-badge {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.nav-badge {
+    background: #ef4444;
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 0.15rem 0.4rem;
+    border-radius: 10px;
+    line-height: 1;
+}
+
 /* Sidebar Footer Profile Details */
 .sidebar-footer {
     padding: 1.25rem 1rem;
@@ -241,6 +307,16 @@ body::after {
     gap: 0.75rem;
     margin-top: auto;
     background: #fafafb;
+}
+
+.sidebar-footer-link {
+    text-decoration: none;
+    color: inherit;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: 1;
+    min-width: 0;
 }
 
 .user-profile-details {
@@ -312,6 +388,91 @@ body::after {
     min-height: 100vh;
     background-color: var(--bg-base);
     min-width: 0; /* prevent layout break */
+    transition: margin-left 0.2s ease;
+}
+
+/* Desktop icon-only collapse rail */
+@media (min-width: 1025px) {
+    .dashboard-wrapper.sidebar-collapsed .sidebar {
+        width: 76px;
+    }
+
+    .dashboard-wrapper.sidebar-collapsed .main-container {
+        margin-left: 76px;
+    }
+
+    .dashboard-wrapper.sidebar-collapsed .sidebar-header {
+        justify-content: center;
+        padding: 0 0.75rem;
+    }
+
+    .dashboard-wrapper.sidebar-collapsed .brand-text,
+    .dashboard-wrapper.sidebar-collapsed .nav-btn span:not(.chevron-icon),
+    .dashboard-wrapper.sidebar-collapsed .chevron-icon,
+    .dashboard-wrapper.sidebar-collapsed .user-meta {
+        display: none;
+    }
+
+    .dashboard-wrapper.sidebar-collapsed .sidebar-collapse-btn {
+        margin-left: 0;
+    }
+
+    .dashboard-wrapper.sidebar-collapsed .sidebar-collapse-btn svg {
+        transform: rotate(180deg);
+    }
+
+    .dashboard-wrapper.sidebar-collapsed .nav-btn {
+        justify-content: center;
+        padding: 0.75rem 0.5rem;
+    }
+
+    .dashboard-wrapper.sidebar-collapsed .sidebar-footer {
+        justify-content: center;
+    }
+
+    .dashboard-wrapper.sidebar-collapsed .logout-form {
+        display: none;
+    }
+
+    .dashboard-wrapper.sidebar-collapsed .sidebar-footer-link {
+        flex: none;
+        justify-content: center;
+    }
+
+    .dashboard-wrapper.sidebar-collapsed .sidebar-submenu {
+        display: none;
+    }
+}
+
+/* Mobile off-canvas sidebar */
+@media (max-width: 1024px) {
+    button.sidebar-toggle-btn {
+        display: flex;
+    }
+
+    .sidebar-collapse-btn {
+        display: none;
+    }
+
+    .sidebar {
+        width: 280px;
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        z-index: 200;
+    }
+
+    .dashboard-wrapper.sidebar-mobile-open .sidebar {
+        transform: translateX(0);
+        box-shadow: 8px 0 32px rgba(15, 23, 42, 0.2);
+    }
+
+    .main-container {
+        margin-left: 0;
+    }
+
+    .dashboard-wrapper.sidebar-mobile-open .sidebar-overlay {
+        display: block;
+    }
 }
 
 /* Top bar widget header */

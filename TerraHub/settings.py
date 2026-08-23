@@ -73,6 +73,7 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'core.context_processors.approvals_count',
+                'core.context_processors.sidebar_nav',
             ],
         },
     },
