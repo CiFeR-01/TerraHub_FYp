@@ -125,6 +125,47 @@ def create_shortage_production_runs(so, plant, user):
     return created_any
 
 
+def sync_production_run_yield(so, product, unfulfilled, user):
+    """
+    Keeps an already-created Production Run's expected_yield in sync with the SO's
+    actual remaining shortfall. Without this, a run created when 480 MT was missing
+    stays at 480 MT forever even if someone later manually allocates existing stock
+    that covers part (or all) of that gap — silently asking the plant to over-produce.
+
+    Only touches runs that haven't started consuming materials yet (Pending Approval /
+    Pending Allocation / Awaiting Materials / Planned) — once a run is InProgress or
+    Completed its yield reflects what's actually being/been made, not a target to move.
+    """
+    from .models import ProductionRun, OrderTimeline
+
+    run = ProductionRun.objects.filter(
+        sales_order=so, target_product=product,
+        status__in=['Pending Approval', 'Pending Allocation', 'Awaiting Materials', 'Planned']
+    ).first()
+    if not run:
+        return
+
+    unfulfilled = Decimal(str(unfulfilled))
+    if unfulfilled <= 0:
+        old_yield = run.expected_yield
+        run.status = 'Cancelled'
+        run.save(update_fields=['status'])
+        OrderTimeline.objects.create(
+            production_run=run,
+            action=f"Auto-cancelled: SO shortage fully covered by direct stock allocation ({old_yield} MT no longer needed).",
+            user=user
+        )
+    elif unfulfilled != run.expected_yield:
+        old_yield = run.expected_yield
+        run.expected_yield = unfulfilled
+        run.save(update_fields=['expected_yield'])
+        OrderTimeline.objects.create(
+            production_run=run,
+            action=f"Expected yield adjusted from {old_yield} to {unfulfilled} MT after additional stock was directly allocated to the SO.",
+            user=user
+        )
+
+
 def consume_materials_for_run(run, user):
     """
     Physically deducts the raw materials a completed run used. For each material

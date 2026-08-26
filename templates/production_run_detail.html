@@ -16,8 +16,7 @@
             {{ run.run_number }} - {{ run.target_product.name }}
         </h1>
         <p style="font-size:0.9rem; color:var(--text-muted);">
-            Yield: {{ run.expected_yield|floatformat:2 }} {{ run.target_product.unit_of_measure }} | 
-            Plant: {{ run.manufacturing_plant.name|default:"Not Set" }}
+            SKU: {{ run.target_product.sku }}
         </p>
     </div>
     
@@ -47,6 +46,21 @@
 <!-- Info Card -->
 <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:2rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); max-width:1200px;">
     <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1.5rem;">
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Target Product</div>
+            <div style="font-size:0.95rem; font-weight:600;">
+                <a href="{% url 'product_detail' run.target_product.pk %}" style="color:var(--primary); text-decoration:none;">{{ run.target_product.name }}</a>
+                <span style="font-size:0.78rem; color:var(--text-muted); font-weight:500; margin-left:0.35rem;">({{ run.target_product.sku }})</span>
+            </div>
+        </div>
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Expected Yield</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ run.expected_yield|floatformat:2 }} {{ run.target_product.unit_of_measure }}</div>
+        </div>
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Manufacturing Plant</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ run.manufacturing_plant.name|default:"Not Set" }}</div>
+        </div>
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Linked Sales Order</div>
             <div style="font-size:0.95rem; font-weight:600;">

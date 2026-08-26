@@ -3725,6 +3725,9 @@ def so_allocate_view(request, pk):
                     total_allocated = prev_allocated + allocated_now
                     unfulfilled = qty_needed - total_allocated
                     total_unfulfilled_across_so += unfulfilled
+
+                    from .utils import sync_production_run_yield
+                    sync_production_run_yield(so, item.product, unfulfilled, request.user)
                 
                 send_to_mfg = request.POST.get('send_to_manufacturing') == 'true'
                 plant_id = request.POST.get('manufacturing_plant_id')
