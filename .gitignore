@@ -18,6 +18,7 @@ staticfiles/
 # IDEs
 .vscode/
 .idea/
+.claude
 .claude/
 launch.json
 *.suo

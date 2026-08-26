@@ -336,12 +336,14 @@ def deallocate_stock(order_type, order):
             batch.save(update_fields=['allocated_quantity'])
             alloc.delete()
 
-def deduct_stock_from_allocation(order_type, order):
+def deduct_stock_from_allocation(order_type, order, user=None):
     """
     Permanently deducts the allocated stock from the physical batch quantities,
-    typically when an order is shipped or a production run is completed.
+    typically when an order is shipped or a production run is completed. Logs one
+    RegistryLog entry per batch so the Outbound movement actually shows up in the
+    Registry Ledger — this previously deducted stock silently.
     """
-    from .models import StockAllocation
+    from .models import StockAllocation, RegistryLog
     with transaction.atomic():
         if order_type == 'sales_order':
             allocs = StockAllocation.objects.filter(sales_order=order)
@@ -349,12 +351,115 @@ def deduct_stock_from_allocation(order_type, order):
             allocs = StockAllocation.objects.filter(shipment=order)
         else:
             allocs = StockAllocation.objects.filter(production_run=order)
-            
+
         for alloc in allocs:
             batch = alloc.batch
             batch.quantity -= alloc.quantity
             batch.allocated_quantity -= alloc.quantity
             batch.save(update_fields=['quantity', 'allocated_quantity'])
+
+            item_name = batch.material.name if batch.material else (batch.product.name if batch.product else batch.batch_number)
+            RegistryLog.objects.create(
+                action_type='Outbound',
+                item_name=f"{item_name} (Batch {batch.batch_number})",
+                quantity_changed=-alloc.quantity,
+                warehouse=batch.warehouse,
+                user=user
+            )
+
             alloc.delete()
+
+
+def apply_po_material_receipt(po_detail, delta_qty, user):
+    """
+    Adds delta_qty to a PurchaseOrderDetail's quantity_received, creates a Batch for
+    the delta at the PO's target warehouse, and recomputes the parent PO's status
+    (Partially Received / Completed). This is the single source of truth for "goods
+    received against a PO" — used both by the PO page's own "mark received" action
+    and by Shipment-side receipt logging, so quantities/batches/status stay
+    consistent no matter which page was used to record it.
+    """
+    import uuid
+    from datetime import date, timedelta
+    from .models import Batch, WarehouseLocation, RegistryLog
+
+    po = po_detail.purchase_order
+    delta_qty = Decimal(str(delta_qty))
+
+    po_detail.quantity_received = (po_detail.quantity_received or Decimal('0')) + delta_qty
+    po_detail.save(update_fields=['quantity_received'])
+
+    if delta_qty > 0:
+        loc = WarehouseLocation.objects.filter(warehouse=po.target_warehouse).first()
+        batch = Batch.objects.create(
+            batch_number=f"B-{po.po_number}-{po_detail.material.sku}-{uuid.uuid4().hex[:6].upper()}",
+            status='Active',
+            material=po_detail.material,
+            quantity=delta_qty,
+            manufacturing_date=date.today(),
+            expiry_date=date.today() + timedelta(days=365),
+            warehouse=po.target_warehouse,
+            purchase_order=po,
+            location=f"Zone {loc.zone_name} Aisle {loc.aisle}" if loc else None
+        )
+        RegistryLog.objects.create(
+            action_type='Inbound',
+            item_name=f"{po_detail.material.name} (Batch {batch.batch_number})",
+            quantity_changed=delta_qty,
+            warehouse=po.target_warehouse,
+            user=user
+        )
+
+    all_items = po.items.all()
+    total_ordered = sum(Decimal(str(i.quantity_ordered)) for i in all_items)
+    total_received = sum(Decimal(str(i.quantity_received)) for i in all_items)
+    if total_received >= total_ordered:
+        po.status = 'Completed'
+    elif total_received > 0:
+        po.status = 'Partially Received'
+    po.save(update_fields=['status'])
+
+
+def apply_so_product_shipment(so_detail, delta_qty):
+    """
+    Adds delta_qty to a SalesOrderDetail's quantity_shipped and recomputes the parent
+    SO's status (Partially Shipped / Shipped). Called when a linked Outbound shipment
+    actually dispatches, so an SO fulfilled across several shipments over time (partial
+    deliveries) accumulates correctly instead of the status flipping to "Shipped" on
+    the first truck regardless of how much was actually sent.
+    """
+    so = so_detail.sales_order
+    delta_qty = Decimal(str(delta_qty))
+
+    so_detail.quantity_shipped = (so_detail.quantity_shipped or Decimal('0')) + delta_qty
+    so_detail.save(update_fields=['quantity_shipped'])
+
+    all_items = so.items.all()
+    total_ordered = sum(Decimal(str(i.quantity_ordered)) for i in all_items)
+    total_shipped = sum(Decimal(str(i.quantity_shipped)) for i in all_items)
+    if so.status not in ['Delivered']:
+        if total_shipped >= total_ordered:
+            so.status = 'Shipped'
+        elif total_shipped > 0:
+            so.status = 'Partially Shipped'
+        so.save(update_fields=['status'])
+
+
+def mark_so_delivered_if_fully_shipped(so, completing_shipment=None):
+    """
+    Marks a SalesOrder Delivered once a linked Outbound shipment actually completes
+    (delivery confirmed) — but only if no other shipment against the same SO is still
+    outstanding, so a partially-fulfilled SO with a second truck still in transit
+    correctly stays at Shipped/Partially Shipped instead of jumping to Delivered early.
+    """
+    outstanding = so.shipments.filter(direction='Outbound').exclude(status__in=['Completed', 'Cancelled'])
+    if completing_shipment is not None:
+        outstanding = outstanding.exclude(pk=completing_shipment.pk)
+
+    if not outstanding.exists():
+        so.status = 'Delivered'
+        so.save(update_fields=['status'])
+        return True
+    return False
 
 

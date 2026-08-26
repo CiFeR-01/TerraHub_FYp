@@ -17,8 +17,8 @@ from .models import (
     CustomUser, Warehouse, WarehouseLocation, Material, Product,
     ProductRecipe, ProductionRun, ProductionConsumption, Batch,
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
-    Shipment, ShipmentItem, StockAudit, RegistryLog, OrderTimeline, Notification, Role,
-    StockAllocation
+    Shipment, ShipmentItem, ShipmentItemReceipt, StockAudit, RegistryLog, OrderTimeline, Notification, Role,
+    StockAllocation, Supplier, SupplierMaterial, Client
 )
 from .utils import generate_next_code
 
@@ -1460,6 +1460,136 @@ def material_edit_view(request, pk):
 
 
 # --------------------------------------------------------------------------
+# SUPPLIERS
+# --------------------------------------------------------------------------
+@login_required
+def supplier_list_view(request):
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'toggle_active':
+            if request.user.role in ['Admin', 'Manager']:
+                supplier_id = request.POST.get('supplier_id')
+                sup = get_object_or_404(Supplier, id=supplier_id)
+                sup.is_active = not sup.is_active
+                sup.save()
+                messages.success(request, f"Supplier {sup.name} is now {'Active' if sup.is_active else 'Deactivated'}.")
+            else:
+                messages.error(request, "Permission denied. Only Managers and Admins can toggle status.")
+            return redirect('supplier_list')
+
+        name = request.POST.get('name', '').strip()
+        try:
+            if not name:
+                messages.error(request, "Supplier name is required.")
+                return redirect('supplier_list')
+            Supplier.objects.create(
+                name=name,
+                contact_person=request.POST.get('contact_person', '').strip(),
+                email=request.POST.get('email', '').strip(),
+                phone=request.POST.get('phone', '').strip(),
+                address=request.POST.get('address', '').strip(),
+            )
+            messages.success(request, f"Supplier '{name}' registered.")
+        except Exception as e:
+            messages.error(request, f"Error registering supplier: {e}")
+        return redirect('supplier_list')
+
+    suppliers = Supplier.objects.all().order_by('name')
+    context = {'suppliers': suppliers}
+    return render(request, 'supplier_list.html', context)
+
+
+@login_required
+def supplier_edit_view(request, pk):
+    supplier = get_object_or_404(Supplier, pk=pk)
+
+    if request.method == 'POST':
+        name = request.POST.get('name', '').strip()
+        try:
+            if not name:
+                messages.error(request, "Supplier name is required.")
+                return redirect('supplier_list')
+
+            supplier.name = name
+            supplier.contact_person = request.POST.get('contact_person', '').strip()
+            supplier.email = request.POST.get('email', '').strip()
+            supplier.phone = request.POST.get('phone', '').strip()
+            supplier.address = request.POST.get('address', '').strip()
+            supplier.save()
+
+            messages.success(request, f"Supplier '{supplier.name}' updated successfully.")
+        except Exception as e:
+            messages.error(request, f"Error updating supplier: {e}")
+
+    return redirect('supplier_list')
+
+
+# --------------------------------------------------------------------------
+# CLIENTS
+# --------------------------------------------------------------------------
+@login_required
+def client_list_view(request):
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'toggle_active':
+            if request.user.role in ['Admin', 'Manager']:
+                client_id = request.POST.get('client_id')
+                cli = get_object_or_404(Client, id=client_id)
+                cli.is_active = not cli.is_active
+                cli.save()
+                messages.success(request, f"Client {cli.name} is now {'Active' if cli.is_active else 'Deactivated'}.")
+            else:
+                messages.error(request, "Permission denied. Only Managers and Admins can toggle status.")
+            return redirect('client_list')
+
+        name = request.POST.get('name', '').strip()
+        try:
+            if not name:
+                messages.error(request, "Client name is required.")
+                return redirect('client_list')
+            Client.objects.create(
+                name=name,
+                contact_person=request.POST.get('contact_person', '').strip(),
+                email=request.POST.get('email', '').strip(),
+                phone=request.POST.get('phone', '').strip(),
+                delivery_address=request.POST.get('delivery_address', '').strip(),
+            )
+            messages.success(request, f"Client '{name}' registered.")
+        except Exception as e:
+            messages.error(request, f"Error registering client: {e}")
+        return redirect('client_list')
+
+    clients = Client.objects.all().order_by('name')
+    context = {'clients': clients}
+    return render(request, 'client_list.html', context)
+
+
+@login_required
+def client_edit_view(request, pk):
+    client = get_object_or_404(Client, pk=pk)
+
+    if request.method == 'POST':
+        name = request.POST.get('name', '').strip()
+        try:
+            if not name:
+                messages.error(request, "Client name is required.")
+                return redirect('client_list')
+
+            client.name = name
+            client.contact_person = request.POST.get('contact_person', '').strip()
+            client.email = request.POST.get('email', '').strip()
+            client.phone = request.POST.get('phone', '').strip()
+            client.delivery_address = request.POST.get('delivery_address', '').strip()
+            client.save()
+
+            messages.success(request, f"Client '{client.name}' updated successfully.")
+        except Exception as e:
+            messages.error(request, f"Error updating client: {e}")
+
+    return redirect('client_list')
+
+
+# --------------------------------------------------------------------------
 # SALES ORDERS
 # --------------------------------------------------------------------------
 @login_required
@@ -1472,11 +1602,13 @@ def sales_order_list_view(request):
             if so_number_auto or not so_number:
                 so_number = generate_next_code(SalesOrder, 'so_number', 'SO', 1001)
             client_name = request.POST.get('client_name')
+            client_id = request.POST.get('client_id')
             warehouse_id = request.POST.get('origin_warehouse_id')
             try:
                 wh = get_object_or_404(Warehouse, id=warehouse_id)
+                client_obj = Client.objects.filter(id=client_id).first() if client_id else None
                 so = SalesOrder.objects.create(
-                    so_number=so_number, client_name=client_name,
+                    so_number=so_number, client_name=client_name, client=client_obj,
                     origin_warehouse=wh, status='Draft', created_by=request.user
                 )
                 OrderTimeline.objects.create(sales_order=so, action="Sales Order Created (Draft)", user=request.user)
@@ -1502,7 +1634,7 @@ def sales_order_list_view(request):
             
             from .utils import deduct_stock_from_allocation
             if old_status not in ['Shipped', 'Delivered'] and new_status in ['Shipped', 'Delivered']:
-                deduct_stock_from_allocation('sales_order', so)
+                deduct_stock_from_allocation('sales_order', so, user=request.user)
                 
             messages.success(request, f"Sales Order {so.so_number} updated to {new_status}.")
 
@@ -1522,12 +1654,14 @@ def sales_order_list_view(request):
         sales_orders = sales_orders.filter(status=status_filter)
 
     warehouses = Warehouse.objects.all().order_by('name')
+    clients = Client.objects.filter(is_active=True).order_by('name')
 
     context = {
         'search_query': search_query,
         'status_filter': status_filter,
         'sales_orders': sales_orders,
         'warehouses': warehouses,
+        'clients': clients,
         'so_status_choices': SalesOrder.STATUS_CHOICES,
         'next_so_number': generate_next_code(SalesOrder, 'so_number', 'SO', 1001),
     }
@@ -1547,11 +1681,13 @@ def purchase_order_list_view(request):
             if po_number_auto or not po_number:
                 po_number = generate_next_code(PurchaseOrder, 'po_number', 'PO', 5001)
             supplier_name = request.POST.get('supplier_name')
+            supplier_id = request.POST.get('supplier_id')
             warehouse_id = request.POST.get('target_warehouse_id')
             try:
                 wh = get_object_or_404(Warehouse, id=warehouse_id)
+                supplier_obj = Supplier.objects.filter(id=supplier_id).first() if supplier_id else None
                 po = PurchaseOrder.objects.create(
-                    po_number=po_number, supplier_name=supplier_name,
+                    po_number=po_number, supplier_name=supplier_name, supplier=supplier_obj,
                     target_warehouse=wh, status='Draft', created_by=request.user
                 )
                 OrderTimeline.objects.create(purchase_order=po, action="Purchase Order Created (Draft)", user=request.user)
@@ -1586,12 +1722,14 @@ def purchase_order_list_view(request):
         purchase_orders = purchase_orders.filter(status=status_filter)
 
     warehouses = Warehouse.objects.all().order_by('name')
+    suppliers = Supplier.objects.filter(is_active=True).order_by('name')
 
     context = {
         'search_query': search_query,
         'status_filter': status_filter,
         'purchase_orders': purchase_orders,
         'warehouses': warehouses,
+        'suppliers': suppliers,
         'po_status_choices': PurchaseOrder.STATUS_CHOICES,
         'next_po_number': generate_next_code(PurchaseOrder, 'po_number', 'PO', 5001),
     }
@@ -1603,7 +1741,7 @@ def purchase_order_list_view(request):
 # --------------------------------------------------------------------------
 @login_required
 def so_detail_view(request, pk):
-    so = get_object_or_404(SalesOrder.objects.prefetch_related('items__product', 'timeline__user'), pk=pk)
+    so = get_object_or_404(SalesOrder.objects.prefetch_related('items__product', 'timeline__user', 'shipments', 'production_runs'), pk=pk)
     products = Product.objects.all().order_by('name')
     warehouses = Warehouse.objects.all().order_by('name')
 
@@ -1653,7 +1791,7 @@ def so_detail_view(request, pk):
             
             from .utils import deduct_stock_from_allocation
             if old_status not in ['Shipped', 'Delivered'] and new_status in ['Shipped', 'Delivered']:
-                deduct_stock_from_allocation('sales_order', so)
+                deduct_stock_from_allocation('sales_order', so, user=request.user)
 
             # Notify followers of status change
             for follower in so.followers.all():
@@ -1826,7 +1964,7 @@ def so_detail_view(request, pk):
 # --------------------------------------------------------------------------
 @login_required
 def po_detail_view(request, pk):
-    po = get_object_or_404(PurchaseOrder.objects.prefetch_related('items__material', 'timeline__user'), pk=pk)
+    po = get_object_or_404(PurchaseOrder.objects.prefetch_related('items__material', 'timeline__user', 'shipments'), pk=pk)
     materials = Material.objects.all().order_by('name')
     warehouses = Warehouse.objects.all().order_by('name')
 
@@ -1877,34 +2015,10 @@ def po_detail_view(request, pk):
                 old_qty = float(item.quantity_received)
                 new_qty = float(qty_received)
                 delta = new_qty - old_qty
-                
-                item.quantity_received = new_qty
-                item.save()
+
+                from .utils import apply_po_material_receipt
+                apply_po_material_receipt(item, delta, request.user)
                 OrderTimeline.objects.create(purchase_order=po, action=f"Received {new_qty} of {item.material.name}", user=request.user)
-                
-                if delta > 0:
-                    loc = WarehouseLocation.objects.filter(warehouse=po.target_warehouse).first()
-                    Batch.objects.create(
-                        batch_number=f"B-{po.po_number}-{item.material.sku}-{int(new_qty)}",
-                        status='Active',
-                        material=item.material,
-                        quantity=delta,
-                        manufacturing_date=date.today(),
-                        expiry_date=date.today() + timedelta(days=365),
-                        warehouse=po.target_warehouse,
-                        purchase_order=po,
-                        location=f"Zone {loc.zone_name} Aisle {loc.aisle}" if loc else None
-                    )
-                
-                # Auto update PO status
-                all_items = po.items.all()
-                total_ordered = sum(float(i.quantity_ordered) for i in all_items)
-                total_received = sum(float(i.quantity_received) for i in all_items)
-                if total_received >= total_ordered:
-                    po.status = 'Completed'
-                elif total_received > 0:
-                    po.status = 'Partially Received'
-                po.save()
                 messages.success(request, f"Updated received quantity for {item.material.name} and added {delta} to inventory.")
             except Exception as e:
                 messages.error(request, f"Error updating received qty: {e}")
@@ -2146,8 +2260,8 @@ def manufacturing_view(request):
             with transaction.atomic():
                 po = PurchaseOrder.objects.create(
                     po_number=po_number,
-                    supplier="To Be Determined",
-                    destination_warehouse=run.manufacturing_plant,
+                    supplier_name="To Be Determined",
+                    target_warehouse=run.manufacturing_plant,
                     status='Draft',
                     created_by=request.user,
                     assigned_to=purchaser,
@@ -2323,16 +2437,21 @@ def manufacturing_view(request):
                     'available': avail,
                     'sufficient': sufficient,
                 })
-            # Check if a run already exists for this product+SO
-            existing_run = so.production_runs.filter(target_product=item.product).first()
+            # A run only "handles" this item once it's actually finished — a run still
+            # stuck at e.g. Awaiting Materials or Pending Approval still needs attention,
+            # so it shouldn't make the SO disappear from this queue. A Cancelled run
+            # doesn't count either, since it never produced anything.
+            existing_run = so.production_runs.filter(target_product=item.product).exclude(status='Cancelled').order_by('-id').first()
+            run_resolved = existing_run is not None and existing_run.status == 'Completed'
             so_items.append({
                 'item': item,
                 'bom_rows': bom_rows,
                 'can_make': can_make if can_make is not None else '∞',
                 'bom_ready': all(r['sufficient'] for r in bom_rows),
                 'existing_run': existing_run,
+                'run_resolved': run_resolved,
             })
-        if any(not i['existing_run'] for i in so_items):
+        if any(not i['run_resolved'] for i in so_items):
             so_queue.append({
                 'so': so,
                 'items': so_items,
@@ -2398,6 +2517,17 @@ def shipments_view(request):
                 po = PurchaseOrder.objects.filter(id=po_id).first() if po_id else None
                 so = SalesOrder.objects.filter(id=so_id).first() if so_id else None
 
+                # Pull the delivery contact/address from the linked Client record — the
+                # contact PERSON's name and phone are kept as separate fields, distinct
+                # from the client/company name shown elsewhere.
+                client_contact_name_val = None
+                client_contact_phone_val = None
+                client_address_val = None
+                if so and so.client:
+                    client_contact_name_val = so.client.contact_person or None
+                    client_contact_phone_val = so.client.phone or None
+                    client_address_val = so.client.delivery_address or None
+
                 shipment = Shipment.objects.create(
                     tracking_number=tracking_number,
                     direction=direction,
@@ -2409,20 +2539,55 @@ def shipments_view(request):
                     dispatch_date=dispatch_dt if dispatch_dt else date.today(),
                     expected_eta_date=eta if eta else None,
                     actual_arrival_date=actual_arrival_dt if (status == 'Arrived' and actual_arrival_dt) else None,
-                    external_origin=external_origin if external_origin else None
+                    external_origin=external_origin if external_origin else None,
+                    client_contact_name=client_contact_name_val,
+                    client_contact_phone=client_contact_phone_val,
+                    client_address=client_address_val,
                 )
                 
-                # Auto update Sales Order status based on Shipment
+                # Auto update Sales Order status based on Shipment.
+                # 'Dispatched' is handled after cargo items are pre-filled below, since it
+                # needs the actual item quantities to update quantity_shipped accurately.
                 if so:
                     if status == 'Preparing':
                         so.status = 'Ready to Ship'
-                    elif status == 'Dispatched':
-                        so.status = 'Shipped'
+                        so.save()
                     elif status == 'Arrived':
                         so.status = 'Delivered'
-                    so.save()
-                    
-                messages.success(request, f"Shipment '{tracking_number}' registered. Now you can add items.")
+                        so.save()
+
+                # Pre-fill cargo items from the linked order's outstanding quantities.
+                # No batch is assigned here (same as manually adding an item without one) —
+                # the coordinator still picks/confirms batches on the shipment detail page.
+                items_added = 0
+                if po:
+                    for detail in po.items.all():
+                        remaining = float(detail.quantity_ordered) - float(detail.quantity_received)
+                        if remaining > 0:
+                            ShipmentItem.objects.create(shipment=shipment, material=detail.material, quantity=remaining)
+                            items_added += 1
+                elif so:
+                    for detail in so.items.all():
+                        remaining = float(detail.quantity_ordered) - float(detail.quantity_shipped)
+                        if remaining > 0:
+                            ShipmentItem.objects.create(shipment=shipment, product=detail.product, quantity=remaining)
+                            items_added += 1
+
+                # This shipment was created already-Dispatched — count its cargo as shipped
+                # against the SO now (accumulates correctly across multiple shipments/SO).
+                if so and status == 'Dispatched':
+                    from .utils import apply_so_product_shipment
+                    for si in shipment.items.all():
+                        if si.product:
+                            so_detail = SalesOrderDetail.objects.filter(sales_order=so, product=si.product).first()
+                            if so_detail:
+                                apply_so_product_shipment(so_detail, si.quantity)
+
+                if items_added:
+                    OrderTimeline.objects.create(shipment=shipment, action=f"Pre-filled {items_added} cargo item(s) from the linked order.", user=request.user)
+                    messages.success(request, f"Shipment '{tracking_number}' registered with {items_added} item(s) pulled from the order. Review quantities and batches before dispatch.")
+                else:
+                    messages.success(request, f"Shipment '{tracking_number}' registered. Now you can add items.")
                 return redirect('shipment_detail', pk=shipment.pk)
             except Exception as e:
                 messages.error(request, f"Error registering shipment: {e}")
@@ -2478,6 +2643,15 @@ def shipments_view(request):
         'arrived': Shipment.objects.filter(status='Arrived').count(),
     }
 
+    # Only statuses that make sense to hand-pick when manually creating a shipment here.
+    # 'Draft' is reserved for system auto-generated shipments (see is_auto_generated),
+    # and 'Pending Approval' / 'Logistics Review' / etc. are set by other workflows.
+    initial_status_choices = [
+        ('Preparing', 'Approved / Preparing'),
+        ('Dispatched', 'Dispatched'),
+        ('Arrived', 'Arrived'),
+    ]
+
     context = {
         'shipments': shipments,
         'warehouses': warehouses,
@@ -2488,6 +2662,7 @@ def shipments_view(request):
         'batches': batches,
         'stats': stats,
         'status_choices': Shipment.STATUS_CHOICES,
+        'initial_status_choices': initial_status_choices,
         'direction_choices': Shipment.DIRECTION_CHOICES,
         'next_tracking_number': generate_next_code(Shipment, 'tracking_number', 'TRK', 101, pad=4),
     }
@@ -2844,36 +3019,41 @@ def shipment_detail_view(request, pk):
             
             # New Logistics Fields
             client_address = request.POST.get('client_address')
-            client_contact = request.POST.get('client_contact')
+            client_contact_name = request.POST.get('client_contact_name')
+            client_contact_phone = request.POST.get('client_contact_phone')
             external_tracking_id = request.POST.get('external_tracking_id')
             departure_datetime = request.POST.get('departure_datetime')
-            
+
             core_changed = False
-            
+
             # Check string fields
             if client_address is not None and (shipment.client_address or "") != client_address.strip(): core_changed = True
-            if client_contact is not None and (shipment.client_contact or "") != client_contact.strip(): core_changed = True
+            if client_contact_name is not None and (shipment.client_contact_name or "") != client_contact_name.strip(): core_changed = True
+            if client_contact_phone is not None and (shipment.client_contact_phone or "") != client_contact_phone.strip(): core_changed = True
             if external_tracking_id is not None and (shipment.external_tracking_id or "") != external_tracking_id.strip(): core_changed = True
-            
+
             # Check FK fields
             if origin_id is not None and str(shipment.origin_warehouse_id or "") != origin_id: core_changed = True
             if dest_id is not None and str(shipment.destination_warehouse_id or "") != dest_id: core_changed = True
-            
+
             # Check departure_datetime
             if departure_datetime:
                 current_dep = shipment.departure_datetime.strftime('%Y-%m-%dT%H:%M') if shipment.departure_datetime else ""
                 if current_dep != departure_datetime: core_changed = True
                 shipment.departure_datetime = departure_datetime
-            
+
             if eta: shipment.expected_eta_date = eta
             if arrival: shipment.actual_arrival_date = arrival
             if origin_id: shipment.origin_warehouse_id = origin_id
             if dest_id: shipment.destination_warehouse_id = dest_id
             if client_address is not None: shipment.client_address = client_address
-            if client_contact is not None: shipment.client_contact = client_contact
+            if client_contact_name is not None: shipment.client_contact_name = client_contact_name
+            if client_contact_phone is not None: shipment.client_contact_phone = client_contact_phone
             if external_tracking_id is not None: shipment.external_tracking_id = external_tracking_id
                 
-            if core_changed and shipment.status in ['Preparing', 'Dispatched', 'Delayed']:
+            # Inbound shipments are just a record of what the supplier is sending — we don't
+            # control their dispatch, so editing details shouldn't force a manager re-approval.
+            if core_changed and shipment.status in ['Preparing', 'Dispatched', 'Delayed'] and shipment.direction != 'Inbound':
                 shipment.status = 'Logistics Review'
                 messages.warning(request, "Core logistics details were modified. The shipment has been returned to Logistics Review and must be re-approved.")
                 OrderTimeline.objects.create(shipment=shipment, action="Core logistics details modified. Status reverted to Logistics Review.", user=request.user)
@@ -2941,14 +3121,23 @@ def shipment_detail_view(request, pk):
                 shipment.save()
                 
             messages.success(request, "Shipment scrapped. Cargo locks released and linked orders updated.")
-            
+
+        elif action == 'skip_approval':
+            if shipment.direction != 'Inbound':
+                messages.error(request, "Only inbound (supplier) shipments can skip manager approval.")
+            else:
+                shipment.status = 'Preparing'
+                shipment.save()
+                OrderTimeline.objects.create(shipment=shipment, action="Inbound shipment confirmed without manager approval (outside our control).", user=request.user)
+                messages.success(request, "Shipment confirmed and marked as Preparing.")
+
         elif action == 'submit_for_approval':
             approver_id = request.POST.get('approver_id')
             if shipment.direction == 'Transfer' and (not shipment.origin_warehouse or not shipment.destination_warehouse):
                 messages.error(request, "Origin and Destination facilities MUST be selected before submitting for approval.")
                 route_error = True
-            elif shipment.direction == 'Outbound' and (not shipment.client_address or not shipment.client_contact):
-                messages.error(request, "Client Address and Contact MUST be completed before submitting an outbound shipment for approval.")
+            elif shipment.direction == 'Outbound' and (not shipment.client_address or not shipment.client_contact_name or not shipment.client_contact_phone):
+                messages.error(request, "Client Address, Contact Name, and Contact Phone MUST be completed before submitting an outbound shipment for approval.")
                 route_error = True
             elif not approver_id:
                 messages.error(request, "You must select a Manager for approval.")
@@ -3002,8 +3191,21 @@ def shipment_detail_view(request, pk):
             if new_st in ['Preparing', 'Dispatched', 'Delayed', 'Arrived', 'Completed', 'Discrepant']:
                 shipment.status = new_st
                 shipment.save()
+
+                # First time crossing into Dispatched — count this shipment's cargo as
+                # shipped against the SO (guarded so re-saving/Delayed-then-Dispatched
+                # again doesn't double-count).
+                if (new_st == 'Dispatched' and old_status not in ['Dispatched', 'Delayed', 'Arrived', 'Completed', 'Discrepant']
+                        and shipment.direction == 'Outbound' and shipment.sales_order):
+                    from .utils import apply_so_product_shipment
+                    for si in shipment.items.all():
+                        if si.product:
+                            so_detail = SalesOrderDetail.objects.filter(sales_order=shipment.sales_order, product=si.product).first()
+                            if so_detail:
+                                apply_so_product_shipment(so_detail, si.quantity)
+
                 messages.success(request, f"Operational status updated to {new_st}.")
-            
+
         elif action == 'complete_shipment':
             has_discrepancy = False
             for item in shipment.items.all():
@@ -3051,12 +3253,15 @@ def shipment_detail_view(request, pk):
                     )
 
                 shipment.save()
-                
+
                 # Release lock and deduct stock
                 if shipment.direction in ['Outbound', 'Transfer']:
-                    from .utils import deduct_stock_from_allocation
-                    deduct_stock_from_allocation('shipment', shipment)
-                
+                    from .utils import deduct_stock_from_allocation, mark_so_delivered_if_fully_shipped
+                    deduct_stock_from_allocation('shipment', shipment, user=request.user)
+
+                    if shipment.direction == 'Outbound' and shipment.sales_order:
+                        mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
+
                 if shipment.direction == 'Transfer' and shipment.destination_warehouse:
                     loc = WarehouseLocation.objects.filter(warehouse=shipment.destination_warehouse).first()
                     if loc:
@@ -3090,7 +3295,93 @@ def shipment_detail_view(request, pk):
                                 user=request.user
                             )
                 messages.success(request, "Shipment receipt confirmed and marked as Completed.")
-        
+
+        elif action == 'log_item_receipt':
+            from decimal import Decimal
+            from .utils import apply_po_material_receipt
+
+            item_id = request.POST.get('item_id')
+            qty_str = request.POST.get('quantity')
+            received_date_str = request.POST.get('received_date')
+            notes = request.POST.get('notes', '').strip()
+            try:
+                item = get_object_or_404(ShipmentItem, id=item_id, shipment=shipment)
+                qty = float(qty_str)
+                if qty <= 0:
+                    messages.error(request, "Enter a quantity greater than zero.")
+                else:
+                    received_date = received_date_str if received_date_str else date.today()
+                    ShipmentItemReceipt.objects.create(
+                        shipment_item=item, quantity=qty, received_date=received_date,
+                        received_by=request.user, notes=notes or None
+                    )
+                    item.received_quantity = (item.received_quantity or Decimal('0')) + Decimal(str(qty))
+                    item.date_confirmed = timezone.now()
+                    item.save(update_fields=['received_quantity', 'date_confirmed'])
+
+                    if shipment.direction == 'Inbound' and shipment.purchase_order and item.material:
+                        detail = PurchaseOrderDetail.objects.filter(purchase_order=shipment.purchase_order, material=item.material).first()
+                        if detail:
+                            apply_po_material_receipt(detail, qty, request.user)
+
+                    item_name = item.material.name if item.material else (item.product.name if item.product else 'item')
+                    OrderTimeline.objects.create(shipment=shipment, action=f"Logged receipt of {qty} for {item_name} on {received_date}.", user=request.user)
+                    messages.success(request, f"Logged {qty} received for {item_name}. Running total: {item.received_quantity}.")
+            except Exception as e:
+                messages.error(request, f"Error logging receipt: {e}")
+
+        elif action == 'finalize_shipment_receiving':
+            if shipment.direction not in ['Inbound', 'Outbound']:
+                messages.error(request, "This action is only for inbound or outbound shipments.")
+            else:
+                has_discrepancy = any(
+                    float(item.received_quantity) != float(item.quantity)
+                    for item in shipment.items.all()
+                )
+
+                if has_discrepancy:
+                    shipment.status = 'Discrepant'
+                    shipment.save()
+                    messages.warning(request, "Receiving finalized, but quantities don't fully match what was expected. You may log more receipts, or request a Manager Force Close.")
+                else:
+                    shipment.status = 'Completed'
+                    shipment.acknowledged_by = request.user
+                    shipment.last_edited_by = request.user
+
+                    if shipment.direction == 'Inbound' and shipment.purchase_order and shipment.purchase_order.linked_production_run:
+                        run = shipment.purchase_order.linked_production_run
+                        missing_materials = []
+                        for req in run.target_product.recipe_items.all():
+                            needed = float(req.quantity_required) * float(run.expected_yield)
+                            available = Batch.objects.filter(
+                                material=req.material,
+                                warehouse=run.manufacturing_plant,
+                                status='Active'
+                            ).aggregate(total=Sum(F('quantity') - F('allocated_quantity')))['total'] or 0
+                            if float(available) < needed:
+                                missing_materials.append(req.material.name)
+
+                        if not missing_materials:
+                            msg = f"Materials have arrived for Production Run {run.run_number}. You have sufficient materials to allocate and start the run."
+                        else:
+                            msg = f"Partial materials have arrived for Production Run {run.run_number}, but you are still short on: {', '.join(missing_materials)}."
+
+                        Notification.objects.create(
+                            user=run.supervisor,
+                            message=msg,
+                            link=f"/operations/manufacture/run/{run.id}/allocate/"
+                        )
+
+                    shipment.save()
+
+                    if shipment.direction == 'Outbound':
+                        from .utils import deduct_stock_from_allocation, mark_so_delivered_if_fully_shipped
+                        deduct_stock_from_allocation('shipment', shipment, user=request.user)
+                        if shipment.sales_order:
+                            mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
+
+                    messages.success(request, "Receiving finalized. Shipment marked Completed.")
+
         elif action == 'request_force_close':
             mgr_id = request.POST.get('assigned_manager_id')
             remarks = request.POST.get('discrepancy_remarks', '').strip()
@@ -3127,10 +3418,11 @@ def shipment_detail_view(request, pk):
                 else:
                     shipment.discrepancy_remarks = f"Manager Acknowledgment: {mgr_comment}"
             
+            from decimal import Decimal
             shipment.status = 'Completed'
             shipment.approved_by = request.user
             shipment.save()
-            
+
             # Manually handle discrepancy deduction and lock release
             if shipment.direction in ['Outbound', 'Transfer']:
                 allocs = StockAllocation.objects.filter(shipment=shipment)
@@ -3138,12 +3430,26 @@ def shipment_detail_view(request, pk):
                     batch = alloc.batch
                     item = shipment.items.filter(batch=batch).first()
                     rcv_qty = item.received_quantity if item else 0
-                    
+
                     batch.quantity -= Decimal(str(rcv_qty))
                     batch.allocated_quantity -= alloc.quantity
                     batch.save(update_fields=['quantity', 'allocated_quantity'])
+
+                    item_name = batch.material.name if batch.material else (batch.product.name if batch.product else batch.batch_number)
+                    RegistryLog.objects.create(
+                        action_type='Outbound',
+                        item_name=f"{item_name} (Batch {batch.batch_number}) — force closed",
+                        quantity_changed=-Decimal(str(rcv_qty)),
+                        warehouse=batch.warehouse,
+                        user=request.user
+                    )
+
                     alloc.delete()
-                    
+
+                if shipment.direction == 'Outbound' and shipment.sales_order:
+                    from .utils import mark_so_delivered_if_fully_shipped
+                    mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
+
             if shipment.direction == 'Transfer' and shipment.destination_warehouse:
                 loc = WarehouseLocation.objects.filter(warehouse=shipment.destination_warehouse).first()
                 if loc:

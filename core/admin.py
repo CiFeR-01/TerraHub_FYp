@@ -4,7 +4,8 @@ from .models import (
     CustomUser, Warehouse, WarehouseLocation, Material, Product,
     ProductRecipe, ProductionRun, ProductionConsumption, Batch,
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
-    Shipment, StockAudit, RegistryLog, OrderTimeline, Notification
+    Shipment, StockAudit, RegistryLog, OrderTimeline, Notification,
+    Supplier, SupplierMaterial, Client
 )
 
 class CustomUserAdmin(UserAdmin):
@@ -35,3 +36,6 @@ admin.site.register(StockAudit)
 admin.site.register(RegistryLog)
 admin.site.register(OrderTimeline)
 admin.site.register(Notification)
+admin.site.register(Supplier)
+admin.site.register(SupplierMaterial)
+admin.site.register(Client)

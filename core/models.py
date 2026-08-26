@@ -101,6 +101,43 @@ class ProductRecipe(models.Model):
     def __str__(self):
         return f"{self.product.sku} requires {self.quantity_required} of {self.material.sku}"
 
+class Supplier(models.Model):
+    name = models.CharField(max_length=255)
+    contact_person = models.CharField(max_length=255, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+    phone = models.CharField(max_length=50, blank=True, null=True)
+    address = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    materials_supplied = models.ManyToManyField(Material, through='SupplierMaterial', related_name='suppliers', blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+
+class SupplierMaterial(models.Model):
+    supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE)
+    material = models.ForeignKey(Material, on_delete=models.CASCADE)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    lead_time_days = models.PositiveIntegerField(null=True, blank=True, help_text="Typical days from order to delivery")
+
+    class Meta:
+        unique_together = ('supplier', 'material')
+
+    def __str__(self):
+        return f"{self.supplier.name} supplies {self.material.sku}"
+
+class Client(models.Model):
+    name = models.CharField(max_length=255)
+    contact_person = models.CharField(max_length=255, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+    phone = models.CharField(max_length=50, blank=True, null=True)
+    delivery_address = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+
 class ProductionRun(models.Model):
     STATUS_CHOICES = (
         ('Pending Approval', 'Pending Approval'),
@@ -215,6 +252,7 @@ class PurchaseOrder(models.Model):
     )
     po_number = models.CharField(max_length=100, unique=True)
     supplier_name = models.CharField(max_length=255)
+    supplier = models.ForeignKey('Supplier', on_delete=models.SET_NULL, null=True, blank=True, related_name='purchase_orders')
     target_warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
     order_date = models.DateField(auto_now_add=True)
     expected_delivery_date = models.DateField(null=True, blank=True)
@@ -257,12 +295,14 @@ class SalesOrder(models.Model):
         ('Awaiting Acknowledgement', 'Awaiting Manufacturing Acknowledgement'),
         ('In Production', 'In Production'),
         ('Ready to Ship', 'Ready to Ship'),
+        ('Partially Shipped', 'Partially Shipped'),
         ('Shipped', 'Shipped'),
         ('Delivered', 'Delivered'),
         ('Rejected', 'Rejected'),
     )
     so_number = models.CharField(max_length=100, unique=True)
     client_name = models.CharField(max_length=255)
+    client = models.ForeignKey('Client', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_orders')
     origin_warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
     order_date = models.DateField(auto_now_add=True)
     fulfillment_deadline = models.DateField(null=True, blank=True)
@@ -329,7 +369,8 @@ class Shipment(models.Model):
     
     # Logistics Tracking Details
     client_address = models.TextField(null=True, blank=True, help_text="Destination address for outbound shipments")
-    client_contact = models.CharField(max_length=255, null=True, blank=True, help_text="Contact person and phone/email")
+    client_contact_name = models.CharField(max_length=255, null=True, blank=True, help_text="Contact person's name")
+    client_contact_phone = models.CharField(max_length=100, null=True, blank=True, help_text="Contact phone or email")
     external_tracking_id = models.CharField(max_length=255, null=True, blank=True, help_text="Real logistics company tracking ID")
     departure_datetime = models.DateTimeField(null=True, blank=True)
     
@@ -365,6 +406,26 @@ class ShipmentItem(models.Model):
     def __str__(self):
         item_name = self.material.sku if self.material else (self.product.sku if self.product else 'Unknown')
         return f"{self.shipment.tracking_number} - {item_name} (Qty: {self.quantity})"
+
+class ShipmentItemReceipt(models.Model):
+    """
+    One dated receiving event against a ShipmentItem — a single inbound truck can be
+    received across multiple rounds (e.g. partial unload, supplier sends the remainder
+    later). ShipmentItem.received_quantity/date_confirmed stay as a running total kept
+    in sync with these entries, so existing code reading those fields still works.
+    """
+    shipment_item = models.ForeignKey(ShipmentItem, on_delete=models.CASCADE, related_name='receipts')
+    quantity = models.DecimalField(max_digits=12, decimal_places=2)
+    received_date = models.DateField()
+    received_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)
+    notes = models.CharField(max_length=255, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-received_date', '-created_at']
+
+    def __str__(self):
+        return f"{self.shipment_item} +{self.quantity} on {self.received_date}"
 
 class StockAudit(models.Model):
     STATUS_CHOICES = (

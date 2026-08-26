@@ -108,6 +108,10 @@ def sidebar_nav(request):
         catalog_items.append({'label': 'Products Catalog', 'url_name': 'product_list'})
     if user.has_perm('core.view_material'):
         catalog_items.append({'label': 'Materials Hub', 'url_name': 'material_list'})
+    if user.has_perm('core.view_supplier'):
+        catalog_items.append({'label': 'Suppliers', 'url_name': 'supplier_list'})
+    if user.has_perm('core.view_client'):
+        catalog_items.append({'label': 'Clients', 'url_name': 'client_list'})
     if catalog_items:
         groups.append({'id': 'catalog', 'label': 'Catalog & Directory', 'icon': NAV_ICONS['catalog'], 'items': catalog_items})
 

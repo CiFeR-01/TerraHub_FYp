@@ -76,6 +76,19 @@
                     <div style="font-size:0.95rem; font-weight:600;">{{ po.expected_delivery_date|default:"—" }}</div>
                 </div>
                 <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Logistics</div>
+                    <div style="font-size:0.95rem; font-weight:600; display:flex; flex-direction:column; gap:0.35rem;">
+                        {% for shipment in po.shipments.all %}
+                        <a href="{% url 'shipment_detail' shipment.pk %}" style="color:var(--primary); text-decoration:none; display:flex; align-items:center; gap:0.4rem;">
+                            {{ shipment.tracking_number }}
+                            <span class="badge {% if shipment.status == 'Completed' %}badge-emerald{% elif shipment.status == 'Discrepant' %}badge-rose{% elif shipment.status == 'Arrived' %}badge-emerald{% elif shipment.status in 'Preparing,Dispatched' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.65rem;">{{ shipment.status }}</span>
+                        </a>
+                        {% empty %}
+                        <span style="color:var(--text-muted); font-weight:400; font-size:0.85rem;">No shipment linked yet</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div>
                     <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Created By</div>
                     <div style="font-size:0.95rem; font-weight:600;">{{ po.created_by.username|default:"System" }}</div>
                 </div>

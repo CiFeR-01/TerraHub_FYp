@@ -178,8 +178,13 @@
         </div>
         
         <div>
-            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Contact</label>
-            <input type="text" name="client_contact" value="{{ shipment.client_contact|default:'' }}" placeholder="Phone/Email" class="form-input" style="width:100%; padding:0.4rem;">
+            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Contact Name</label>
+            <input type="text" name="client_contact_name" value="{{ shipment.client_contact_name|default:'' }}" placeholder="Contact person" class="form-input" style="width:100%; padding:0.4rem;">
+        </div>
+
+        <div>
+            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Contact Phone</label>
+            <input type="text" name="client_contact_phone" value="{{ shipment.client_contact_phone|default:'' }}" placeholder="Phone/Email" class="form-input" style="width:100%; padding:0.4rem;">
         </div>
         
         <div>
@@ -205,7 +210,7 @@
             {% endif %}
         </div>
     </form>
-    {% if shipment.status in 'Preparing,Dispatched,Delayed' %}
+    {% if shipment.status in 'Preparing,Dispatched,Delayed' and shipment.direction != 'Inbound' %}
     <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.75rem; text-align:left;">
         <em>Note: Modifying core details will require re-approval from a manager.</em>
     </div>
@@ -226,8 +231,12 @@
             {% endif %}
         </div>
         <div>
-            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Contact</div>
-            <div style="font-size:0.95rem; font-weight:600;">{{ shipment.client_contact|default:"—" }}</div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Contact Name</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ shipment.client_contact_name|default:"—" }}</div>
+        </div>
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Contact Phone</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ shipment.client_contact_phone|default:"—" }}</div>
         </div>
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">External Tracking ID</div>
@@ -418,6 +427,78 @@
 
         <!-- Confirm Receipt Panel (Only if Arrived or Completed) -->
         {% if shipment.status in 'Arrived,Completed,Discrepant' %}
+        {% if shipment.direction in 'Inbound,Outbound' %}
+        <div class="pane-card" style="padding: 1.5rem; background:#f0fdf4; border: 1px solid var(--border-light); border-radius: 8px;">
+            <h4 style="margin-top:0; margin-bottom:0.25rem; font-size:0.95rem; color:#166534;">✅ {% if shipment.status == 'Completed' %}Receiving Complete{% else %}Log Received Quantities{% endif %}</h4>
+            <p style="font-size:0.8rem; color:#166534; opacity:0.8; margin-top:0; margin-bottom:1.25rem;">
+                {% if shipment.direction == 'Inbound' %}
+                Goods can arrive in more than one round — log each delivery as it comes in, then finalize once nothing more is expected.
+                {% else %}
+                The client can confirm receipt in more than one round — log each confirmation as it comes in, then finalize once nothing more is expected.
+                {% endif %}
+            </p>
+            <div style="display:flex; flex-direction:column; gap:0.85rem; margin-bottom:1.25rem;">
+                {% for item in shipment.items.all %}
+                <div style="background:#fff; border:1px solid #bbf7d0; border-radius:8px; padding:1rem 1.25rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem;">
+                        <div>
+                            <strong style="color:#166534; font-size:0.9rem;">
+                                {% if item.material %}{{ item.material.name }}{% elif item.product %}{{ item.product.name }}{% endif %}
+                            </strong>
+                            <div style="font-size:0.75rem; color:#166534; opacity:0.7; margin-top:0.15rem;">Batch: {{ item.batch.batch_number|default:"-" }}</div>
+                        </div>
+                        <div style="display:flex; gap:1.75rem;">
+                            <div style="text-align:right;">
+                                <div style="font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:#166534; opacity:0.65;">{% if shipment.direction == 'Inbound' %}Expected{% else %}Shipped Qty{% endif %}</div>
+                                <div style="font-weight:700; color:#166534;">{{ item.quantity|floatformat:2 }}</div>
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:#166534; opacity:0.65;">Received So Far</div>
+                                <div style="font-weight:700; color:{% if item.received_quantity == item.quantity %}#166534{% else %}#b45309{% endif %};">{{ item.received_quantity|floatformat:2 }}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="margin-top:0.85rem; padding-top:0.75rem; border-top:1px dashed #bbf7d0;">
+                        <div style="font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:#166534; opacity:0.65; margin-bottom:0.5rem;">History</div>
+                        {% if item.receipts.all %}
+                        <div style="display:flex; flex-wrap:wrap; gap:0.5rem;">
+                            {% for r in item.receipts.all reversed %}
+                            <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:0.3rem 0.65rem; font-size:0.75rem; color:#166534; white-space:nowrap;">
+                                <strong>+{{ r.quantity|floatformat:2 }}</strong>
+                                <span style="opacity:0.75;">· {{ r.received_date|date:"Y-m-d" }} · {{ r.received_by.get_full_name|default:r.received_by.username|default:"—" }}</span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <span style="font-size:0.8rem; color:#166534; opacity:0.5;">No receipts logged yet.</span>
+                        {% endif %}
+                    </div>
+
+                    {% if shipment.status != 'Completed' %}
+                    <form method="POST" style="display:flex; align-items:center; flex-wrap:wrap; gap:0.6rem; margin-top:0.85rem; padding-top:0.75rem; border-top:1px dashed #bbf7d0;">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="log_item_receipt">
+                        <input type="hidden" name="item_id" value="{{ item.id }}">
+                        <input type="number" step="0.01" min="0.01" name="quantity" placeholder="Qty" required class="form-input" style="width:100px; padding:0.4rem; border:1px solid #bbf7d0; background:#fff;">
+                        <input type="date" name="received_date" value="{% now 'Y-m-d' %}" required class="form-input" style="width:150px; padding:0.4rem; border:1px solid #bbf7d0; background:#fff;">
+                        <button type="submit" class="btn" style="padding:0.4rem 0.9rem; font-size:0.78rem; font-weight:700; background:#166534; color:white; border-radius:6px; border:none;">+ Log Receipt</button>
+                    </form>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% if shipment.status != 'Completed' %}
+            <form method="POST" style="text-align:right;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="finalize_shipment_receiving">
+                <button type="submit" class="btn" style="padding: 0.65rem 1.5rem; font-weight:700; background:#166534; color:white; border-radius:6px; cursor:pointer; border:none;">
+                    Finalize Receiving
+                </button>
+            </form>
+            {% endif %}
+        </div>
+        {% else %}
         <div class="pane-card" style="padding: 1.5rem; background:#f0fdf4; border: 1px solid var(--border-light); border-radius: 8px;">
             <h4 style="margin-top:0; margin-bottom:1rem; font-size:0.95rem; color:#166534;">✅ {% if shipment.status == 'Completed' %}Receipt Confirmed{% else %}Confirm Receipt & Complete Shipment{% endif %}</h4>
             <form method="POST">
@@ -461,7 +542,7 @@
                     </tbody>
                 </table>
                 {% if shipment.status != 'Completed' %}
-                
+
                 {% if shipment.status == 'Arrived' or shipment.status == 'Discrepant' %}
                 <div style="text-align:right;">
                     <button type="submit" class="btn" style="padding: 0.65rem 1.5rem; font-weight:700; background:#166534; color:white; border-radius:6px; cursor:pointer; border:none;">
@@ -469,10 +550,11 @@
                     </button>
                 </div>
                 {% endif %}
-                
+
                 {% endif %}
             </form>
         </div>
+        {% endif %}
         {% endif %}
     </div>
 
@@ -480,7 +562,7 @@
     <div>
         <!-- Status & Actions -->
         <div class="pane-card">
-            <h3 style="margin-bottom: 1rem; border-bottom: 1px solid var(--border-light); padding-bottom: 0.75rem;">Status & Actions</h3>
+            <h3 style="margin-bottom: 1rem; border-bottom: 1px solid var(--border-light); padding-bottom: 0.75rem;">{% if shipment.direction == 'Inbound' %}Delivery Tracking{% else %}Status & Actions{% endif %}</h3>
             
             {% if shipment.status != 'Completed' %}
             
@@ -495,6 +577,16 @@
         
             <!-- Logistics Actions -->
             {% if shipment.status == 'Logistics Review' %}
+            {% if shipment.direction == 'Inbound' %}
+            <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.75rem;">
+                Inbound shipments are a record of what the supplier is sending — we don't control their dispatch, so no manager approval is needed here.
+            </p>
+            <form method="POST">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="skip_approval">
+                <button type="submit" class="btn btn-primary" style="width:100%; padding:0.65rem; margin-bottom:0.75rem;">Confirm &amp; Continue Preparing</button>
+            </form>
+            {% else %}
             <form method="POST">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="submit_for_approval">
@@ -509,6 +601,7 @@
                 </div>
                 <button type="submit" class="btn btn-primary" style="width:100%; padding:0.65rem; margin-bottom:0.75rem;">Submit for Approval</button>
             </form>
+            {% endif %}
             <form method="POST">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="return_to_manufacturing">
@@ -535,11 +628,13 @@
             <form method="POST" style="margin-top: 1rem; border-top: 1px solid var(--border-light); padding-top: 1rem;">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="update_operational_status">
-                <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-muted); margin-bottom:0.5rem;">Operational Status</label>
+                <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-muted); margin-bottom:0.5rem;">{% if shipment.direction == 'Inbound' %}Delivery Status{% else %}Operational Status{% endif %}</label>
                 <select name="status" class="form-select" style="width: 100%; padding: 0.65rem 1rem; margin-bottom:0.75rem;">
                     <option value="Preparing" {% if shipment.status == 'Preparing' %}selected{% endif %}>Preparing</option>
                     <option value="Dispatched" {% if shipment.status == 'Dispatched' %}selected{% endif %}>Dispatched (In Transit)</option>
+                    {% if shipment.direction != 'Inbound' %}
                     <option value="Delayed" {% if shipment.status == 'Delayed' %}selected{% endif %}>Delayed</option>
+                    {% endif %}
                     <option value="Arrived" {% if shipment.status == 'Arrived' %}selected{% endif %}>Arrived</option>
                 </select>
                 <button type="submit" class="btn btn-secondary" style="width:100%; padding: 0.65rem;">Save Status</button>

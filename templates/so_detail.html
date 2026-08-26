@@ -84,6 +84,32 @@
                     <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Line Items</div>
                     <div style="font-size:0.95rem; font-weight:600;">{{ so.items.count }} product(s)</div>
                 </div>
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Logistics</div>
+                    <div style="font-size:0.95rem; font-weight:600; display:flex; flex-direction:column; gap:0.35rem;">
+                        {% for shipment in so.shipments.all %}
+                        <a href="{% url 'shipment_detail' shipment.pk %}" style="color:var(--primary); text-decoration:none; display:flex; align-items:center; gap:0.4rem;">
+                            {{ shipment.tracking_number }}
+                            <span class="badge {% if shipment.status == 'Completed' %}badge-emerald{% elif shipment.status == 'Discrepant' %}badge-rose{% elif shipment.status == 'Arrived' %}badge-emerald{% elif shipment.status in 'Preparing,Dispatched' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.65rem;">{{ shipment.status }}</span>
+                        </a>
+                        {% empty %}
+                        <span style="color:var(--text-muted); font-weight:400; font-size:0.85rem;">No shipment linked yet</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div>
+                    <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Manufacturing</div>
+                    <div style="font-size:0.95rem; font-weight:600; display:flex; flex-direction:column; gap:0.35rem;">
+                        {% for run in so.production_runs.all %}
+                        <a href="{% url 'production_run_detail' run.pk %}" style="color:var(--primary); text-decoration:none; display:flex; align-items:center; gap:0.4rem;">
+                            {{ run.run_number }}
+                            <span class="badge {% if run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.65rem;">{{ run.status }}</span>
+                        </a>
+                        {% empty %}
+                        <span style="color:var(--text-muted); font-weight:400; font-size:0.85rem;">No production run linked yet</span>
+                        {% endfor %}
+                    </div>
+                </div>
                 {% if so.assigned_to and so.status == 'Pending Approval' %}
                 <div>
                     <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Pending Approval</div>
@@ -334,6 +360,19 @@
 <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.08s;">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:0.75rem;">SO Fulfillment</h3>
     <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.25rem;">Allocate finished goods from the warehouse to fulfill this Sales Order. You must allocate enough stock to meet the ordered quantity before this order can be shipped.</p>
+    {% if so.production_runs.all %}
+    <div style="margin-bottom:1.25rem;">
+        <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.5rem;">Manufacturing orders already created for this SO</div>
+        <div style="display:flex; flex-direction:column; gap:0.4rem;">
+            {% for run in so.production_runs.all %}
+            <a href="{% url 'production_run_detail' run.pk %}" style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; padding:0.6rem 0.85rem; background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; text-decoration:none; color:var(--text-main); font-size:0.85rem;">
+                <span><strong style="color:var(--primary);">{{ run.run_number }}</strong> — {{ run.target_product.name }} ({{ run.expected_yield|floatformat:0 }} {{ run.target_product.unit_of_measure }})</span>
+                <span class="badge {% if run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.7rem;">{{ run.status }}</span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
     {% if so.status == 'Ready to Ship' %}
         <form method="post" action="{% url 'so_create_shipment' so.pk %}">
             {% csrf_token %}

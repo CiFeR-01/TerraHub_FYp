@@ -138,8 +138,8 @@
                 <div>
                     <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Initial Status</label>
                     <select name="status" id="id_status" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); font-weight:500;">
-                        {% for code, label in status_choices %}
-                        <option value="{{ code }}">{{ label }}</option>
+                        {% for code, label in initial_status_choices %}
+                        <option value="{{ code }}"{% if code == 'Preparing' %} selected{% endif %}>{{ label }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -240,6 +240,8 @@
             {% for po in purchase_orders %}
             "{{ po.id }}": {
                 "warehouse_id": "{{ po.target_warehouse.id|default:'' }}",
+                "supplier_name": "{{ po.supplier_name|default:''|escapejs }}",
+                "expected_delivery_date": "{{ po.expected_delivery_date|date:'Y-m-d'|default:'' }}",
                 "items": [
                     {% for item in po.items.all %}
                     {"id": "{{ item.material.id }}", "sku": "{{ item.material.sku|escapejs }}", "name": "{{ item.material.name|escapejs }}", "qty": "{{ item.quantity_ordered }}"}
@@ -256,6 +258,7 @@
             {% for so in sales_orders %}
             "{{ so.id }}": {
                 "warehouse_id": "{{ so.origin_warehouse.id|default:'' }}",
+                "fulfillment_deadline": "{{ so.fulfillment_deadline|date:'Y-m-d'|default:'' }}",
                 "items": [
                     {% for item in so.items.all %}
                     {"id": "{{ item.product.id }}", "sku": "{{ item.product.sku|escapejs }}", "name": "{{ item.product.name|escapejs }}", "qty": "{{ item.quantity_ordered }}"}
@@ -345,6 +348,31 @@
             } else {
                 divActualArrival.style.display = "none";
                 document.getElementById("id_actual_arrival_date").value = "";
+            }
+        });
+
+        // Autofill from the selected Purchase Order (Inbound shipments)
+        poSelect.addEventListener("change", function() {
+            const po = poData[this.value];
+            if (!po) return;
+            document.getElementById("id_external_origin").value = po.supplier_name || "";
+            if (po.warehouse_id) {
+                document.getElementById("id_destination_warehouse").value = po.warehouse_id;
+            }
+            if (po.expected_delivery_date) {
+                document.getElementById("id_expected_eta_date").value = po.expected_delivery_date;
+            }
+        });
+
+        // Autofill from the selected Sales Order (Outbound shipments)
+        soSelect.addEventListener("change", function() {
+            const so = soData[this.value];
+            if (!so) return;
+            if (so.warehouse_id) {
+                document.getElementById("id_origin_warehouse").value = so.warehouse_id;
+            }
+            if (so.fulfillment_deadline) {
+                document.getElementById("id_expected_eta_date").value = so.fulfillment_deadline;
             }
         });
 
