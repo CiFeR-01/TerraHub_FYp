@@ -19,10 +19,10 @@
     <div class="header-action-tray">
         <div class="timestamp-badge">
             <span class="live-dot"></span>
-            Last Sync: {{ current_timestamp }}
+            Last activity: {% if last_activity %}{{ last_activity|timesince }} ago{% else %}{{ current_timestamp }}{% endif %}
         </div>
-        <button class="btn btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">Export Log</button>
-        <button class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">Live Filter</button>
+        <a href="{% url 'registry' %}" class="btn btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">Registry Ledger</a>
+        <a href="{% url 'approvals_inbox' %}" class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">Approvals Inbox</a>
     </div>
 </header>
 
@@ -35,13 +35,22 @@
             <span class="kpi-value">{{ inventory_metrics.raw_materials|floatformat:0 }}</span>
             <span class="badge badge-sky">MT Stocked</span>
         </div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.35rem;">
+            Intake vs prior 30d:
+            {% if kpi_deltas.raw_materials is None %}
+            <span style="color: var(--text-muted);">no baseline</span>
+            {% elif kpi_deltas.raw_materials >= 0 %}
+            <span style="color: #059669; font-weight: 700;">&#9650; {{ kpi_deltas.raw_materials|floatformat:0 }}%</span>
+            {% else %}
+            <span style="color: #dc2626; font-weight: 700;">&#9660; {{ kpi_deltas.raw_materials|floatformat:0 }}%</span>
+            {% endif %}
+        </div>
         <div class="kpi-sparkline-box">
-            <div class="sparkbar active-primary" style="height: 40%;"></div>
-            <div class="sparkbar active-primary" style="height: 60%;"></div>
-            <div class="sparkbar active-primary" style="height: 55%;"></div>
-            <div class="sparkbar active-primary" style="height: 80%;"></div>
-            <div class="sparkbar active-primary" style="height: 75%;"></div>
-            <div class="sparkbar active-primary" style="height: 95%;"></div>
+            {% for h in raw_spark %}
+            <div class="sparkbar active-primary" style="height: {{ h }}%;"></div>
+            {% empty %}
+            <div class="sparkbar" style="height: 6%;"></div>
+            {% endfor %}
         </div>
     </div>
 
@@ -52,13 +61,22 @@
             <span class="kpi-value">{{ inventory_metrics.finished_goods|floatformat:0 }}</span>
             <span class="badge badge-emerald">Units Ready</span>
         </div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.35rem;">
+            Output vs prior 30d:
+            {% if kpi_deltas.finished_goods is None %}
+            <span style="color: var(--text-muted);">no baseline</span>
+            {% elif kpi_deltas.finished_goods >= 0 %}
+            <span style="color: #059669; font-weight: 700;">&#9650; {{ kpi_deltas.finished_goods|floatformat:0 }}%</span>
+            {% else %}
+            <span style="color: #dc2626; font-weight: 700;">&#9660; {{ kpi_deltas.finished_goods|floatformat:0 }}%</span>
+            {% endif %}
+        </div>
         <div class="kpi-sparkline-box">
-            <div class="sparkbar active-secondary" style="height: 30%;"></div>
-            <div class="sparkbar active-secondary" style="height: 45%;"></div>
-            <div class="sparkbar active-secondary" style="height: 70%;"></div>
-            <div class="sparkbar active-secondary" style="height: 65%;"></div>
-            <div class="sparkbar active-secondary" style="height: 85%;"></div>
-            <div class="sparkbar active-secondary" style="height: 90%;"></div>
+            {% for h in fg_spark %}
+            <div class="sparkbar active-secondary" style="height: {{ h }}%;"></div>
+            {% empty %}
+            <div class="sparkbar" style="height: 6%;"></div>
+            {% endfor %}
         </div>
     </div>
 
@@ -99,6 +117,104 @@
             <div class="sparkbar active-primary" style="height: 72%;"></div>
         </div>
     </div>
+
+    <!-- KPI 5: Inventory Value -->
+    <div class="kpi-item-card">
+        <span class="kpi-label">Inventory Value on Hand</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">RM{{ inventory_value|floatformat:0 }}</span>
+            <span class="badge badge-slate">RM Valued</span>
+        </div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.35rem;">
+            Raw material cost + finished-goods price, active batches only
+        </div>
+    </div>
+</section>
+
+<!-- Needs Attention Action Bar -->
+<section class="animate-fade-in-up" style="animation-delay: 0.06s; margin-bottom: 2rem;">
+    {% if attention_total %}
+    <div style="display: flex; flex-wrap: wrap; gap: 0.75rem;">
+        {% if attention.approvals %}
+        <a href="{% url 'approvals_inbox' %}" class="attn-chip attn-amber">
+            <strong>{{ attention.approvals }}</strong> awaiting approval
+        </a>
+        {% endif %}
+        {% if attention.overdue_pos %}
+        <a href="{% url 'po_list' %}" class="attn-chip attn-rose">
+            <strong>{{ attention.overdue_pos }}</strong> overdue purchase order{{ attention.overdue_pos|pluralize }}
+        </a>
+        {% endif %}
+        {% if attention.late_sos %}
+        <a href="{% url 'so_list' %}" class="attn-chip attn-rose">
+            <strong>{{ attention.late_sos }}</strong> sales order{{ attention.late_sos|pluralize }} past deadline
+        </a>
+        {% endif %}
+        {% if attention.delayed_shipments %}
+        <a href="{% url 'shipments' %}" class="attn-chip attn-rose">
+            <strong>{{ attention.delayed_shipments }}</strong> delayed / discrepant shipment{{ attention.delayed_shipments|pluralize }}
+        </a>
+        {% endif %}
+        {% if attention.awaiting_materials %}
+        <a href="{% url 'readiness' %}" class="attn-chip attn-amber">
+            <strong>{{ attention.awaiting_materials }}</strong> run{{ attention.awaiting_materials|pluralize }} awaiting materials
+        </a>
+        {% endif %}
+        {% if attention.quarantined %}
+        <a href="{% url 'warehouse_inventory' %}" class="attn-chip attn-amber">
+            <strong>{{ attention.quarantined }}</strong> quarantined batch{{ attention.quarantined|pluralize:"es" }}
+        </a>
+        {% endif %}
+        {% if attention.pending_audits %}
+        <a href="{% url 'stock_audit' %}" class="attn-chip attn-slate">
+            <strong>{{ attention.pending_audits }}</strong> stock audit{{ attention.pending_audits|pluralize }} to resolve
+        </a>
+        {% endif %}
+    </div>
+    {% else %}
+    <div style="display: flex; align-items: center; gap: 0.6rem; font-size: 0.9rem; color: #065f46; background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); border-radius: 10px; padding: 0.9rem 1.25rem;">
+        <span style="font-size: 1.1rem;">&#10004;</span> Nothing needs attention &mdash; no overdue orders, delayed shipments, or open approvals.
+    </div>
+    {% endif %}
+</section>
+
+<!-- Production In Progress -->
+<section class="pane-card animate-fade-in-up" style="animation-delay: 0.08s; margin-bottom: 2rem;">
+    <h3>&#128296; Production In Progress</h3>
+    {% if run_progress %}
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem;">
+        {% for run in run_progress %}
+        <a href="{% url 'production_run_detail' run.pk %}" style="text-decoration: none; color: inherit;">
+            <div style="background: #fafafb; border: 1px solid var(--border-light); border-radius: 10px; padding: 1.1rem 1.25rem;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+                    <div>
+                        <div style="font-family: monospace; font-weight: 700; color: var(--primary);">{{ run.run_number }}</div>
+                        <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 600;">{{ run.product }}</div>
+                    </div>
+                    <span class="badge {% if run.status == 'InProgress' %}badge-sky{% elif run.status == 'Paused' %}badge-amber{% else %}badge-slate{% endif %}">{{ run.status_display }}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">
+                    <span>{{ run.made|floatformat:0 }} / {{ run.expected|floatformat:0 }} {{ run.unit }}</span>
+                    <span style="font-weight: 700; color: var(--text-main);">{{ run.pct|floatformat:0 }}%</span>
+                </div>
+                <div class="micro-progress-container">
+                    <div class="micro-progress-bar {% if run.pct_raw >= 100 %}progress-emerald{% elif run.pct_raw >= 50 %}progress-sky{% else %}progress-amber{% endif %}" style="width: {{ run.pct }}%;"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.6rem; font-size: 0.75rem; color: var(--text-muted);">
+                    <span>Supervisor: {{ run.supervisor }}</span>
+                    {% if run.days_running is not None %}<span>Day {{ run.days_running }}</span>{% endif %}
+                </div>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="zero-state-box">
+        <div class="zero-state-icon">&#128564;</div>
+        <h4 style="font-weight: 600; color: var(--text-main);">No runs on the floor</h4>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">Nothing is currently in progress, paused, or awaiting materials.</p>
+    </div>
+    {% endif %}
 </section>
 
 <!-- Visualization Grid -->
@@ -123,6 +239,38 @@
     </div>
 </section>
 
+<!-- Production Analytics Grid -->
+<section class="charts-container-grid animate-fade-in-up" style="animation-delay: 0.12s;">
+    <!-- Weekly Output Trend -->
+    <div class="chart-box col-span-2-lg">
+        <h3>Finished-Goods Output (last 12 weeks)</h3>
+        <div class="chart-wrapper">
+            <canvas id="outputTrendChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Material Usage Variance Leaderboard -->
+    <div class="chart-box">
+        <h3>Material Usage Variance</h3>
+        <div style="flex: 1; overflow-y: auto;">
+            {% for m in material_variance %}
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid var(--border-light);">
+                <div>
+                    <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-main);">{{ m.material__name }}</div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted); font-family: monospace;">{{ m.material__sku }} &middot; {{ m.runs }} run{{ m.runs|pluralize }}</div>
+                </div>
+                <span style="font-weight: 700; font-size: 0.9rem; color: {% if m.avg_var > 5 %}#dc2626{% elif m.avg_var < -1 %}#059669{% else %}var(--text-muted){% endif %};">
+                    {% if m.avg_var >= 0 %}+{% endif %}{{ m.avg_var|floatformat:1 }}%
+                </span>
+            </div>
+            {% empty %}
+            <p style="font-size: 0.85rem; color: var(--text-muted); padding-top: 1rem;">No completed-run usage data yet.</p>
+            {% endfor %}
+        </div>
+        <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.5rem;">Avg actual vs expected consumption. Positive = over-consuming.</div>
+    </div>
+</section>
+
 <!-- Operational Split-Pane Layout -->
 <section class="split-grid animate-fade-in-up" style="animation-delay: 0.15s;">
     <!-- Left Column: Active Logistics Movements Table -->
@@ -142,7 +290,9 @@
                 <tbody>
                     {% for shipment in active_shipments %}
                     <tr>
-                        <td style="font-family: monospace; font-weight: 600; color: var(--primary);">{{ shipment.tracking_number }}</td>
+                        <td style="font-family: monospace; font-weight: 600;">
+                            <a href="{% url 'shipment_detail' shipment.pk %}" style="color: var(--primary); text-decoration: none;">{{ shipment.tracking_number }}</a>
+                        </td>
                         <td>
                             {% if shipment.direction == 'Inbound' %}
                             <span style="color: #059669; margin-right: 0.25rem;">📥</span> Inbound
@@ -327,6 +477,7 @@
 <!-- Safe JSON data injection -->
 {{ chart_data|json_script:"chart-data" }}
 {{ sales_order_stats|json_script:"so-data" }}
+{{ output_trend|json_script:"output-trend-data" }}
 {% endblock %}
 
 {% block extra_js %}
@@ -336,6 +487,49 @@
     document.addEventListener('DOMContentLoaded', () => {
         const chartData = JSON.parse(document.getElementById('chart-data').textContent);
         const soData = JSON.parse(document.getElementById('so-data').textContent);
+        const outputTrend = JSON.parse(document.getElementById('output-trend-data').textContent);
+
+        // Weekly finished-goods output trend (line)
+        const trendEl = document.getElementById('outputTrendChart');
+        if (trendEl && outputTrend.labels.length) {
+            new Chart(trendEl.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: outputTrend.labels,
+                    datasets: [{
+                        label: 'Units produced',
+                        data: outputTrend.values,
+                        borderColor: 'rgba(79, 70, 229, 1)',
+                        backgroundColor: 'rgba(79, 70, 229, 0.08)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.35,
+                        pointRadius: 3,
+                        pointBackgroundColor: 'rgba(79, 70, 229, 1)'
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                            titleColor: '#ffffff',
+                            bodyColor: '#e2e8f0',
+                            padding: 10,
+                            cornerRadius: 6
+                        }
+                    },
+                    scales: {
+                        x: { grid: { display: false }, ticks: { color: '#64748b' } },
+                        y: { beginAtZero: true, grid: { color: 'rgba(15, 23, 42, 0.04)' }, ticks: { color: '#64748b' } }
+                    }
+                }
+            });
+        } else if (trendEl) {
+            trendEl.parentElement.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem; text-align: center; padding-top: 3rem;">No yield logged in the last 12 weeks.</p>';
+        }
 
         // Setup Sales Order Funnel Doughnut Chart
         const salesCtx = document.getElementById('salesOrderFunnelChart').getContext('2d');

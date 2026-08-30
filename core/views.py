@@ -5,8 +5,8 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django import forms
 from django.db import transaction
-from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q
-from django.db.models.functions import Coalesce
+from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q, Avg
+from django.db.models.functions import Coalesce, TruncWeek
 from django.core.paginator import Paginator
 from datetime import date, timedelta
 import csv
@@ -15,7 +15,8 @@ import uuid
 from django.utils import timezone
 from .models import (
     CustomUser, Warehouse, WarehouseLocation, Material, Product,
-    ProductRecipe, ProductionRun, ProductionConsumption, Batch,
+    ProductRecipe, ProductionRun, ProductionRunYieldLog, RunMaterialUsage,
+    ProductionConsumption, Batch,
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
     Shipment, ShipmentItem, ShipmentItemReceipt, StockAudit, RegistryLog, OrderTimeline, Notification, Role,
     StockAllocation, Supplier, SupplierMaterial, Client
@@ -130,6 +131,137 @@ def dashboard_view(request):
                 b.threshold_days = b.material.safe_storage_days if b.material else 30
                 degrading_batches.append(b)
 
+    # ------------------------------------------------------------------
+    # Analytics upgrade: attention panel, live production progress,
+    # period-over-period KPI deltas, real sparklines, output trend.
+    # ------------------------------------------------------------------
+    tomorrow = today + timedelta(days=1)
+    prev30 = today - timedelta(days=30)
+    prev60 = today - timedelta(days=60)
+
+    def _reg_sum(action, start, end):
+        return float(RegistryLog.objects.filter(
+            action_type=action, timestamp__date__gte=start, timestamp__date__lt=end
+        ).aggregate(s=Sum('quantity_changed'))['s'] or 0)
+
+    def _pct_delta(cur, prev):
+        if not prev:
+            return None
+        return (cur - prev) / prev * 100
+
+    # A. "Needs attention" counters (each links to a filtered work list)
+    attention = {
+        'approvals': (
+            PurchaseOrder.objects.filter(status='Pending Approval').count()
+            + SalesOrder.objects.filter(status='Pending Approval').count()
+            + ProductionRun.objects.filter(status='Pending Approval').count()
+            + Shipment.objects.filter(status='Pending Approval').count()
+        ),
+        'overdue_pos': PurchaseOrder.objects.filter(
+            expected_delivery_date__lt=today
+        ).exclude(status__in=['Completed', 'Rejected', 'Draft']).count(),
+        'late_sos': SalesOrder.objects.filter(
+            fulfillment_deadline__lt=today
+        ).exclude(status__in=['Shipped', 'Delivered', 'Rejected', 'Draft']).count(),
+        'delayed_shipments': Shipment.objects.filter(
+            status__in=['Delayed', 'Discrepant']
+        ).count(),
+        'awaiting_materials': ProductionRun.objects.filter(status='Awaiting Materials').count(),
+        'quarantined': Batch.objects.filter(status='Quarantined').count(),
+        'pending_audits': StockAudit.objects.filter(status='Pending').count(),
+    }
+    attention_total = sum(attention.values())
+
+    # B. Production in progress — % of target reached from dated yield logs
+    active_runs = (
+        ProductionRun.objects
+        .filter(status__in=['InProgress', 'Paused', 'Awaiting Materials'])
+        .select_related('target_product', 'supervisor')
+        .annotate(made=Coalesce(
+            Sum('yield_logs__quantity'),
+            Value(0, output_field=DecimalField()),
+        ))
+        .order_by('status', 'run_number')
+    )
+    run_progress = []
+    for r in active_runs:
+        expected = float(r.expected_yield or 0)
+        made = float(r.made or 0)
+        pct = (made / expected * 100) if expected > 0 else 0
+        run_progress.append({
+            'run_number': r.run_number,
+            'pk': r.pk,
+            'product': r.target_product.name if r.target_product else '—',
+            'status': r.status,
+            'status_display': r.get_status_display(),
+            'supervisor': r.supervisor.username if r.supervisor else 'Unassigned',
+            'made': made,
+            'expected': expected,
+            'unit': r.target_product.unit_of_measure if r.target_product else '',
+            'pct': min(pct, 100),
+            'pct_raw': pct,
+            'days_running': (today - r.start_time.date()).days if r.start_time else None,
+        })
+
+    # C. KPI deltas — last 30 days vs the 30 days before that
+    rm_in_cur, rm_in_prev = _reg_sum('Inbound', prev30, tomorrow), _reg_sum('Inbound', prev60, prev30)
+    fg_cur, fg_prev = _reg_sum('Produced', prev30, tomorrow), _reg_sum('Produced', prev60, prev30)
+
+    kpi_deltas = {
+        'raw_materials': _pct_delta(rm_in_cur, rm_in_prev),
+        'finished_goods': _pct_delta(fg_cur, fg_prev),
+    }
+
+    # D. Real sparklines — weekly totals for the last 6 weeks (normalised heights)
+    def _weekly_heights(action):
+        raw = []
+        for i in range(6, 0, -1):
+            wk_start = today - timedelta(days=i * 7)
+            wk_end = today - timedelta(days=(i - 1) * 7)
+            raw.append(_reg_sum(action, wk_start, wk_end))
+        peak = max(raw) or 1
+        return [max(round(v / peak * 100), 4) for v in raw]
+
+    raw_spark = _weekly_heights('Inbound')
+    fg_spark = _weekly_heights('Produced')
+
+    # E. Weekly finished-goods output trend (12 weeks) for a real line chart
+    twelve_weeks_ago = today - timedelta(weeks=12)
+    weekly_output_qs = (
+        ProductionRunYieldLog.objects
+        .filter(log_date__gte=twelve_weeks_ago)
+        .annotate(wk=TruncWeek('log_date'))
+        .values('wk')
+        .annotate(qty=Sum('quantity'))
+        .order_by('wk')
+    )
+    output_trend = {
+        'labels': [row['wk'].strftime('%d %b') for row in weekly_output_qs],
+        'values': [float(row['qty'] or 0) for row in weekly_output_qs],
+    }
+
+    # F. Material usage variance leaderboard (completed runs)
+    material_variance = list(
+        RunMaterialUsage.objects
+        .filter(production_run__status='Completed')
+        .values('material__name', 'material__sku')
+        .annotate(avg_var=Avg('variance_pct'), runs=Count('id'))
+        .order_by('-avg_var')[:6]
+    )
+
+    # G. Inventory value in RM (not just tonnage)
+    rm_value = Batch.objects.filter(status='Active', material__isnull=False).aggregate(
+        v=Coalesce(Sum(F('quantity') * F('material__cost_per_unit'),
+                       output_field=DecimalField()), Value(0, output_field=DecimalField()))
+    )['v']
+    fg_value = Batch.objects.filter(status='Active', product__isnull=False).aggregate(
+        v=Coalesce(Sum(F('quantity') * F('product__price_per_unit'),
+                       output_field=DecimalField()), Value(0, output_field=DecimalField()))
+    )['v']
+    inventory_value = float(rm_value) + float(fg_value)
+
+    last_activity = RegistryLog.objects.order_by('-timestamp').values_list('timestamp', flat=True).first()
+
     # 6. Sales order stats
     so_counts = SalesOrder.objects.values('status').annotate(count=Count('id'))
     counts_dict = {item['status']: item['count'] for item in so_counts}
@@ -154,6 +286,17 @@ def dashboard_view(request):
         'degrading_batches': degrading_batches,
         'sales_order_stats': sales_order_stats,
         'current_timestamp': date.today().strftime('%Y-%m-%d'),
+        # analytics upgrade
+        'attention': attention,
+        'attention_total': attention_total,
+        'run_progress': run_progress,
+        'kpi_deltas': kpi_deltas,
+        'raw_spark': raw_spark,
+        'fg_spark': fg_spark,
+        'output_trend': output_trend,
+        'material_variance': material_variance,
+        'inventory_value': inventory_value,
+        'last_activity': last_activity,
     }
 
     return render(request, 'dashboard.html', context)
