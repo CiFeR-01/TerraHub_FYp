@@ -125,6 +125,30 @@ def create_shortage_production_runs(so, plant, user):
     return created_any
 
 
+def release_production_run_allocations(run):
+    """
+    Releases every StockAllocation held by a run back to available stock, and cancels
+    any auto-generated Draft transfer shipments left over from allocating it. Shared by
+    every path that stops a run before it's produced anything — manual "cancel
+    allocation", scrapping a run outright, and auto-cancelling a run whose need
+    disappeared (fully covered by direct allocation, or its SO line item was removed).
+    """
+    from .models import StockAllocation, Shipment
+
+    allocs = StockAllocation.objects.filter(production_run=run)
+    for alloc in allocs:
+        batch = alloc.batch
+        batch.allocated_quantity -= alloc.quantity
+        if batch.allocated_quantity < 0:
+            batch.allocated_quantity = 0
+        batch.save(update_fields=['allocated_quantity'])
+        alloc.delete()
+
+    Shipment.objects.filter(
+        linked_production_run=run, is_auto_generated=True, status='Draft'
+    ).update(status='Cancelled')
+
+
 def sync_production_run_yield(so, product, unfulfilled, user):
     """
     Keeps an already-created Production Run's expected_yield in sync with the SO's
@@ -148,6 +172,7 @@ def sync_production_run_yield(so, product, unfulfilled, user):
     unfulfilled = Decimal(str(unfulfilled))
     if unfulfilled <= 0:
         old_yield = run.expected_yield
+        release_production_run_allocations(run)
         run.status = 'Cancelled'
         run.save(update_fields=['status'])
         OrderTimeline.objects.create(
@@ -162,6 +187,39 @@ def sync_production_run_yield(so, product, unfulfilled, user):
         OrderTimeline.objects.create(
             production_run=run,
             action=f"Expected yield adjusted from {old_yield} to {unfulfilled} MT after additional stock was directly allocated to the SO.",
+            user=user
+        )
+
+
+def handle_so_item_removed(so, product, user):
+    """
+    Called when a line item is deleted from a Sales Order. A Production Run created
+    for that SO+product would otherwise be silently orphaned — still expected to
+    produce something the order no longer needs. If the run hasn't started yet, cancel
+    it outright (releasing any allocated materials). If it's already InProgress or
+    Completed, leave it alone (the goods aren't wasted — they can still go to stock or
+    another order) but note on its timeline that its SO link no longer has this item,
+    so anyone looking at the run isn't misled about why it exists.
+    """
+    from .models import ProductionRun, OrderTimeline
+
+    run = ProductionRun.objects.filter(sales_order=so, target_product=product).exclude(status='Cancelled').first()
+    if not run:
+        return
+
+    if run.status in ['InProgress', 'Completed']:
+        OrderTimeline.objects.create(
+            production_run=run,
+            action=f"Note: {product.sku} was removed from {so.so_number} — this run's SO no longer requires it.",
+            user=user
+        )
+    else:
+        release_production_run_allocations(run)
+        run.status = 'Cancelled'
+        run.save(update_fields=['status'])
+        OrderTimeline.objects.create(
+            production_run=run,
+            action=f"Auto-cancelled: {product.sku} was removed from {so.so_number}, this run is no longer needed.",
             user=user
         )
 
@@ -356,6 +414,142 @@ def finalize_production_run(run, user):
         )
 
     return fg_batch
+
+
+def get_batch_reservations(batch):
+    """
+    Every current reservation against a batch (StockAllocation rows), each resolved
+    to a human label + URL for whatever it's held for — a Sales Order, a Production
+    Run's material draw, or a Shipment. Used by the Product/Material traceability
+    views and the SO detail page's batch breakdown.
+    """
+    from django.urls import reverse
+    from .models import StockAllocation
+
+    reservations = []
+    for alloc in StockAllocation.objects.filter(batch=batch).select_related('sales_order', 'production_run', 'shipment'):
+        if alloc.sales_order:
+            reservations.append({
+                'quantity': alloc.quantity,
+                'label': f"Sales Order {alloc.sales_order.so_number}",
+                'url': reverse('so_detail', args=[alloc.sales_order.pk]),
+            })
+        elif alloc.production_run:
+            reservations.append({
+                'quantity': alloc.quantity,
+                'label': f"Production Run {alloc.production_run.run_number}",
+                'url': reverse('production_run_detail', args=[alloc.production_run.pk]),
+            })
+        elif alloc.shipment:
+            reservations.append({
+                'quantity': alloc.quantity,
+                'label': f"Shipment {alloc.shipment.tracking_number}",
+                'url': reverse('shipment_detail', args=[alloc.shipment.pk]),
+            })
+    return reservations
+
+
+def get_batch_produced_for(batch):
+    """
+    If this batch was manufactured (not received via PO), returns the SO its own
+    Production Run was originally linked to — even if the batch's allocation has
+    since moved elsewhere. This is the "originally intended for" signal distinct
+    from "currently reserved for" (get_batch_reservations).
+    """
+    if batch.produced_in and batch.produced_in.sales_order:
+        so = batch.produced_in.sales_order
+        from django.urls import reverse
+        return {'so_number': so.so_number, 'url': reverse('so_detail', args=[so.pk]), 'run_number': batch.produced_in.run_number}
+    return None
+
+
+def unallocate_so_batch(allocation, quantity, user, target_so=None):
+    """
+    Releases (or transfers) a quantity of an SO-level StockAllocation. If target_so
+    is given, the released amount is immediately re-allocated to it in the same
+    transaction (a direct transfer); otherwise it's simply freed back to available
+    stock, where it becomes visible to any SO's normal allocation screen. Logs to
+    both orders' timelines either way, and recomputes each order's fulfillment
+    status afterward. Returns (source_so, target_so_or_None).
+    """
+    from .models import StockAllocation, OrderTimeline, SalesOrder
+
+    if allocation.sales_order is None:
+        raise ValueError("This allocation isn't held by a Sales Order — nothing to unallocate here.")
+
+    quantity = Decimal(str(quantity))
+    if quantity <= 0 or quantity > allocation.quantity:
+        raise ValueError(f"Quantity must be between 0 and {allocation.quantity}.")
+
+    source_so = allocation.sales_order
+    batch = allocation.batch
+    product = batch.product
+
+    with transaction.atomic():
+        if quantity == allocation.quantity:
+            allocation.delete()
+        else:
+            allocation.quantity -= quantity
+            allocation.save(update_fields=['quantity'])
+
+        batch.allocated_quantity -= quantity
+        if batch.allocated_quantity < 0:
+            batch.allocated_quantity = 0
+        batch.save(update_fields=['allocated_quantity'])
+
+        if target_so:
+            batch.allocated_quantity += quantity
+            batch.save(update_fields=['allocated_quantity'])
+            StockAllocation.objects.create(batch=batch, sales_order=target_so, quantity=quantity)
+            OrderTimeline.objects.create(
+                sales_order=source_so,
+                action=f"Unallocated {quantity} {product.unit_of_measure} of {product.sku} (Batch {batch.batch_number}) — transferred to {target_so.so_number}.",
+                user=user
+            )
+            OrderTimeline.objects.create(
+                sales_order=target_so,
+                action=f"Received {quantity} {product.unit_of_measure} of {product.sku} (Batch {batch.batch_number}) transferred from {source_so.so_number}.",
+                user=user
+            )
+        else:
+            OrderTimeline.objects.create(
+                sales_order=source_so,
+                action=f"Unallocated {quantity} {product.unit_of_measure} of {product.sku} (Batch {batch.batch_number}) — released back to available stock.",
+                user=user
+            )
+
+    _resync_so_fulfillment_status(source_so, user)
+    if target_so:
+        _resync_so_fulfillment_status(target_so, user)
+
+    return source_so, target_so
+
+
+def _resync_so_fulfillment_status(so, user):
+    """
+    After allocations change, nudges an SO's status to reflect whether it's now
+    fully covered — mirrors the same check finalize_production_run already does at
+    completion time, factored out so unallocate/transfer can trigger it too.
+    """
+    from django.db.models import Sum
+    from .models import StockAllocation, OrderTimeline
+
+    if so.status in ['Shipped', 'Delivered', 'Cancelled', 'Rejected', 'Draft', 'Pending Approval']:
+        return
+
+    fully_covered = True
+    for it in so.items.all():
+        alloc_sum = StockAllocation.objects.filter(sales_order=so, batch__product=it.product).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+        if Decimal(str(alloc_sum)) + Decimal(str(it.quantity_shipped)) < Decimal(str(it.quantity_ordered)):
+            fully_covered = False
+            break
+
+    new_status = 'Ready to Ship' if fully_covered else 'Pending'
+    if so.status != new_status:
+        old_status = so.status
+        so.status = new_status
+        so.save(update_fields=['status'])
+        OrderTimeline.objects.create(sales_order=so, action=f"Status auto-updated from {old_status} to {new_status} after allocation change.", user=user)
 
 
 def deallocate_stock(order_type, order):

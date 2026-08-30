@@ -145,6 +145,7 @@ class ProductionRun(models.Model):
         ('Awaiting Materials', 'Awaiting Materials'),
         ('Planned', 'Planned'),
         ('InProgress', 'In Progress'),
+        ('Paused', 'Paused'),
         ('Completed', 'Completed'),
         ('Cancelled', 'Cancelled'),
     )
@@ -173,6 +174,26 @@ class ProductionRun(models.Model):
 
     def __str__(self):
         return f"Run {self.run_number} - {self.target_product.sku}"
+
+class ProductionRunYieldLog(models.Model):
+    """
+    One dated finished-goods yield entry against a run — production can span several
+    sessions (a day, pause, resume a week later), so this is a running record of how
+    much was actually made and when, instead of a single number typed in once at the
+    very end.
+    """
+    production_run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, related_name='yield_logs')
+    quantity = models.DecimalField(max_digits=12, decimal_places=2)
+    log_date = models.DateField()
+    logged_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)
+    notes = models.CharField(max_length=255, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-log_date', '-created_at']
+
+    def __str__(self):
+        return f"{self.production_run.run_number} +{self.quantity} on {self.log_date}"
 
 class RunMaterialUsage(models.Model):
     production_run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, related_name='material_usages')
