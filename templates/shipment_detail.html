@@ -28,12 +28,42 @@
         </h1>
         <div style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.35rem;">
             {% if shipment.purchase_order %}
-            PO: <a href="{% url 'po_detail' shipment.purchase_order.id %}" style="color:var(--primary); font-weight:600; text-decoration:none;">{{ shipment.purchase_order.po_number }}</a> | 
+            PO: <a href="{% url 'po_detail' shipment.purchase_order.id %}" style="color:var(--primary); font-weight:600; text-decoration:none;">{{ shipment.purchase_order.po_number }}</a> |
             {% endif %}
             {% if shipment.sales_order %}
             SO: <a href="{% url 'so_detail' shipment.sales_order.id %}" style="color:var(--primary); font-weight:600; text-decoration:none;">{{ shipment.sales_order.so_number }}</a>
             {% endif %}
         </div>
+
+        {% if shipment.direction == 'Transfer' %}
+        <div style="margin-top:0.6rem; display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+            {% if shipment.sales_order %}
+            <span style="font-size:0.82rem; color:var(--text-muted);">
+                🔒 Reservations owned by
+                <a href="{% url 'so_detail' shipment.sales_order.id %}" style="color:var(--primary); font-weight:600; text-decoration:none;">{{ shipment.sales_order.so_number }}</a>
+            </span>
+            {% if shipment.status in 'Draft,Logistics Review' %}
+            <form method="post" style="display:inline;" onsubmit="return confirm('Unlink from {{ shipment.sales_order.so_number }}? The order keeps its batch reservations.');">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="unlink_order">
+                <button type="submit" class="btn btn-secondary" style="padding:0.25rem 0.7rem; font-size:0.75rem;">Unlink</button>
+            </form>
+            {% endif %}
+            {% elif shipment.status in 'Draft,Logistics Review' %}
+            <form method="post" style="display:flex; align-items:center; gap:0.4rem;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="link_order">
+                <select name="sales_order_id" required class="form-select" style="padding:0.35rem 0.5rem; font-size:0.8rem; max-width:280px;">
+                    <option value="">🔗 Link to a Sales Order…</option>
+                    {% for s in linkable_sos %}
+                    <option value="{{ s.id }}">{{ s.so_number }} — {{ s.client_name }} ({{ s.get_status_display }})</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-primary" style="padding:0.3rem 0.9rem; font-size:0.78rem;">Link</button>
+            </form>
+            {% endif %}
+        </div>
+        {% endif %}
     </div>
       <div class="header-action-tray">
           {% if shipment.status not in 'Cancelled,Completed,Arrived,Delivered' %}
@@ -380,8 +410,8 @@
                     <select name="batch_id" id="id_batch" class="form-select" style="width:100%; padding:0.55rem;" {% if shipment.direction == 'Transfer' %}required{% endif %}>
                         <option value="">-- Select --</option>
                         {% for b in batches %}
-                        <option value="{{ b.id }}" data-mat="{{ b.material.id|default:'' }}" data-prod="{{ b.product.id|default:'' }}" data-qty="{{ b.quantity|floatformat:1 }}">
-                            {{ b.batch_number }} (Qty: {{ b.quantity|floatformat:1 }})
+                        <option value="{{ b.id }}" data-mat="{{ b.material.id|default:'' }}" data-prod="{{ b.product.id|default:'' }}" data-qty="{{ b.available_qty|default:b.quantity|floatformat:1 }}">
+                            {{ b.batch_number }}{% if b.warehouse %} · {{ b.warehouse.name }}{% endif %} · avail {{ b.available_qty|default:b.quantity|floatformat:1 }}{% if b.matches_so %} ✓ (SO item){% endif %}
                         </option>
                         {% endfor %}
                     </select>

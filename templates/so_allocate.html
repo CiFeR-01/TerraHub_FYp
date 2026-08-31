@@ -45,10 +45,19 @@
         <div style="margin-bottom:2rem; padding:1.25rem; background:#f8fafc; border:1px solid var(--border-light); border-radius:8px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; border-bottom:1px solid #e2e8f0; padding-bottom:0.75rem;">
                 <div style="font-weight:700; font-size:1rem; color:var(--primary);">{{ row.product.name }} ({{ row.product.sku }})</div>
+                {% if row.needed > 0 %}
                 <div style="font-size:0.9rem; font-weight:600; color:var(--text-main);">Needed to Allocate: <span style="color:#ef4444;" id="needed_{{ row.item_id }}">{{ row.needed }}</span></div>
+                {% else %}
+                <div style="font-size:0.9rem; font-weight:700; color:#059669;">&#10004; Fully Allocated<span style="display:none;" id="needed_{{ row.item_id }}">0</span></div>
+                {% endif %}
             </div>
-            
-            {% if row.batches %}
+
+            {% if row.needed <= 0 %}
+            <div style="font-size:0.88rem; color:#065f46; background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:8px; padding:0.9rem 1.1rem; display:flex; align-items:center; gap:0.55rem;">
+                <span style="font-size:1.1rem;">&#10004;</span>
+                Allocation complete for this line item — the ordered quantity is fully covered. Adjust existing allocations from the <a href="{% url 'so_detail' so.pk %}" style="color:#065f46; font-weight:600;">order page</a>.
+            </div>
+            {% elif row.batches %}
             <div class="table-responsive">
                 <table class="modern-table" style="width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--border-light); border-radius:6px; overflow:hidden;">
                     <thead>

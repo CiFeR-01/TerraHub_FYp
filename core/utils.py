@@ -224,6 +224,54 @@ def handle_so_item_removed(so, product, user):
         )
 
 
+def release_so_product_allocations(so, product, user):
+    """
+    A line item was removed from a Sales Order. Free every finished-goods reservation
+    held for that product on this SO: drop the batch lock counter, delete the
+    StockAllocation, and pull the batch off any in-flight internal transfer that was
+    carrying it for this order (cancelling that transfer if it ends up with no cargo).
+    """
+    from .models import StockAllocation, ShipmentItem, OrderTimeline
+
+    allocs = list(
+        StockAllocation.objects
+        .filter(sales_order=so, batch__product=product)
+        .select_related('batch', 'shipment')
+    )
+    if not allocs:
+        return
+
+    touched_shipments = {}
+    for a in allocs:
+        b = a.batch
+        sh = a.shipment
+        if sh and sh.direction == 'Transfer' and sh.status not in ['Completed', 'Cancelled']:
+            ShipmentItem.objects.filter(shipment=sh, batch=b).delete()
+            touched_shipments[sh.id] = sh
+        b.allocated_quantity = (b.allocated_quantity or Decimal('0')) - a.quantity
+        if b.allocated_quantity < 0:
+            b.allocated_quantity = Decimal('0')
+        b.save(update_fields=['allocated_quantity'])
+        a.delete()
+
+    for sh in touched_shipments.values():
+        if not sh.items.exists():
+            sh.status = 'Cancelled'
+            sh.sales_order = None
+            sh.save(update_fields=['status', 'sales_order'])
+            OrderTimeline.objects.create(
+                shipment=sh,
+                action=f"Auto-cancelled: all cargo removed after {product.sku} was dropped from {so.so_number}.",
+                user=user,
+            )
+        else:
+            OrderTimeline.objects.create(
+                shipment=sh,
+                action=f"{product.sku} batches removed after the line item was dropped from {so.so_number}.",
+                user=user,
+            )
+
+
 def consume_materials_for_run(run, user):
     """
     Physically deducts the raw materials a completed run used. For each material
@@ -696,5 +744,36 @@ def mark_so_delivered_if_fully_shipped(so, completing_shipment=None):
         so.save(update_fields=['status'])
         return True
     return False
+
+
+def notify_so_ready_to_close(so, completing_shipment, user):
+    """
+    A linked Outbound shipment for this SO has completed. We deliberately DO NOT
+    auto-close the SO here — that path skipped stock deduction entirely. Instead we
+    leave the SO Shipped and prompt a human to confirm delivery on the SO page; that
+    confirmation (`confirm_so_delivery`) is what deducts the reserved batches.
+    """
+    from .models import OrderTimeline, Notification
+    from django.urls import reverse
+
+    outstanding = (so.shipments.filter(direction='Outbound')
+                   .exclude(status__in=['Completed', 'Cancelled'])
+                   .exclude(pk=completing_shipment.pk))
+
+    if outstanding.exists():
+        note = f"{outstanding.count()} other outbound shipment(s) still open."
+    else:
+        note = "Confirm delivery on the order to close it and release reserved stock."
+    OrderTimeline.objects.create(
+        sales_order=so,
+        action=f"Outbound shipment {completing_shipment.tracking_number} completed. {note}",
+        user=user,
+    )
+    if not outstanding.exists() and so.created_by and so.created_by != user:
+        Notification.objects.create(
+            user=so.created_by,
+            message=f"{so.so_number}: all shipments delivered — confirm closure to finalise and deduct stock.",
+            link=reverse('so_detail', args=[so.pk]),
+        )
 
 

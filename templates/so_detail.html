@@ -161,6 +161,37 @@
 
 
 
+        <!-- Internal Transfers In Progress (hidden when none active) -->
+{% if in_flight_transfers %}
+<div class="animate-fade-in-up" style="border:1px solid rgba(14,165,233,0.3); background:rgba(14,165,233,0.05); border-radius:14px; padding:1.25rem 1.5rem; margin-bottom:1.5rem;">
+    <div style="font-size:0.78rem; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#0369a1; margin-bottom:0.75rem;">🚚 Internal transfers in progress for this order</div>
+    <div class="table-responsive" style="overflow-x:auto;">
+        <table style="width:100%; border-collapse:collapse; font-size:0.82rem;">
+            <tr style="color:var(--text-muted); font-weight:600; text-align:left;">
+                <td style="padding:0.3rem 0.6rem;">Shipment</td>
+                <td style="padding:0.3rem 0.6rem;">Route</td>
+                <td style="padding:0.3rem 0.6rem;">Batches</td>
+                <td style="padding:0.3rem 0.6rem;">Status</td>
+            </tr>
+            {% for t in in_flight_transfers %}
+            <tr style="border-top:1px solid rgba(14,165,233,0.15);">
+                <td style="padding:0.4rem 0.6rem; font-weight:600;">
+                    <a href="{% url 'shipment_detail' t.pk %}" style="color:var(--primary); text-decoration:none;">{{ t.tracking_number }}</a>
+                </td>
+                <td style="padding:0.4rem 0.6rem; color:var(--text-muted);">
+                    {{ t.origin_warehouse.name|default:"—" }} → {{ t.destination_warehouse.name|default:"—" }}
+                </td>
+                <td style="padding:0.4rem 0.6rem;">
+                    {% for it in t.items.all %}{{ it.batch.batch_number|default:"—" }} ({{ it.quantity|floatformat:1 }}){% if not forloop.last %}, {% endif %}{% endfor %}
+                </td>
+                <td style="padding:0.4rem 0.6rem;"><span class="badge badge-sky">{{ t.get_status_display }}</span></td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+{% endif %}
+
         <!-- Line Items Table -->
 <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.05s;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
@@ -261,6 +292,7 @@
                             <tr style="color:var(--text-muted); font-weight:600; border-bottom:1px solid var(--border-light);">
                                 <td style="padding:0.3rem 0.75rem;">Batch</td>
                                 <td style="padding:0.3rem 0.75rem;">Quantity</td>
+                                <td style="padding:0.3rem 0.75rem;">Location</td>
                                 <td style="padding:0.3rem 0.75rem;">Source</td>
                                 <td style="padding:0.3rem 0.75rem;"></td>
                             </tr>
@@ -270,6 +302,12 @@
                                     <a href="{% url 'batch_detail' arow.batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ arow.batch.batch_number }}</a>
                                 </td>
                                 <td style="padding:0.4rem 0.75rem;">{{ arow.quantity|floatformat:2 }} {{ row.item.product.unit_of_measure }}</td>
+                                <td style="padding:0.4rem 0.75rem;">
+                                    {{ arow.batch.warehouse.name|default:"—" }}{% if arow.batch.location %} <span style="color:var(--text-muted);">/ {{ arow.batch.location }}</span>{% endif %}
+                                    {% if so.origin_warehouse_id and arow.batch.warehouse_id and arow.batch.warehouse_id != so.origin_warehouse_id %}
+                                    <br><span style="font-size:0.72rem; color:#b45309; font-weight:600;">⚠ not in {{ so.origin_warehouse.name }} — needs transfer</span>
+                                    {% endif %}
+                                </td>
                                 <td style="padding:0.4rem 0.75rem;">
                                     {% if 'Newly Manufactured' in arow.source %}<span style="color:#059669; font-weight:600;">{{ arow.source }}</span>
                                     {% else %}<span style="color:var(--text-muted);">{{ arow.source }}</span>{% endif %}
@@ -282,7 +320,7 @@
                                 </td>
                             </tr>
                             <tr id="unalloc-{{ arow.alloc_id }}" style="display:none;">
-                                <td colspan="4" style="padding:0.5rem 0.75rem 0.85rem;">
+                                <td colspan="5" style="padding:0.5rem 0.75rem 0.85rem;">
                                     <form method="post" style="display:flex; align-items:flex-end; gap:0.6rem; flex-wrap:wrap; background:#fff; border:1px solid var(--border-light); border-radius:6px; padding:0.75rem;">
                                         {% csrf_token %}
                                         <input type="hidden" name="action" value="unallocate_so_stock">
@@ -408,6 +446,28 @@
             {% csrf_token %}
             <button type="submit" class="btn btn-primary" style="padding:0.5rem 1.25rem; font-size:0.9rem; background:#10b981; border-color:#10b981;">Create Logistics Order</button>
         </form>
+    {% elif so.status == 'Shipped' or so.status == 'Partially Shipped' %}
+        <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.5rem;">Outbound shipments</div>
+        <div style="display:flex; flex-direction:column; gap:0.4rem; margin-bottom:1rem;">
+            {% for s in so.shipments.all %}{% if s.direction == 'Outbound' %}
+            <a href="{% url 'shipment_detail' s.pk %}" style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; padding:0.55rem 0.85rem; background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; text-decoration:none; color:var(--text-main); font-size:0.85rem;">
+                <span style="font-family:monospace; font-weight:600; color:var(--primary);">{{ s.tracking_number }}</span>
+                <span class="badge {% if s.status == 'Completed' %}badge-emerald{% elif s.status == 'Cancelled' %}badge-rose{% elif s.status == 'Dispatched' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.7rem;">{{ s.get_status_display }}</span>
+            </a>
+            {% endif %}{% endfor %}
+        </div>
+        {% if all_outbound_completed %}
+        <form method="post" style="margin:0;" onsubmit="return confirm('Confirm delivery of {{ so.so_number }}? This deducts the reserved batches from inventory and closes the order.');">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="confirm_so_delivery">
+            <button type="submit" class="btn btn-primary" style="padding:0.5rem 1.25rem; font-size:0.9rem; background:#10b981; border-color:#10b981;">Confirm Delivery &amp; Close Order</button>
+        </form>
+        <p style="font-size:0.73rem; color:var(--text-muted); margin-top:0.5rem;">Deducts the reserved batches from inventory and sets the order to Delivered.</p>
+        {% else %}
+        <p style="font-size:0.85rem; color:#b45309; padding:0.85rem 1rem; background:#fffbeb; border-radius:8px; border:1px solid rgba(245,158,11,0.3);">
+            Mark the outbound shipment(s) <strong>Completed</strong>, then confirm delivery here to close the order and deduct stock.
+        </p>
+        {% endif %}
     {% elif so.status == 'Pending' %}
         <div style="display:flex; gap:1rem; align-items:center;">
             <a href="{% url 'so_allocate' so.pk %}" class="btn btn-primary" style="padding:0.5rem 1.25rem; font-size:0.9rem;">Allocate Finished Goods</a>
@@ -425,6 +485,41 @@
         <p style="font-size:0.85rem; color:var(--text-muted); padding:1rem; background:#f8fafc; border-radius:8px; border:1px solid var(--border-light);">
             Allocation is available when the order is in <strong>Pending</strong> status. Current status: <span style="font-weight:600;">{{ so.status }}</span>.
         </p>
+    {% endif %}
+
+    {% if misplaced_groups %}
+    <div style="margin-top:1.25rem; padding:1.15rem 1.25rem; background:#fffbeb; border:1px solid rgba(245,158,11,0.3); border-radius:10px;">
+        <div style="font-size:0.85rem; font-weight:700; color:#b45309; margin-bottom:0.5rem;">
+            &#9888; Allocated stock outside {{ so.origin_warehouse.name }}
+        </div>
+        <ul style="margin:0 0 0.75rem 1.1rem; padding:0; font-size:0.8rem; color:var(--text-muted); line-height:1.8;">
+            {% for g in misplaced_groups %}
+            <li>
+                <strong style="color:var(--text-main);">{{ g.warehouse.name }}</strong> —
+                {{ g.batches|length }} batch{{ g.batches|length|pluralize:"es" }}, {{ g.total_qty|floatformat:1 }} total
+                {% for t in g.transfers %}
+                &nbsp;<a href="{% url 'shipment_detail' t.pk %}" style="font-family:monospace; color:var(--primary); text-decoration:none;">{{ t.tracking }}</a>
+                <span class="badge {% if t.status == 'Completed' %}badge-emerald{% elif t.status == 'Cancelled' %}badge-rose{% elif t.status == 'Dispatched' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.65rem;">{{ t.status }}</span>
+                {% endfor %}
+                {% if g.transferable %}<span style="color:#b45309; font-weight:600;">&nbsp;{{ g.transferable }} not on a transfer</span>{% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% if transferable_group_count %}
+        <form method="post" style="margin:0;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="create_so_transfers">
+            <button type="submit" class="btn btn-secondary" style="padding:0.45rem 1.1rem; font-size:0.83rem;">
+                Create Transfer Order{{ transferable_group_count|pluralize }} ({{ transferable_group_count }})
+            </button>
+        </form>
+        {% endif %}
+        <div style="font-size:0.73rem; color:var(--text-muted); margin-top:0.6rem;">
+            Optional &mdash; batches stock into one logistics order per source warehouse, linked to {{ so.so_number }}.
+            Status updates live above; if a transfer is scrapped its batches become available to re-create here.
+            Flagged stock can also ship directly from its current location if internal transfer costs more.
+        </div>
+    </div>
     {% endif %}
 </div>
 

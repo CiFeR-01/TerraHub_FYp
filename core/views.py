@@ -1972,7 +1972,8 @@ def so_detail_view(request, pk):
                 product = item.product
                 item.delete()
 
-                from .utils import handle_so_item_removed
+                from .utils import handle_so_item_removed, release_so_product_allocations
+                release_so_product_allocations(so, product, request.user)
                 handle_so_item_removed(so, product, request.user)
 
                 OrderTimeline.objects.create(sales_order=so, action=f"Line item removed: {name}", user=request.user)
@@ -2099,6 +2100,89 @@ def so_detail_view(request, pk):
             except Exception as e:
                 messages.error(request, f"Error unallocating stock: {e}")
 
+        elif action == 'create_so_transfers':
+            # One draft internal transfer per source warehouse, for allocated batches
+            # that sit outside this SO's origin. The reservation is already held by the
+            # SO; we just tag it with the new shipment. Purely optional — flagged stock
+            # can also ship direct from its current location if that's cheaper.
+            if not so.origin_warehouse_id:
+                messages.error(request, "Set an origin warehouse on this order first.")
+            else:
+                grouped = {}
+                for a in (StockAllocation.objects.filter(sales_order=so)
+                          .select_related('batch__warehouse', 'shipment')):
+                    b = a.batch
+                    if not b.warehouse_id or b.warehouse_id == so.origin_warehouse_id:
+                        continue
+                    if (a.shipment_id and a.shipment.direction == 'Transfer'
+                            and a.shipment.status not in ['Completed', 'Cancelled']):
+                        continue  # already on an in-flight transfer
+                    grouped.setdefault(b.warehouse_id, []).append(a)
+
+                if not grouped:
+                    messages.info(request, "Nothing to transfer — all allocated stock is already in this order's warehouse or in transit.")
+                else:
+                    created = []
+                    with transaction.atomic():
+                        for wh_id, allocs in grouped.items():
+                            src_wh = Warehouse.objects.get(id=wh_id)
+                            tracking = generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4)
+                            sh = Shipment.objects.create(
+                                tracking_number=tracking, direction='Transfer', status='Draft',
+                                sales_order=so, origin_warehouse=src_wh,
+                                destination_warehouse=so.origin_warehouse, last_edited_by=request.user,
+                            )
+                            for a in allocs:
+                                b = a.batch
+                                ShipmentItem.objects.create(
+                                    shipment=sh, product=b.product, material=b.material,
+                                    batch=b, quantity=a.quantity,
+                                )
+                                a.shipment = sh
+                                a.save(update_fields=['shipment'])
+                            OrderTimeline.objects.create(
+                                shipment=sh,
+                                action=(
+                                    f"Auto-drafted for Sales Order {so.so_number}: {len(allocs)} batch(es) "
+                                    f"from {src_wh.name} → {so.origin_warehouse.name}. Reservations held by the order."
+                                ),
+                                user=request.user,
+                            )
+                            OrderTimeline.objects.create(
+                                sales_order=so,
+                                action=f"Internal transfer {tracking} drafted ({src_wh.name} → {so.origin_warehouse.name}, {len(allocs)} batch(es)).",
+                                user=request.user,
+                            )
+                            created.append(tracking)
+                    messages.success(
+                        request,
+                        f"Drafted {len(created)} internal transfer order(s): {', '.join(created)}. "
+                        f"Take them through Logistics, or leave them and ship direct from source if transfer costs more."
+                    )
+
+        elif action == 'confirm_so_delivery':
+            # Manual close, enabled once every outbound shipment for this SO is
+            # Completed. THIS is what deducts the reserved batches from inventory.
+            from .utils import deduct_stock_from_allocation
+            outbound = so.shipments.filter(direction='Outbound')
+            open_ships = list(outbound.exclude(status__in=['Completed', 'Cancelled']).values_list('tracking_number', flat=True))
+            if so.status not in ['Shipped', 'Partially Shipped', 'Ready to Ship']:
+                messages.error(request, f"{so.so_number} is not in a shippable state (currently {so.status}).")
+            elif not outbound.exists():
+                messages.error(request, "Create and dispatch a logistics order for this SO first.")
+            elif open_ships:
+                messages.error(request, f"Mark {', '.join(open_ships)} as Completed before closing the order.")
+            else:
+                deduct_stock_from_allocation('sales_order', so, user=request.user)
+                so.status = 'Delivered'
+                so.save(update_fields=['status'])
+                OrderTimeline.objects.create(
+                    sales_order=so,
+                    action="Delivery confirmed. Reserved batches deducted from inventory; order closed.",
+                    user=request.user,
+                )
+                messages.success(request, f"{so.so_number} closed — reserved stock has been deducted from inventory.")
+
         return redirect('so_detail', pk=so.pk)
 
     # BOM readiness and Allocation logic
@@ -2185,10 +2269,64 @@ def so_detail_view(request, pk):
     has_deficit = any(row['deficit'] > 0 for row in line_items_with_bom)
     manufacturing_plants = Warehouse.objects.filter(location_type='Manufacturing').order_by('name')
 
+    in_flight_transfers = (
+        so.shipments.filter(direction='Transfer')
+        .exclude(status__in=['Completed', 'Cancelled'])
+        .select_related('origin_warehouse', 'destination_warehouse')
+        .prefetch_related('items__batch')
+        .order_by('-id')
+    )
+
+    # Allocated stock physically sitting in a warehouse other than the SO origin,
+    # grouped by that source warehouse — one draft transfer order per group. Each
+    # group also carries the live status of any transfer already moving its stock,
+    # and a scrapped/cancelled transfer drops its batches back to "transferable".
+    misplaced_groups = []
+    if so.origin_warehouse_id:
+        grouped = {}
+        for a in (StockAllocation.objects.filter(sales_order=so)
+                  .select_related('batch__warehouse', 'batch__product', 'batch__material', 'shipment')):
+            b = a.batch
+            if not b.warehouse_id or b.warehouse_id == so.origin_warehouse_id:
+                continue
+            in_transit = bool(
+                a.shipment_id and a.shipment.direction == 'Transfer'
+                and a.shipment.status not in ['Completed', 'Cancelled']
+            )
+            g = grouped.setdefault(b.warehouse_id, {
+                'warehouse': b.warehouse, 'batches': [], 'total_qty': 0.0,
+                'transferable': 0, 'transfers': [],
+            })
+            unit = b.product.unit_of_measure if b.product else (b.material.unit_of_measure if b.material else '')
+            g['batches'].append({'number': b.batch_number, 'qty': float(a.quantity),
+                                 'in_transit': in_transit, 'unit': unit})
+            g['total_qty'] += float(a.quantity)
+            if in_transit:
+                if a.shipment.tracking_number not in [t['tracking'] for t in g['transfers']]:
+                    g['transfers'].append({
+                        'tracking': a.shipment.tracking_number,
+                        'pk': a.shipment.pk,
+                        'status': a.shipment.get_status_display(),
+                    })
+            else:
+                g['transferable'] += 1
+        misplaced_groups = list(grouped.values())
+    transferable_group_count = sum(1 for g in misplaced_groups if g['transferable'] > 0)
+
+    outbound_ships = so.shipments.filter(direction='Outbound')
+    all_outbound_completed = (
+        outbound_ships.exists()
+        and not outbound_ships.exclude(status__in=['Completed', 'Cancelled']).exists()
+    )
+
     context = {
         'so': so,
         'line_items': line_items_with_bom,
         'has_deficit': has_deficit,
+        'in_flight_transfers': in_flight_transfers,
+        'misplaced_groups': misplaced_groups,
+        'transferable_group_count': transferable_group_count,
+        'all_outbound_completed': all_outbound_completed,
         'products': products,
         'warehouses': warehouses,
         'manufacturing_plants': manufacturing_plants,
@@ -3172,8 +3310,9 @@ def approvals_inbox_view(request):
 
 @login_required
 def shipment_detail_view(request, pk):
+    from decimal import Decimal
     shipment = get_object_or_404(Shipment.objects.prefetch_related('items__material', 'items__product', 'items__batch'), pk=pk)
-    
+
     route_error = False
     if request.method == 'POST':
         old_status = shipment.status
@@ -3194,10 +3333,22 @@ def shipment_detail_view(request, pk):
                 # Validation for Internal Transfers
                 if shipment.direction == 'Transfer' and not batch:
                     messages.error(request, "A Batch MUST be selected for Internal Transfers.")
+                elif shipment.direction == 'Transfer' and not shipment.origin_warehouse_id:
+                    messages.error(request, "Set the transfer's origin facility before adding cargo.")
+                elif (shipment.direction == 'Transfer' and batch
+                      and shipment.origin_warehouse_id
+                      and batch.warehouse_id != shipment.origin_warehouse_id):
+                    messages.error(
+                        request,
+                        f"Batch {batch.batch_number} is in "
+                        f"{batch.warehouse.name if batch.warehouse else 'an unknown facility'}, not this "
+                        f"transfer's origin ({shipment.origin_warehouse.name}). You can only load batches "
+                        f"physically at the origin."
+                    )
                 elif shipment.direction in ['Outbound', 'Transfer'] and batch:
                     qty_val = float(qty) if qty else 0.0
                     if qty_val > float(batch.available_quantity):
-                        messages.error(request, f"Cannot add {qty_val}. Only {batch.available_quantity:.2f} available to allocate from batch {batch.batch_number}.")
+                        messages.error(request, f"Cannot add {qty_val}. Only {batch.available_quantity:.2f} unreserved in batch {batch.batch_number}.")
                     else:
                         ShipmentItem.objects.create(
                             shipment=shipment,
@@ -3206,11 +3357,17 @@ def shipment_detail_view(request, pk):
                             batch=batch,
                             quantity=qty_val
                         )
-                        OrderTimeline.objects.create(shipment=shipment, action=f"Added item {mat.sku if mat else prod.sku} (Qty: {qty_val}).", user=request.user)
-                        messages.success(request, "Item added to shipment.")
-                        # Allocation Logic (Lock Stock)
+                        # Lock stock. For a Transfer linked to a Sales Order the lock is
+                        # OWNED by the SO (tagged with the shipment for traceability); it
+                        # survives the shipment being scrapped or unlinked and is only
+                        # freed by removing it from the order. Everything else stays a
+                        # plain shipment-scoped lock.
                         qty_dec = Decimal(str(qty_val))
-                        if shipment.sales_order:
+                        link_so = shipment.sales_order if shipment.direction == 'Transfer' else None
+
+                        if shipment.sales_order and not link_so:
+                            # Auto-drafted Outbound SO shipment: move qty off the SO's
+                            # own allocation onto a shipment-scoped one (unchanged).
                             so_alloc = StockAllocation.objects.filter(sales_order=shipment.sales_order, batch=batch).first()
                             if so_alloc:
                                 deduct = min(qty_dec, so_alloc.quantity)
@@ -3219,12 +3376,17 @@ def shipment_detail_view(request, pk):
                                 else: so_alloc.save(update_fields=['quantity'])
                                 StockAllocation.objects.create(batch=batch, shipment=shipment, quantity=deduct)
                                 qty_dec -= deduct
-                        
+
                         if qty_dec > 0:
                             batch.allocated_quantity += qty_dec
                             batch.save(update_fields=['allocated_quantity'])
-                            StockAllocation.objects.create(batch=batch, shipment=shipment, quantity=qty_dec)
-                        OrderTimeline.objects.create(shipment=shipment, action=f"Added item {mat.sku if mat else prod.sku} (Qty: {qty_val}) and locked stock.", user=request.user)
+                            StockAllocation.objects.create(
+                                batch=batch, shipment=shipment, sales_order=link_so, quantity=qty_dec
+                            )
+                        tag = f" (locked to {link_so.so_number})" if link_so else " and locked stock"
+                        OrderTimeline.objects.create(shipment=shipment, action=f"Added item {mat.sku if mat else prod.sku} (Qty: {qty_val}){tag}.", user=request.user)
+                        if link_so:
+                            OrderTimeline.objects.create(sales_order=link_so, action=f"Batch {batch.batch_number} ({qty_val}) reserved via internal transfer {shipment.tracking_number}.", user=request.user)
                         messages.success(request, "Item added and stock locked.")
                 else:
                     ShipmentItem.objects.create(
@@ -3245,20 +3407,117 @@ def shipment_detail_view(request, pk):
                 if item:
                     qty = item.quantity
                     batch = item.batch
+                    released = True
                     if batch and shipment.direction in ['Outbound', 'Transfer']:
                         alloc = StockAllocation.objects.filter(shipment=shipment, batch=batch).first()
                         if alloc:
                             deduct = min(Decimal(str(qty)), alloc.quantity)
-                            alloc.quantity -= deduct
-                            if alloc.quantity <= 0: alloc.delete()
-                            else: alloc.save(update_fields=['quantity'])
-                            batch.allocated_quantity -= deduct
-                            batch.save(update_fields=['allocated_quantity'])
+                            if alloc.sales_order_id:
+                                # SO owns this lock — pulling it off the truck just
+                                # detaches it; the reservation stays on the order and
+                                # is only freed by unallocating it there.
+                                released = False
+                                alloc.shipment = None
+                                alloc.save(update_fields=['shipment'])
+                                OrderTimeline.objects.create(
+                                    sales_order=alloc.sales_order,
+                                    action=f"Batch {batch.batch_number} removed from transfer {shipment.tracking_number}; reservation retained on this order.",
+                                    user=request.user,
+                                )
+                            else:
+                                alloc.quantity -= deduct
+                                if alloc.quantity <= 0: alloc.delete()
+                                else: alloc.save(update_fields=['quantity'])
+                                batch.allocated_quantity -= deduct
+                                if batch.allocated_quantity < 0: batch.allocated_quantity = Decimal('0')
+                                batch.save(update_fields=['allocated_quantity'])
                     item.delete()
-                    OrderTimeline.objects.create(shipment=shipment, action=f"Removed item from shipment.", user=request.user)
-                    messages.success(request, "Item removed and stock lock released.")
+                    OrderTimeline.objects.create(shipment=shipment, action="Removed item from shipment.", user=request.user)
+                    messages.success(
+                        request,
+                        "Item removed and stock lock released." if released
+                        else "Item removed. The linked Sales Order keeps its reservation — unallocate it from the order to release."
+                    )
             except Exception as e:
                 messages.error(request, f"Error removing item: {e}")
+
+        elif action == 'link_order':
+            so_id = request.POST.get('sales_order_id')
+            if shipment.direction != 'Transfer':
+                messages.error(request, "Only internal transfers can be linked to a Sales Order here.")
+            elif shipment.status not in ['Draft', 'Logistics Review']:
+                messages.error(request, "Link the order before the transfer leaves Logistics Review.")
+            elif not so_id:
+                messages.error(request, "Choose a Sales Order to link.")
+            else:
+                so = SalesOrder.objects.filter(id=so_id).first()
+                if not so:
+                    messages.error(request, "Sales Order not found.")
+                else:
+                    with transaction.atomic():
+                        shipment.sales_order = so
+                        shipment.save(update_fields=['sales_order'])
+                        retagged = StockAllocation.objects.filter(
+                            shipment=shipment, sales_order__isnull=True
+                        ).update(sales_order=so)
+                        OrderTimeline.objects.create(
+                            shipment=shipment,
+                            action=f"Linked to Sales Order {so.so_number}. {retagged} existing reservation(s) reassigned to the order.",
+                            user=request.user,
+                        )
+                        OrderTimeline.objects.create(
+                            sales_order=so,
+                            action=(
+                                f"Internal transfer {shipment.tracking_number} linked "
+                                f"({shipment.origin_warehouse.name if shipment.origin_warehouse else '—'} → "
+                                f"{shipment.destination_warehouse.name if shipment.destination_warehouse else '—'})."
+                            ),
+                            user=request.user,
+                        )
+                        if (shipment.destination_warehouse_id and so.origin_warehouse_id
+                                and shipment.destination_warehouse_id != so.origin_warehouse_id):
+                            messages.warning(
+                                request,
+                                f"Heads up: this transfer's destination "
+                                f"({shipment.destination_warehouse.name}) is not {so.so_number}'s origin "
+                                f"warehouse. The stock won't land where the order ships from."
+                            )
+                        from .utils import _resync_so_fulfillment_status
+                        _resync_so_fulfillment_status(so, request.user)
+                    messages.success(request, f"Transfer linked to {so.so_number}.")
+
+        elif action == 'unlink_order':
+            if shipment.status not in ['Draft', 'Logistics Review']:
+                messages.error(request, "Unlink is only possible before the transfer leaves Logistics Review.")
+            elif not shipment.sales_order:
+                messages.error(request, "This transfer isn't linked to an order.")
+            else:
+                so = shipment.sales_order
+                with transaction.atomic():
+                    # Keep SO-owned reservations (just detach them from the truck);
+                    # release any plain shipment-only locks.
+                    StockAllocation.objects.filter(
+                        shipment=shipment, sales_order__isnull=False
+                    ).update(shipment=None)
+                    for a in StockAllocation.objects.filter(shipment=shipment, sales_order__isnull=True):
+                        a.batch.allocated_quantity -= a.quantity
+                        if a.batch.allocated_quantity < 0:
+                            a.batch.allocated_quantity = Decimal('0')
+                        a.batch.save(update_fields=['allocated_quantity'])
+                        a.delete()
+                    shipment.sales_order = None
+                    shipment.save(update_fields=['sales_order'])
+                    OrderTimeline.objects.create(
+                        shipment=shipment,
+                        action=f"Unlinked from Sales Order {so.so_number}. Batch reservations retained on the order.",
+                        user=request.user,
+                    )
+                    OrderTimeline.objects.create(
+                        sales_order=so,
+                        action=f"Internal transfer {shipment.tracking_number} unlinked. Reservations retained — remove them here to release.",
+                        user=request.user,
+                    )
+                messages.success(request, f"Unlinked from {so.so_number}. The order keeps its reservations.")
 
         elif action == 'update_route':
             eta = request.POST.get('eta_date')
@@ -3320,7 +3579,46 @@ def shipment_detail_view(request, pk):
             
         elif action == 'scrap_shipment':
             from decimal import Decimal
-            
+
+            # An internal transfer linked to a Sales Order: the SO owns the reservation,
+            # so scrapping the truck must NOT free the stock. Detach the locks from the
+            # shipment, keep them on the order, and release only plain shipment-only locks.
+            if shipment.direction == 'Transfer' and shipment.sales_order:
+                with transaction.atomic():
+                    so = shipment.sales_order
+                    kept = StockAllocation.objects.filter(
+                        shipment=shipment, sales_order__isnull=False
+                    ).update(shipment=None)
+                    for a in StockAllocation.objects.filter(shipment=shipment, sales_order__isnull=True):
+                        a.batch.allocated_quantity -= a.quantity
+                        if a.batch.allocated_quantity < 0:
+                            a.batch.allocated_quantity = Decimal('0')
+                        a.batch.save(update_fields=['allocated_quantity'])
+                        a.delete()
+                    shipment.status = 'Cancelled'
+                    shipment.sales_order = None
+                    shipment.linked_production_run = None
+                    shipment.save()
+                    OrderTimeline.objects.create(
+                        shipment=shipment,
+                        action="Transfer scrapped. Sales Order reservations retained.",
+                        user=request.user,
+                    )
+                    OrderTimeline.objects.create(
+                        sales_order=so,
+                        action=(
+                            f"Internal transfer {shipment.tracking_number} scrapped. {kept} batch "
+                            f"reservation(s) retained on this order — unallocate them here to release."
+                        ),
+                        user=request.user,
+                    )
+                messages.success(
+                    request,
+                    "Transfer scrapped. The Sales Order keeps its batch reservations — remove them "
+                    "from the order itself to release the stock."
+                )
+                return redirect('shipment_detail', pk=shipment.pk)
+
             with transaction.atomic():
                 for item in shipment.items.all():
                     qty = item.quantity
@@ -3515,45 +3813,100 @@ def shipment_detail_view(request, pk):
                 shipment.save()
 
                 # Release lock and deduct stock
-                if shipment.direction in ['Outbound', 'Transfer']:
-                    from .utils import deduct_stock_from_allocation, mark_so_delivered_if_fully_shipped
+                if shipment.direction == 'Outbound':
+                    from .utils import deduct_stock_from_allocation, notify_so_ready_to_close
                     deduct_stock_from_allocation('shipment', shipment, user=request.user)
-
-                    if shipment.direction == 'Outbound' and shipment.sales_order:
-                        mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
+                    if shipment.sales_order:
+                        notify_so_ready_to_close(shipment.sales_order, shipment, request.user)
 
                 if shipment.direction == 'Transfer' and shipment.destination_warehouse:
+                    from decimal import Decimal as _Dec
                     loc = WarehouseLocation.objects.filter(warehouse=shipment.destination_warehouse).first()
-                    if loc:
-                        for item in shipment.items.all():
-                            if not item.batch or float(item.received_quantity) <= 0: continue
-                            b = item.batch
-                            rcv_qty = float(item.received_quantity)
-                            
-                            new_batch, created = Batch.objects.get_or_create(
-                                batch_number=f"{b.batch_number}-TRF-{shipment.id}",
-                                defaults={
-                                    'status': 'Active',
-                                    'material': b.material,
-                                    'product': b.product,
-                                    'quantity': rcv_qty,
-                                    'manufacturing_date': b.manufacturing_date,
-                                    'expiry_date': b.expiry_date,
-                                    'location': loc,
-                                    'produced_in': b.produced_in
-                                }
-                            )
-                            if not created:
-                                # Update quantity in case it was reopened and changed
-                                new_batch.quantity = rcv_qty
-                                new_batch.save(update_fields=['quantity'])
-                            RegistryLog.objects.create(
-                                action_type='Inbound',
-                                item_name=f"Internal Transfer Received: {new_batch.batch_number}",
-                                quantity_changed=rcv_qty,
-                                warehouse=shipment.destination_warehouse,
-                                user=request.user
-                            )
+                    loc_str = f"Zone {loc.zone_name} Aisle {loc.aisle}" if loc else None
+                    for item in shipment.items.all():
+                        if not item.batch or float(item.received_quantity) <= 0:
+                            continue
+                        src = item.batch
+                        rq = _Dec(str(item.received_quantity))
+
+                        # 1. Source batch physically leaves the origin facility.
+                        src.quantity = (src.quantity or _Dec('0')) - rq
+                        if src.quantity < 0:
+                            src.quantity = _Dec('0')
+                        src.save(update_fields=['quantity'])
+                        src_name = src.material.name if src.material else (src.product.name if src.product else src.batch_number)
+                        RegistryLog.objects.create(
+                            action_type='Outbound',
+                            item_name=f"Internal Transfer Sent: {src_name} (Batch {src.batch_number})",
+                            quantity_changed=-rq,
+                            warehouse=shipment.origin_warehouse,
+                            user=request.user,
+                        )
+
+                        # 2. Arrived stock becomes a batch at the destination facility.
+                        new_batch, created = Batch.objects.get_or_create(
+                            batch_number=f"{src.batch_number}-TRF-{shipment.id}",
+                            defaults={
+                                'status': 'Active',
+                                'material': src.material,
+                                'product': src.product,
+                                'quantity': rq,
+                                'manufacturing_date': src.manufacturing_date,
+                                'expiry_date': src.expiry_date,
+                                'warehouse': shipment.destination_warehouse,
+                                'location': loc_str,
+                                'produced_in': src.produced_in,
+                                'purchase_order': src.purchase_order,
+                            }
+                        )
+                        if not created:
+                            # Reopened / edited receipt — re-derive from the lock rows below.
+                            new_batch.quantity = rq
+                            new_batch.warehouse = shipment.destination_warehouse
+                            new_batch.allocated_quantity = _Dec('0')
+                            new_batch.save(update_fields=['quantity', 'warehouse', 'allocated_quantity'])
+                        RegistryLog.objects.create(
+                            action_type='Inbound',
+                            item_name=f"Internal Transfer Received: {new_batch.batch_number}",
+                            quantity_changed=rq,
+                            warehouse=shipment.destination_warehouse,
+                            user=request.user,
+                        )
+
+                        # 3. Move the lock from the source batch to the arrived batch so an
+                        #    SO-owned reservation follows the stock without ever dropping.
+                        remaining = rq
+                        for alloc in StockAllocation.objects.filter(shipment=shipment, batch=src):
+                            carried = min(alloc.quantity, remaining) if remaining > 0 else _Dec('0')
+
+                            src.allocated_quantity = (src.allocated_quantity or _Dec('0')) - alloc.quantity
+                            if src.allocated_quantity < 0:
+                                src.allocated_quantity = _Dec('0')
+                            src.save(update_fields=['allocated_quantity'])
+
+                            if alloc.sales_order_id and carried > 0:
+                                new_batch.allocated_quantity = (new_batch.allocated_quantity or _Dec('0')) + carried
+                                new_batch.save(update_fields=['allocated_quantity'])
+                                alloc.batch = new_batch
+                                alloc.shipment = None
+                                alloc.quantity = carried
+                                alloc.save(update_fields=['batch', 'shipment', 'quantity'])
+                                OrderTimeline.objects.create(
+                                    sales_order=alloc.sales_order,
+                                    action=(
+                                        f"Internal transfer {shipment.tracking_number} arrived at "
+                                        f"{shipment.destination_warehouse.name}; reservation moved to batch "
+                                        f"{new_batch.batch_number} ({carried})."
+                                    ),
+                                    user=request.user,
+                                )
+                                remaining -= carried
+                            else:
+                                alloc.delete()
+
+                    if shipment.sales_order:
+                        from .utils import _resync_so_fulfillment_status
+                        _resync_so_fulfillment_status(shipment.sales_order, request.user)
                 messages.success(request, "Shipment receipt confirmed and marked as Completed.")
 
         elif action == 'log_item_receipt':
@@ -3635,10 +3988,10 @@ def shipment_detail_view(request, pk):
                     shipment.save()
 
                     if shipment.direction == 'Outbound':
-                        from .utils import deduct_stock_from_allocation, mark_so_delivered_if_fully_shipped
+                        from .utils import deduct_stock_from_allocation, notify_so_ready_to_close
                         deduct_stock_from_allocation('shipment', shipment, user=request.user)
                         if shipment.sales_order:
-                            mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
+                            notify_so_ready_to_close(shipment.sales_order, shipment, request.user)
 
                     messages.success(request, "Receiving finalized. Shipment marked Completed.")
 
@@ -3684,9 +4037,8 @@ def shipment_detail_view(request, pk):
             shipment.save()
 
             # Manually handle discrepancy deduction and lock release
-            if shipment.direction in ['Outbound', 'Transfer']:
-                allocs = StockAllocation.objects.filter(shipment=shipment)
-                for alloc in allocs:
+            if shipment.direction == 'Outbound':
+                for alloc in StockAllocation.objects.filter(shipment=shipment):
                     batch = alloc.batch
                     item = shipment.items.filter(batch=batch).first()
                     rcv_qty = item.received_quantity if item else 0
@@ -3703,38 +4055,85 @@ def shipment_detail_view(request, pk):
                         warehouse=batch.warehouse,
                         user=request.user
                     )
-
                     alloc.delete()
 
-                if shipment.direction == 'Outbound' and shipment.sales_order:
-                    from .utils import mark_so_delivered_if_fully_shipped
-                    mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
+                if shipment.sales_order:
+                    from .utils import notify_so_ready_to_close
+                    notify_so_ready_to_close(shipment.sales_order, shipment, request.user)
 
             if shipment.direction == 'Transfer' and shipment.destination_warehouse:
+                _D = Decimal
                 loc = WarehouseLocation.objects.filter(warehouse=shipment.destination_warehouse).first()
-                if loc:
-                    for item in shipment.items.all():
-                        if not item.batch or float(item.received_quantity) <= 0: continue
-                        b = item.batch
-                        rcv_qty = float(item.received_quantity)
-                        
-                        new_batch, created = Batch.objects.get_or_create(
-                            batch_number=f"{b.batch_number}-TRF-{shipment.id}",
-                            defaults={
-                                'status': 'Active',
-                                'material': b.material,
-                                'product': b.product,
-                                'quantity': rcv_qty,
-                                'manufacturing_date': b.manufacturing_date,
-                                'expiry_date': b.expiry_date,
-                                'location': loc,
-                                'produced_in': b.produced_in
-                            }
-                        )
-                        if not created:
-                            new_batch.quantity = rcv_qty
-                            new_batch.save(update_fields=['quantity'])
-            
+                loc_str = f"Zone {loc.zone_name} Aisle {loc.aisle}" if loc else None
+                for item in shipment.items.all():
+                    if not item.batch or float(item.received_quantity) <= 0:
+                        continue
+                    src = item.batch
+                    rq = _D(str(item.received_quantity))
+
+                    src.quantity = (src.quantity or _D('0')) - rq
+                    if src.quantity < 0:
+                        src.quantity = _D('0')
+                    src.save(update_fields=['quantity'])
+                    src_name = src.material.name if src.material else (src.product.name if src.product else src.batch_number)
+                    RegistryLog.objects.create(
+                        action_type='Outbound',
+                        item_name=f"Internal Transfer Sent: {src_name} (Batch {src.batch_number}) — force closed",
+                        quantity_changed=-rq,
+                        warehouse=shipment.origin_warehouse,
+                        user=request.user,
+                    )
+
+                    new_batch, created = Batch.objects.get_or_create(
+                        batch_number=f"{src.batch_number}-TRF-{shipment.id}",
+                        defaults={
+                            'status': 'Active',
+                            'material': src.material,
+                            'product': src.product,
+                            'quantity': rq,
+                            'manufacturing_date': src.manufacturing_date,
+                            'expiry_date': src.expiry_date,
+                            'warehouse': shipment.destination_warehouse,
+                            'location': loc_str,
+                            'produced_in': src.produced_in,
+                            'purchase_order': src.purchase_order,
+                        }
+                    )
+                    if not created:
+                        new_batch.quantity = rq
+                        new_batch.warehouse = shipment.destination_warehouse
+                        new_batch.allocated_quantity = _D('0')
+                        new_batch.save(update_fields=['quantity', 'warehouse', 'allocated_quantity'])
+                    RegistryLog.objects.create(
+                        action_type='Inbound',
+                        item_name=f"Internal Transfer Received: {new_batch.batch_number}",
+                        quantity_changed=rq,
+                        warehouse=shipment.destination_warehouse,
+                        user=request.user,
+                    )
+
+                    remaining = rq
+                    for alloc in StockAllocation.objects.filter(shipment=shipment, batch=src):
+                        carried = min(alloc.quantity, remaining) if remaining > 0 else _D('0')
+                        src.allocated_quantity = (src.allocated_quantity or _D('0')) - alloc.quantity
+                        if src.allocated_quantity < 0:
+                            src.allocated_quantity = _D('0')
+                        src.save(update_fields=['allocated_quantity'])
+                        if alloc.sales_order_id and carried > 0:
+                            new_batch.allocated_quantity = (new_batch.allocated_quantity or _D('0')) + carried
+                            new_batch.save(update_fields=['allocated_quantity'])
+                            alloc.batch = new_batch
+                            alloc.shipment = None
+                            alloc.quantity = carried
+                            alloc.save(update_fields=['batch', 'shipment', 'quantity'])
+                            remaining -= carried
+                        else:
+                            alloc.delete()
+
+                if shipment.sales_order:
+                    from .utils import _resync_so_fulfillment_status
+                    _resync_so_fulfillment_status(shipment.sales_order, request.user)
+
             if shipment.purchase_order:
                 po = shipment.purchase_order
                 po.status = 'Partially Received'
@@ -3822,10 +4221,40 @@ def shipment_detail_view(request, pk):
         
     materials = Material.objects.all().order_by('name')
     products = Product.objects.all().order_by('name')
-    batches = Batch.objects.filter(status='Active').order_by('batch_number')
+
+    # Batch picker. For a Transfer you can only load stock physically at the origin
+    # facility, so scope to it and expose the unreserved quantity. If the transfer is
+    # linked to a Sales Order, float that order's products to the top.
+    if shipment.direction == 'Transfer' and shipment.origin_warehouse_id:
+        batch_qs = Batch.objects.filter(status='Active', warehouse_id=shipment.origin_warehouse_id)
+    else:
+        batch_qs = Batch.objects.filter(status='Active')
+    batch_qs = batch_qs.select_related('material', 'product', 'warehouse').annotate(
+        avail=F('quantity') - F('allocated_quantity')
+    ).order_by('batch_number')
+
+    so_product_ids = set()
+    if shipment.direction == 'Transfer' and shipment.sales_order_id:
+        so_product_ids = set(shipment.sales_order.items.values_list('product_id', flat=True))
+
+    batches = []
+    for b in batch_qs:
+        b.available_qty = b.avail
+        b.matches_so = bool(so_product_ids) and b.product_id in so_product_ids
+        batches.append(b)
+    if so_product_ids:
+        batches.sort(key=lambda x: (not x.matches_so, x.batch_number))
+
+    linkable_sos = (
+        SalesOrder.objects.exclude(
+            status__in=['Draft', 'Cancelled', 'Rejected', 'Shipped', 'Delivered']
+        ).order_by('-order_date')
+        if shipment.direction == 'Transfer' else SalesOrder.objects.none()
+    )
+
     managers = CustomUser.objects.filter(role__in=['Admin', 'Manager'])
     all_users = CustomUser.objects.all().order_by('username')
-    
+
     warehouses = Warehouse.objects.all()
     
     # Calculate extra info from timeline
@@ -3841,6 +4270,7 @@ def shipment_detail_view(request, pk):
         'materials': materials,
         'products': products,
         'batches': batches,
+        'linkable_sos': linkable_sos,
         'managers': managers,
         'all_users': all_users,
         'status_choices': Shipment.STATUS_CHOICES,
@@ -4083,6 +4513,7 @@ def so_create_shipment_view(request, pk):
             )
             
             # Create shipment items based on allocated stock
+            misplaced = []
             for alloc in allocations:
                 ShipmentItem.objects.create(
                     shipment=shipment,
@@ -4090,7 +4521,17 @@ def so_create_shipment_view(request, pk):
                     batch=alloc.batch,
                     quantity=alloc.quantity
                 )
-            
+                if origin_wh and alloc.batch.warehouse_id and alloc.batch.warehouse_id != origin_wh.id:
+                    misplaced.append(alloc.batch.batch_number)
+
+            if misplaced:
+                messages.warning(
+                    request,
+                    f"Heads up: batch(es) {', '.join(sorted(set(misplaced)))} are not physically in "
+                    f"{origin_wh.name}. Create an internal transfer from the Sales Order first, or this "
+                    f"shipment won't be fulfillable from the dock."
+                )
+
             # Note: We do NOT change so.status to 'Shipped' here.
             # It remains 'Ready to Ship' until logistics dispatches it.
             
