@@ -583,10 +583,10 @@ def batch_detail_view(request, batch_number):
                 batch.save()
                 RegistryLog.objects.create(
                     action_type='Adjusted',
-                    item_name=batch.batch_number,
+                    item_name=f"{batch.batch_number} — {', '.join(changes)}",
                     quantity_changed=0,
+                    warehouse=batch.warehouse if batch.warehouse else None,
                     user=request.user,
-                    notes=", ".join(changes)
                 )
                 messages.success(request, "Batch details updated successfully.")
             return redirect('batch_detail', batch_number=batch.batch_number)
