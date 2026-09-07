@@ -44,6 +44,8 @@
     </div>
 </header>
 
+{% include "partials/_insight_link.html" with link_url='so_delivery_risk' link_label='Delivery risk board' %}
+
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
@@ -61,7 +63,7 @@
     <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Sales Orders
         (Client Demand)</h3>
     <div class="table-responsive">
-        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr
                     style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">

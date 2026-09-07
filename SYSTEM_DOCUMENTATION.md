@@ -49,6 +49,9 @@ D:\TerraHub
 │   ├── migrations/             # Database migration history
 │   ├── models.py               # Domain models (see §5)
 │   ├── views.py                # Controller views for all modules
+│   ├── analytics.py            # Analytics & forecasting computation layer (see §8)
+│   ├── settings_store.py       # Typed access to admin-editable operational settings
+│   ├── management/commands/    # Scheduled jobs (daily snapshots, AI briefing)
 │   ├── urls.py                 # Application URL routing (see §4)
 │   ├── utils.py                # Allocation engine (FEFO), stock helpers
 │   ├── decorators.py           # Role/permission decorators
@@ -87,6 +90,7 @@ D:\TerraHub
 | `/dashboard/` | `dashboard` | `dashboard_view` | Main authenticated dashboard |
 | `/profile/` | `profile` | `profile_view` | User profile |
 | `/system/` | `system` | `system_view` | System telemetry console |
+| `/system/settings/` | `system_settings` | `system_settings_view` | Operational settings editor (superuser; see §8) |
 | `/system/users/` | `user_management` | `user_management_view` | User/role administration |
 | `/system/db-logs/` | `db_logs_api` | `db_logs_api_view` | DB query logs & connection status (JSON) |
 | `/system/db-logs/clear/` | `db_clear_logs` | `db_clear_logs_view` | Clears in-memory query log buffer |
@@ -128,6 +132,11 @@ D:\TerraHub
 | `/operations/qa/` | `qa_dashboard` | `qa_dashboard_view` | QA dashboard |
 | `/operations/approvals/` | `approvals_inbox` | `approvals_inbox_view` | Pending approvals inbox |
 | `/operations/notifications/read/` | `mark_notifications_read` | `mark_notifications_read` | Mark notifications read |
+| `/catalog/suppliers/scorecard/` | `supplier_scorecard` | `views_analytics.supplier_scorecard_view` | Supplier reliability scorecard — "Scorecard" tab of the Suppliers hub (see §8) |
+| `/operations/sales-orders/risk/` | `so_delivery_risk` | `views_analytics.sales_order_delivery_risk_view` | Sales-order delivery-risk board — "Delivery Risk" tab of the Sales Orders hub (see §8) |
+| `/warehouse/stock-audit/accuracy/` | `audit_accuracy` | `views_analytics.audit_accuracy_view` | Stock-audit accuracy roll-up — "Accuracy" tab of the Stock Audit hub (see §8) |
+| `/operations/manufacture/yield/` | `production_yield` | `views_analytics.production_yield_view` | Production yield variance — "Yield" tab of the Manufacturing hub (see §8) |
+| `/warehouse/forecast/` | `forecast` | `views_analytics.forecast_view` | Consumption-rate stockout & reorder forecast (see §8) |
 | `/admin/` | — | Django admin | Django admin site |
 
 ---
@@ -144,9 +153,10 @@ Defined in `core/models.py`:
 - **Purchasing**: `PurchaseOrder`, `PurchaseOrderDetail`
 - **Sales**: `SalesOrder`, `SalesOrderDetail`
 - **Fulfillment**: `Shipment`, `ShipmentItem`
-- **Quality & Audit**: `StockAudit`, `RegistryLog`, `OrderTimeline`
+- **Quality & Audit**: `StockAudit`, `RegistryLog` (movement ledger; `RegistryLog.material` FK is the machine-readable key behind the analytics engine — see §8), `OrderTimeline`
 - **Allocation**: `StockAllocation` (shared reservation engine used by sales orders and production runs, resolved via FEFO in `core/utils.py`)
 - **Messaging**: `Notification`
+- **Configuration**: `SystemSetting` (key/value store for admin-editable operational tunables; read via `core/settings_store.py` — see §8)
 
 ---
 
@@ -209,3 +219,206 @@ TerraHub includes an integrated real-time database connection diagnostics helper
   - **Autorefresh Toggle**: Initiates an AJAX polling query (every 2 seconds) to `/system/db-logs/` to update database query logs dynamically.
   - **Clear Console**: Empties the in-memory log buffer via `/system/db-logs/clear/` JSON POST.
   - **Read/Write Debug Operations**: Simple interactive test triggers that run a safe `SELECT` (reading user details) or `INSERT` (creating a dummy notification record) query, showing immediately in the console.
+
+---
+
+## 8. Analytics & Forecasting Engine
+
+A layered analytics capability built on data the platform already records. All
+computation lives in **`core/analytics.py`** as pure functions (no request /
+response, no side effects) so it can be called identically from web views,
+management commands, the shell, and tests. Scheduled jobs live in
+`core/management/commands/`. A phase-by-phase build log is kept in
+`ANALYTICS_CHANGELOG.md`.
+
+Three tiers:
+
+| Tier | Nature | Examples |
+| :--- | :--- | :--- |
+| **1** | Roll-ups of stored data (ORM aggregation, no new math) | supplier reliability, sales-order delivery risk, audit-accuracy trend, production yield variance |
+| **2** | Statistical forecasting by plain arithmetic (no ML library) | consumption-rate stockout ETA, reorder-by date, warehouse capacity runway |
+| **3** | LLM reasoning over the Tier 1/2 signals | daily "AI Ops Briefing" in plain English |
+
+**Navigation.** All analytics views live in the **Insights** sidebar section
+(second, after Overview): Stockout Forecast, Supplier Scorecard, Delivery Risk,
+Yield Variance, Audit Accuracy (Capacity Runway and AI Ops Briefing land there in
+Phases 2b / 3). Each domain page — Suppliers, Sales Orders, Stock Tally,
+Manufacture, Materials Hub — links into its analytic via a single header
+call-out (`templates/partials/_insight_link.html`); the analytics pages
+themselves are standalone (breadcrumb `Dashboard / <Parent> / <Analytic>`, no tab
+strip). Exactly one sidebar item highlights per page.
+
+### 8.1. The RegistryLog material spine  *(Phase 0 — implemented)*
+
+`RegistryLog` is the append-only ledger of every physical stock movement
+(`Inbound`, `Outbound`, `Consumed_For_Manufacturing`, `Produced`, `Adjusted`,
+`Spoiled_Disposal`, `QA_Extension`). Historically its only item reference was the
+free-text `item_name` (e.g. `"MAP (Run RUN-2010)"`).
+
+`RegistryLog.material` (nullable FK → `Material`, `related_name='registry_logs'`)
+adds a machine-readable key. It is stamped at write time wherever a specific raw
+material moves; it is left **null** for movements that are not material-specific
+(finished-goods `Produced`, bulk-import summaries, outbound shipments of finished
+products). Migration `0035` adds the column (guarded with `ADD COLUMN IF NOT
+EXISTS` — see the changelog for why); migration `0036` backfills history.
+
+**Backfill algorithm** (`resolve_material_from_label(item_name, by_name)`):
+build `{material.name.lower(): Material}`, then for each null-material ledger row
+whose action is stock-affecting, match `item_name` against these shapes and take
+the first hit — `<name> (Run …)`, `<name> (Batch …)` (± ` - force closed`),
+`Manual Receipt of <name>`, `Updated Material '<name>' (SKU: …)`,
+`Batch <b> (<sku> - <name>)`, or an exact `<name>`. No match ⇒ leave null
+(conservative: a null row is excluded from rates, never mis-attributed).
+
+### 8.2. Consumption rate  *(Phase 0 — implemented)*
+
+```
+daily_consumption(material, window_days=30, end=today) -> { date: Decimal }
+    Σ quantity_changed grouped by calendar day, from
+    material.registry_logs where action_type = 'Consumed_For_Manufacturing'
+    and  end - window_days  <  timestamp::date  <=  end
+    (days with no consumption are omitted)
+
+consumption_rate(material, window_days=30, end=today) -> Decimal
+    total = Σ daily_consumption(...).values()
+    return 0            if total <= 0 or window_days <= 0
+    return total / window_days
+```
+
+The denominator is the **whole window**, not the number of active days, so idle
+days correctly drag the burn rate down. The result is the input to the Phase 2
+stockout forecast (`on_hand / rate → days of cover`) that will replace the
+current flat degradation threshold in `dashboard_view`
+(`days_remaining <= 30 or < material.safe_storage_days`).
+
+### 8.3. Supplier reliability scorecard  *(Phase 1 — implemented)*
+
+`supplier_reliability(since=None, until=None)` → `views_analytics.supplier_scorecard_view`
+→ `/catalog/suppliers/scorecard/` (nav: *Insights → Supplier Scorecard*; Suppliers links to it via a header call-out).
+
+Considers POs in status `Pending` / `Partially Received` / `Completed`, optionally
+bounded by `order_date`. Grouped by the `supplier` FK, with free-text
+`supplier_name`-only POs rolled up under their name.
+
+```
+fill_rate     = Σ quantity_received / Σ quantity_ordered      (line items; may exceed 1.0)
+arrival(po)   = po.completed_date
+                 ?? max linked Shipment.actual_arrival_date
+                 ?? max manufacturing_date of batches received against the po
+due(po)       = po.expected_delivery_date                          -> not estimated
+                 ?? po.order_date + lead                           -> estimated
+                    lead = max SupplierMaterial.lead_time_days over the po's
+                           materials for its supplier,
+                           else get_setting("po_default_lead_time_days")
+assessable    = arrival(po) and due(po) both exist
+on_time_rate  = count(arrival <= due) / count(assessable)
+avg_delay_days= mean( (arrival - due).days )                       (signed, +ve = late)
+estimated_share = count(assessable with estimated due) / count(assessable)
+rating        = good   if on_time_rate >= .9 and fill_rate >= .98
+                poor   if on_time_rate <  .7 or  fill_rate <  .9
+                watch  otherwise      (missing on_time_rate counts as 1.0)
+```
+
+Rows are returned worst-first: `(rating rank, on_time_rate, fill_rate, name)`.
+Rows whose score leans on an estimated due date are tagged `EST` in the UI and
+their estimated share is shown, so committed-date and estimated rates are not
+blended silently.
+
+`po_default_lead_time_days` (default 14) is one `SystemSetting`. Edit it in-site at
+**System Console → Operational Settings** (`/system/settings/`, superuser-only) —
+a form generated from the registry; the raw Django admin (`/admin/core/systemsetting/`)
+is a fallback. `core/settings_store.py` holds the registry of such tunables
+(`REGISTRY`, keyed to `(default, type, description)`), `cast_value()`, and
+`get_setting(key)` which returns the typed DB override or the default. A data
+migration seeds one row per registry entry so they are all editable from day one.
+
+### 8.4. Sales-order delivery risk  *(Phase 1 — implemented)*
+
+`sales_order_delivery_risk()` → `views_analytics.sales_order_delivery_risk_view`
+→ `/operations/sales-orders/risk/` (nav: *Insights → Delivery Risk*; Sales Orders links to it via a header call-out).
+
+```
+arrival(so)   = max outbound Shipment.actual_arrival_date          -> is_actual
+                 ?? max outbound Shipment.expected_eta_date        -> ETA
+                 ?? None
+shipped_frac  = Σ quantity_shipped / Σ quantity_ordered
+risk          = no_deadline   if fulfillment_deadline is None
+                on_track      if arrival and arrival <= deadline
+                late          if arrival > deadline and (is_actual or shipped_frac >= 1)
+                at_risk       if arrival > deadline otherwise
+                late          if no shipment and deadline < today
+                at_risk       if no shipment and 0 <= days_left <= so_at_risk_window_days
+                              and status in (Pending, Awaiting Acknowledgement, In Production)
+                on_track      otherwise
+days_slack    = (deadline - (arrival or today)).days               (negative = behind)
+```
+
+Open = status in Pending / Awaiting Acknowledgement / In Production / Ready to
+Ship / Partially Shipped / Shipped. Sorted `(risk rank, days_slack, so_number)`.
+`so_at_risk_window_days` (default 7) is a `SystemSetting` (see below).
+
+### 8.5. Stock-audit accuracy  *(Phase 1 — implemented)*
+
+`audit_accuracy(since=None)` → `views_analytics.audit_accuracy_view` →
+`/warehouse/stock-audit/accuracy/` (nav: *Insights → Audit Accuracy*; Stock Tally links to it via a header call-out).
+
+`variance = actual_quantity − expected_quantity` per `StockAudit`. Rolled up
+`by_warehouse` and `by_item` (`accuracy_rate` = zero-variance share, `shrinkage` =
+Σ negative, `overage` = Σ positive, `net_variance`, `mean_abs_variance`,
+`chronic_shrinkage` when net < 0 over ≥ 3 audits), plus a monthly `trend`
+(count / mean |variance| / net). Sorted lowest accuracy, then largest mean |var|.
+
+### 8.6. Production yield variance  *(Phase 1 — implemented)*
+
+`production_yield_variance()` → `views_analytics.production_yield_view` →
+`/operations/manufacture/yield/` (nav: *Insights → Yield Variance*; Manufacture links to it via a header call-out).
+
+For `status='Completed'` runs with an `actual_yield`, grouped `by_product` and
+`by_supervisor`:
+
+```
+yield_variance_pct   = mean( (actual_yield - expected_yield) / expected_yield * 100 )
+material_overuse_pct = mean( RunMaterialUsage.variance_pct )   over the run's usages
+rating               = good   if yield_variance_pct >= -2 and material_overuse_pct <= 5
+                       poor   if yield_variance_pct <  -10 or material_overuse_pct >  15
+                       watch  otherwise
+```
+
+Sorted `(rating rank, yield_variance_pct, -material_overuse_pct, name)`.
+
+### 8.7. Stockout & reorder forecast  *(Phase 2a — implemented)*
+
+`stockout_forecast(window_days=30)` → `views_analytics.forecast_view` →
+`/warehouse/forecast/` (nav: *Insights → Stockout Forecast*; Materials Hub links to it via a header call-out).
+
+```
+burn/day    = Σ Consumed_For_Manufacturing qty over window / window_days   (consumption_rates())
+available   = Σ active Batch.quantity - Σ Batch.allocated_quantity  (per material)
+days_cover  = available / burn/day        (None if burn/day == 0, or cover > 3650)
+stockout    = today + days_cover
+lead_time   = max SupplierMaterial.lead_time_days for the material
+              ?? po_default_lead_time_days setting          (-> lead_time_estimated)
+reorder_by  = stockout - lead_time
+days_until_reorder = days_cover - lead_time
+status      = critical     if available <= 0, or days_until_reorder < 0
+              reorder_now  if days_until_reorder <= 2
+              watch        if days_until_reorder <= 14
+              ok           otherwise
+              no_usage     if burn/day == 0
+```
+
+`on_order` (open-PO outstanding qty) is shown for context, not subtracted. Rows
+sorted `(status rank, reorder_by, -burn/day, name)`. `consumption_rates()` is the
+batched sibling of Phase 0's `consumption_rate()` — one grouped query for many
+materials.
+
+### 8.8. Planned algorithms  *(Phases 2b–3 — not yet implemented)*
+
+- **Capacity runway** — snapshot `utilization_percent` per warehouse daily
+  (`WarehouseUtilizationSnapshot` + `snapshot_utilization` command), linear-fit
+  the trend, project the date it crosses 100%.
+- **AI Ops Briefing** — `generate_ops_briefing` command aggregates the signals
+  above into a structured payload, sends it to Claude with a constrained prompt
+  ("use only the numbers provided"), stores the result in `OpsBriefing`; the
+  `ops_briefing` view renders the latest. This is the target of the currently
+  inert `Digital Assistant (AI)` sidebar link.

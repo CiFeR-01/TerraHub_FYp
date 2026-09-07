@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}Audit Accuracy - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <a href="{% url 'stock_audit' %}">Stock Audit</a>
+            <span class="separator">/</span>
+            <span class="current-page">Audit Accuracy</span>
+        </nav>
+        <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
+            Audit Accuracy
+        </h1>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:64ch;">
+            How closely physical counts match the system, by warehouse and by item.
+            Lowest count-accuracy first.
+        </p>
+    </div>
+</header>
+
+<div class="animate-fade-in-up" style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center; margin-bottom:1.25rem;">
+    <span style="font-size:0.8rem; color:var(--text-muted); margin-right:0.25rem;">Audited within:</span>
+    {% for w in window_choices %}
+    <a href="?window={{ w }}"
+       style="font-size:0.8rem; padding:0.3rem 0.7rem; border-radius:6px; text-decoration:none; border:1px solid var(--border-light);
+              {% if w == window_days %}background:var(--primary); color:#fff; font-weight:700;{% else %}color:var(--text-muted); background:#fff;{% endif %}">
+        {% if w == 0 %}All time{% else %}{{ w }} days{% endif %}
+    </a>
+    {% endfor %}
+</div>
+
+<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay:0.05s; margin-bottom:1.5rem;">
+    <div class="kpi-item-card">
+        <span class="kpi-label">Audits</span>
+        <div class="kpi-value-row"><span class="kpi-value">{{ summary.total_audits }}</span></div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Exact-Match Rate</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">{% if summary.overall_accuracy is not None %}{% widthratio summary.overall_accuracy 1 100 %}%{% else %}&mdash;{% endif %}</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Net Variance</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value" style="color:{% if summary.net_variance < 0 %}#dc2626{% elif summary.net_variance > 0 %}#059669{% else %}var(--text-main){% endif %};">{{ summary.net_variance|floatformat:1 }}</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Shrinkage (losses)</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value" style="color:{% if summary.shrinkage < 0 %}#dc2626{% else %}var(--text-main){% endif %};">{{ summary.shrinkage|floatformat:1 }}</span>
+        </div>
+    </div>
+</section>
+
+{% if trend %}
+<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:700; margin:0 0 1rem;">Monthly trend</h3>
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th style="padding:0.6rem 1rem;">Month</th>
+                    <th style="padding:0.6rem 1rem; text-align:right;">Audits</th>
+                    <th style="padding:0.6rem 1rem; text-align:right;">Mean |variance|</th>
+                    <th style="padding:0.6rem 1rem; text-align:right;">Net variance</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in trend %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                    <td style="padding:0.6rem 1rem; font-weight:600;">{{ t.bucket }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right;">{{ t.audit_count }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right;">{{ t.mean_abs_variance|floatformat:2 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if t.net_variance < 0 %}#dc2626{% elif t.net_variance > 0 %}#059669{% endif %};">{{ t.net_variance|floatformat:1 }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% for section in sections %}
+<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:700; margin:0 0 1rem;">{{ section.title }}</h3>
+    <div class="table-responsive">
+        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th data-sort="text" style="padding:0.6rem 1rem;">{{ section.label }}</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Audits</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Exact-match</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Mean |var|</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Shrinkage</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Net</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in section.rows %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                    <td style="padding:0.6rem 1rem; font-weight:700; color:var(--primary);">
+                        {{ r.name }}
+                        {% if r.chronic_shrinkage %}
+                        <span style="font-size:0.6rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.05rem 0.4rem; border-radius:4px; margin-left:0.3rem;">chronic loss</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right;">{{ r.audit_count }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; {% if r.accuracy_rate < 0.75 %}color:#dc2626;{% endif %}">
+                        {% if r.accuracy_rate is not None %}{% widthratio r.accuracy_rate 1 100 %}%{% else %}&mdash;{% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right;">{{ r.mean_abs_variance|floatformat:2 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if r.shrinkage < 0 %}#dc2626;{% endif %}">{{ r.shrinkage|floatformat:1 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if r.net_variance < 0 %}#dc2626{% elif r.net_variance > 0 %}#059669{% endif %};">{{ r.net_variance|floatformat:1 }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" style="padding:1.5rem 1rem; text-align:center; color:var(--text-muted);">No audits in this window.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endfor %}
+
+<p style="color:var(--text-muted); font-size:0.75rem; margin-top:0.5rem; max-width:74ch;">
+    Variance = counted quantity &minus; system quantity. <em>Exact-match</em> is the
+    share of audits with zero variance. <em>Shrinkage</em> sums the negative
+    variances (stock found short); <em>Net</em> is the signed total. "Chronic loss"
+    flags a warehouse or item with a negative net across 3+ audits.
+    Rows load worst-first &mdash; click any column heading to re-sort.
+</p>
+
+{% endblock %}

@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}Yield Variance - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <a href="{% url 'readiness' %}">Manufacturing</a>
+            <span class="separator">/</span>
+            <span class="current-page">Yield Variance</span>
+        </nav>
+        <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
+            Yield Variance
+        </h1>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:64ch;">
+            Completed-run yield against plan, and material consumption against recipe,
+            by product and by supervisor. Worst first.
+        </p>
+    </div>
+</header>
+
+<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay:0.05s; margin-bottom:1.5rem;">
+    <div class="kpi-item-card">
+        <span class="kpi-label">Completed Runs</span>
+        <div class="kpi-value-row"><span class="kpi-value">{{ summary.run_count }}</span></div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Mean Yield Variance</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value" style="color:{% if summary.mean_yield_variance_pct and summary.mean_yield_variance_pct < 0 %}#dc2626{% else %}var(--text-main){% endif %};">
+                {% if summary.mean_yield_variance_pct is not None %}{{ summary.mean_yield_variance_pct|floatformat:1 }}%{% else %}&mdash;{% endif %}
+            </span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Products Tracked</span>
+        <div class="kpi-value-row"><span class="kpi-value">{{ summary.product_count }}</span></div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Needs Attention</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value" style="color:{% if summary.poor_count %}#dc2626{% else %}var(--text-main){% endif %};">{{ summary.poor_count }}</span>
+            <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.4rem;">poor &middot; {{ summary.watch_count }} watch</span>
+        </div>
+    </div>
+</section>
+
+{% for section in sections %}
+<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:700; margin:0 0 1rem;">{{ section.title }}</h3>
+    <div class="table-responsive">
+        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th data-sort="text" style="padding:0.6rem 1rem;">{{ section.label }}</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem;">Rating</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Runs</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Yield vs plan</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Yield variance</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Material overuse</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in section.rows %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                    <td style="padding:0.6rem 1rem; font-weight:700; color:var(--primary);">{{ r.name }}</td>
+                    <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.rating == 'poor' %}0{% elif r.rating == 'watch' %}1{% elif r.rating == 'good' %}2{% else %}3{% endif %}">
+                        {% if r.rating == 'good' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px;">On plan</span>
+                        {% elif r.rating == 'watch' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px;">Watch</span>
+                        {% elif r.rating == 'poor' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px;">Poor</span>
+                        {% else %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#f1f5f9; color:#64748b; padding:0.15rem 0.55rem; border-radius:999px;">No data</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right;">
+                        {% if r.mean_yield_pct is not None %}{{ r.mean_yield_pct|floatformat:1 }}%{% else %}&mdash;{% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; color:{% if r.mean_yield_variance_pct and r.mean_yield_variance_pct < 0 %}#dc2626{% elif r.mean_yield_variance_pct and r.mean_yield_variance_pct > 0 %}#059669{% endif %};">
+                        {% if r.mean_yield_variance_pct is not None %}{{ r.mean_yield_variance_pct|floatformat:1 }}%{% else %}&mdash;{% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if r.mean_material_overuse_pct and r.mean_material_overuse_pct > 5 %}#dc2626{% endif %};">
+                        {% if r.mean_material_overuse_pct is not None %}{{ r.mean_material_overuse_pct|floatformat:1 }}%{% else %}&mdash;{% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" style="padding:1.5rem 1rem; text-align:center; color:var(--text-muted);">No completed runs with recorded yield.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endfor %}
+
+<p style="color:var(--text-muted); font-size:0.75rem; margin-top:0.5rem; max-width:74ch;">
+    <em>Yield vs plan</em> is actual yield &divide; expected yield. <em>Yield variance</em>
+    is the mean signed <code>(actual &minus; expected) / expected</code> across a group's
+    completed runs (negative = under-yielding). <em>Material overuse</em> is the mean
+    of <code>RunMaterialUsage.variance_pct</code> (positive = consumed more than the
+    recipe). Rating: <em>On plan</em> yield variance &ge; &minus;2% and overuse &le; 5%;
+    <em>Poor</em> yield variance &lt; &minus;10% or overuse &gt; 15%; <em>Watch</em> between.
+    Rows load worst-first &mdash; click any column heading to re-sort.
+</p>
+
+{% endblock %}

@@ -1,0 +1,135 @@
+{% comment %}
+Click-to-sort for data tables. Add class "sortable" to a <table>; the script
+does the rest:
+
+  * every column is sortable except ones whose header is "Action(s)" /
+    "QA Actions" or contains "Timeline";
+  * column type (number / date / text) is auto-detected from the cells;
+  * a <th> may force it with data-sort="text|num|date"; a <td> may override its
+    value with data-sort-value="..." (used for badge / multi-line cells);
+  * blank / "—" cells always sort last;
+  * an empty-state colspan row is left in place.
+
+Self-initialising, idempotent, no dependencies. Included once from base.html.
+{% endcomment %}
+<script>
+(function () {
+    if (window.__sortableTablesInit) return;
+    window.__sortableTablesInit = true;
+
+    var MONTHS = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, sept:8, oct:9, nov:10, dec:11 };
+    var SKIP_HEADERS = /^(actions?|qa actions)$/;
+
+    function parseDate(text) {
+        var t = text.trim();
+        var m = t.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+        if (m) return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] || 0, +m[5] || 0, +m[6] || 0);
+        m = t.match(/^(\d{1,2})\s+([A-Za-z]{3,9})\.?\s+(\d{4})/);           // 1 Sept 2026
+        if (m && MONTHS[m[2].toLowerCase()] != null) return Date.UTC(+m[3], MONTHS[m[2].toLowerCase()], +m[1]);
+        m = t.match(/^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})/);          // Sept. 1, 2026
+        if (m && MONTHS[m[1].toLowerCase()] != null) return Date.UTC(+m[3], MONTHS[m[1].toLowerCase()], +m[2]);
+        if (/[A-Za-z]{3}/.test(t) || /\d[-/]\d/.test(t)) {                   // only try native parse when it looks datey
+            var d = Date.parse(t);
+            if (!isNaN(d)) return d;
+        }
+        return null;
+    }
+
+    function parseNum(text) {
+        var s = String(text).replace(/−/g, '-').replace(/,/g, '');
+        var m = s.match(/-?\d+\.?\d*/);
+        return m ? parseFloat(m[0]) : null;
+    }
+
+    function rawValue(td) {
+        if (!td) return '';
+        var v = td.getAttribute('data-sort-value');
+        return (v !== null ? v : td.textContent).trim();
+    }
+
+    function isBlank(s) { return s === '' || s === '—' || s === '-'; }
+
+    function detectType(bodyRows, idx) {
+        var seen = 0, numOk = 0, dateOk = 0;
+        for (var i = 0; i < bodyRows.length && seen < 24; i++) {
+            var td = bodyRows[i].cells[idx];
+            if (!td) continue;
+            var s = rawValue(td);
+            if (isBlank(s)) continue;
+            seen++;
+            if (parseDate(s) !== null) { dateOk++; continue; }
+            if (parseNum(s) !== null && !/[A-Za-z]{3,}/.test(s.replace(/RM/gi, ''))) numOk++;
+        }
+        if (!seen) return 'text';
+        if (dateOk === seen) return 'date';
+        if (numOk === seen) return 'num';
+        return 'text';
+    }
+
+    function cellValue(td, type) {
+        var s = rawValue(td);
+        if (isBlank(s)) return null;
+        if (type === 'num') return parseNum(s);
+        if (type === 'date') return parseDate(s);
+        return s.toLowerCase();
+    }
+
+    function initTable(table) {
+        var headRow = table.tHead && table.tHead.rows[0];
+        if (!headRow || !table.tBodies.length) return;
+        var tbody = table.tBodies[0];
+        var dataRows = function () {
+            return Array.prototype.slice.call(tbody.rows).filter(function (r) {
+                return !r.querySelector('td[colspan]');
+            });
+        };
+
+        Array.prototype.slice.call(headRow.cells).forEach(function (th) {
+            var idx = th.cellIndex;
+            var forced = th.getAttribute('data-sort');
+            var label = th.textContent.trim().toLowerCase();
+            if (!forced && (SKIP_HEADERS.test(label) || label.indexOf('timeline') !== -1)) return;
+
+            var type = forced || detectType(dataRows(), idx);
+            th.style.cursor = 'pointer';
+            th.style.userSelect = 'none';
+            var arrow = document.createElement('span');
+            arrow.className = 'sort-arrow';
+            arrow.textContent = '↕';
+            arrow.style.cssText = 'margin-left:4px; font-size:0.7em; opacity:0.35;';
+            th.appendChild(arrow);
+
+            th.addEventListener('click', function () {
+                var asc = th.getAttribute('data-dir') !== 'asc';
+                Array.prototype.slice.call(headRow.cells).forEach(function (h) {
+                    h.removeAttribute('data-dir');
+                    var a = h.querySelector('.sort-arrow');
+                    if (a) { a.textContent = '↕'; a.style.opacity = '0.35'; }
+                });
+                th.setAttribute('data-dir', asc ? 'asc' : 'desc');
+                arrow.textContent = asc ? '▲' : '▼';
+                arrow.style.opacity = '1';
+
+                var rows = dataRows();
+                rows.sort(function (a, b) {
+                    var av = cellValue(a.cells[idx], type);
+                    var bv = cellValue(b.cells[idx], type);
+                    if (av === null && bv === null) return 0;
+                    if (av === null) return 1;   // blanks always last
+                    if (bv === null) return -1;
+                    var cmp = av < bv ? -1 : av > bv ? 1 : 0;
+                    return asc ? cmp : -cmp;
+                });
+                rows.forEach(function (r) { tbody.appendChild(r); });
+            });
+        });
+    }
+
+    function init() { document.querySelectorAll('table.sortable').forEach(initTable); }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>

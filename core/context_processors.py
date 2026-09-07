@@ -53,6 +53,11 @@ NAV_ICONS = {
         '<rect x="3" y="11" width="18" height="11" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/>'
         '<path d="M7 11V7a5 5 0 0 1 10 0v4" fill="none" stroke="currentColor" stroke-width="2"/>'
     ),
+    'insights': mark_safe(
+        '<path d="M3 3v18h18" fill="none" stroke="currentColor" stroke-width="2"/>'
+        '<path d="M7 14l3-4 3 3 5-7" fill="none" stroke="currentColor" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round"/>'
+    ),
 }
 
 
@@ -79,8 +84,6 @@ def sidebar_nav(request):
 
     # Overview
     overview_items = [{'label': 'Dashboard & Analytics', 'url_name': 'dashboard'}]
-    if user.is_superuser:
-        overview_items.append({'label': 'System Console', 'url_name': 'system'})
     overview_items.append({'label': 'Digital Assistant (AI)', 'url_name': None, 'css_class': 'ai-link'})
     if _has_any_role(user, 'Admin', 'Manager'):
         overview_items.append({
@@ -89,6 +92,25 @@ def sidebar_nav(request):
             'show_badge': True,
         })
     groups.append({'id': 'overview', 'label': 'Overview', 'icon': NAV_ICONS['overview'], 'items': overview_items})
+
+    # Insights - the single home for the analytics & forecasting views. Each
+    # domain page (Suppliers, Sales Orders, Stock Tally, Manufacture, Materials
+    # Hub) links into its analytic via _insight_link.html, but the sidebar
+    # highlight and canonical location is here.
+    # Capacity Runway is added by Phase 2b, AI Ops Briefing by Phase 3.
+    insights_items = []
+    if user.has_perm('core.view_material'):
+        insights_items.append({'label': 'Stockout Forecast', 'url_name': 'forecast'})
+    if user.has_perm('core.view_supplier'):
+        insights_items.append({'label': 'Supplier Scorecard', 'url_name': 'supplier_scorecard'})
+    if user.has_perm('core.view_shipment'):
+        insights_items.append({'label': 'Delivery Risk', 'url_name': 'so_delivery_risk'})
+    if user.has_perm('core.view_productrecipe') or user.has_perm('core.add_batch'):
+        insights_items.append({'label': 'Yield Variance', 'url_name': 'production_yield'})
+    if user.has_perm('core.view_stockaudit') or user.has_perm('core.add_stockaudit'):
+        insights_items.append({'label': 'Audit Accuracy', 'url_name': 'audit_accuracy'})
+    if insights_items:
+        groups.append({'id': 'insights', 'label': 'Insights', 'icon': NAV_ICONS['insights'], 'items': insights_items})
 
     # Inventory & Facilities
     inventory_items = []
@@ -129,18 +151,25 @@ def sidebar_nav(request):
         groups.append({'id': 'operations', 'label': 'Operations & Logistics', 'icon': NAV_ICONS['operations'], 'items': ops_items})
 
     # Admin
+    admin_items = []
     if _has_any_role(user, 'Admin', 'Manager'):
+        admin_items.append({'label': 'Users Management', 'url_name': 'user_management'})
+    if user.is_superuser:
+        admin_items.append({'label': 'System Console', 'url_name': 'system'})
+        admin_items.append({'label': 'System Settings', 'url_name': 'system_settings'})
+    if admin_items:
         groups.append({
             'id': 'admin',
             'label': 'Admin',
             'icon': NAV_ICONS['admin'],
-            'items': [{'label': 'Users Management', 'url_name': 'user_management'}],
+            'items': admin_items,
         })
 
     for group in groups:
         group_active = False
         for item in group['items']:
-            item['active'] = bool(item.get('url_name')) and item['url_name'] == url_name
+            names = [item['url_name']] + item.get('alias_url_names', []) if item.get('url_name') else []
+            item['active'] = url_name in names
             if item['active']:
                 group_active = True
         group['active'] = group_active

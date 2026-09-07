@@ -260,6 +260,16 @@ def dashboard_view(request):
     )['v']
     inventory_value = float(rm_value) + float(fg_value)
 
+    def _compact_rm(amount):
+        """Executive-style short money label, e.g. 34_089_550 -> 'RM 34.1M'."""
+        amount = float(amount)
+        for divisor, suffix in ((1_000_000_000, 'B'), (1_000_000, 'M'), (1_000, 'K')):
+            if abs(amount) >= divisor:
+                return f"RM {amount / divisor:.1f}{suffix}"
+        return f"RM {amount:,.0f}"
+
+    inventory_value_compact = _compact_rm(inventory_value)
+
     last_activity = RegistryLog.objects.order_by('-timestamp').values_list('timestamp', flat=True).first()
 
     # 6. Sales order stats
@@ -280,6 +290,7 @@ def dashboard_view(request):
         'chart_data': chart_data,
         'inventory_metrics': inventory_metrics,
         'global_utilization': global_utilization,
+        'global_utilization_bar': min(global_utilization, 100),
         'total_daily_cost': total_daily_cost,
         'recent_logs': recent_logs,
         'active_shipments': active_shipments,
@@ -296,6 +307,7 @@ def dashboard_view(request):
         'output_trend': output_trend,
         'material_variance': material_variance,
         'inventory_value': inventory_value,
+        'inventory_value_compact': inventory_value_compact,
         'last_activity': last_activity,
     }
 
@@ -326,6 +338,62 @@ def system_view(request):
         'db_status': db_status,
         'db_logs': initial_logs,
     })
+
+
+@login_required
+def system_settings_view(request):
+    """
+    In-site editor for the operational tunables registered in
+    core.settings_store.REGISTRY (stored in SystemSetting). Superuser-only, same
+    as the System Console. Django admin remains available as a fallback.
+    """
+    if not request.user.is_superuser:
+        messages.error(request, "Permission Denied. System settings are superuser-only.")
+        return redirect('dashboard')
+
+    from .models import SystemSetting
+    from .settings_store import REGISTRY, cast_value, get_setting
+
+    if request.method == 'POST':
+        updated = 0
+        for key, (default, value_type, description) in REGISTRY.items():
+            raw = request.POST.get(key, 'false' if value_type == 'bool' else None)
+            if raw is None:
+                continue
+            cast = cast_value(raw.strip(), value_type)
+            if cast is None:
+                messages.error(request, f"'{raw}' is not a valid {value_type} value for {key}.")
+                continue
+            SystemSetting.objects.update_or_create(
+                key=key,
+                defaults={
+                    'value': str(cast),
+                    'value_type': value_type,
+                    'description': description,
+                    'updated_by': request.user,
+                },
+            )
+            updated += 1
+        if updated:
+            messages.success(request, f"Saved {updated} setting{'s' if updated != 1 else ''}.")
+        return redirect('system_settings')
+
+    rows = SystemSetting.objects.in_bulk(field_name='key')
+    settings_list = [
+        {
+            'key': key,
+            'label': key.replace('_', ' ').title(),
+            'value': get_setting(key),
+            'default': default,
+            'value_type': value_type,
+            'description': description,
+            'updated_at': rows[key].updated_at if key in rows else None,
+            'updated_by': rows[key].updated_by if key in rows else None,
+            'is_overridden': key in rows and str(get_setting(key)) != str(default),
+        }
+        for key, (default, value_type, description) in REGISTRY.items()
+    ]
+    return render(request, 'system_settings.html', {'settings_list': settings_list})
 
 
 from django.http import JsonResponse
@@ -391,8 +459,10 @@ def warehouse_inventory_view(request):
                 return redirect('warehouse_inventory')
                 
             try:
+                log_material = None
                 if material_id:
                     mat = get_object_or_404(Material, id=material_id)
+                    log_material = mat
                     b = Batch.objects.create(
                         batch_number=f"M-ADJ-{mat.sku}-{date.today().strftime('%Y%m%d')}",
                         status='Active',
@@ -424,6 +494,7 @@ def warehouse_inventory_view(request):
                 RegistryLog.objects.create(
                     action_type='Adjusted',
                     item_name=f"Manual Receipt of {log_item}",
+                    material=log_material,
                     quantity_changed=float(qty),
                     warehouse_id=wh_id,
                     user=request.user
@@ -734,6 +805,7 @@ def stock_audit_view(request):
                     RegistryLog.objects.create(
                         action_type='Adjusted',
                         item_name=f"Batch {b.batch_number} ({b.material or b.product})",
+                        material=b.material,
                         quantity_changed=variance,
                         warehouse=wh,
                         user=request.user
@@ -1617,6 +1689,7 @@ def material_edit_view(request, pk):
             RegistryLog.objects.create(
                 action_type='Adjusted',
                 item_name=f"Updated Material '{material.name}' (SKU: {material.sku})",
+                material=material,
                 quantity_changed=0,
                 warehouse=None,
                 user=request.user if request.user.is_authenticated else None
@@ -2935,6 +3008,7 @@ def qa_dashboard_view(request):
                 RegistryLog.objects.create(
                     action_type='QA_Extension',
                     item_name=f"Batch {batch.batch_number} (+{days} days)",
+                    material=batch.material,
                     quantity_changed=batch.quantity,
                     warehouse=batch.warehouse if batch.warehouse else None,
                     user=request.user
@@ -2959,6 +3033,7 @@ def qa_dashboard_view(request):
             RegistryLog.objects.create(
                 action_type='Spoiled_Disposal',
                 item_name=f"Batch {batch.batch_number} Disposed",
+                material=batch.material,
                 quantity_changed=batch.quantity,
                 warehouse=batch.warehouse if batch.warehouse else None,
                 user=request.user
@@ -3550,6 +3625,7 @@ def shipment_detail_view(request, pk):
                             RegistryLog.objects.create(
                                 action_type='Inbound',
                                 item_name=f"Internal Transfer Received: {new_batch.batch_number}",
+                                material=new_batch.material,
                                 quantity_changed=rcv_qty,
                                 warehouse=shipment.destination_warehouse,
                                 user=request.user
@@ -3699,6 +3775,7 @@ def shipment_detail_view(request, pk):
                     RegistryLog.objects.create(
                         action_type='Outbound',
                         item_name=f"{item_name} (Batch {batch.batch_number}) — force closed",
+                        material=batch.material,
                         quantity_changed=-Decimal(str(rcv_qty)),
                         warehouse=batch.warehouse,
                         user=request.user

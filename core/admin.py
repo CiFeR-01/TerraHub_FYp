@@ -5,7 +5,7 @@ from .models import (
     ProductRecipe, ProductionRun, ProductionConsumption, Batch,
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
     Shipment, StockAudit, RegistryLog, OrderTimeline, Notification,
-    Supplier, SupplierMaterial, Client
+    Supplier, SupplierMaterial, Client, SystemSetting
 )
 
 class CustomUserAdmin(UserAdmin):
@@ -39,3 +39,22 @@ admin.site.register(Notification)
 admin.site.register(Supplier)
 admin.site.register(SupplierMaterial)
 admin.site.register(Client)
+
+
+@admin.register(SystemSetting)
+class SystemSettingAdmin(admin.ModelAdmin):
+    list_display = ('key', 'value', 'value_type', 'description', 'updated_at', 'updated_by')
+    list_editable = ('value',)
+    readonly_fields = ('key', 'value_type', 'description', 'updated_at', 'updated_by')
+    search_fields = ('key', 'description')
+
+    def has_add_permission(self, request):
+        # Rows are seeded by migration from core.settings_store.REGISTRY.
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def save_model(self, request, obj, form, change):
+        obj.updated_by = request.user
+        super().save_model(request, obj, form, change)

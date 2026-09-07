@@ -277,6 +277,10 @@ class PurchaseOrder(models.Model):
     target_warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
     order_date = models.DateField(auto_now_add=True)
     expected_delivery_date = models.DateField(null=True, blank=True)
+    # Stamped the first time cumulative receipts flip this PO to 'Completed'
+    # (see core/utils.py :: apply_po_material_receipt). Authoritative "arrived"
+    # date for the supplier scorecard, independent of later batch edits.
+    completed_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Draft')
     
     created_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_pos')
@@ -477,6 +481,14 @@ class RegistryLog(models.Model):
     )
     action_type = models.CharField(max_length=50, choices=ACTION_CHOICES)
     item_name = models.CharField(max_length=255)
+    # Structured link to the raw material this movement concerns. item_name stays as
+    # the human-readable label; this FK is the machine-readable key that powers the
+    # consumption-rate / stockout / capacity analytics (see core/analytics.py).
+    # Null for movements that are not material-specific (bulk imports, finished-goods
+    # 'Produced' rows, summary entries).
+    material = models.ForeignKey(
+        Material, on_delete=models.SET_NULL, null=True, blank=True, related_name='registry_logs'
+    )
     quantity_changed = models.DecimalField(max_digits=12, decimal_places=2)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True)
     timestamp = models.DateTimeField(auto_now_add=True)
@@ -518,4 +530,33 @@ class StockAllocation(models.Model):
 
     def __str__(self):
         return f"Allocated {self.quantity} from {self.batch.batch_number}"
+
+
+class SystemSetting(models.Model):
+    """
+    Small key/value store for operational tunables that staff need to change
+    without a code deploy (analytics lead times, thresholds, windows).
+
+    Edit at /admin/core/systemsetting/. Read through
+    core.settings_store.get_setting(key), which knows the registered default and
+    the type to cast to, so callers never touch this model directly.
+    """
+    TYPE_CHOICES = (
+        ('int', 'Integer'),
+        ('float', 'Float'),
+        ('str', 'String'),
+        ('bool', 'Boolean'),
+    )
+    key = models.CharField(max_length=100, unique=True)
+    value = models.CharField(max_length=255)
+    value_type = models.CharField(max_length=10, choices=TYPE_CHOICES, default='str')
+    description = models.CharField(max_length=255, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)
+
+    class Meta:
+        ordering = ['key']
+
+    def __str__(self):
+        return f"{self.key} = {self.value}"
 
