@@ -102,7 +102,7 @@
                     </td>
                     <td style="padding:0.85rem 1rem; font-weight:600; color:var(--text-main);">{{ log.item_name }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:700; {% if log.action_type in 'Inbound,Produced,QA_Extension' %}color:#10b981;{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal' %}color:#ef4444;{% endif %}">
-                        {% if log.action_type in 'Inbound,Produced' %}+{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal' %}-{% endif %}{{ log.quantity_changed|floatformat:2 }}
+                        {% if log.action_type in 'Inbound,Produced' %}+{{ log.quantity_changed|floatformat:2|cut:"-" }}{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal' %}-{{ log.quantity_changed|floatformat:2|cut:"-" }}{% else %}{{ log.quantity_changed|floatformat:2 }}{% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem;">{{ log.warehouse.name|default:"—" }}</td>
                     <td style="padding:0.85rem 1rem;">{{ log.user.username|default:"System Engine" }}</td>
