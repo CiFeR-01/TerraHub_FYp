@@ -1,48 +1,86 @@
 {% extends "base.html" %}
+{% load humanize %}
 
 {% block title %}Executive Dashboard - TerraHub{% endblock %}
 
 {% block content %}
-<!-- Header Layer -->
+<div class="dash-shell">
+
+{% comment %}Icon sprite — referenced with <svg><use href="#i-..."/></svg> throughout.{% endcomment %}
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+        <symbol id="i-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></symbol>
+        <symbol id="i-package-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 2 2 4-4"/><path d="M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14"/><path d="m7.5 4.27 9 5.15"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></symbol>
+        <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m6.08 9.5-3.48 1.59a1 1 0 0 0 0 1.81l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9a1 1 0 0 0 0-1.83l-3.5-1.59"/><path d="m6.08 14.5-3.48 1.59a1 1 0 0 0 0 1.81l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9a1 1 0 0 0 0-1.83l-3.5-1.59"/></symbol>
+        <symbol id="i-dollar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></symbol>
+        <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"/><path d="M4 6v12c0 1.1.9 2 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></symbol>
+        <symbol id="i-hammer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5"/></symbol>
+        <symbol id="i-bar-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></symbol>
+        <symbol id="i-truck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62l-3.48-4.35A1 1 0 0 0 18.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></symbol>
+        <symbol id="i-shield-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z"/><path d="M12 8v4"/><path d="M12 16h.01"/></symbol>
+        <symbol id="i-shield-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z"/><path d="m9 12 2 2 4-4"/></symbol>
+        <symbol id="i-building" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01"/><path d="M16 6h.01"/><path d="M8 10h.01"/><path d="M16 10h.01"/><path d="M8 14h.01"/><path d="M16 14h.01"/></symbol>
+        <symbol id="i-clipboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></symbol>
+        <symbol id="i-clipboard-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></symbol>
+        <symbol id="i-check-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.801 10A10 10 0 1 1 17 3.335"/><path d="m9 11 3 3L22 4"/></symbol>
+        <symbol id="i-alert-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+        <symbol id="i-package" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></symbol>
+        <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z"/></symbol>
+        <symbol id="i-inbound" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7 7 17"/><path d="M17 17H7V7"/></symbol>
+        <symbol id="i-outbound" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></symbol>
+        <symbol id="i-repeat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></symbol>
+        <symbol id="i-trend-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></symbol>
+        <symbol id="i-trend-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></symbol>
+        <symbol id="i-minus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></symbol>
+        <symbol id="i-coffee" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v2"/><path d="M14 2v2"/><path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/><path d="M6 2v2"/></symbol>
+        <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
+    </defs>
+</svg>
+
+<!-- ===================== Header ===================== -->
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="#">Dashboard</a>
+            <a href="{% url 'dashboard' %}">Dashboard</a>
             <span class="separator">/</span>
             <span class="current-page">Overview</span>
         </nav>
-        <h1
-            style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
-            Executive Overview</h1>
+        <span class="page-eyebrow">Executive Dashboard</span>
+        <h1 class="page-title-lg">Operations Overview</h1>
     </div>
 
     <div class="header-action-tray">
         <div class="timestamp-badge">
             <span class="live-dot"></span>
-            Last activity: {% if last_activity %}{{ last_activity|timesince }} ago{% else %}{{ current_timestamp }}{% endif %}
+            {% if last_activity %}Updated {{ last_activity|timesince }} ago{% else %}As of {{ current_timestamp }}{% endif %}
         </div>
         <a href="{% url 'registry' %}" class="btn btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">Registry Ledger</a>
         <a href="{% url 'approvals_inbox' %}" class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">Approvals Inbox</a>
     </div>
 </header>
 
-<!-- Core Metrics KPI Row (Moved to the Top for Better Hierarchy) -->
-<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay: 0.05s;">
-    <!-- KPI 1: Active Raw Materials -->
+<!-- ===================== KPI Row ===================== -->
+<section class="kpi-wrapper-grid kpi-v2 animate-fade-in-up" style="animation-delay: 0.05s;">
+
+    <!-- Active Raw Materials -->
     <div class="kpi-item-card">
-        <span class="kpi-label">Active Raw Materials</span>
+        <div class="kpi-top">
+            <span class="kpi-icon"><svg><use href="#i-box"/></svg></span>
+            <span class="kpi-label">Active Raw Materials</span>
+        </div>
         <div class="kpi-value-row">
-            <span class="kpi-value">{{ inventory_metrics.raw_materials|floatformat:0 }}</span>
+            <span class="kpi-value">{{ inventory_metrics.raw_materials|floatformat:0|intcomma }}</span>
             <span class="badge badge-sky">MT Stocked</span>
         </div>
-        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.35rem;">
-            Intake vs prior 30d:
+        <div class="kpi-foot">
+            Intake vs prior 30&nbsp;days &nbsp;
             {% if kpi_deltas.raw_materials is None %}
-            <span style="color: var(--text-muted);">no baseline</span>
+            <span class="trend-pill flat"><svg><use href="#i-minus"/></svg> no baseline</span>
             {% elif kpi_deltas.raw_materials >= 0 %}
-            <span style="color: #059669; font-weight: 700;">&#9650; {{ kpi_deltas.raw_materials|floatformat:0 }}%</span>
+            <span class="trend-pill up"><svg><use href="#i-trend-up"/></svg>{{ kpi_deltas.raw_materials|floatformat:0 }}%</span>
             {% else %}
-            <span style="color: #dc2626; font-weight: 700;">&#9660; {{ kpi_deltas.raw_materials|floatformat:0 }}%</span>
+            <span class="trend-pill down"><svg><use href="#i-trend-down"/></svg>{{ kpi_deltas.raw_materials|floatformat:0 }}%</span>
             {% endif %}
         </div>
         <div class="kpi-sparkline-box">
@@ -54,21 +92,24 @@
         </div>
     </div>
 
-    <!-- KPI 2: Active Finished Goods -->
+    <!-- Finished Goods -->
     <div class="kpi-item-card">
-        <span class="kpi-label">Finished Goods</span>
+        <div class="kpi-top">
+            <span class="kpi-icon"><svg><use href="#i-package-check"/></svg></span>
+            <span class="kpi-label">Finished Goods</span>
+        </div>
         <div class="kpi-value-row">
-            <span class="kpi-value">{{ inventory_metrics.finished_goods|floatformat:0 }}</span>
+            <span class="kpi-value">{{ inventory_metrics.finished_goods|floatformat:0|intcomma }}</span>
             <span class="badge badge-emerald">Units Ready</span>
         </div>
-        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.35rem;">
-            Output vs prior 30d:
+        <div class="kpi-foot">
+            Output vs prior 30&nbsp;days &nbsp;
             {% if kpi_deltas.finished_goods is None %}
-            <span style="color: var(--text-muted);">no baseline</span>
+            <span class="trend-pill flat"><svg><use href="#i-minus"/></svg> no baseline</span>
             {% elif kpi_deltas.finished_goods >= 0 %}
-            <span style="color: #059669; font-weight: 700;">&#9650; {{ kpi_deltas.finished_goods|floatformat:0 }}%</span>
+            <span class="trend-pill up"><svg><use href="#i-trend-up"/></svg>{{ kpi_deltas.finished_goods|floatformat:0 }}%</span>
             {% else %}
-            <span style="color: #dc2626; font-weight: 700;">&#9660; {{ kpi_deltas.finished_goods|floatformat:0 }}%</span>
+            <span class="trend-pill down"><svg><use href="#i-trend-down"/></svg>{{ kpi_deltas.finished_goods|floatformat:0 }}%</span>
             {% endif %}
         </div>
         <div class="kpi-sparkline-box">
@@ -80,310 +121,321 @@
         </div>
     </div>
 
-    <!-- KPI 3: Global Operating Capacity -->
+    <!-- Global Space Utilization -->
     <div class="kpi-item-card">
-        <span class="kpi-label">Global Space Utilization</span>
+        <div class="kpi-top">
+            <span class="kpi-icon"><svg><use href="#i-layers"/></svg></span>
+            <span class="kpi-label">Global Space Utilization</span>
+        </div>
         <div class="kpi-value-row">
             <span class="kpi-value">{{ global_utilization|floatformat:1 }}%</span>
-            <span
-                class="badge {% if global_utilization > 85 %}badge-rose{% elif global_utilization > 70 %}badge-amber{% else %}badge-emerald{% endif %}">
+            <span class="badge {% if global_utilization > 85 %}badge-rose{% elif global_utilization > 70 %}badge-amber{% else %}badge-emerald{% endif %}">
                 {% if global_utilization > 85 %}Critical{% elif global_utilization > 70 %}Warning{% else %}Healthy{% endif %}
             </span>
         </div>
-        <div class="kpi-sparkline-box">
-            <div class="sparkbar" style="height: 50%;"></div>
-            <div class="sparkbar" style="height: 60%;"></div>
-            <div class="sparkbar" style="height: 70%;"></div>
-            <div class="sparkbar" style="height: 80%;"></div>
-            <div class="sparkbar" style="height: 75%;"></div>
-            <div class="sparkbar {% if global_utilization > 85 %}active-rose{% else %}active-primary{% endif %}"
-                style="height: {{ global_utilization }}%;"></div>
+        <div class="kpi-meter">
+            <span class="{% if global_utilization > 85 %}crit{% elif global_utilization > 70 %}warn{% endif %}"
+                  style="width: {{ global_utilization_bar|floatformat:0 }}%;"></span>
         </div>
+        <div class="kpi-foot">Used capacity across all facilities{% if global_utilization > 100 %} &mdash; overbooked{% endif %}.</div>
     </div>
 
-    <!-- KPI 4: Daily Burn -->
+    <!-- Est. Daily Space Cost -->
     <div class="kpi-item-card">
-        <span class="kpi-label">Est. Daily Space Cost</span>
+        <div class="kpi-top">
+            <span class="kpi-icon"><svg><use href="#i-dollar"/></svg></span>
+            <span class="kpi-label">Est. Daily Space Cost</span>
+        </div>
         <div class="kpi-value-row">
-            <span class="kpi-value">RM{{ total_daily_cost|floatformat:2 }}</span>
+            <span class="kpi-value">RM&thinsp;{{ total_daily_cost|floatformat:2|intcomma }}</span>
             <span class="badge badge-amber">Daily Burn</span>
         </div>
-        <div class="kpi-sparkline-box">
-            <div class="sparkbar active-primary" style="height: 90%;"></div>
-            <div class="sparkbar active-primary" style="height: 85%;"></div>
-            <div class="sparkbar active-primary" style="height: 80%;"></div>
-            <div class="sparkbar active-primary" style="height: 75%;"></div>
-            <div class="sparkbar active-primary" style="height: 70%;"></div>
-            <div class="sparkbar active-primary" style="height: 72%;"></div>
-        </div>
+        <div class="kpi-foot">Rental spend on external &amp; usage-billed storage, per day.</div>
     </div>
 
-    <!-- KPI 5: Inventory Value -->
+    <!-- Inventory Value on Hand -->
     <div class="kpi-item-card">
-        <span class="kpi-label">Inventory Value on Hand</span>
+        <div class="kpi-top">
+            <span class="kpi-icon"><svg><use href="#i-wallet"/></svg></span>
+            <span class="kpi-label">Inventory Value on Hand</span>
+        </div>
         <div class="kpi-value-row">
-            <span class="kpi-value">RM{{ inventory_value|floatformat:0 }}</span>
-            <span class="badge badge-slate">RM Valued</span>
+            <span class="kpi-value" title="RM {{ inventory_value|floatformat:0|intcomma }}">{{ inventory_value_compact }}</span>
+            <span class="badge badge-slate">Valued</span>
         </div>
-        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.35rem;">
-            Raw material cost + finished-goods price, active batches only
-        </div>
+        <div class="kpi-foot">RM {{ inventory_value|floatformat:0|intcomma }} &mdash; raw-material cost + finished-goods price, active batches.</div>
     </div>
 </section>
 
-<!-- Needs Attention Action Bar -->
-<section class="animate-fade-in-up" style="animation-delay: 0.06s; margin-bottom: 2rem;">
+<!-- ===================== Needs Attention ===================== -->
+<section class="animate-fade-in-up" style="animation-delay: 0.06s; margin-bottom: 2.5rem;">
     {% if attention_total %}
     <div style="display: flex; flex-wrap: wrap; gap: 0.75rem;">
         {% if attention.approvals %}
         <a href="{% url 'approvals_inbox' %}" class="attn-chip attn-amber">
-            <strong>{{ attention.approvals }}</strong> awaiting approval
+            <svg><use href="#i-check-circle"/></svg><strong>{{ attention.approvals }}</strong> awaiting approval
         </a>
         {% endif %}
         {% if attention.overdue_pos %}
         <a href="{% url 'po_list' %}" class="attn-chip attn-rose">
-            <strong>{{ attention.overdue_pos }}</strong> overdue purchase order{{ attention.overdue_pos|pluralize }}
+            <svg><use href="#i-alert-circle"/></svg><strong>{{ attention.overdue_pos }}</strong> overdue purchase order{{ attention.overdue_pos|pluralize }}
         </a>
         {% endif %}
         {% if attention.late_sos %}
         <a href="{% url 'so_list' %}" class="attn-chip attn-rose">
-            <strong>{{ attention.late_sos }}</strong> sales order{{ attention.late_sos|pluralize }} past deadline
+            <svg><use href="#i-clock"/></svg><strong>{{ attention.late_sos }}</strong> sales order{{ attention.late_sos|pluralize }} past deadline
         </a>
         {% endif %}
         {% if attention.delayed_shipments %}
         <a href="{% url 'shipments' %}" class="attn-chip attn-rose">
-            <strong>{{ attention.delayed_shipments }}</strong> delayed / discrepant shipment{{ attention.delayed_shipments|pluralize }}
+            <svg><use href="#i-truck"/></svg><strong>{{ attention.delayed_shipments }}</strong> delayed / discrepant shipment{{ attention.delayed_shipments|pluralize }}
         </a>
         {% endif %}
         {% if attention.awaiting_materials %}
         <a href="{% url 'readiness' %}" class="attn-chip attn-amber">
-            <strong>{{ attention.awaiting_materials }}</strong> run{{ attention.awaiting_materials|pluralize }} awaiting materials
+            <svg><use href="#i-package"/></svg><strong>{{ attention.awaiting_materials }}</strong> run{{ attention.awaiting_materials|pluralize }} awaiting materials
         </a>
         {% endif %}
         {% if attention.quarantined %}
         <a href="{% url 'warehouse_inventory' %}" class="attn-chip attn-amber">
-            <strong>{{ attention.quarantined }}</strong> quarantined batch{{ attention.quarantined|pluralize:"es" }}
+            <svg><use href="#i-shield"/></svg><strong>{{ attention.quarantined }}</strong> quarantined batch{{ attention.quarantined|pluralize:"es" }}
         </a>
         {% endif %}
         {% if attention.pending_audits %}
         <a href="{% url 'stock_audit' %}" class="attn-chip attn-slate">
-            <strong>{{ attention.pending_audits }}</strong> stock audit{{ attention.pending_audits|pluralize }} to resolve
+            <svg><use href="#i-clipboard-check"/></svg><strong>{{ attention.pending_audits }}</strong> stock audit{{ attention.pending_audits|pluralize }} to resolve
         </a>
         {% endif %}
     </div>
     {% else %}
-    <div style="display: flex; align-items: center; gap: 0.6rem; font-size: 0.9rem; color: #065f46; background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); border-radius: 10px; padding: 0.9rem 1.25rem;">
-        <span style="font-size: 1.1rem;">&#10004;</span> Nothing needs attention &mdash; no overdue orders, delayed shipments, or open approvals.
+    <div class="callout-ok">
+        <svg><use href="#i-check-circle"/></svg>
+        Nothing needs attention &mdash; no overdue orders, delayed shipments, or open approvals.
     </div>
     {% endif %}
 </section>
 
-<!-- Production In Progress -->
-<section class="pane-card animate-fade-in-up" style="animation-delay: 0.08s; margin-bottom: 2rem;">
-    <h3>&#128296; Production In Progress</h3>
+<!-- ===================== Production In Progress ===================== -->
+<section class="dash-section animate-fade-in-up" style="animation-delay: 0.08s;">
+    <div class="dash-section-head">
+        <span class="sec-icon"><svg><use href="#i-hammer"/></svg></span>
+        <div>
+            <h2>Production In Progress</h2>
+            <div class="sec-sub">Live runs on the floor, tracked against target yield.</div>
+        </div>
+        <a href="{% url 'readiness' %}" class="sec-link">All runs <svg><use href="#i-arrow-right"/></svg></a>
+    </div>
+
     {% if run_progress %}
-    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem;">
+    <div class="run-grid">
         {% for run in run_progress %}
-        <a href="{% url 'production_run_detail' run.pk %}" style="text-decoration: none; color: inherit;">
-            <div style="background: #fafafb; border: 1px solid var(--border-light); border-radius: 10px; padding: 1.1rem 1.25rem;">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
-                    <div>
-                        <div style="font-family: monospace; font-weight: 700; color: var(--primary);">{{ run.run_number }}</div>
-                        <div style="font-size: 0.85rem; color: var(--text-main); font-weight: 600;">{{ run.product }}</div>
-                    </div>
-                    <span class="badge {% if run.status == 'InProgress' %}badge-sky{% elif run.status == 'Paused' %}badge-amber{% else %}badge-slate{% endif %}">{{ run.status_display }}</span>
+        <a href="{% url 'production_run_detail' run.pk %}" class="run-card">
+            <div class="run-card-head">
+                <div>
+                    <div class="run-card-num">{{ run.run_number }}</div>
+                    <div class="run-card-prod">{{ run.product }}</div>
                 </div>
-                <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">
-                    <span>{{ run.made|floatformat:0 }} / {{ run.expected|floatformat:0 }} {{ run.unit }}</span>
-                    <span style="font-weight: 700; color: var(--text-main);">{{ run.pct|floatformat:0 }}%</span>
-                </div>
-                <div class="micro-progress-container">
-                    <div class="micro-progress-bar {% if run.pct_raw >= 100 %}progress-emerald{% elif run.pct_raw >= 50 %}progress-sky{% else %}progress-amber{% endif %}" style="width: {{ run.pct }}%;"></div>
-                </div>
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.6rem; font-size: 0.75rem; color: var(--text-muted);">
-                    <span>Supervisor: {{ run.supervisor }}</span>
-                    {% if run.days_running is not None %}<span>Day {{ run.days_running }}</span>{% endif %}
-                </div>
+                <span class="badge {% if run.status == 'InProgress' %}badge-sky{% elif run.status == 'Paused' %}badge-amber{% else %}badge-slate{% endif %}">{{ run.status_display }}</span>
+            </div>
+            <div class="run-card-stats">
+                <span>{{ run.made|floatformat:0 }} / {{ run.expected|floatformat:0 }} {{ run.unit }}</span>
+                <strong>{{ run.pct|floatformat:0 }}%</strong>
+            </div>
+            <div class="micro-progress-container">
+                <div class="micro-progress-bar {% if run.pct_raw >= 100 %}progress-emerald{% elif run.pct_raw >= 50 %}progress-sky{% else %}progress-amber{% endif %}" style="width: {{ run.pct }}%;"></div>
+            </div>
+            <div class="run-card-foot">
+                <span>Supervisor &middot; {{ run.supervisor }}</span>
+                {% if run.days_running is not None %}<span>Day {{ run.days_running }}</span>{% endif %}
             </div>
         </a>
         {% endfor %}
     </div>
     {% else %}
     <div class="zero-state-box">
-        <div class="zero-state-icon">&#128564;</div>
+        <div class="zero-state-icon"><svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#i-coffee"/></svg></div>
         <h4 style="font-weight: 600; color: var(--text-main);">No runs on the floor</h4>
         <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">Nothing is currently in progress, paused, or awaiting materials.</p>
     </div>
     {% endif %}
 </section>
 
-<!-- Visualization Grid -->
-<section class="charts-container-grid animate-fade-in-up" style="animation-delay: 0.1s;">
-    <!-- Sales Order Fulfillment Funnel Card -->
-    <div class="chart-box">
-        <h3>Sales Order Funnel</h3>
-        <div class="chart-wrapper">
-            <canvas id="salesOrderFunnelChart"></canvas>
-        </div>
-        <div class="color-ledger" id="sales-funnel-ledger">
-            <!-- Programmatically populated by JS for accessibility -->
+<!-- ===================== Analytics ===================== -->
+<section class="dash-section animate-fade-in-up" style="animation-delay: 0.1s;">
+    <div class="dash-section-head">
+        <span class="sec-icon"><svg><use href="#i-bar-chart"/></svg></span>
+        <div>
+            <h2>Analytics</h2>
+            <div class="sec-sub">Demand funnel, capacity load, and production yield.</div>
         </div>
     </div>
 
-    <!-- Warehouse Space & Optimization Metrics Bar Chart Card -->
-    <div class="chart-box col-span-2-lg">
-        <h3>Warehouse Capacity Optimization (Total vs. Used space in MT)</h3>
-        <div class="chart-wrapper">
-            <canvas id="warehouseCapacityChart"></canvas>
-        </div>
-    </div>
-</section>
-
-<!-- Production Analytics Grid -->
-<section class="charts-container-grid animate-fade-in-up" style="animation-delay: 0.12s;">
-    <!-- Weekly Output Trend -->
-    <div class="chart-box col-span-2-lg">
-        <h3>Finished-Goods Output (last 12 weeks)</h3>
-        <div class="chart-wrapper">
-            <canvas id="outputTrendChart"></canvas>
-        </div>
-    </div>
-
-    <!-- Material Usage Variance Leaderboard -->
-    <div class="chart-box">
-        <h3>Material Usage Variance</h3>
-        <div style="flex: 1; overflow-y: auto;">
-            {% for m in material_variance %}
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid var(--border-light);">
-                <div>
-                    <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-main);">{{ m.material__name }}</div>
-                    <div style="font-size: 0.72rem; color: var(--text-muted); font-family: monospace;">{{ m.material__sku }} &middot; {{ m.runs }} run{{ m.runs|pluralize }}</div>
-                </div>
-                <span style="font-weight: 700; font-size: 0.9rem; color: {% if m.avg_var > 5 %}#dc2626{% elif m.avg_var < -1 %}#059669{% else %}var(--text-muted){% endif %};">
-                    {% if m.avg_var >= 0 %}+{% endif %}{{ m.avg_var|floatformat:1 }}%
-                </span>
+    <div class="charts-container-grid" style="margin-bottom: 1.5rem;">
+        <div class="chart-box">
+            <h3>Sales Order Funnel</h3>
+            <div class="chart-wrapper">
+                <canvas id="salesOrderFunnelChart"></canvas>
             </div>
-            {% empty %}
-            <p style="font-size: 0.85rem; color: var(--text-muted); padding-top: 1rem;">No completed-run usage data yet.</p>
-            {% endfor %}
+            <div class="color-ledger" id="sales-funnel-ledger"></div>
         </div>
-        <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.5rem;">Avg actual vs expected consumption. Positive = over-consuming.</div>
+
+        <div class="chart-box col-span-2-lg">
+            <h3>Warehouse Capacity Optimization <span style="font-weight:400;color:var(--text-muted);font-size:0.85rem;">(total vs. used, MT)</span></h3>
+            <div class="chart-wrapper">
+                <canvas id="warehouseCapacityChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="charts-container-grid">
+        <div class="chart-box col-span-2-lg">
+            <h3>Finished-Goods Output <span style="font-weight:400;color:var(--text-muted);font-size:0.85rem;">(last 12 weeks)</span></h3>
+            <div class="chart-wrapper">
+                <canvas id="outputTrendChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-box">
+            <h3>Material Usage Variance</h3>
+            <div style="flex: 1; overflow-y: auto;">
+                <div class="var-list">
+                    {% for m in material_variance %}
+                    <div class="var-row">
+                        <div>
+                            <div class="var-name">{{ m.material__name }}</div>
+                            <div class="var-meta">{{ m.material__sku }} &middot; {{ m.runs }} run{{ m.runs|pluralize }}</div>
+                        </div>
+                        <span class="var-val {% if m.avg_var > 5 %}over{% elif m.avg_var < -1 %}under{% else %}neutral{% endif %}">
+                            {% if m.avg_var >= 0 %}+{% endif %}{{ m.avg_var|floatformat:1 }}%
+                        </span>
+                    </div>
+                    {% empty %}
+                    <p style="font-size: 0.85rem; color: var(--text-muted); padding-top: 1rem;">No completed-run usage data yet.</p>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="section-note">Avg actual vs expected consumption. Positive = over-consuming.</div>
+        </div>
     </div>
 </section>
 
-<!-- Operational Split-Pane Layout -->
-<section class="split-grid animate-fade-in-up" style="animation-delay: 0.15s;">
-    <!-- Left Column: Active Logistics Movements Table -->
-    <div class="pane-card">
-        <h3>🚚 Active Logistics Pipeline</h3>
-        <div class="data-table-container">
-            <table class="custom-table">
-                <thead>
-                    <tr>
-                        <th>Tracking / Fleet ID</th>
-                        <th>Direction</th>
-                        <th>Status</th>
-                        <th>ETA Date</th>
-                        <th style="text-align: right;">Items</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for shipment in active_shipments %}
-                    <tr>
-                        <td style="font-family: monospace; font-weight: 600;">
-                            <a href="{% url 'shipment_detail' shipment.pk %}" style="color: var(--primary); text-decoration: none;">{{ shipment.tracking_number }}</a>
-                        </td>
-                        <td>
-                            {% if shipment.direction == 'Inbound' %}
-                            <span style="color: #059669; margin-right: 0.25rem;">📥</span> Inbound
-                            {% elif shipment.direction == 'Outbound' %}
-                            <span style="color: #0284c7; margin-right: 0.25rem;">📤</span> Outbound
-                            {% else %}
-                            <span style="color: #64748b; margin-right: 0.25rem;">🔁</span> Transfer
-                            {% endif %}
-                        </td>
-                        <td>
-                            <span
-                                class="badge {% if shipment.status == 'Delayed' %}badge-rose{% elif shipment.status == 'Dispatched' %}badge-sky{% else %}badge-slate{% endif %}">
-                                {{ shipment.status }}
-                            </span>
-                        </td>
-                        <td style="color: var(--text-muted);">{{ shipment.expected_eta_date|default:"N/A" }}</td>
-                        <td style="text-align: right; font-weight: 700;">{{ shipment.items.count }} Item(s)</td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">
-                            No active movements in pipeline.
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+<!-- ===================== Logistics & Facilities ===================== -->
+<section class="dash-section animate-fade-in-up" style="animation-delay: 0.13s;">
+    <div class="dash-section-head">
+        <span class="sec-icon"><svg><use href="#i-truck"/></svg></span>
+        <div>
+            <h2>Logistics &amp; Facilities</h2>
+            <div class="sec-sub">Shipments in motion and per-warehouse space economics.</div>
         </div>
     </div>
 
-    <!-- Right Column: Warehouse Space & Cost Optimizer -->
-    <div class="pane-card">
-        <h3>🏢 Space & Cost Optimization</h3>
-        <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+    <div class="split-grid" style="margin-bottom: 0;">
+        <div class="pane-card">
+            <h3><svg><use href="#i-truck"/></svg> Active Logistics Pipeline</h3>
+            <div class="data-table-container">
+                <table class="custom-table">
+                    <thead>
+                        <tr>
+                            <th>Tracking / Fleet ID</th>
+                            <th>Direction</th>
+                            <th>Status</th>
+                            <th>ETA Date</th>
+                            <th style="text-align: right;">Items</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for shipment in active_shipments %}
+                        <tr>
+                            <td style="font-family: 'Outfit', sans-serif; font-weight: 600;">
+                                <a href="{% url 'shipment_detail' shipment.pk %}" style="color: var(--primary); text-decoration: none;">{{ shipment.tracking_number }}</a>
+                            </td>
+                            <td>
+                                {% if shipment.direction == 'Inbound' %}
+                                <span class="dir-cell inbound"><svg><use href="#i-inbound"/></svg><span>Inbound</span></span>
+                                {% elif shipment.direction == 'Outbound' %}
+                                <span class="dir-cell outbound"><svg><use href="#i-outbound"/></svg><span>Outbound</span></span>
+                                {% else %}
+                                <span class="dir-cell transfer"><svg><use href="#i-repeat"/></svg><span>Transfer</span></span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge {% if shipment.status == 'Delayed' %}badge-rose{% elif shipment.status == 'Dispatched' %}badge-sky{% else %}badge-slate{% endif %}">
+                                    {{ shipment.status }}
+                                </span>
+                            </td>
+                            <td style="color: var(--text-muted);">{{ shipment.expected_eta_date|default:"N/A" }}</td>
+                            <td style="text-align: right; font-weight: 700;">{{ shipment.items.count }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                                No active movements in pipeline.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="pane-card">
+            <h3><svg><use href="#i-building"/></svg> Space &amp; Cost Optimization</h3>
             {% for w in warehouse_stats %}
-            <div
-                style="background: #fafafb; border: 1px solid var(--border-light); border-radius: 8px; padding: 1.25rem; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.01);">
-                <div
-                    style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+            <div class="wh-card">
+                <div class="wh-card-head">
                     <div>
-                        <h4
-                            style="font-family: 'Outfit', sans-serif; font-size: 1.05rem; font-weight: 600; color: var(--text-main);">
-                            {{ w.name }}</h4>
-                        <span style="font-size: 0.75rem; color: var(--text-muted);">Billing: {{ w.billing_mode }}</span>
+                        <h4>{{ w.name }}</h4>
+                        <div class="wh-sub">Billing &middot; {{ w.billing_mode }}</div>
                     </div>
-                    <div>
-                        {% if w.raw_type == 'Internal' %}
-                        <span class="badge badge-emerald">Internal warehouse</span>
-                        {% else %}
-                        <span class="badge badge-rose">External provider</span>
-                        {% endif %}
-                    </div>
+                    {% if w.raw_type == 'Internal' %}
+                    <span class="badge badge-emerald">Internal</span>
+                    {% else %}
+                    <span class="badge badge-rose">External</span>
+                    {% endif %}
                 </div>
 
-                <!-- Micro progress bar -->
-                <div
-                    style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">
-                    <span>Space Utilized: {{ w.used_mt|floatformat:1 }} / {{ w.capacity_mt|floatformat:1 }} MT</span>
-                    <span style="font-weight: 600; color: var(--text-main);">{{ w.utilization_percent|floatformat:1 }}%</span>
+                <div class="wh-line">
+                    <span>Utilized: {{ w.used_mt|floatformat:1 }} / {{ w.capacity_mt|floatformat:1 }} MT</span>
+                    <strong>{{ w.utilization_percent|floatformat:1 }}%</strong>
                 </div>
                 <div class="micro-progress-container">
                     <div class="micro-progress-bar {% if w.utilization_percent > 85 %}progress-rose{% elif w.utilization_percent > 70 %}progress-amber{% else %}progress-emerald{% endif %}"
-                        style="width: {{ w.utilization_percent }}%;"></div>
+                        style="width: {% if w.utilization_percent > 100 %}100{% else %}{{ w.utilization_percent }}{% endif %}%;"></div>
                 </div>
 
-                <div
-                    style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; font-size: 0.8rem; border-top: 1px solid var(--border-light); padding-top: 0.5rem;">
-                    <span style="color: var(--text-muted);">Daily Burn Rate:</span>
-                    <span
-                        style="font-weight: 700; color: {% if w.daily_cost > 0 %}#dc2626{% else %}#059669{% endif %};">
-                        {% if w.daily_cost > 0 %}RM{{ w.daily_cost|floatformat:2 }}{% else %}Free (Owned){% endif %}
+                <div class="wh-card-foot">
+                    <span>Daily burn rate</span>
+                    <span class="burn {% if w.daily_cost <= 0 %}free{% endif %}">
+                        {% if w.daily_cost > 0 %}RM&thinsp;{{ w.daily_cost|floatformat:2|intcomma }}{% else %}Free (owned){% endif %}
                     </span>
                 </div>
             </div>
+            {% empty %}
+            <p style="font-size: 0.85rem; color: var(--text-muted);">No warehouses configured.</p>
             {% endfor %}
         </div>
     </div>
 </section>
 
-<!-- Risk Mitigation & Ledger Sections -->
-<section class="animate-fade-in" style="animation-delay: 0.2s; margin-top: 1rem;">
-    <!-- Predictive Degradation Alerts (FIFO Warnings) -->
+<!-- ===================== Risk & Compliance ===================== -->
+<section class="dash-section animate-fade-in" style="animation-delay: 0.16s;">
+    <div class="dash-section-head">
+        <span class="sec-icon" style="background: var(--danger-bg); color: var(--danger);"><svg><use href="#i-shield-alert"/></svg></span>
+        <div>
+            <h2>Risk &amp; Compliance</h2>
+            <div class="sec-sub">Shelf-life exposure and the most recent registry movements.</div>
+        </div>
+    </div>
+
     <div class="risk-alert-box">
-        <h3>⚠️ Predictive Material Degradation Alerts (FIFO Risk Warning)</h3>
+        <h3><svg><use href="#i-shield-alert"/></svg> Predictive Material Degradation Alerts (FIFO risk)</h3>
         {% if degrading_batches %}
         <div class="risk-grid">
             {% for batch in degrading_batches %}
             <div class="risk-item">
                 <div class="risk-tag-row">
-                    <span style="font-family: monospace; font-weight: 700; font-size: 0.85rem; color: var(--primary);">
-                        BATCH: {{ batch.batch_number }}
+                    <span style="font-family: 'Outfit', sans-serif; font-weight: 700; font-size: 0.85rem; color: var(--primary);">
+                        {{ batch.batch_number }}
                     </span>
                     <span class="badge {% if batch.days_remaining <= 10 %}badge-rose{% else %}badge-amber{% endif %}">
                         Expiring soon
@@ -392,23 +444,17 @@
 
                 <div style="margin: 0.5rem 0;">
                     <div style="font-weight: 600; color: var(--text-main);">
-                        {% if batch.material %}
-                        {{ batch.material.name }}
-                        {% elif batch.product %}
-                        {{ batch.product.name }}
-                        {% endif %}
+                        {% if batch.material %}{{ batch.material.name }}{% elif batch.product %}{{ batch.product.name }}{% endif %}
                     </div>
                     <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
                         Stored at: {{ batch.location|default:"Unassigned" }}
                     </div>
                 </div>
 
-                <div
-                    style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #fee2e2; padding-top: 0.5rem; font-size: 0.8rem;">
-                    <span style="color: var(--text-muted);">Shelf Life Remaining:</span>
-                    <span
-                        style="font-weight: 700; color: {% if batch.days_remaining <= 10 %}#dc2626{% else %}#d97706{% endif %};">
-                        {{ batch.days_remaining }} Days
+                <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #fee2e2; padding-top: 0.5rem; font-size: 0.8rem;">
+                    <span style="color: var(--text-muted);">Shelf life remaining</span>
+                    <span style="font-weight: 700; color: {% if batch.days_remaining <= 10 %}var(--danger){% else %}var(--warning){% endif %};">
+                        {{ batch.days_remaining }} day{{ batch.days_remaining|pluralize }}
                     </span>
                 </div>
             </div>
@@ -416,36 +462,34 @@
         </div>
         {% else %}
         <div class="zero-state-box">
-            <div class="zero-state-icon">🛡️</div>
-            <h4 style="font-weight: 600; color: var(--text-main);">No Expiring Stocks</h4>
+            <div class="zero-state-icon"><svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield-check"/></svg></div>
+            <h4 style="font-weight: 600; color: var(--text-main);">No expiring stock</h4>
             <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem; text-align: center;">
-                All active raw materials and finished goods reside safely within their defined storage thresholds.
+                All active raw materials and finished goods sit within their defined storage thresholds.
             </p>
         </div>
         {% endif %}
     </div>
 
-    <!-- Registry Transaction Log Ledger -->
-    <div class="pane-card" style="margin-top: 2rem;">
-        <h3>📋 Recent Registry Logs Ledger</h3>
+    <div class="pane-card" style="margin-top: 1.5rem;">
+        <h3><svg><use href="#i-clipboard"/></svg> Recent Registry Movements</h3>
         <div class="data-table-container">
             <table class="custom-table">
                 <thead>
                     <tr>
-                        <th>Transaction Timestamp</th>
-                        <th>Action Code</th>
-                        <th>Cargo Item</th>
-                        <th>Quantity Adjustment</th>
-                        <th>Warehouse Facility</th>
+                        <th>Timestamp</th>
+                        <th>Action</th>
+                        <th>Item</th>
+                        <th>Quantity</th>
+                        <th>Facility</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for log in recent_logs %}
                     <tr>
-                        <td style="color: var(--text-muted);">{{ log.timestamp|date:"Y-m-d H:i:s" }}</td>
+                        <td style="color: var(--text-muted);">{{ log.timestamp|date:"Y-m-d H:i" }}</td>
                         <td>
-                            <span
-                                class="badge {% if log.action_type == 'Inbound' or log.action_type == 'Produced' %}badge-emerald{% elif log.action_type == 'Outbound' or log.action_type == 'Consumed_For_Manufacturing' or log.action_type == 'Spoiled_Disposal' %}badge-slate{% else %}badge-slate{% endif %}">
+                            <span class="badge {% if log.action_type == 'Inbound' or log.action_type == 'Produced' %}badge-emerald{% else %}badge-slate{% endif %}">
                                 {{ log.get_action_type_display|default:log.action_type }}
                             </span>
                         </td>
@@ -478,18 +522,33 @@
 {{ chart_data|json_script:"chart-data" }}
 {{ sales_order_stats|json_script:"so-data" }}
 {{ output_trend|json_script:"output-trend-data" }}
+</div>
 {% endblock %}
 
 {% block extra_js %}
-<!-- Include Chart.js -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4" defer></script>
 <script>
     document.addEventListener('DOMContentLoaded', () => {
+        if (typeof Chart === 'undefined') return;
+
         const chartData = JSON.parse(document.getElementById('chart-data').textContent);
         const soData = JSON.parse(document.getElementById('so-data').textContent);
         const outputTrend = JSON.parse(document.getElementById('output-trend-data').textContent);
 
-        // Weekly finished-goods output trend (line)
+        const FONT = "'Plus Jakarta Sans', sans-serif";
+        const tooltipStyle = {
+            backgroundColor: 'rgba(15, 23, 42, 0.95)',
+            titleColor: '#ffffff',
+            bodyColor: '#e2e8f0',
+            borderColor: 'rgba(255, 255, 255, 0.1)',
+            borderWidth: 1,
+            padding: 10,
+            cornerRadius: 8,
+            titleFont: { family: FONT, weight: '600' },
+            bodyFont: { family: FONT }
+        };
+
+        // --- Weekly finished-goods output trend (line) ---
         const trendEl = document.getElementById('outputTrendChart');
         if (trendEl && outputTrend.labels.length) {
             new Chart(trendEl.getContext('2d'), {
@@ -511,19 +570,10 @@
                 options: {
                     maintainAspectRatio: false,
                     responsive: true,
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                            titleColor: '#ffffff',
-                            bodyColor: '#e2e8f0',
-                            padding: 10,
-                            cornerRadius: 6
-                        }
-                    },
+                    plugins: { legend: { display: false }, tooltip: tooltipStyle },
                     scales: {
-                        x: { grid: { display: false }, ticks: { color: '#64748b' } },
-                        y: { beginAtZero: true, grid: { color: 'rgba(15, 23, 42, 0.04)' }, ticks: { color: '#64748b' } }
+                        x: { grid: { display: false }, ticks: { color: '#64748b', font: { family: FONT } } },
+                        y: { beginAtZero: true, grid: { color: 'rgba(15, 23, 42, 0.04)' }, ticks: { color: '#64748b', font: { family: FONT } } }
                     }
                 }
             });
@@ -531,178 +581,101 @@
             trendEl.parentElement.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem; text-align: center; padding-top: 3rem;">No yield logged in the last 12 weeks.</p>';
         }
 
-        // Setup Sales Order Funnel Doughnut Chart
-        const salesCtx = document.getElementById('salesOrderFunnelChart').getContext('2d');
-
+        // --- Sales order funnel (doughnut) ---
+        const salesEl = document.getElementById('salesOrderFunnelChart');
         const funnelLabels = ['Draft', 'Pending Approval', 'Pending (Approved)', 'In Production', 'Ready to Ship', 'Shipped & Delivered'];
         const funnelCounts = [
-            soData.Draft,
-            soData.Pending_Approval,
-            soData.Pending_Approved,
-            soData.In_Production,
-            soData.Ready_to_Ship,
-            soData.Shipped_Delivered
+            soData.Draft, soData.Pending_Approval, soData.Pending_Approved,
+            soData.In_Production, soData.Ready_to_Ship, soData.Shipped_Delivered
         ];
-
-        // Clean light palette colors
         const funnelColors = [
-            'rgba(148, 163, 184, 0.8)', // Slate (Draft)
-            'rgba(245, 158, 11, 0.8)',  // Amber (Approval)
-            'rgba(14, 165, 233, 0.8)',  // Sky (Approved)
-            'rgba(99, 102, 241, 0.8)',  // Indigo (Production)
-            'rgba(6, 182, 212, 0.8)',   // Cyan (Ready to Ship)
-            'rgba(16, 185, 129, 0.8)'   // Emerald (Shipped)
+            'rgba(148, 163, 184, 0.85)', 'rgba(245, 158, 11, 0.85)', 'rgba(14, 165, 233, 0.85)',
+            'rgba(99, 102, 241, 0.85)', 'rgba(6, 182, 212, 0.85)', 'rgba(16, 185, 129, 0.85)'
         ];
+        const funnelHoverColors = funnelColors.map(c => c.replace('0.85', '1'));
 
-        const funnelHoverColors = [
-            'rgba(148, 163, 184, 1)',
-            'rgba(245, 158, 11, 1)',
-            'rgba(14, 165, 233, 1)',
-            'rgba(99, 102, 241, 1)',
-            'rgba(6, 182, 212, 1)',
-            'rgba(16, 185, 129, 1)'
-        ];
-
-        const salesChart = new Chart(salesCtx, {
-            type: 'doughnut',
-            data: {
-                labels: funnelLabels,
-                datasets: [{
-                    data: funnelCounts,
-                    backgroundColor: funnelColors,
-                    hoverBackgroundColor: funnelHoverColors,
-                    borderWidth: 2,
-                    borderColor: '#ffffff'
-                }]
-            },
-            options: {
-                maintainAspectRatio: false,
-                responsive: true,
-                animation: {
-                    duration: 1200,
-                    easing: 'easeOutQuart'
+        if (salesEl) {
+            new Chart(salesEl.getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: funnelLabels,
+                    datasets: [{
+                        data: funnelCounts,
+                        backgroundColor: funnelColors,
+                        hoverBackgroundColor: funnelHoverColors,
+                        borderWidth: 2,
+                        borderColor: '#ffffff'
+                    }]
                 },
-                plugins: {
-                    legend: {
-                        display: false
-                    },
-                    tooltip: {
-                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                        titleColor: '#ffffff',
-                        bodyColor: '#e2e8f0',
-                        borderColor: 'rgba(255, 255, 255, 0.1)',
-                        borderWidth: 1,
-                        padding: 10,
-                        cornerRadius: 6,
-                        font: {
-                            family: 'Plus Jakarta Sans'
-                        }
-                    }
-                },
-                cutout: '70%'
-            }
-        });
+                options: {
+                    maintainAspectRatio: false,
+                    responsive: true,
+                    animation: { duration: 1000, easing: 'easeOutQuart' },
+                    plugins: { legend: { display: false }, tooltip: tooltipStyle },
+                    cutout: '70%'
+                }
+            });
 
-        // Populate custom HTML color ledger for accessibility
-        const ledgerContainer = document.getElementById('sales-funnel-ledger');
-        funnelLabels.forEach((label, index) => {
-            const item = document.createElement('div');
-            item.className = 'ledger-item';
-            item.innerHTML = `
-                <span class="ledger-color" style="background-color: ${funnelColors[index]}"></span>
-                <span style="color: var(--text-muted); font-weight: 500;">${label} (${funnelCounts[index]})</span>
-            `;
-            ledgerContainer.appendChild(item);
-        });
+            const ledgerContainer = document.getElementById('sales-funnel-ledger');
+            funnelLabels.forEach((label, index) => {
+                const item = document.createElement('div');
+                item.className = 'ledger-item';
+                item.innerHTML = `
+                    <span class="ledger-color" style="background-color: ${funnelColors[index]}"></span>
+                    <span style="color: var(--text-muted); font-weight: 500;">${label} (${funnelCounts[index]})</span>
+                `;
+                ledgerContainer.appendChild(item);
+            });
+        }
 
-        // Setup Warehouse Space Optimization Grouped Bar Chart
-        const whCtx = document.getElementById('warehouseCapacityChart').getContext('2d');
-
-        const whChart = new Chart(whCtx, {
-            type: 'bar',
-            data: {
-                labels: chartData.labels,
-                datasets: [
-                    {
-                        label: 'Total Capacity (MT)',
-                        data: chartData.capacities,
-                        backgroundColor: 'rgba(15, 23, 42, 0.04)',
-                        borderColor: 'rgba(15, 23, 42, 0.1)',
-                        borderWidth: 1.5,
-                        borderRadius: 6,
-                        barPercentage: 0.6,
-                        categoryPercentage: 0.7
-                    },
-                    {
-                        label: 'Utilized Space (MT)',
-                        data: chartData.used,
-                        backgroundColor: 'rgba(79, 70, 229, 0.8)',
-                        hoverBackgroundColor: 'rgba(79, 70, 229, 0.95)',
-                        borderColor: 'rgba(79, 70, 229, 1)',
-                        borderWidth: 1.5,
-                        borderRadius: 6,
-                        barPercentage: 0.6,
-                        categoryPercentage: 0.7
-                    }
-                ]
-            },
-            options: {
-                maintainAspectRatio: false,
-                responsive: true,
-                animation: {
-                    duration: 1400,
-                    easing: 'easeOutQuart'
-                },
-                scales: {
-                    x: {
-                        grid: {
-                            display: false
+        // --- Warehouse capacity (grouped bar) ---
+        const whEl = document.getElementById('warehouseCapacityChart');
+        if (whEl && chartData.labels.length) {
+            new Chart(whEl.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: chartData.labels,
+                    datasets: [
+                        {
+                            label: 'Total capacity (MT)',
+                            data: chartData.capacities,
+                            backgroundColor: 'rgba(15, 23, 42, 0.05)',
+                            borderColor: 'rgba(15, 23, 42, 0.12)',
+                            borderWidth: 1.5,
+                            borderRadius: 6,
+                            barPercentage: 0.6,
+                            categoryPercentage: 0.7
                         },
-                        ticks: {
-                            color: '#64748b',
-                            font: {
-                                family: 'Plus Jakarta Sans',
-                                weight: 500
-                            }
+                        {
+                            label: 'Utilized space (MT)',
+                            data: chartData.used,
+                            backgroundColor: 'rgba(79, 70, 229, 0.85)',
+                            hoverBackgroundColor: 'rgba(79, 70, 229, 1)',
+                            borderColor: 'rgba(79, 70, 229, 1)',
+                            borderWidth: 1.5,
+                            borderRadius: 6,
+                            barPercentage: 0.6,
+                            categoryPercentage: 0.7
                         }
-                    },
-                    y: {
-                        grid: {
-                            color: 'rgba(15, 23, 42, 0.04)'
-                        },
-                        ticks: {
-                            color: '#64748b',
-                            font: {
-                                family: 'Plus Jakarta Sans'
-                            }
-                        }
-                    }
+                    ]
                 },
-                plugins: {
-                    legend: {
-                        labels: {
-                            color: '#0f172a',
-                            font: {
-                                family: 'Plus Jakarta Sans',
-                                weight: 600
-                            }
-                        }
+                options: {
+                    maintainAspectRatio: false,
+                    responsive: true,
+                    animation: { duration: 1200, easing: 'easeOutQuart' },
+                    scales: {
+                        x: { grid: { display: false }, ticks: { color: '#64748b', font: { family: FONT, weight: '500' } } },
+                        y: { grid: { color: 'rgba(15, 23, 42, 0.04)' }, ticks: { color: '#64748b', font: { family: FONT } } }
                     },
-                    tooltip: {
-                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                        titleColor: '#ffffff',
-                        bodyColor: '#e2e8f0',
-                        borderColor: 'rgba(255, 255, 255, 0.1)',
-                        borderWidth: 1,
-                        padding: 10,
-                        cornerRadius: 6,
-                        font: {
-                            family: 'Plus Jakarta Sans'
-                        }
+                    plugins: {
+                        legend: { labels: { color: '#0f172a', font: { family: FONT, weight: '600' }, usePointStyle: true, pointStyle: 'circle', padding: 16 } },
+                        tooltip: tooltipStyle
                     }
                 }
-            }
-        });
+            });
+        } else if (whEl) {
+            whEl.parentElement.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem; text-align: center; padding-top: 3rem;">No warehouse capacity data.</p>';
+        }
     });
 </script>
 {% endblock %}

@@ -300,6 +300,7 @@ def consume_materials_for_run(run, user):
             RegistryLog.objects.create(
                 action_type='Consumed_For_Manufacturing',
                 item_name=f"{material.name} (Run {run.run_number})",
+                material=material,
                 quantity_changed=consumed,
                 warehouse=run.manufacturing_plant,
                 user=user
@@ -597,6 +598,7 @@ def deduct_stock_from_allocation(order_type, order, user=None):
             RegistryLog.objects.create(
                 action_type='Outbound',
                 item_name=f"{item_name} (Batch {batch.batch_number})",
+                material=batch.material,
                 quantity_changed=-alloc.quantity,
                 warehouse=batch.warehouse,
                 user=user
@@ -640,6 +642,7 @@ def apply_po_material_receipt(po_detail, delta_qty, user):
         RegistryLog.objects.create(
             action_type='Inbound',
             item_name=f"{po_detail.material.name} (Batch {batch.batch_number})",
+            material=po_detail.material,
             quantity_changed=delta_qty,
             warehouse=po.target_warehouse,
             user=user
@@ -650,9 +653,13 @@ def apply_po_material_receipt(po_detail, delta_qty, user):
     total_received = sum(Decimal(str(i.quantity_received)) for i in all_items)
     if total_received >= total_ordered:
         po.status = 'Completed'
-    elif total_received > 0:
-        po.status = 'Partially Received'
-    po.save(update_fields=['status'])
+        if po.completed_date is None:
+            po.completed_date = date.today()
+        po.save(update_fields=['status', 'completed_date'])
+    else:
+        if total_received > 0:
+            po.status = 'Partially Received'
+        po.save(update_fields=['status'])
 
 
 def apply_so_product_shipment(so_detail, delta_qty):

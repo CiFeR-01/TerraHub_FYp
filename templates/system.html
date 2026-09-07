@@ -114,7 +114,8 @@
             System Diagnostics &amp; Telemetry Control
         </h1>
     </div>
-    <div class="header-action-tray">
+    <div class="header-action-tray" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+        <a href="{% url 'system_settings' %}" class="btn btn-outline" style="padding:0.45rem 1rem; font-size:0.85rem;">⚙ Operational Settings</a>
         <span class="badge badge-emerald" style="padding:0.4rem 0.8rem; font-weight:600;">● System Online (Django 6.0.4)</span>
     </div>
 </header>
