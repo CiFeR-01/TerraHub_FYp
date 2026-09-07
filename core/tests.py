@@ -1154,3 +1154,87 @@ class StockoutForecastTests(TestCase):
 
     def test_view_requires_login(self):
         self.assertEqual(self.client.get(reverse('forecast')).status_code, 302)
+
+
+from datetime import date, timedelta
+from core.models import RegistryLog
+
+
+class BatchDetailEditTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='warehouseop', password='password123')
+        self.client.login(username='warehouseop', password='password123')
+
+        self.warehouse = Warehouse.objects.create(
+            name="Batch Edit Facility",
+            location_type="Storage",
+            ownership_type="Internal",
+            rental_billing_method="Usage",
+            rental_cost_per_mt=0.00,
+            total_capacity_mt=1000.00,
+        )
+        self.material = Material.objects.create(
+            name="Edit Test Material",
+            sku="MATEDIT1",
+            category="Chemicals",
+            unit_of_measure="MT",
+            safe_storage_days=90,
+            weight_mt_per_unit=1.0,
+            cost_per_unit=50.00,
+        )
+        self.batch = Batch.objects.create(
+            batch_number="BATCH-EDIT-001",
+            status="Active",
+            material=self.material,
+            quantity=100,
+            manufacturing_date=date.today() - timedelta(days=10),
+            expiry_date=date.today() + timedelta(days=80),
+            warehouse=self.warehouse,
+            location="Zone A",
+        )
+
+    def _post_update(self, **overrides):
+        data = {
+            'action': 'update_batch',
+            'status': self.batch.status,
+            'expiry_date': self.batch.expiry_date.strftime('%Y-%m-%d'),
+            'location': self.batch.location,
+        }
+        data.update(overrides)
+        url = reverse('batch_detail', kwargs={'batch_number': self.batch.batch_number})
+        return self.client.post(url, data)
+
+    def test_update_batch_status_logs_change_without_error(self):
+        response = self._post_update(status='Quarantined')
+        self.assertEqual(response.status_code, 302)
+
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.status, 'Quarantined')
+
+        log = RegistryLog.objects.get(action_type='Adjusted', item_name__icontains='BATCH-EDIT-001')
+        self.assertIn('Status changed to Quarantined', log.item_name)
+        self.assertEqual(log.warehouse, self.warehouse)
+        self.assertEqual(log.user, self.user)
+
+    def test_update_batch_multiple_fields_logged_and_visible_in_history(self):
+        new_expiry = (self.batch.expiry_date + timedelta(days=30)).strftime('%Y-%m-%d')
+        response = self._post_update(status='Quarantined', expiry_date=new_expiry, location='Zone B')
+        self.assertEqual(response.status_code, 302)
+
+        log = RegistryLog.objects.get(action_type='Adjusted', item_name__icontains='BATCH-EDIT-001')
+        self.assertIn('Status changed to Quarantined', log.item_name)
+        self.assertIn('Expiry updated to', log.item_name)
+        self.assertIn('Location updated', log.item_name)
+
+        # The batch detail page filters its history by item_name__icontains=batch_number,
+        # so the folded summary must still surface there.
+        history_url = reverse('batch_detail', kwargs={'batch_number': self.batch.batch_number})
+        page = self.client.get(history_url)
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, 'Status changed to Quarantined')
+
+    def test_update_batch_no_changes_writes_no_log(self):
+        response = self._post_update()
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(RegistryLog.objects.filter(item_name__icontains='BATCH-EDIT-001').exists())
