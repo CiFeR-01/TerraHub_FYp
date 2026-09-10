@@ -84,7 +84,7 @@ def sidebar_nav(request):
 
     # Overview
     overview_items = [{'label': 'Dashboard & Analytics', 'url_name': 'dashboard'}]
-    overview_items.append({'label': 'Digital Assistant (AI)', 'url_name': None, 'css_class': 'ai-link'})
+    overview_items.append({'label': 'Digital Assistant (AI)', 'url_name': 'ops_briefing', 'css_class': 'ai-link'})
     if _has_any_role(user, 'Admin', 'Manager'):
         overview_items.append({
             'label': 'Action Center',
@@ -97,10 +97,13 @@ def sidebar_nav(request):
     # domain page (Suppliers, Sales Orders, Stock Tally, Manufacture, Materials
     # Hub) links into its analytic via _insight_link.html, but the sidebar
     # highlight and canonical location is here.
-    # Capacity Runway is added by Phase 2b, AI Ops Briefing by Phase 3.
+    # The Tier 3 AI Ops Briefing that narrates these signals lives on the
+    # "Digital Assistant (AI)" link in Overview (Phase 3), not in this section.
     insights_items = []
     if user.has_perm('core.view_material'):
         insights_items.append({'label': 'Stockout Forecast', 'url_name': 'forecast'})
+    if user.has_perm('core.view_warehouse'):
+        insights_items.append({'label': 'Capacity Runway', 'url_name': 'capacity_forecast'})
     if user.has_perm('core.view_supplier'):
         insights_items.append({'label': 'Supplier Scorecard', 'url_name': 'supplier_scorecard'})
     if user.has_perm('core.view_shipment'):

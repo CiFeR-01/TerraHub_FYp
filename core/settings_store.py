@@ -27,6 +27,20 @@ REGISTRY: dict[str, tuple[object, str, str]] = {
         "A sales order with no shipment yet and a fulfillment deadline this many "
         "days out (or nearer) is flagged 'at risk' on the delivery-risk board.",
     ),
+    "ops_briefing_enabled": (
+        True,
+        "bool",
+        "When off, the generate_ops_briefing command records a 'skipped' briefing "
+        "instead of calling the Claude API. Turn off to pause the paid daily call "
+        "without a deploy.",
+    ),
+    "ops_briefing_model": (
+        "claude-opus-5",
+        "str",
+        "Claude model id the AI Ops Briefing (Tier 3) is generated with. "
+        "claude-opus-5 is the default; claude-sonnet-5 or claude-haiku-4-5 are "
+        "cheaper for this structured-summarisation job.",
+    ),
 }
 
 

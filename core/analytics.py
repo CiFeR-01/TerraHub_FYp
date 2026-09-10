@@ -19,6 +19,8 @@ Delivered so far:
             sales_order_delivery_risk() board; audit_accuracy();
             production_yield_variance().
   Phase 2a - stockout_forecast(): consumption-rate days-of-cover + reorder-by date.
+  Phase 2b - capacity_forecast(): linear-fit of WarehouseUtilizationSnapshot -> date
+             each warehouse crosses 100%.
 """
 from __future__ import annotations
 
@@ -819,6 +821,152 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
         _STOCKOUT_RANK[r["status"]],
         r["reorder_by_date"] or _dt.date.max,
         -r["daily_rate"],
+        r["name"].lower(),
+    ))
+    return rows
+
+
+# --------------------------------------------------------------------------------
+# Tier 2 - Warehouse capacity runway
+# --------------------------------------------------------------------------------
+# Snapshots utilization_percent per warehouse daily (management command
+# snapshot_utilization), then linear-fits the trend to project when each
+# warehouse crosses 100%.
+
+_CAPACITY_RANK = {"critical": 0, "watch": 1, "ok": 2, "stable": 3, "no_data": 4}
+
+# Below this many snapshots there is no trend to fit.
+_MIN_SNAPSHOTS = 3
+# Slopes flatter than this (percentage points per day) count as "not filling".
+_FLAT_SLOPE_PP = 0.02
+_CAPACITY_HORIZON_DAYS = 3650
+
+
+def used_mt_expr():
+    """
+    ORM expression for a Warehouse's active-stock tonnage: Σ over active batches of
+    quantity × the material's or product's weight_mt_per_unit. Shared by
+    dashboard_view and warehouse_utilization() so the number is defined once.
+    """
+    from django.db.models import Case, When, F, Value, DecimalField
+    from django.db.models.functions import Coalesce
+
+    return Coalesce(
+        Sum(Case(
+            When(batches__status='Active', batches__material__isnull=False,
+                 then=F('batches__quantity') * F('batches__material__weight_mt_per_unit')),
+            When(batches__status='Active', batches__product__isnull=False,
+                 then=F('batches__quantity') * F('batches__product__weight_mt_per_unit')),
+            default=Value(0), output_field=DecimalField(),
+        )),
+        Value(0, output_field=DecimalField()),
+    )
+
+
+def warehouse_utilization():
+    """
+    Current point-in-time utilization per warehouse:
+    ``[{warehouse_id, name, used_mt, capacity_mt, utilization_percent}, ...]``.
+    """
+    from .models import Warehouse
+
+    rows = []
+    for w in Warehouse.objects.annotate(used_mt=used_mt_expr()).order_by('name'):
+        used = float(w.used_mt or 0)
+        cap = float(w.total_capacity_mt or 0)
+        rows.append({
+            "warehouse_id": w.id,
+            "name": w.name,
+            "used_mt": round(used, 3),
+            "capacity_mt": round(cap, 3),
+            "utilization_percent": round(used / cap * 100, 2) if cap > 0 else 0.0,
+        })
+    return rows
+
+
+def _linreg(points):
+    """Ordinary least-squares (slope, intercept) for [(x, y), ...]. slope=None if degenerate."""
+    n = len(points)
+    if n < 2:
+        return None, None
+    sx = sum(p[0] for p in points)
+    sy = sum(p[1] for p in points)
+    sxx = sum(p[0] * p[0] for p in points)
+    sxy = sum(p[0] * p[1] for p in points)
+    denom = n * sxx - sx * sx
+    if denom == 0:
+        return None, None
+    slope = (n * sxy - sx * sy) / denom
+    intercept = (sy - slope * sx) / n
+    return slope, intercept
+
+
+def capacity_forecast():
+    """
+    Per warehouse, fit utilization_percent over its snapshot history and project
+    when it reaches 100%. Most urgent first.
+
+    Row keys: warehouse_id, name, snapshot_count, first_date, latest_date,
+    current_percent, weekly_rate_pp (slope × 7; +ve = filling), days_to_full,
+    projected_full_date, status
+    ('critical' | 'watch' | 'ok' | 'stable' | 'no_data').
+
+      critical  - current >= 95%, or projected full within 14 days
+      watch     - projected full within 60 days
+      ok        - filling, but further out
+      stable    - flat or emptying
+      no_data   - fewer than 3 snapshots
+    """
+    from .models import Warehouse, WarehouseUtilizationSnapshot
+
+    snaps = {}
+    for s in (WarehouseUtilizationSnapshot.objects
+              .order_by('warehouse_id', 'snapshot_date')
+              .values('warehouse_id', 'snapshot_date', 'utilization_percent')):
+        snaps.setdefault(s['warehouse_id'], []).append(
+            (s['snapshot_date'], float(s['utilization_percent']))
+        )
+
+    rows = []
+    for w in Warehouse.objects.order_by('name'):
+        hist = snaps.get(w.id, [])
+        base = {
+            "warehouse_id": w.id, "name": w.name,
+            "snapshot_count": len(hist),
+            "first_date": hist[0][0] if hist else None,
+            "latest_date": hist[-1][0] if hist else None,
+            "current_percent": round(hist[-1][1], 2) if hist else None,
+            "weekly_rate_pp": None, "days_to_full": None, "projected_full_date": None,
+        }
+        if len(hist) < _MIN_SNAPSHOTS:
+            base["status"] = "no_data"
+            rows.append(base)
+            continue
+
+        d0 = hist[0][0]
+        slope, _intercept = _linreg([((d - d0).days, y) for d, y in hist])
+        current = hist[-1][1]
+        base["weekly_rate_pp"] = round(slope * 7, 2) if slope is not None else None
+
+        if slope is None or slope <= _FLAT_SLOPE_PP:
+            base["status"] = "stable" if current < 95 else "critical"
+        else:
+            days_to_full = max(0.0, (100.0 - current) / slope)
+            base["days_to_full"] = round(days_to_full, 1)
+            if days_to_full <= _CAPACITY_HORIZON_DAYS:
+                base["projected_full_date"] = hist[-1][0] + _dt.timedelta(days=round(days_to_full))
+            if current >= 95 or days_to_full <= 14:
+                base["status"] = "critical"
+            elif days_to_full <= 60:
+                base["status"] = "watch"
+            else:
+                base["status"] = "ok"
+        rows.append(base)
+
+    rows.sort(key=lambda r: (
+        _CAPACITY_RANK[r["status"]],
+        r["days_to_full"] if r["days_to_full"] is not None else 10 ** 6,
+        -(r["current_percent"] or 0),
         r["name"].lower(),
     ))
     return rows

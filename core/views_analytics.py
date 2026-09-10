@@ -6,13 +6,16 @@ template under templates/analytics/. All real computation lives in analytics.py 
 it stays testable and reusable by management commands. See
 SYSTEM_DOCUMENTATION.md section 8 and ANALYTICS_CHANGELOG.md.
 """
+import os
 from datetime import timedelta
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.utils import timezone
 
 from . import analytics
+from .settings_store import get_setting
 
 # Trailing windows offered in the UI. 0 == all time.
 WINDOW_CHOICES = (30, 90, 180, 365, 0)
@@ -186,4 +189,114 @@ def forecast_view(request):
             ("ok", "OK"),
             ("no_usage", "No usage"),
         ],
+    })
+
+
+@login_required
+def capacity_forecast_view(request):
+    rows = analytics.capacity_forecast()
+    history_days = max((r["snapshot_count"] for r in rows), default=0)
+    summary = {
+        "warehouse_count": len(rows),
+        "critical": sum(1 for r in rows if r["status"] == "critical"),
+        "watch": sum(1 for r in rows if r["status"] == "watch"),
+        "no_data": sum(1 for r in rows if r["status"] == "no_data"),
+        "history_days": history_days,
+        "empty": history_days == 0,
+        "building": 0 < history_days < 7,
+    }
+    return render(request, "analytics/capacity_forecast.html", {
+        "rows": rows,
+        "summary": summary,
+    })
+
+
+# --------------------------------------------------------------------------------
+# Tier 3 - AI Ops Briefing
+# --------------------------------------------------------------------------------
+# Renders the latest OpsBriefing (core/briefing.py). This is the target of the
+# "Digital Assistant (AI)" sidebar link. Admin / Manager can also trigger a run
+# here so it is usable before the generate_ops_briefing job is scheduled.
+
+_BRIEFING_SIGNAL_LINKS = [
+    ("stockout_forecast", "forecast", "Stockout Forecast"),
+    ("capacity_runway", "capacity_forecast", "Capacity Runway"),
+    ("supplier_reliability", "supplier_scorecard", "Supplier Scorecard"),
+    ("sales_order_delivery_risk", "so_delivery_risk", "Delivery Risk"),
+    ("stock_audit_accuracy", "audit_accuracy", "Audit Accuracy"),
+    ("production_yield_variance", "production_yield", "Yield Variance"),
+]
+
+
+def _can_generate_briefing(user):
+    return user.is_superuser or getattr(user, "role", None) in ("Admin", "Manager")
+
+
+def _parse_briefing_body(briefing):
+    """Split the stored body_text into bullet points and an optional 'Watch:' line."""
+    if briefing is None:
+        return [], ""
+    points, watch = [], ""
+    for line in (briefing.body_text or "").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.lower().startswith("watch:"):
+            watch = s[len("watch:"):].strip()
+        elif s[:2] in ("- ", "* ", "• "):
+            points.append(s[2:].strip())
+        else:
+            points.append(s)
+    return points, watch
+
+
+@login_required
+def ops_briefing_view(request):
+    from .models import OpsBriefing
+
+    can_generate = _can_generate_briefing(request.user)
+
+    if request.method == "POST":
+        if not can_generate:
+            messages.error(request, "Only Admin or Manager can generate a briefing.")
+            return redirect("ops_briefing")
+        from .briefing import generate_briefing
+        b = generate_briefing(period=request.POST.get("period", "daily"), user=request.user)
+        if b.status == "ok":
+            messages.success(request, f"Briefing generated ({b.model_id}, {b.signal_count} signals).")
+        elif b.status == "empty":
+            messages.success(request, "Nothing notable to brief right now.")
+        elif b.status == "skipped":
+            messages.warning(request, f"Briefing skipped: {b.error_detail}")
+        else:
+            messages.error(request, f"Briefing failed: {b.error_detail}")
+        return redirect("ops_briefing")
+
+    latest = OpsBriefing.objects.filter(status="ok").first()
+    last_attempt = OpsBriefing.objects.first()
+    points, watch = _parse_briefing_body(latest)
+
+    signal_sections = []
+    if latest:
+        sig = latest.signals_json or {}
+        for key, url_name, label in _BRIEFING_SIGNAL_LINKS:
+            payload = sig.get(key)
+            if key == "stock_audit_accuracy" and isinstance(payload, dict):
+                n = len(payload.get("by_warehouse", [])) + len(payload.get("by_item", []))
+            else:
+                n = len(payload or [])
+            signal_sections.append({"label": label, "url_name": url_name, "count": n})
+
+    return render(request, "analytics/ops_briefing.html", {
+        "briefing": latest,
+        "points": points,
+        "watch": watch,
+        "last_attempt": last_attempt,
+        "stale_attempt": last_attempt if (last_attempt and last_attempt != latest) else None,
+        "signal_sections": signal_sections,
+        "recent": OpsBriefing.objects.all()[:8],
+        "can_generate": can_generate,
+        "has_api_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "model_setting": get_setting("ops_briefing_model"),
+        "briefing_enabled": get_setting("ops_briefing_enabled"),
     })
