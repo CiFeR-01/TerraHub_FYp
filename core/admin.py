@@ -5,7 +5,8 @@ from .models import (
     ProductRecipe, ProductionRun, ProductionConsumption, Batch,
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
     Shipment, StockAudit, RegistryLog, OrderTimeline, Notification,
-    Supplier, SupplierMaterial, Client, SystemSetting
+    Supplier, SupplierMaterial, Client, SystemSetting, WarehouseUtilizationSnapshot,
+    OpsBriefing,
 )
 
 class CustomUserAdmin(UserAdmin):
@@ -41,6 +42,13 @@ admin.site.register(SupplierMaterial)
 admin.site.register(Client)
 
 
+@admin.register(WarehouseUtilizationSnapshot)
+class WarehouseUtilizationSnapshotAdmin(admin.ModelAdmin):
+    list_display = ('warehouse', 'snapshot_date', 'utilization_percent', 'used_mt', 'capacity_mt')
+    list_filter = ('warehouse', 'snapshot_date')
+    date_hierarchy = 'snapshot_date'
+
+
 @admin.register(SystemSetting)
 class SystemSettingAdmin(admin.ModelAdmin):
     list_display = ('key', 'value', 'value_type', 'description', 'updated_at', 'updated_by')
@@ -58,3 +66,18 @@ class SystemSettingAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         obj.updated_by = request.user
         super().save_model(request, obj, form, change)
+
+
+@admin.register(OpsBriefing)
+class OpsBriefingAdmin(admin.ModelAdmin):
+    list_display = ('generated_at', 'period', 'status', 'model_id', 'signal_count',
+                    'input_tokens', 'output_tokens', 'headline')
+    list_filter = ('status', 'period', 'model_id')
+    date_hierarchy = 'generated_at'
+    readonly_fields = ('generated_at', 'period', 'status', 'headline', 'body_text',
+                       'signals_json', 'signal_count', 'model_id', 'input_tokens',
+                       'output_tokens', 'error_detail', 'generated_by')
+
+    def has_add_permission(self, request):
+        # Created by generate_ops_briefing / the briefing page, never hand-typed.
+        return False

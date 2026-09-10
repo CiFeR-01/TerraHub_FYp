@@ -560,3 +560,67 @@ class SystemSetting(models.Model):
     def __str__(self):
         return f"{self.key} = {self.value}"
 
+
+class WarehouseUtilizationSnapshot(models.Model):
+    """
+    One row per warehouse per day, written by `manage.py snapshot_utilization`.
+    Point-in-time utilization was computed on the fly in dashboard_view and
+    discarded; recording it daily lets analytics.capacity_forecast() trend it and
+    project when each warehouse crosses 100%.
+    """
+    warehouse = models.ForeignKey(
+        Warehouse, on_delete=models.CASCADE, related_name='utilization_snapshots'
+    )
+    snapshot_date = models.DateField()
+    used_mt = models.DecimalField(max_digits=14, decimal_places=3)
+    capacity_mt = models.DecimalField(max_digits=14, decimal_places=3)
+    utilization_percent = models.DecimalField(max_digits=6, decimal_places=2)
+
+    class Meta:
+        unique_together = ('warehouse', 'snapshot_date')
+        ordering = ['-snapshot_date', 'warehouse_id']
+
+    def __str__(self):
+        return f"{self.warehouse.name} @ {self.snapshot_date}: {self.utilization_percent}%"
+
+
+class OpsBriefing(models.Model):
+    """
+    A stored run of the Tier 3 "AI Ops Briefing" (see core/briefing.py).
+
+    `generate_ops_briefing` collects the Tier 1/2 analytics signals into
+    `signals_json`, sends them to Claude with a constrained prompt, and saves the
+    plain-English result here. `ops_briefing_view` renders the latest `ok` row -
+    it is the target of the "Digital Assistant (AI)" sidebar link. Nothing here
+    is computed on the fly; a claim in `body_text` traces back to `signals_json`
+    and to the analytics page it came from.
+    """
+    PERIOD_CHOICES = (('daily', 'Daily'), ('weekly', 'Weekly'))
+    STATUS_CHOICES = (
+        ('ok', 'Generated'),
+        ('empty', 'No notable signals'),
+        ('skipped', 'Skipped (disabled)'),
+        ('error', 'Failed'),
+    )
+    generated_at = models.DateTimeField(auto_now_add=True)
+    period = models.CharField(max_length=10, choices=PERIOD_CHOICES, default='daily')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='ok')
+    headline = models.CharField(max_length=255, blank=True)
+    body_text = models.TextField(blank=True)
+    signals_json = models.JSONField(default=dict, blank=True)
+    signal_count = models.PositiveIntegerField(default=0)
+    model_id = models.CharField(max_length=80, blank=True)
+    input_tokens = models.PositiveIntegerField(null=True, blank=True)
+    output_tokens = models.PositiveIntegerField(null=True, blank=True)
+    error_detail = models.CharField(max_length=500, blank=True)
+    generated_by = models.ForeignKey(
+        CustomUser, on_delete=models.SET_NULL, null=True, blank=True,
+        help_text="The user who triggered a manual run; null for the scheduled job.",
+    )
+
+    class Meta:
+        ordering = ['-generated_at']
+
+    def __str__(self):
+        return f"OpsBriefing #{self.pk} ({self.period}, {self.status}) @ {self.generated_at:%Y-%m-%d %H:%M}"
+

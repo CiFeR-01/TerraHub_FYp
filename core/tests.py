@@ -478,10 +478,12 @@ from datetime import date
 from core.models import (
     Supplier, SupplierMaterial, PurchaseOrder, PurchaseOrderDetail, Shipment,
     SystemSetting, ProductionRun, RunMaterialUsage, StockAudit,
+    WarehouseUtilizationSnapshot,
 )
 from core.analytics import (
     supplier_reliability, sales_order_delivery_risk,
     audit_accuracy, production_yield_variance, stockout_forecast,
+    capacity_forecast, warehouse_utilization,
 )
 from core.settings_store import get_setting
 
@@ -1238,3 +1240,106 @@ class BatchDetailEditTests(TestCase):
         response = self._post_update()
         self.assertEqual(response.status_code, 302)
         self.assertFalse(RegistryLog.objects.filter(item_name__icontains='BATCH-EDIT-001').exists())
+
+
+class CapacityForecastTests(TestCase):
+    """Phase 2b: warehouse_utilization(), snapshot_utilization command, capacity_forecast()."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='capacity', password='pw')
+        self.wh = Warehouse.objects.create(
+            name='Depot 1', location_type='Storage', total_capacity_mt=Decimal('1000'),
+        )
+        self.material = Material.objects.create(
+            name='Sand', sku='MAT-S', category='Bulk', unit_of_measure='MT',
+            safe_storage_days=365, weight_mt_per_unit=Decimal('1.0'),
+        )
+
+    def _batch(self, qty):
+        return Batch.objects.create(
+            batch_number=f'B-{self.wh.id}-{qty}', material=self.material,
+            quantity=Decimal(str(qty)), status='Active', warehouse=self.wh,
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=300),
+        )
+
+    def _snap(self, pct, days_ago):
+        return WarehouseUtilizationSnapshot.objects.create(
+            warehouse=self.wh, snapshot_date=date.today() - timedelta(days=days_ago),
+            used_mt=Decimal(str(pct * 10)), capacity_mt=Decimal('1000'),
+            utilization_percent=Decimal(str(pct)),
+        )
+
+    def _row(self):
+        return next(r for r in capacity_forecast() if r['warehouse_id'] == self.wh.id)
+
+    def test_warehouse_utilization_weighted_by_unit_weight(self):
+        self._batch(300)  # 300 MT into a 1000 MT warehouse -> 30%
+        row = next(r for r in warehouse_utilization() if r['warehouse_id'] == self.wh.id)
+        self.assertAlmostEqual(row['used_mt'], 300.0)
+        self.assertAlmostEqual(row['utilization_percent'], 30.0)
+
+    def test_snapshot_command_is_idempotent_per_day(self):
+        from django.core.management import call_command
+        self._batch(400)
+        call_command('snapshot_utilization')
+        call_command('snapshot_utilization')
+        rows = WarehouseUtilizationSnapshot.objects.filter(warehouse=self.wh)
+        self.assertEqual(rows.count(), 1)
+        self.assertAlmostEqual(float(rows.first().utilization_percent), 40.0)
+
+    def test_no_data_below_three_snapshots(self):
+        self._snap(50, 2)
+        self._snap(55, 1)
+        self.assertEqual(self._row()['status'], 'no_data')
+
+    def test_filling_trend_projects_full_date(self):
+        # 60 -> 70 -> 80 over 20 days: ~1 pp/day, 20 days to 100
+        self._snap(60, 20)
+        self._snap(70, 10)
+        self._snap(80, 0)
+        row = self._row()
+        self.assertEqual(row['current_percent'], 80.0)
+        self.assertAlmostEqual(row['weekly_rate_pp'], 7.0, places=1)
+        self.assertAlmostEqual(row['days_to_full'], 20.0, places=0)
+        self.assertIsNotNone(row['projected_full_date'])
+        self.assertEqual(row['status'], 'watch')  # full in ~20d -> within 60, past 14
+
+    def test_fast_fill_is_critical(self):
+        self._snap(80, 6)
+        self._snap(90, 3)
+        self._snap(97, 0)  # already >= 95
+        self.assertEqual(self._row()['status'], 'critical')
+
+    def test_flat_trend_is_stable(self):
+        self._snap(50, 20)
+        self._snap(50, 10)
+        self._snap(50, 0)
+        row = self._row()
+        self.assertEqual(row['status'], 'stable')
+        self.assertIsNone(row['projected_full_date'])
+
+    def test_view_renders_with_history_banner(self):
+        self._snap(60, 2)
+        self._snap(65, 1)
+        self._snap(70, 0)
+        self.client.login(username='capacity', password='pw')
+        resp = self.client.get(reverse('capacity_forecast'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Depot 1')
+        self.assertContains(resp, 'Collecting data')  # 3 days < 7
+
+    def test_view_empty_state(self):
+        self.client.login(username='capacity', password='pw')
+        resp = self.client.get(reverse('capacity_forecast'))
+        self.assertContains(resp, 'No snapshots yet')
+
+    def test_view_requires_login(self):
+        self.assertEqual(self.client.get(reverse('capacity_forecast')).status_code, 302)
+
+    def test_nav_and_facility_callout(self):
+        self.client.login(username='capacity', password='pw')
+        # facility page links to it
+        fac = self.client.get(reverse('warehouse_list'))
+        self.assertContains(fac, reverse('capacity_forecast'))
+        self.assertContains(fac, 'Capacity runway')

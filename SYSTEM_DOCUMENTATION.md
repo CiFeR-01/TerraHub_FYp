@@ -137,6 +137,7 @@ D:\TerraHub
 | `/warehouse/stock-audit/accuracy/` | `audit_accuracy` | `views_analytics.audit_accuracy_view` | Stock-audit accuracy roll-up — "Accuracy" tab of the Stock Audit hub (see §8) |
 | `/operations/manufacture/yield/` | `production_yield` | `views_analytics.production_yield_view` | Production yield variance — "Yield" tab of the Manufacturing hub (see §8) |
 | `/warehouse/forecast/` | `forecast` | `views_analytics.forecast_view` | Consumption-rate stockout & reorder forecast (see §8) |
+| `/warehouse/capacity/` | `capacity_forecast` | `views_analytics.capacity_forecast_view` | Warehouse capacity runway — daily-snapshot trend (see §8) |
 | `/admin/` | — | Django admin | Django admin site |
 
 ---
@@ -157,6 +158,7 @@ Defined in `core/models.py`:
 - **Allocation**: `StockAllocation` (shared reservation engine used by sales orders and production runs, resolved via FEFO in `core/utils.py`)
 - **Messaging**: `Notification`
 - **Configuration**: `SystemSetting` (key/value store for admin-editable operational tunables; read via `core/settings_store.py` — see §8)
+- **Analytics snapshots**: `WarehouseUtilizationSnapshot` (one row per warehouse per day, written by `manage.py snapshot_utilization`; see §8)
 
 ---
 
@@ -412,11 +414,35 @@ sorted `(status rank, reorder_by, -burn/day, name)`. `consumption_rates()` is th
 batched sibling of Phase 0's `consumption_rate()` — one grouped query for many
 materials.
 
-### 8.8. Planned algorithms  *(Phases 2b–3 — not yet implemented)*
+### 8.8. Capacity runway  *(Phase 2b — implemented)*
 
-- **Capacity runway** — snapshot `utilization_percent` per warehouse daily
-  (`WarehouseUtilizationSnapshot` + `snapshot_utilization` command), linear-fit
-  the trend, project the date it crosses 100%.
+`capacity_forecast()` → `views_analytics.capacity_forecast_view` →
+`/warehouse/capacity/` (nav: *Insights → Capacity Runway*; Facility Management
+links to it via a header call-out).
+
+`manage.py snapshot_utilization` writes one `WarehouseUtilizationSnapshot` per
+warehouse per day (idempotent on `(warehouse, snapshot_date)`), using the same
+active-stock-tonnage expression as `dashboard_view` (`analytics.used_mt_expr()`).
+**This command has no scheduler wired — run it daily** via Heroku Scheduler, cron,
+or a scheduled GitHub Action.
+
+```
+slope, _  = least-squares fit of utilization_percent over the snapshot dates
+weekly_rate_pp = slope × 7
+days_to_full   = (100 − current) / slope           (slope in pp/day)
+projected_full = latest_snapshot_date + days_to_full
+status = no_data   if < 3 snapshots
+         stable    if slope <= 0.02 pp/day (and current < 95)
+         critical  if current >= 95%, or days_to_full <= 14
+         watch     if days_to_full <= 60
+         ok         otherwise
+```
+
+Sorted `(status rank, days_to_full, -current, name)`. The UI shows a "collecting
+data" banner until a warehouse has 7 snapshots.
+
+### 8.9. Planned algorithms  *(Phase 3 — not yet implemented)*
+
 - **AI Ops Briefing** — `generate_ops_briefing` command aggregates the signals
   above into a structured payload, sends it to Claude with a constrained prompt
   ("use only the numbers provided"), stores the result in `OpsBriefing`; the

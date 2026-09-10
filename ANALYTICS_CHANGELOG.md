@@ -357,10 +357,52 @@ scorecard was a stray top-level nav item.
   audit of who changed it. Django admin still works as a fallback.
 - `manage.py test core` → **61 passed** (was 55).
 
-## Phase 2 — Tier 2 forecasting  ·  _in progress_
+## Phase 2 — Tier 2 forecasting  ·  **complete**
 
 Consumption-rate stockout ETA + reorder-by **(done)** · warehouse capacity runway
-(`WarehouseUtilizationSnapshot` + `snapshot_utilization` command) _pending_.
+**(done)**.
+
+### 2b — Capacity runway  ·  2026-09-08
+
+The last Tier 2 piece, and the first with a data pipeline: `utilization_percent`
+was computed on the fly in `dashboard_view` and thrown away; now it's snapshotted
+daily and linear-fit to a "date this warehouse fills up".
+
+| File | Change |
+| :--- | :--- |
+| `core/models.py` | New `WarehouseUtilizationSnapshot` — `warehouse` FK, `snapshot_date`, `used_mt`, `capacity_mt`, `utilization_percent`; unique on `(warehouse, snapshot_date)`. Migration `0040`. |
+| `core/analytics.py` | `used_mt_expr()` — the active-stock-tonnage ORM expression, extracted so `dashboard_view` and the snapshot share one definition. `warehouse_utilization()` — current per-warehouse utilization. `_linreg()` — plain least-squares. `capacity_forecast()` — per warehouse: fit `utilization_percent` over its snapshots, `days_to_full = (100 − current) / slope`, projected full date, status `critical` / `watch` / `ok` / `stable` / `no_data`. |
+| `core/views.py` | `dashboard_view` now calls `analytics.used_mt_expr()` instead of an inline `Coalesce(Sum(Case(...)))`. |
+| `core/management/commands/snapshot_utilization.py` | **New** — writes one row per warehouse per day (idempotent; `--date` override for backfill). |
+| `core/views_analytics.py` | `capacity_forecast_view` — KPI summary + `empty` / `building` (< 7 days) flags. |
+| `templates/analytics/capacity_forecast.html` | **New** — "no snapshots yet" and "collecting data" banners, KPI tiles, sortable table (warehouse, status, utilization, weekly rate in pp, days to full, projected full date, snapshot count), method footnote. |
+| `core/urls.py` | `+ warehouse/capacity/` (`capacity_forecast`). |
+| `core/context_processors.py` | Nav: **Capacity Runway** in Insights, after Stockout Forecast (gated `core.view_warehouse`). |
+| `templates/warehouse_list.html` | Header call-out link into it (`_insight_link.html`). |
+| `core/admin.py` | `WarehouseUtilizationSnapshot` registered (list + date hierarchy). |
+| `core/tests.py` | +10 tests (`CapacityForecastTests`): weighted utilization, command idempotency, `no_data` floor, rising trend → projected date + `watch`, fast fill → `critical`, flat → `stable`, view empty / building states, auth, facility call-out. |
+
+#### Scheduling
+
+`snapshot_utilization` must run **once a day**. It has no scheduler wired — pick one:
+
+- **Heroku Scheduler** add-on → daily job `python manage.py snapshot_utilization`
+- **cron** → `0 2 * * * cd /app && python manage.py snapshot_utilization`
+- **GitHub Actions** → a `schedule:` workflow hitting the same command
+
+`capacity_forecast()` returns `no_data` until a warehouse has 3 snapshots and the
+UI flags "collecting data" until 7. Backfill isn't possible (no utilization
+history exists) — the runway starts the day the job first runs.
+
+#### Verification
+
+- `manage.py check` clean; `migrate` → `0040 OK`; `manage.py test core` → **114 passed**.
+- Command run against dev data: `Snapshotted 4 warehouse(s)`.
+- Live at `/warehouse/capacity/`: with a seeded 7-day rising trend, Main Assembly
+  Plant showed **Critical · 88.0% · +30 pp/wk · 3d · 11 Sep 2026**; other
+  warehouses "No data" (1 snapshot). Sidebar highlights only `Insights → Capacity
+  Runway`; no console errors. Synthetic snapshots then cleared — dev DB holds one
+  honest day.
 
 ### Sidebar — "Insights" section  ·  2026-09-01
 

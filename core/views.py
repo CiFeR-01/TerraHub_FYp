@@ -26,27 +26,9 @@ from .utils import generate_next_code
 
 @login_required
 def dashboard_view(request):
-    used_mt_annotation = Coalesce(
-        Sum(
-            Case(
-                When(
-                    batches__status='Active',
-                    batches__material__isnull=False,
-                    then=F('batches__quantity') * F('batches__material__weight_mt_per_unit')
-                ),
-                When(
-                    batches__status='Active',
-                    batches__product__isnull=False,
-                    then=F('batches__quantity') * F('batches__product__weight_mt_per_unit')
-                ),
-                default=Value(0),
-                output_field=DecimalField()
-            )
-        ),
-        Value(0, output_field=DecimalField())
-    )
+    from .analytics import used_mt_expr
 
-    warehouses = Warehouse.objects.annotate(used_mt=used_mt_annotation).order_by('name')
+    warehouses = Warehouse.objects.annotate(used_mt=used_mt_expr()).order_by('name')
 
     warehouse_stats = []
     total_capacity = 0.0
