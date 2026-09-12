@@ -63,7 +63,7 @@
                 </div>
             </div>
 
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.5rem;">
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 1.5rem;">
                 <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
                     <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Current Quantity</span>
                     <div style="font-size: 1.5rem; font-weight: 700; color: var(--text-main); margin-top: 0.25rem;">
@@ -84,6 +84,54 @@
                         {{ batch.days_until_expiry|default:"-" }} Days
                     </div>
                 </div>
+                <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
+                    <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Est. Value</span>
+                    <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-main); margin-top: 0.25rem;">
+                        {% if est_value is not None %}RM {{ est_value|floatformat:2 }}{% else %}—{% endif %}
+                    </div>
+                    {% if unit_cost is not None %}
+                    <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.15rem;">@ RM {{ unit_cost|floatformat:2 }}/unit</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Reservations -->
+        <div class="pane-card">
+            <h3 style="margin-bottom: 1rem;">🔖 Reservations</h3>
+            {% if reservations %}
+            <div class="data-table-container">
+                <table class="custom-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Reserved By</th>
+                            <th style="text-align: right;">Quantity</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in reservations %}
+                        <tr>
+                            <td><span class="badge badge-slate">{{ r.type }}</span></td>
+                            <td>
+                                {% if r.url_name %}
+                                <a href="{% url r.url_name r.url_pk %}" style="color: var(--primary); text-decoration: none; font-weight: 600;">{{ r.label }}</a>
+                                {% else %}
+                                {{ r.label }}
+                                {% endif %}
+                            </td>
+                            <td style="text-align: right; font-family: monospace; font-weight: 600;">{{ r.quantity|floatformat:2 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">Nothing currently reserved.</p>
+            {% endif %}
+            <div style="display: flex; justify-content: space-between; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--border-light); font-size: 0.9rem;">
+                <span style="color: var(--text-muted); font-weight: 600;">Available</span>
+                <span style="font-weight: 700; color: {% if available_quantity > 0 %}#059669{% else %}var(--text-muted){% endif %};">{{ available_quantity|floatformat:2 }}</span>
             </div>
         </div>
 
@@ -186,9 +234,33 @@
                 <span class="badge badge-emerald" style="margin-bottom: 0.5rem;">Manufactured In-House</span>
                 <div style="font-weight: 600; color: var(--text-main);">Run #{{ batch.produced_in.run_number }}</div>
                 <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">Plant: {{ batch.produced_in.manufacturing_plant.name }}</div>
+                <a href="{% url 'production_run_detail' batch.produced_in.id %}" class="btn btn-secondary" style="width: 100%; margin-top: 1rem; padding: 0.4rem; font-size: 0.85rem;">View Run Details</a>
             </div>
             {% else %}
             <p style="color: var(--text-muted); font-size: 0.85rem;">Origin data not available (possibly imported).</p>
+            {% endif %}
+        </div>
+
+        <!-- Shipment History -->
+        <div class="pane-card">
+            <h3 style="margin-bottom: 1rem;">🚚 Shipment History</h3>
+            {% if shipment_history %}
+            <div style="display: flex; flex-direction: column; gap: 0.6rem;">
+                {% for sh in shipment_history %}
+                <div style="padding: 0.6rem 0.85rem; background: #f8fafc; border-radius: 8px; border: 1px solid var(--border-light);">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <a href="{% url 'shipment_detail' sh.shipment.pk %}" style="color: var(--primary); text-decoration: none; font-weight: 600; font-size: 0.85rem;">{{ sh.shipment.tracking_number }}</a>
+                        <span style="font-weight: 700; font-size: 0.85rem; color: var(--text-main);">{{ sh.quantity|floatformat:2 }}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-top: 0.35rem; font-size: 0.75rem; color: var(--text-muted);">
+                        <span>Received: {{ sh.received_quantity|default:"0" }}</span>
+                        <span>{{ sh.date_confirmed|date:"Y-m-d"|default:"Pending" }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p style="color: var(--text-muted); font-size: 0.85rem;">This batch has not moved through any shipment yet.</p>
             {% endif %}
         </div>
 

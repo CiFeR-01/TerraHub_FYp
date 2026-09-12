@@ -125,6 +125,105 @@ def create_shortage_production_runs(so, plant, user):
     return created_any
 
 
+def release_production_run_allocations(run):
+    """
+    Releases every StockAllocation held by a run back to available stock, and cancels
+    any auto-generated Draft transfer shipments left over from allocating it. Shared by
+    every path that stops a run before it's produced anything — manual "cancel
+    allocation", scrapping a run outright, and auto-cancelling a run whose need
+    disappeared (fully covered by direct allocation, or its SO line item was removed).
+    """
+    from .models import StockAllocation, Shipment
+
+    allocs = StockAllocation.objects.filter(production_run=run)
+    for alloc in allocs:
+        batch = alloc.batch
+        batch.allocated_quantity -= alloc.quantity
+        if batch.allocated_quantity < 0:
+            batch.allocated_quantity = 0
+        batch.save(update_fields=['allocated_quantity'])
+        alloc.delete()
+
+    Shipment.objects.filter(
+        linked_production_run=run, is_auto_generated=True, status='Draft'
+    ).update(status='Cancelled')
+
+
+def sync_production_run_yield(so, product, unfulfilled, user):
+    """
+    Keeps an already-created Production Run's expected_yield in sync with the SO's
+    actual remaining shortfall. Without this, a run created when 480 MT was missing
+    stays at 480 MT forever even if someone later manually allocates existing stock
+    that covers part (or all) of that gap — silently asking the plant to over-produce.
+
+    Only touches runs that haven't started consuming materials yet (Pending Approval /
+    Pending Allocation / Awaiting Materials / Planned) — once a run is InProgress or
+    Completed its yield reflects what's actually being/been made, not a target to move.
+    """
+    from .models import ProductionRun, OrderTimeline
+
+    run = ProductionRun.objects.filter(
+        sales_order=so, target_product=product,
+        status__in=['Pending Approval', 'Pending Allocation', 'Awaiting Materials', 'Planned']
+    ).first()
+    if not run:
+        return
+
+    unfulfilled = Decimal(str(unfulfilled))
+    if unfulfilled <= 0:
+        old_yield = run.expected_yield
+        release_production_run_allocations(run)
+        run.status = 'Cancelled'
+        run.save(update_fields=['status'])
+        OrderTimeline.objects.create(
+            production_run=run,
+            action=f"Auto-cancelled: SO shortage fully covered by direct stock allocation ({old_yield} MT no longer needed).",
+            user=user
+        )
+    elif unfulfilled != run.expected_yield:
+        old_yield = run.expected_yield
+        run.expected_yield = unfulfilled
+        run.save(update_fields=['expected_yield'])
+        OrderTimeline.objects.create(
+            production_run=run,
+            action=f"Expected yield adjusted from {old_yield} to {unfulfilled} MT after additional stock was directly allocated to the SO.",
+            user=user
+        )
+
+
+def handle_so_item_removed(so, product, user):
+    """
+    Called when a line item is deleted from a Sales Order. A Production Run created
+    for that SO+product would otherwise be silently orphaned — still expected to
+    produce something the order no longer needs. If the run hasn't started yet, cancel
+    it outright (releasing any allocated materials). If it's already InProgress or
+    Completed, leave it alone (the goods aren't wasted — they can still go to stock or
+    another order) but note on its timeline that its SO link no longer has this item,
+    so anyone looking at the run isn't misled about why it exists.
+    """
+    from .models import ProductionRun, OrderTimeline
+
+    run = ProductionRun.objects.filter(sales_order=so, target_product=product).exclude(status='Cancelled').first()
+    if not run:
+        return
+
+    if run.status in ['InProgress', 'Completed']:
+        OrderTimeline.objects.create(
+            production_run=run,
+            action=f"Note: {product.sku} was removed from {so.so_number} — this run's SO no longer requires it.",
+            user=user
+        )
+    else:
+        release_production_run_allocations(run)
+        run.status = 'Cancelled'
+        run.save(update_fields=['status'])
+        OrderTimeline.objects.create(
+            production_run=run,
+            action=f"Auto-cancelled: {product.sku} was removed from {so.so_number}, this run is no longer needed.",
+            user=user
+        )
+
+
 def consume_materials_for_run(run, user):
     """
     Physically deducts the raw materials a completed run used. For each material
@@ -201,6 +300,7 @@ def consume_materials_for_run(run, user):
             RegistryLog.objects.create(
                 action_type='Consumed_For_Manufacturing',
                 item_name=f"{material.name} (Run {run.run_number})",
+                material=material,
                 quantity_changed=consumed,
                 warehouse=run.manufacturing_plant,
                 user=user
@@ -317,6 +417,142 @@ def finalize_production_run(run, user):
     return fg_batch
 
 
+def get_batch_reservations(batch):
+    """
+    Every current reservation against a batch (StockAllocation rows), each resolved
+    to a human label + URL for whatever it's held for — a Sales Order, a Production
+    Run's material draw, or a Shipment. Used by the Product/Material traceability
+    views and the SO detail page's batch breakdown.
+    """
+    from django.urls import reverse
+    from .models import StockAllocation
+
+    reservations = []
+    for alloc in StockAllocation.objects.filter(batch=batch).select_related('sales_order', 'production_run', 'shipment'):
+        if alloc.sales_order:
+            reservations.append({
+                'quantity': alloc.quantity,
+                'label': f"Sales Order {alloc.sales_order.so_number}",
+                'url': reverse('so_detail', args=[alloc.sales_order.pk]),
+            })
+        elif alloc.production_run:
+            reservations.append({
+                'quantity': alloc.quantity,
+                'label': f"Production Run {alloc.production_run.run_number}",
+                'url': reverse('production_run_detail', args=[alloc.production_run.pk]),
+            })
+        elif alloc.shipment:
+            reservations.append({
+                'quantity': alloc.quantity,
+                'label': f"Shipment {alloc.shipment.tracking_number}",
+                'url': reverse('shipment_detail', args=[alloc.shipment.pk]),
+            })
+    return reservations
+
+
+def get_batch_produced_for(batch):
+    """
+    If this batch was manufactured (not received via PO), returns the SO its own
+    Production Run was originally linked to — even if the batch's allocation has
+    since moved elsewhere. This is the "originally intended for" signal distinct
+    from "currently reserved for" (get_batch_reservations).
+    """
+    if batch.produced_in and batch.produced_in.sales_order:
+        so = batch.produced_in.sales_order
+        from django.urls import reverse
+        return {'so_number': so.so_number, 'url': reverse('so_detail', args=[so.pk]), 'run_number': batch.produced_in.run_number}
+    return None
+
+
+def unallocate_so_batch(allocation, quantity, user, target_so=None):
+    """
+    Releases (or transfers) a quantity of an SO-level StockAllocation. If target_so
+    is given, the released amount is immediately re-allocated to it in the same
+    transaction (a direct transfer); otherwise it's simply freed back to available
+    stock, where it becomes visible to any SO's normal allocation screen. Logs to
+    both orders' timelines either way, and recomputes each order's fulfillment
+    status afterward. Returns (source_so, target_so_or_None).
+    """
+    from .models import StockAllocation, OrderTimeline, SalesOrder
+
+    if allocation.sales_order is None:
+        raise ValueError("This allocation isn't held by a Sales Order — nothing to unallocate here.")
+
+    quantity = Decimal(str(quantity))
+    if quantity <= 0 or quantity > allocation.quantity:
+        raise ValueError(f"Quantity must be between 0 and {allocation.quantity}.")
+
+    source_so = allocation.sales_order
+    batch = allocation.batch
+    product = batch.product
+
+    with transaction.atomic():
+        if quantity == allocation.quantity:
+            allocation.delete()
+        else:
+            allocation.quantity -= quantity
+            allocation.save(update_fields=['quantity'])
+
+        batch.allocated_quantity -= quantity
+        if batch.allocated_quantity < 0:
+            batch.allocated_quantity = 0
+        batch.save(update_fields=['allocated_quantity'])
+
+        if target_so:
+            batch.allocated_quantity += quantity
+            batch.save(update_fields=['allocated_quantity'])
+            StockAllocation.objects.create(batch=batch, sales_order=target_so, quantity=quantity)
+            OrderTimeline.objects.create(
+                sales_order=source_so,
+                action=f"Unallocated {quantity} {product.unit_of_measure} of {product.sku} (Batch {batch.batch_number}) — transferred to {target_so.so_number}.",
+                user=user
+            )
+            OrderTimeline.objects.create(
+                sales_order=target_so,
+                action=f"Received {quantity} {product.unit_of_measure} of {product.sku} (Batch {batch.batch_number}) transferred from {source_so.so_number}.",
+                user=user
+            )
+        else:
+            OrderTimeline.objects.create(
+                sales_order=source_so,
+                action=f"Unallocated {quantity} {product.unit_of_measure} of {product.sku} (Batch {batch.batch_number}) — released back to available stock.",
+                user=user
+            )
+
+    _resync_so_fulfillment_status(source_so, user)
+    if target_so:
+        _resync_so_fulfillment_status(target_so, user)
+
+    return source_so, target_so
+
+
+def _resync_so_fulfillment_status(so, user):
+    """
+    After allocations change, nudges an SO's status to reflect whether it's now
+    fully covered — mirrors the same check finalize_production_run already does at
+    completion time, factored out so unallocate/transfer can trigger it too.
+    """
+    from django.db.models import Sum
+    from .models import StockAllocation, OrderTimeline
+
+    if so.status in ['Shipped', 'Delivered', 'Cancelled', 'Rejected', 'Draft', 'Pending Approval']:
+        return
+
+    fully_covered = True
+    for it in so.items.all():
+        alloc_sum = StockAllocation.objects.filter(sales_order=so, batch__product=it.product).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+        if Decimal(str(alloc_sum)) + Decimal(str(it.quantity_shipped)) < Decimal(str(it.quantity_ordered)):
+            fully_covered = False
+            break
+
+    new_status = 'Ready to Ship' if fully_covered else 'Pending'
+    if so.status != new_status:
+        old_status = so.status
+        so.status = new_status
+        so.save(update_fields=['status'])
+        OrderTimeline.objects.create(sales_order=so, action=f"Status auto-updated from {old_status} to {new_status} after allocation change.", user=user)
+
+
 def deallocate_stock(order_type, order):
     """
     Reverses all allocations for a specific SalesOrder, ProductionRun, or Shipment.
@@ -336,12 +572,14 @@ def deallocate_stock(order_type, order):
             batch.save(update_fields=['allocated_quantity'])
             alloc.delete()
 
-def deduct_stock_from_allocation(order_type, order):
+def deduct_stock_from_allocation(order_type, order, user=None):
     """
     Permanently deducts the allocated stock from the physical batch quantities,
-    typically when an order is shipped or a production run is completed.
+    typically when an order is shipped or a production run is completed. Logs one
+    RegistryLog entry per batch so the Outbound movement actually shows up in the
+    Registry Ledger — this previously deducted stock silently.
     """
-    from .models import StockAllocation
+    from .models import StockAllocation, RegistryLog
     with transaction.atomic():
         if order_type == 'sales_order':
             allocs = StockAllocation.objects.filter(sales_order=order)
@@ -349,12 +587,121 @@ def deduct_stock_from_allocation(order_type, order):
             allocs = StockAllocation.objects.filter(shipment=order)
         else:
             allocs = StockAllocation.objects.filter(production_run=order)
-            
+
         for alloc in allocs:
             batch = alloc.batch
             batch.quantity -= alloc.quantity
             batch.allocated_quantity -= alloc.quantity
             batch.save(update_fields=['quantity', 'allocated_quantity'])
+
+            item_name = batch.material.name if batch.material else (batch.product.name if batch.product else batch.batch_number)
+            RegistryLog.objects.create(
+                action_type='Outbound',
+                item_name=f"{item_name} (Batch {batch.batch_number})",
+                material=batch.material,
+                quantity_changed=-alloc.quantity,
+                warehouse=batch.warehouse,
+                user=user
+            )
+
             alloc.delete()
+
+
+def apply_po_material_receipt(po_detail, delta_qty, user):
+    """
+    Adds delta_qty to a PurchaseOrderDetail's quantity_received, creates a Batch for
+    the delta at the PO's target warehouse, and recomputes the parent PO's status
+    (Partially Received / Completed). This is the single source of truth for "goods
+    received against a PO" — used both by the PO page's own "mark received" action
+    and by Shipment-side receipt logging, so quantities/batches/status stay
+    consistent no matter which page was used to record it.
+    """
+    import uuid
+    from datetime import date, timedelta
+    from .models import Batch, WarehouseLocation, RegistryLog
+
+    po = po_detail.purchase_order
+    delta_qty = Decimal(str(delta_qty))
+
+    po_detail.quantity_received = (po_detail.quantity_received or Decimal('0')) + delta_qty
+    po_detail.save(update_fields=['quantity_received'])
+
+    if delta_qty > 0:
+        loc = WarehouseLocation.objects.filter(warehouse=po.target_warehouse).first()
+        batch = Batch.objects.create(
+            batch_number=f"B-{po.po_number}-{po_detail.material.sku}-{uuid.uuid4().hex[:6].upper()}",
+            status='Active',
+            material=po_detail.material,
+            quantity=delta_qty,
+            manufacturing_date=date.today(),
+            expiry_date=date.today() + timedelta(days=365),
+            warehouse=po.target_warehouse,
+            purchase_order=po,
+            location=f"Zone {loc.zone_name} Aisle {loc.aisle}" if loc else None
+        )
+        RegistryLog.objects.create(
+            action_type='Inbound',
+            item_name=f"{po_detail.material.name} (Batch {batch.batch_number})",
+            material=po_detail.material,
+            quantity_changed=delta_qty,
+            warehouse=po.target_warehouse,
+            user=user
+        )
+
+    all_items = po.items.all()
+    total_ordered = sum(Decimal(str(i.quantity_ordered)) for i in all_items)
+    total_received = sum(Decimal(str(i.quantity_received)) for i in all_items)
+    if total_received >= total_ordered:
+        po.status = 'Completed'
+        if po.completed_date is None:
+            po.completed_date = date.today()
+        po.save(update_fields=['status', 'completed_date'])
+    else:
+        if total_received > 0:
+            po.status = 'Partially Received'
+        po.save(update_fields=['status'])
+
+
+def apply_so_product_shipment(so_detail, delta_qty):
+    """
+    Adds delta_qty to a SalesOrderDetail's quantity_shipped and recomputes the parent
+    SO's status (Partially Shipped / Shipped). Called when a linked Outbound shipment
+    actually dispatches, so an SO fulfilled across several shipments over time (partial
+    deliveries) accumulates correctly instead of the status flipping to "Shipped" on
+    the first truck regardless of how much was actually sent.
+    """
+    so = so_detail.sales_order
+    delta_qty = Decimal(str(delta_qty))
+
+    so_detail.quantity_shipped = (so_detail.quantity_shipped or Decimal('0')) + delta_qty
+    so_detail.save(update_fields=['quantity_shipped'])
+
+    all_items = so.items.all()
+    total_ordered = sum(Decimal(str(i.quantity_ordered)) for i in all_items)
+    total_shipped = sum(Decimal(str(i.quantity_shipped)) for i in all_items)
+    if so.status not in ['Delivered']:
+        if total_shipped >= total_ordered:
+            so.status = 'Shipped'
+        elif total_shipped > 0:
+            so.status = 'Partially Shipped'
+        so.save(update_fields=['status'])
+
+
+def mark_so_delivered_if_fully_shipped(so, completing_shipment=None):
+    """
+    Marks a SalesOrder Delivered once a linked Outbound shipment actually completes
+    (delivery confirmed) — but only if no other shipment against the same SO is still
+    outstanding, so a partially-fulfilled SO with a second truck still in transit
+    correctly stays at Shipped/Partially Shipped instead of jumping to Delivered early.
+    """
+    outstanding = so.shipments.filter(direction='Outbound').exclude(status__in=['Completed', 'Cancelled'])
+    if completing_shipment is not None:
+        outstanding = outstanding.exclude(pk=completing_shipment.pk)
+
+    if not outstanding.exists():
+        so.status = 'Delivered'
+        so.save(update_fields=['status'])
+        return True
+    return False
 
 

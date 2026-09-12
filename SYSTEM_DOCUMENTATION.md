@@ -1,16 +1,21 @@
 # TerraHub - System Documentation
 
-Welcome to **TerraHub**, a next-generation geospatial intelligence and environmental workspace application built with Django and Python. This platform acts as a secure console hub for environmental data feeds, telemetry synchronization, and spatial indexing.
+TerraHub is a Django-based manufacturing and warehouse operations platform. It tracks materials and finished-goods inventory across warehouses, drives production runs from bills of materials (recipes), manages purchase and sales orders, generates shipments with FEFO-based batch allocation, and provides QA and approvals workflows on top of full batch/lot traceability.
 
 ---
 
 ## 1. System Overview
 
-TerraHub is designed to coordinate, analyze, and render geological, atmospheric, and telemetry data.
-Key systems established in this initialization:
-- **Custom User Model**: Supporting customizable user credentials and extensible role access flags (`CustomUser`).
-- **Core Workspace Layout**: Fully authenticated console entry and stateful dashboard view.
-- **Premium Responsive Visual Layout**: Sleek obsidian dark theme with futuristic glows, transitions, glassmorphic panels, and dynamic system logs layout.
+Core capabilities:
+- **Custom User Model** with role-based access (`CustomUser`, `Role`) and per-location access restrictions.
+- **Catalog Management**: materials and products, with CSV import/export and per-product recipes (bills of materials).
+- **Warehouse & Inventory**: multi-warehouse, multi-location inventory with full batch/lot tracking, stock audits, and a public batch lookup/print-label flow.
+- **Manufacturing**: production runs consuming materials per recipe, with material allocation and yield tracking.
+- **Order Management**: purchase orders (inbound) and sales orders (outbound), each with line-item detail and an approvals inbox.
+- **Shipments**: transfer and outbound shipments with pick lists, generated from sales-order allocation using FEFO (first-expired-first-out) batch selection.
+- **Stock Allocation**: a shared allocation engine (`StockAllocation`) used by both sales orders and production runs to reserve batch quantities.
+- **QA Dashboard** and **Registry Ledger** for traceability and audit history (`RegistryLog`, `OrderTimeline`).
+- **System Console**: authenticated live database diagnostics and SQL query-logging dashboard.
 
 ---
 
@@ -18,116 +23,196 @@ Key systems established in this initialization:
 
 - **Backend Framework**: Django 6.0.4
 - **Language**: Python 3.14
-- **Database**: SQLite (Local development default, extensible to PostgreSQL)
-- **Frontend / Styling**: Vanilla HTML5, CSS3, Google Fonts (Outfit, Plus Jakarta Sans), semantic structures, and ambient keyframe animations.
+- **Database**: SQLite for local development; PostgreSQL in production via `psycopg2-binary` / `dj-database-url`
+- **Deployment**: `gunicorn` + `whitenoise` (see `Procfile`, `runtime.txt`)
+- **Frontend / Styling**: Vanilla HTML5, CSS3, Google Fonts (Outfit, Plus Jakarta Sans), server-rendered Django templates
 
 ---
 
 ## 3. Directory Layout
 
 ```text
-d:\TerraHub
+D:\TerraHub
 ├── .gitignore
-├── .venv/                      # Local Python Virtual Environment
-├── db.sqlite3                  # SQLite Database
-├── manage.py                   # Django Management Tool
-├── requirements.txt            # System Dependencies list
-├── SYSTEM_DOCUMENTATION.md     # System Architecture & Guides
-├── TerraHub/                   # Django Project Configuration Module
+├── .env / .env.example         # Environment configuration
+├── manage.py                   # Django management tool
+├── requirements.txt            # System dependencies
+├── runtime.txt / Procfile      # Deployment configuration
+├── README.md                   # Project overview (mirrors this file)
+├── SYSTEM_DOCUMENTATION.md     # System architecture & guides
+├── TerraHub/                   # Django project configuration module
 │   ├── __init__.py
-│   ├── asgi.py
-│   ├── settings.py             # Core Project Configuration settings
-│   ├── urls.py                 # Global Project URLs Routing config
-│   └── wsgi.py
-├── core/                       # Core Django Application
-│   ├── migrations/             # Database Migration logs
-│   ├── __init__.py
-│   ├── admin.py
-│   ├── apps.py
-│   ├── db_tracker.py           # Database Query Tracking & Diagnostics
-│   ├── models.py               # Database Schema Definitions
-│   ├── urls.py                 # Application specific URLs mapping
-│   └── views.py                # Core Controller Views
-└── templates/                  # Frontend HTML Master Templates
-    ├── base.html               # Shared premium base skeleton & styles
-    ├── home.html               # Public Landing page
-    ├── login.html              # Custom dark-themed access portal
-    ├── dashboard.html          # Standard app user dashboard placeholder
-    └── system.html             # Secure administrative system control console
+│   ├── asgi.py / wsgi.py
+│   ├── settings.py             # Core project configuration
+│   └── urls.py                 # Root URL routing (admin/ + core.urls)
+├── core/                       # Core Django application
+│   ├── migrations/             # Database migration history
+│   ├── models.py               # Domain models (see §5)
+│   ├── views.py                # Controller views for all modules
+│   ├── analytics.py            # Analytics & forecasting computation layer (see §8)
+│   ├── settings_store.py       # Typed access to admin-editable operational settings
+│   ├── management/commands/    # Scheduled jobs (daily snapshots, AI briefing)
+│   ├── urls.py                 # Application URL routing (see §4)
+│   ├── utils.py                # Allocation engine (FEFO), stock helpers
+│   ├── decorators.py           # Role/permission decorators
+│   ├── context_processors.py   # Template context (nav, notifications, etc.)
+│   ├── db_tracker.py           # DB query interception & diagnostics
+│   ├── admin.py                # Django admin registrations
+│   └── tests.py                # Test suite
+├── static/
+│   └── css/style.css
+└── templates/                  # Server-rendered HTML templates
+    ├── base.html                    # Shared layout/theme
+    ├── home.html / login.html       # Public entry points
+    ├── dashboard.html / profile.html / system.html / user_management.html
+    ├── product_list.html / product_detail.html
+    ├── material_list.html / material_form.html
+    ├── warehouse_list.html / warehouse_form.html / warehouse_inventory.html
+    ├── batch_detail.html / batch_public_info.html / batch_print_label.html
+    ├── stock_audit.html / registry_ledger.html
+    ├── po_list.html / po_detail.html
+    ├── so_list.html / so_detail.html / so_allocate.html
+    ├── shipments.html / shipment_detail.html / shipment_pick_list.html
+    ├── manufacturing.html / production_run_detail.html / production_allocate.html
+    ├── qa_dashboard.html / approvals_inbox.html
+    └── partials/recipe_studio_modal.html
 ```
 
 ---
 
 ## 4. Routing Table
 
-| Path | Name | Controller View / Class | Description | Authentication |
-| :--- | :--- | :--- | :--- | :--- |
-| `/` | `home` | `core.views.home_view` | Public landing page / portal entryway | Public |
-| `/login/` | `login` | `django.contrib.auth.views.LoginView` | Styled glassmorphic authentication page | Public |
-| `/logout/` | `logout` | `django.contrib.auth.views.LogoutView` | Clears active session & redirects home | Active User Session |
-| `/dashboard/` | `dashboard` | `core.views.dashboard_view` | Main user application dashboard placeholder | Authenticated Only |
-| `/system/` | `system` | `core.views.system_view` | Secure system telemetry console workspace | Authenticated Only |
-| `/system/db-logs/` | `db_logs_api` | `core.views.db_logs_api_view` | Returns database query logs & connection status as JSON | Authenticated Only |
-| `/system/db-logs/clear/` | `db_clear_logs` | `core.views.db_clear_logs_view` | Clears in-memory database query logs buffer | Authenticated Only |
-| `/system/db-logs/test/` | `db_test_op` | `core.views.db_test_op_view` | Triggers dummy read/write queries for diagnostic validation | Authenticated Only |
-| `/warehouse/<int:pk>/edit/` | `warehouse_edit` | `core.views.warehouse_edit_view` | Secure administrative facility management edit portal | Authenticated Only |
-
+| Path | Name | Controller View | Description |
+| :--- | :--- | :--- | :--- |
+| `/` | `home` | `home_view` | Public landing page |
+| `/login/` | `login` | `LoginView` | Authentication |
+| `/logout/` | `logout` | `LogoutView` | Clears session, redirects home |
+| `/dashboard/` | `dashboard` | `dashboard_view` | Main authenticated dashboard |
+| `/profile/` | `profile` | `profile_view` | User profile |
+| `/system/` | `system` | `system_view` | System telemetry console |
+| `/system/settings/` | `system_settings` | `system_settings_view` | Operational settings editor (superuser; see §8) |
+| `/system/users/` | `user_management` | `user_management_view` | User/role administration |
+| `/system/db-logs/` | `db_logs_api` | `db_logs_api_view` | DB query logs & connection status (JSON) |
+| `/system/db-logs/clear/` | `db_clear_logs` | `db_clear_logs_view` | Clears in-memory query log buffer |
+| `/system/db-logs/test/` | `db_test_op` | `db_test_op_view` | Triggers dummy read/write for diagnostics |
+| `/warehouse/inventory/` | `warehouse_inventory` | `warehouse_inventory_view` | Inventory across warehouses |
+| `/warehouse/batch/<batch_number>/` | `batch_detail` | `batch_detail_view` | Batch/lot detail & traceability |
+| `/warehouse/batch/<batch_number>/print/` | `batch_print_label` | `batch_print_label_view` | Printable batch label |
+| `/public/batch/<batch_number>/` | `batch_public_info` | `batch_public_info_view` | Public batch lookup |
+| `/warehouse/facilities/` | `warehouse_list` | `facility_management_view` | Warehouse facility list |
+| `/warehouse/create/` | `warehouse_create` | `warehouse_create_view` | Create warehouse |
+| `/warehouse/<pk>/edit/` | `warehouse_edit` | `warehouse_edit_view` | Edit warehouse |
+| `/warehouse/stock-audit/` | `stock_audit` | `stock_audit_view` | Stock audit workflow |
+| `/warehouse/registry/` | `registry` | `registry_ledger_view` | Registry/audit ledger |
+| `/catalog/products/` | `product_list` | `product_list_view` | Product catalog |
+| `/catalog/products/<pk>/` | `product_detail` | `product_detail_view` | Product detail |
+| `/catalog/products/export/` | `export_products_csv` | `export_products_csv` | Export products (CSV) |
+| `/catalog/products/template/` | `export_product_template` | `export_product_template` | Product import template |
+| `/catalog/products/import/` | `import_products` | `import_products` | Bulk import products |
+| `/catalog/products/<id>/recipe/get/` | `get_product_recipe_api` | `get_product_recipe_api` | Fetch product recipe (JSON) |
+| `/catalog/products/recipe/save/` | `save_product_recipe_api` | `save_product_recipe_api` | Save product recipe (JSON) |
+| `/catalog/materials/` | `material_list` | `material_list_view` | Material catalog |
+| `/catalog/materials/<pk>/edit/` | `material_edit` | `material_edit_view` | Edit material |
+| `/catalog/materials/export/` | `export_materials_csv` | `export_materials_csv` | Export materials (CSV) |
+| `/catalog/materials/template/` | `export_material_template` | `export_material_template` | Material import template |
+| `/catalog/materials/import/` | `import_materials` | `import_materials` | Bulk import materials |
+| `/catalog/recipes/export/` | `export_recipes_csv` | `export_product_recipes_csv` | Export product recipes (CSV) |
+| `/operations/sales-orders/` | `so_list` | `sales_order_list_view` | Sales order list |
+| `/operations/orders/so/<pk>/` | `so_detail` | `so_detail_view` | Sales order detail |
+| `/operations/orders/so/<pk>/allocate/` | `so_allocate` | `so_allocate_view` | FEFO batch allocation for SO |
+| `/operations/orders/so/<pk>/create_shipment/` | `so_create_shipment` | `so_create_shipment_view` | Create shipment from SO |
+| `/operations/purchase-orders/` | `po_list` | `purchase_order_list_view` | Purchase order list |
+| `/operations/orders/po/<pk>/` | `po_detail` | `po_detail_view` | Purchase order detail |
+| `/operations/shipments/` | `shipments` | `shipments_view` | Shipment list |
+| `/operations/shipments/<pk>/` | `shipment_detail` | `shipment_detail_view` | Shipment detail |
+| `/operations/shipments/<pk>/picklist/` | `shipment_pick_list` | `shipment_pick_list_view` | Shipment pick list |
+| `/operations/manufacture/` | `readiness` | `manufacturing_view` | Manufacturing readiness dashboard |
+| `/operations/manufacture/run/<pk>/` | `production_run_detail` | `production_run_detail_view` | Production run detail |
+| `/operations/manufacture/run/<pk>/allocate/` | `production_run_allocate` | `production_run_allocate_view` | Material allocation for a run |
+| `/operations/qa/` | `qa_dashboard` | `qa_dashboard_view` | QA dashboard |
+| `/operations/approvals/` | `approvals_inbox` | `approvals_inbox_view` | Pending approvals inbox |
+| `/operations/notifications/read/` | `mark_notifications_read` | `mark_notifications_read` | Mark notifications read |
+| `/catalog/suppliers/scorecard/` | `supplier_scorecard` | `views_analytics.supplier_scorecard_view` | Supplier reliability scorecard — "Scorecard" tab of the Suppliers hub (see §8) |
+| `/operations/sales-orders/risk/` | `so_delivery_risk` | `views_analytics.sales_order_delivery_risk_view` | Sales-order delivery-risk board — "Delivery Risk" tab of the Sales Orders hub (see §8) |
+| `/warehouse/stock-audit/accuracy/` | `audit_accuracy` | `views_analytics.audit_accuracy_view` | Stock-audit accuracy roll-up — "Accuracy" tab of the Stock Audit hub (see §8) |
+| `/operations/manufacture/yield/` | `production_yield` | `views_analytics.production_yield_view` | Production yield variance — "Yield" tab of the Manufacturing hub (see §8) |
+| `/warehouse/forecast/` | `forecast` | `views_analytics.forecast_view` | Consumption-rate stockout & reorder forecast (see §8) |
+| `/warehouse/capacity/` | `capacity_forecast` | `views_analytics.capacity_forecast_view` | Warehouse capacity runway — daily-snapshot trend (see §8) |
+| `/assistant/briefing/` | `ops_briefing` | `views_analytics.ops_briefing_view` | AI Ops Briefing — Claude narration of the Tier 1/2 signals; *Overview → Digital Assistant (AI)* (see §8.9) |
+| `/admin/` | — | Django admin | Django admin site |
 
 ---
 
-## 5. Development & Setup Guide
+## 5. Domain Model
 
-### 5.1. Virtual Environment Setup
-Ensure you have Python 3.14 installed on your system. Navigate to the project root and spin up the environment:
+Defined in `core/models.py`:
+
+- **Access**: `Role`, `CustomUser`
+- **Facilities**: `Warehouse`, `WarehouseLocation`
+- **Catalog**: `Material`, `Product`, `ProductRecipe`
+- **Manufacturing**: `ProductionRun`, `RunMaterialUsage`, `ProductionConsumption`
+- **Inventory**: `Batch` (lot-level tracking with expiry/manufacturing dates, quantity, allocated quantity)
+- **Purchasing**: `PurchaseOrder`, `PurchaseOrderDetail`
+- **Sales**: `SalesOrder`, `SalesOrderDetail`
+- **Fulfillment**: `Shipment`, `ShipmentItem`
+- **Quality & Audit**: `StockAudit`, `RegistryLog` (movement ledger; `RegistryLog.material` FK is the machine-readable key behind the analytics engine — see §8), `OrderTimeline`
+- **Allocation**: `StockAllocation` (shared reservation engine used by sales orders and production runs, resolved via FEFO in `core/utils.py`)
+- **Messaging**: `Notification`
+- **Configuration**: `SystemSetting` (key/value store for admin-editable operational tunables; read via `core/settings_store.py` — see §8)
+- **Analytics snapshots**: `WarehouseUtilizationSnapshot` (one row per warehouse per day, written by `manage.py snapshot_utilization`; see §8)
+- **AI briefings**: `OpsBriefing` (one row per `generate_ops_briefing` run — stored Claude narration of the Tier 1/2 signals plus its input `signals_json` and token counts; see §8.9)
+
+---
+
+## 6. Development & Setup Guide
+
+### 6.1. Virtual Environment Setup
+Requires Python 3.14.
 ```powershell
-# Create virtual environment
 python -m venv .venv
-
-# Activate virtual environment
 .venv\Scripts\Activate.ps1
-
-# Install requirements
 pip install -r requirements.txt
 ```
 
-### 5.2. Database Migrations
-Generate application-specific and default framework database structures:
-```powershell
-# Create core app migrations
-python manage.py makemigrations core
+### 6.2. Environment Configuration
+Copy `.env.example` to `.env` and fill in local values (database URL, secret key, etc.).
 
-# Execute migrations onto SQLite db.sqlite3
+### 6.3. Database Migrations
+```powershell
+python manage.py makemigrations core
 python manage.py migrate
 ```
 
-### 5.3. Superuser Creation
-Create an administrative account non-interactively or interactively:
+### 6.4. Superuser Creation
 ```powershell
-# Environment Variable Method
 $env:DJANGO_SUPERUSER_PASSWORD="admin"
 python manage.py createsuperuser --noinput --username=admin --email=admin@terrahub.local
 ```
 
-### 5.4. Start Development Server
-Deploy the development pipeline server:
+### 6.5. Start Development Server
 ```powershell
 python manage.py runserver
 ```
 The application will be accessible at `http://127.0.0.1:8000/`.
 
+### 6.6. Tests
+```powershell
+python manage.py test
+```
+
 ---
 
-## 6. Live Database Diagnostics & Query Logging Console
+## 7. Live Database Diagnostics & Query Logging Console
 
 TerraHub includes an integrated real-time database connection diagnostics helper and SQL query tracker log dashboard built directly into the **System Control Console** (`/system/`).
 
-### 6.1. DB Diagnostics (Connection Health & Latency)
+### 7.1. DB Diagnostics (Connection Health & Latency)
 - **Automatic Status Check**: Dynamically checks database connectivity using `connection.ensure_connection()` and runs a benchmark query (`SELECT 1`) to calculate latency.
 - **Environment Context Identification**: Detects whether settings are configured to use the live database (PostgreSQL via `django.db.backends.postgresql` backend) or a local development database (SQLite via `django.db.backends.sqlite3` backend).
 - **On-Demand Health Testing**: Users can test the latency and active status directly using the "Test Latency & Status" interactive AJAX trigger on the page.
 
-### 6.2. SQL Read/Write Console
-- **Query Interception**: Implemented in [db_tracker.py](file:///d:/TerraHub/core/db_tracker.py) using a custom `db_query_logging_wrapper` registered via the `connection_created` signal on Django initialization.
+### 7.2. SQL Read/Write Console
+- **Query Interception**: Implemented in [core/db_tracker.py](core/db_tracker.py) using a custom `db_query_logging_wrapper` registered via the `connection_created` signal on Django initialization.
 - **Classification Badges**: Automatically parses SQL commands to identify operation type:
   - `READ` for `SELECT` queries
   - `WRITE` for `INSERT`, `UPDATE`, and `DELETE` queries
@@ -138,3 +223,269 @@ TerraHub includes an integrated real-time database connection diagnostics helper
   - **Autorefresh Toggle**: Initiates an AJAX polling query (every 2 seconds) to `/system/db-logs/` to update database query logs dynamically.
   - **Clear Console**: Empties the in-memory log buffer via `/system/db-logs/clear/` JSON POST.
   - **Read/Write Debug Operations**: Simple interactive test triggers that run a safe `SELECT` (reading user details) or `INSERT` (creating a dummy notification record) query, showing immediately in the console.
+
+---
+
+## 8. Analytics & Forecasting Engine
+
+A layered analytics capability built on data the platform already records. All
+computation lives in **`core/analytics.py`** as pure functions (no request /
+response, no side effects) so it can be called identically from web views,
+management commands, the shell, and tests. Scheduled jobs live in
+`core/management/commands/`. A phase-by-phase build log is kept in
+`ANALYTICS_CHANGELOG.md`.
+
+Three tiers:
+
+| Tier | Nature | Examples |
+| :--- | :--- | :--- |
+| **1** | Roll-ups of stored data (ORM aggregation, no new math) | supplier reliability, sales-order delivery risk, audit-accuracy trend, production yield variance |
+| **2** | Statistical forecasting by plain arithmetic (no ML library) | consumption-rate stockout ETA, reorder-by date, warehouse capacity runway |
+| **3** | LLM reasoning over the Tier 1/2 signals | daily "AI Ops Briefing" in plain English |
+
+**Navigation.** The six Tier 1/2 views live in the **Insights** sidebar section
+(second, after Overview): Stockout Forecast, Capacity Runway, Supplier Scorecard,
+Delivery Risk, Yield Variance, Audit Accuracy. Each domain page — Suppliers,
+Sales Orders, Stock Tally, Manufacture, Materials Hub — links into its analytic
+via a single header call-out (`templates/partials/_insight_link.html`); the
+analytics pages themselves are standalone (breadcrumb
+`Dashboard / <Parent> / <Analytic>`, no tab strip). Exactly one sidebar item
+highlights per page. The Tier 3 **AI Ops Briefing** that narrates these signals
+sits on the **Digital Assistant (AI)** link in Overview, not in Insights.
+
+### 8.1. The RegistryLog material spine  *(Phase 0 — implemented)*
+
+`RegistryLog` is the append-only ledger of every physical stock movement
+(`Inbound`, `Outbound`, `Consumed_For_Manufacturing`, `Produced`, `Adjusted`,
+`Spoiled_Disposal`, `QA_Extension`). Historically its only item reference was the
+free-text `item_name` (e.g. `"MAP (Run RUN-2010)"`).
+
+`RegistryLog.material` (nullable FK → `Material`, `related_name='registry_logs'`)
+adds a machine-readable key. It is stamped at write time wherever a specific raw
+material moves; it is left **null** for movements that are not material-specific
+(finished-goods `Produced`, bulk-import summaries, outbound shipments of finished
+products). Migration `0035` adds the column (guarded with `ADD COLUMN IF NOT
+EXISTS` — see the changelog for why); migration `0036` backfills history.
+
+**Backfill algorithm** (`resolve_material_from_label(item_name, by_name)`):
+build `{material.name.lower(): Material}`, then for each null-material ledger row
+whose action is stock-affecting, match `item_name` against these shapes and take
+the first hit — `<name> (Run …)`, `<name> (Batch …)` (± ` - force closed`),
+`Manual Receipt of <name>`, `Updated Material '<name>' (SKU: …)`,
+`Batch <b> (<sku> - <name>)`, or an exact `<name>`. No match ⇒ leave null
+(conservative: a null row is excluded from rates, never mis-attributed).
+
+### 8.2. Consumption rate  *(Phase 0 — implemented)*
+
+```
+daily_consumption(material, window_days=30, end=today) -> { date: Decimal }
+    Σ quantity_changed grouped by calendar day, from
+    material.registry_logs where action_type = 'Consumed_For_Manufacturing'
+    and  end - window_days  <  timestamp::date  <=  end
+    (days with no consumption are omitted)
+
+consumption_rate(material, window_days=30, end=today) -> Decimal
+    total = Σ daily_consumption(...).values()
+    return 0            if total <= 0 or window_days <= 0
+    return total / window_days
+```
+
+The denominator is the **whole window**, not the number of active days, so idle
+days correctly drag the burn rate down. The result is the input to the Phase 2
+stockout forecast (`on_hand / rate → days of cover`) that will replace the
+current flat degradation threshold in `dashboard_view`
+(`days_remaining <= 30 or < material.safe_storage_days`).
+
+### 8.3. Supplier reliability scorecard  *(Phase 1 — implemented)*
+
+`supplier_reliability(since=None, until=None)` → `views_analytics.supplier_scorecard_view`
+→ `/catalog/suppliers/scorecard/` (nav: *Insights → Supplier Scorecard*; Suppliers links to it via a header call-out).
+
+Considers POs in status `Pending` / `Partially Received` / `Completed`, optionally
+bounded by `order_date`. Grouped by the `supplier` FK, with free-text
+`supplier_name`-only POs rolled up under their name.
+
+```
+fill_rate     = Σ quantity_received / Σ quantity_ordered      (line items; may exceed 1.0)
+arrival(po)   = po.completed_date
+                 ?? max linked Shipment.actual_arrival_date
+                 ?? max manufacturing_date of batches received against the po
+due(po)       = po.expected_delivery_date                          -> not estimated
+                 ?? po.order_date + lead                           -> estimated
+                    lead = max SupplierMaterial.lead_time_days over the po's
+                           materials for its supplier,
+                           else get_setting("po_default_lead_time_days")
+assessable    = arrival(po) and due(po) both exist
+on_time_rate  = count(arrival <= due) / count(assessable)
+avg_delay_days= mean( (arrival - due).days )                       (signed, +ve = late)
+estimated_share = count(assessable with estimated due) / count(assessable)
+rating        = good   if on_time_rate >= .9 and fill_rate >= .98
+                poor   if on_time_rate <  .7 or  fill_rate <  .9
+                watch  otherwise      (missing on_time_rate counts as 1.0)
+```
+
+Rows are returned worst-first: `(rating rank, on_time_rate, fill_rate, name)`.
+Rows whose score leans on an estimated due date are tagged `EST` in the UI and
+their estimated share is shown, so committed-date and estimated rates are not
+blended silently.
+
+`po_default_lead_time_days` (default 14) is one `SystemSetting`. Edit it in-site at
+**System Console → Operational Settings** (`/system/settings/`, superuser-only) —
+a form generated from the registry; the raw Django admin (`/admin/core/systemsetting/`)
+is a fallback. `core/settings_store.py` holds the registry of such tunables
+(`REGISTRY`, keyed to `(default, type, description)`), `cast_value()`, and
+`get_setting(key)` which returns the typed DB override or the default. A data
+migration seeds one row per registry entry so they are all editable from day one.
+
+### 8.4. Sales-order delivery risk  *(Phase 1 — implemented)*
+
+`sales_order_delivery_risk()` → `views_analytics.sales_order_delivery_risk_view`
+→ `/operations/sales-orders/risk/` (nav: *Insights → Delivery Risk*; Sales Orders links to it via a header call-out).
+
+```
+arrival(so)   = max outbound Shipment.actual_arrival_date          -> is_actual
+                 ?? max outbound Shipment.expected_eta_date        -> ETA
+                 ?? None
+shipped_frac  = Σ quantity_shipped / Σ quantity_ordered
+risk          = no_deadline   if fulfillment_deadline is None
+                on_track      if arrival and arrival <= deadline
+                late          if arrival > deadline and (is_actual or shipped_frac >= 1)
+                at_risk       if arrival > deadline otherwise
+                late          if no shipment and deadline < today
+                at_risk       if no shipment and 0 <= days_left <= so_at_risk_window_days
+                              and status in (Pending, Awaiting Acknowledgement, In Production)
+                on_track      otherwise
+days_slack    = (deadline - (arrival or today)).days               (negative = behind)
+```
+
+Open = status in Pending / Awaiting Acknowledgement / In Production / Ready to
+Ship / Partially Shipped / Shipped. Sorted `(risk rank, days_slack, so_number)`.
+`so_at_risk_window_days` (default 7) is a `SystemSetting` (see below).
+
+### 8.5. Stock-audit accuracy  *(Phase 1 — implemented)*
+
+`audit_accuracy(since=None)` → `views_analytics.audit_accuracy_view` →
+`/warehouse/stock-audit/accuracy/` (nav: *Insights → Audit Accuracy*; Stock Tally links to it via a header call-out).
+
+`variance = actual_quantity − expected_quantity` per `StockAudit`. Rolled up
+`by_warehouse` and `by_item` (`accuracy_rate` = zero-variance share, `shrinkage` =
+Σ negative, `overage` = Σ positive, `net_variance`, `mean_abs_variance`,
+`chronic_shrinkage` when net < 0 over ≥ 3 audits), plus a monthly `trend`
+(count / mean |variance| / net). Sorted lowest accuracy, then largest mean |var|.
+
+### 8.6. Production yield variance  *(Phase 1 — implemented)*
+
+`production_yield_variance()` → `views_analytics.production_yield_view` →
+`/operations/manufacture/yield/` (nav: *Insights → Yield Variance*; Manufacture links to it via a header call-out).
+
+For `status='Completed'` runs with an `actual_yield`, grouped `by_product` and
+`by_supervisor`:
+
+```
+yield_variance_pct   = mean( (actual_yield - expected_yield) / expected_yield * 100 )
+material_overuse_pct = mean( RunMaterialUsage.variance_pct )   over the run's usages
+rating               = good   if yield_variance_pct >= -2 and material_overuse_pct <= 5
+                       poor   if yield_variance_pct <  -10 or material_overuse_pct >  15
+                       watch  otherwise
+```
+
+Sorted `(rating rank, yield_variance_pct, -material_overuse_pct, name)`.
+
+### 8.7. Stockout & reorder forecast  *(Phase 2a — implemented)*
+
+`stockout_forecast(window_days=30)` → `views_analytics.forecast_view` →
+`/warehouse/forecast/` (nav: *Insights → Stockout Forecast*; Materials Hub links to it via a header call-out).
+
+```
+burn/day    = Σ Consumed_For_Manufacturing qty over window / window_days   (consumption_rates())
+available   = Σ active Batch.quantity - Σ Batch.allocated_quantity  (per material)
+days_cover  = available / burn/day        (None if burn/day == 0, or cover > 3650)
+stockout    = today + days_cover
+lead_time   = max SupplierMaterial.lead_time_days for the material
+              ?? po_default_lead_time_days setting          (-> lead_time_estimated)
+reorder_by  = stockout - lead_time
+days_until_reorder = days_cover - lead_time
+status      = critical     if available <= 0, or days_until_reorder < 0
+              reorder_now  if days_until_reorder <= 2
+              watch        if days_until_reorder <= 14
+              ok           otherwise
+              no_usage     if burn/day == 0
+```
+
+`on_order` (open-PO outstanding qty) is shown for context, not subtracted. Rows
+sorted `(status rank, reorder_by, -burn/day, name)`. `consumption_rates()` is the
+batched sibling of Phase 0's `consumption_rate()` — one grouped query for many
+materials.
+
+### 8.8. Capacity runway  *(Phase 2b — implemented)*
+
+`capacity_forecast()` → `views_analytics.capacity_forecast_view` →
+`/warehouse/capacity/` (nav: *Insights → Capacity Runway*; Facility Management
+links to it via a header call-out).
+
+`manage.py snapshot_utilization` writes one `WarehouseUtilizationSnapshot` per
+warehouse per day (idempotent on `(warehouse, snapshot_date)`), using the same
+active-stock-tonnage expression as `dashboard_view` (`analytics.used_mt_expr()`).
+**This command has no scheduler wired — run it daily** via Heroku Scheduler, cron,
+or a scheduled GitHub Action.
+
+```
+slope, _  = least-squares fit of utilization_percent over the snapshot dates
+weekly_rate_pp = slope × 7
+days_to_full   = (100 − current) / slope           (slope in pp/day)
+projected_full = latest_snapshot_date + days_to_full
+status = no_data   if < 3 snapshots
+         stable    if slope <= 0.02 pp/day (and current < 95)
+         critical  if current >= 95%, or days_to_full <= 14
+         watch     if days_to_full <= 60
+         ok         otherwise
+```
+
+Sorted `(status rank, days_to_full, -current, name)`. The UI shows a "collecting
+data" banner until a warehouse has 7 snapshots.
+
+### 8.9. AI Ops Briefing  *(Phase 3 — implemented)*
+
+`core/briefing.py` → `generate_ops_briefing` command / `ops_briefing_view` →
+`/assistant/briefing/` (nav: *Overview → Digital Assistant (AI)* — the formerly
+inert link is now wired here).
+
+Two steps, **one stateless LLM call**, no agent loop and no tools:
+
+1. **`collect_signals(window_days=180)`** calls the six §8.3–§8.8 functions and
+   keeps only the rows worth a manager's attention —
+   `stockout_forecast` rows `critical|reorder_now|watch`, `capacity_forecast`
+   rows `critical|watch`, `supplier_reliability` rows `poor|watch`,
+   `sales_order_delivery_risk` rows `late|at_risk`, `audit_accuracy` warehouses
+   with chronic shrinkage or accuracy < 0.8 (+ worst items), and
+   `production_yield_variance` products `poor|watch`. Each section is capped at
+   12 rows and reduced to the few fields the narration needs (name + figures,
+   dates as ISO strings). The result is one JSON-serialisable dict with a
+   `signal_count`.
+
+2. **`generate_briefing(period, user)`** renders that dict as text and makes a
+   single `anthropic` `client.messages.create()` call with `BRIEFING_SYSTEM_PROMPT`
+   ("use ONLY the figures in the payload; never invent a number/name/date").
+   The model gets **no database access and no tools** — only the pre-computed
+   dict — so it can narrate the numbers but cannot fabricate them. The reply
+   (headline + 3–6 bullet lines + optional `Watch:` line) is stored verbatim.
+
+**`OpsBriefing`** row per run: `period`, `status`
+(`ok|empty|skipped|error`), `headline`, `body_text`, `signals_json`,
+`signal_count`, `model_id`, `input_tokens`/`output_tokens` (cost trace),
+`error_detail`, `generated_by` (null for the scheduled job). The view renders the
+latest `ok` row; a newer failed run shows a "last good briefing" notice.
+
+Config in `settings_store.REGISTRY` (editable at `/system/settings/`):
+`ops_briefing_enabled` (bool; off → `skipped` run, no API call) and
+`ops_briefing_model` (default `claude-opus-5`; `claude-sonnet-5` /
+`claude-haiku-4-5` are cheaper for this job). The API key is the
+**`ANTHROPIC_API_KEY` environment variable** — a secret, deliberately not a
+`SystemSetting`.
+
+`generate_briefing()` never raises for a config/API/network problem — it records
+the failure on the row so the scheduled job stays green. **Like
+`snapshot_utilization`, this command has no scheduler wired** — run it daily
+(`python manage.py generate_ops_briefing`, or `--period weekly`) via Heroku
+Scheduler, cron, or a scheduled GitHub Action. Admin/Manager can also trigger a
+run from the page. `--dry-run` prints the signal payload without calling the API.

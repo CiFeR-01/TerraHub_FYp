@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block title %}Capacity Runway - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <a href="{% url 'warehouse_list' %}">Facility Management</a>
+            <span class="separator">/</span>
+            <span class="current-page">Capacity Runway</span>
+        </nav>
+        <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
+            Capacity Runway
+        </h1>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:66ch;">
+            Each warehouse's daily utilization, trended and projected forward to the date
+            it reaches 100&thinsp;%. Fastest-filling first.
+        </p>
+    </div>
+</header>
+
+{% if summary.empty %}
+<div class="animate-fade-in-up" style="background:var(--accent-wash,#eef2ff); border:1px solid rgba(79,70,229,0.2); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:var(--text-main);">
+    <strong>No snapshots yet.</strong> Utilization has to be recorded daily before a trend
+    can be fit. Run <code>python manage.py snapshot_utilization</code> once a day
+    (schedule it &mdash; see the analytics docs). Projections firm up after about a week.
+</div>
+{% elif summary.building %}
+<div class="animate-fade-in-up" style="background:#fef9c3; border:1px solid rgba(202,138,4,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:#854d0e;">
+    <strong>Collecting data.</strong> {{ summary.history_days }} day{{ summary.history_days|pluralize }} of history so
+    far &mdash; projections are shown once a warehouse has 3+ snapshots and firm up around 7.
+</div>
+{% endif %}
+
+<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay:0.05s; margin-bottom:1.5rem;">
+    <div class="kpi-item-card">
+        <span class="kpi-label">Warehouses</span>
+        <div class="kpi-value-row"><span class="kpi-value">{{ summary.warehouse_count }}</span></div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Critical</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value" style="color:{% if summary.critical %}#dc2626{% else %}var(--text-main){% endif %};">{{ summary.critical }}</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Watch</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value" style="color:{% if summary.watch %}#b45309{% else %}var(--text-main){% endif %};">{{ summary.watch }}</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Awaiting History</span>
+        <div class="kpi-value-row"><span class="kpi-value">{{ summary.no_data }}</span></div>
+    </div>
+</section>
+
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+    <div class="table-responsive">
+        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th data-sort="text" style="padding:0.6rem 1rem;">Warehouse</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem;">Status</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Utilization</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Weekly rate</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Days to full</th>
+                    <th data-sort="date" style="padding:0.6rem 1rem; text-align:right;">Projected full</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Snapshots</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in rows %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                    <td style="padding:0.6rem 1rem;">
+                        <a href="{% url 'warehouse_edit' r.warehouse_id %}" style="font-weight:700; color:var(--primary); text-decoration:none;">{{ r.name }}</a>
+                    </td>
+                    <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.status == 'critical' %}0{% elif r.status == 'watch' %}1{% elif r.status == 'ok' %}2{% elif r.status == 'stable' %}3{% else %}4{% endif %}">
+                        {% if r.status == 'critical' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px;">Critical</span>
+                        {% elif r.status == 'watch' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px;">Watch</span>
+                        {% elif r.status == 'ok' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px;">Filling</span>
+                        {% elif r.status == 'stable' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#e0e7ff; color:#4338ca; padding:0.15rem 0.55rem; border-radius:999px;">Stable</span>
+                        {% else %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#f1f5f9; color:#64748b; padding:0.15rem 0.55rem; border-radius:999px;">No data</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; {% if r.current_percent and r.current_percent >= 95 %}color:#dc2626;{% endif %}"
+                        data-sort-value="{{ r.current_percent|default_if_none:'' }}">
+                        {% if r.current_percent is not None %}{{ r.current_percent|floatformat:1 }}%{% else %}<span style="color:var(--text-muted); font-weight:400;">&mdash;</span>{% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right;" data-sort-value="{{ r.weekly_rate_pp|default_if_none:'' }}">
+                        {% if r.weekly_rate_pp is not None %}
+                            {% if r.weekly_rate_pp > 0 %}<span style="color:#dc2626;">+{{ r.weekly_rate_pp|floatformat:2 }} pp</span>
+                            {% else %}<span style="color:#059669;">{{ r.weekly_rate_pp|floatformat:2 }} pp</span>{% endif %}
+                        {% else %}<span style="color:var(--text-muted);">&mdash;</span>{% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700;" data-sort-value="{{ r.days_to_full|default_if_none:'' }}">
+                        {% if r.days_to_full is not None %}{{ r.days_to_full|floatformat:0 }}d{% else %}<span style="color:var(--text-muted); font-weight:400;">&mdash;</span>{% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right; {% if r.status == 'critical' %}color:#dc2626; font-weight:700;{% endif %}"
+                        data-sort-value="{{ r.projected_full_date|date:'Y-m-d' }}">
+                        {{ r.projected_full_date|date:"d M Y"|default:"&mdash;" }}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right; color:var(--text-muted);">
+                        {{ r.snapshot_count }}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="padding:2rem 1rem; text-align:center; color:var(--text-muted);">No warehouses.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<p style="color:var(--text-muted); font-size:0.75rem; margin-top:1rem; max-width:78ch;">
+    <strong>How it is projected.</strong> Each night <code>snapshot_utilization</code> records
+    every warehouse's <em>utilization</em> (active-stock tonnage &divide; capacity). A least-squares
+    line is fit through the last snapshots; its slope &times;&nbsp;7 is the <em>weekly rate</em>.
+    <em>Days to full</em> = (100&thinsp;% &minus; current) &divide; daily slope. <em>Critical</em> =
+    at or above 95&thinsp;%, or full within 14 days; <em>Watch</em> = full within 60 days;
+    <em>Filling</em> = rising but further out; <em>Stable</em> = flat or emptying.
+</p>
+{% endblock %}

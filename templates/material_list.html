@@ -30,6 +30,8 @@
     </div>
 </header>
 
+{% include "partials/_insight_link.html" with link_url='forecast' link_label='Stockout forecast' %}
+
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
@@ -42,7 +44,7 @@
 
 <div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
     <div class="table-responsive">
-        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
                     <th style="padding:0.75rem 1rem;">SKU</th>

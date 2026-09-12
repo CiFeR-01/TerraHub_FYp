@@ -19,191 +19,72 @@
 
 <body>
     {% if user.is_authenticated %}
-    <div class="dashboard-wrapper">
+    <div class="dashboard-wrapper" id="dashboard-wrapper">
+        <script>
+            (function () {
+                try {
+                    if (localStorage.getItem('th_sidebar_collapsed') === '1') {
+                        document.getElementById('dashboard-wrapper').classList.add('sidebar-collapsed');
+                    }
+                } catch (e) {}
+            })();
+        </script>
         <!-- Sidebar Drawer -->
-        <aside class="sidebar">
+        <aside class="sidebar" id="app-sidebar" aria-label="Sidebar navigation">
             <div class="sidebar-header">
-                <span class="sidebar-brand">IWMS</span>
+                <span class="sidebar-brand"><span class="brand-text">IWMS</span></span>
+                <button type="button" id="sidebar-collapse-btn" class="sidebar-collapse-btn"
+                    aria-label="Collapse sidebar" aria-expanded="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="15 18 9 12 15 6" />
+                    </svg>
+                </button>
             </div>
 
-            <nav class="sidebar-nav">
+            <nav class="sidebar-nav" role="navigation" aria-label="Main">
                 <ul class="nav-menu">
-
-                    <!-- Overview -->
-                    <li
-                        class="nav-item{% if request.resolver_match.url_name in 'dashboard,system' %} group-expanded{% endif %}">
-                        <a href="#"
-                            class="nav-btn nav-toggle{% if request.resolver_match.url_name in 'dashboard,system' %} active{% endif %}">
-                            <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20">
-                                <rect x="3" y="3" width="7" height="7" rx="1" fill="none" stroke="currentColor"
-                                    stroke-width="2" />
-                                <rect x="14" y="3" width="7" height="7" rx="1" fill="none" stroke="currentColor"
-                                    stroke-width="2" />
-                                <rect x="3" y="14" width="7" height="7" rx="1" fill="none" stroke="currentColor"
-                                    stroke-width="2" />
-                                <rect x="14" y="14" width="7" height="7" rx="1" fill="none" stroke="currentColor"
-                                    stroke-width="2" />
-                            </svg>
-                            <span>Overview</span>
-                            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
+                    {% for group in nav_groups %}
+                    <li class="nav-item{% if group.active %} group-expanded{% endif %}"
+                        data-nav-group="{{ group.id }}">
+                        <button type="button" class="nav-btn nav-toggle{% if group.active %} active{% endif %}"
+                            aria-expanded="{% if group.active %}true{% else %}false{% endif %}"
+                            aria-controls="submenu-{{ group.id }}">
+                            <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20"
+                                aria-hidden="true">{{ group.icon }}</svg>
+                            <span>{{ group.label }}</span>
+                            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
                                 <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"
                                     stroke-linecap="round" stroke-linejoin="round" />
                             </svg>
-                        </a>
-                        <ul class="sidebar-submenu">
-                            <li><a href="{% url 'dashboard' %}"
-                                    class="submenu-link{% if request.resolver_match.url_name == 'dashboard' %} active{% endif %}">Dashboard
-                                    &amp; Analytics</a></li>
-                            {% if user.is_superuser %}
-                            <li><a href="{% url 'system' %}"
-                                    class="submenu-link{% if request.resolver_match.url_name == 'system' %} active{% endif %}">System Console</a></li>
-                            {% endif %}
-                            <li><a href="#" class="submenu-link ai-link">Digital Assistant (AI)</a></li>
-                            {% if user.role in 'Admin,Manager' or user.is_superuser %}
+                        </button>
+                        <ul class="sidebar-submenu" id="submenu-{{ group.id }}">
+                            {% for item in group.items %}
                             <li>
-                                <a href="{% url 'approvals_inbox' %}" class="submenu-link{% if request.resolver_match.url_name == 'approvals_inbox' %} active{% endif %}" style="display:flex; justify-content:space-between; align-items:center;">
-                                    Action Center 
-                                    {% if pending_approvals_total and pending_approvals_total > 0 %}
-                                    <span style="background:#ef4444; color:#fff; font-size:0.7rem; font-weight:700; padding:0.15rem 0.4rem; border-radius:10px; line-height:1;">{{ pending_approvals_total }}</span>
+                                {% if item.url_name %}
+                                <a href="{% url item.url_name %}"
+                                    class="submenu-link{% if item.css_class %} {{ item.css_class }}{% endif %}{% if item.active %} active{% endif %}{% if item.show_badge %} has-badge{% endif %}"
+                                    {% if item.active %}aria-current="page"{% endif %}>
+                                    {{ item.label }}
+                                    {% if item.show_badge and pending_approvals_total %}
+                                    <span class="nav-badge">{{ pending_approvals_total }}</span>
                                     {% endif %}
                                 </a>
+                                {% else %}
+                                <a href="#"
+                                    class="submenu-link{% if item.css_class %} {{ item.css_class }}{% endif %}">{{ item.label }}</a>
+                                {% endif %}
                             </li>
-                            {% endif %}
-
+                            {% endfor %}
                         </ul>
                     </li>
-
-                    <!-- Inventory & Facilities -->
-                    {% if perms.core.view_warehouse or perms.core.view_stockaudit or perms.core.view_registrylog %}
-                    <li
-                        class="nav-item{% if request.resolver_match.url_name in 'warehouse_inventory,warehouse_list,stock_audit,registry' %} group-expanded{% endif %}">
-                        <a href="#"
-                            class="nav-btn nav-toggle{% if request.resolver_match.url_name in 'warehouse_inventory,warehouse_list,stock_audit,registry' %} active{% endif %}">
-                            <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20">
-                                <path
-                                    d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
-                                    fill="none" stroke="currentColor" stroke-width="2" />
-                                <polyline points="3.27 6.96 12 12.01 20.73 6.96" fill="none" stroke="currentColor"
-                                    stroke-width="2" />
-                                <line x1="12" y1="22.08" x2="12" y2="12" fill="none" stroke="currentColor"
-                                    stroke-width="2" />
-                            </svg>
-                            <span>Inventory &amp; Facilities</span>
-                            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
-                                <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"
-                                    stroke-linecap="round" stroke-linejoin="round" />
-                            </svg>
-                        </a>
-                        <ul class="sidebar-submenu">
-                            {% if perms.core.view_warehouse %}
-                            <li><a href="{% url 'warehouse_inventory' %}"
-                                    class="submenu-link emerald-link{% if request.resolver_match.url_name == 'warehouse_inventory' %} active{% endif %}">Warehouse
-                                    Inventory</a></li>
-                            <li><a href="{% url 'warehouse_list' %}" class="submenu-link{% if request.resolver_match.url_name == 'warehouse_list' %} active{% endif %}">Facility Management</a></li>
-                            {% endif %}
-                            {% if perms.core.view_stockaudit or perms.core.add_stockaudit %}
-                            <li><a href="{% url 'stock_audit' %}" class="submenu-link{% if request.resolver_match.url_name == 'stock_audit' %} active{% endif %}">Stock Tally (Audit)</a></li>
-                            {% endif %}
-                            {% if perms.core.view_registrylog %}
-                            <li><a href="{% url 'registry' %}" class="submenu-link{% if request.resolver_match.url_name == 'registry' %} active{% endif %}">Registry Ledger</a></li>
-                            {% endif %}
-                        </ul>
-                    </li>
-                    {% endif %}
-
-                    <!-- Catalog & Directory -->
-                    {% if perms.core.view_product or perms.core.view_material %}
-                    <li
-                        class="nav-item{% if request.resolver_match.url_name in 'product_list,material_list' %} group-expanded{% endif %}">
-                        <a href="#"
-                            class="nav-btn nav-toggle{% if request.resolver_match.url_name in 'product_list,material_list' %} active{% endif %}">
-                            <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20">
-                                <ellipse cx="12" cy="5" rx="9" ry="3" fill="none" stroke="currentColor"
-                                    stroke-width="2" />
-                                <path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5" fill="none" stroke="currentColor"
-                                    stroke-width="2" />
-                                <path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6" fill="none" stroke="currentColor"
-                                    stroke-width="2" />
-                            </svg>
-                            <span>Catalog &amp; Directory</span>
-                            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
-                                <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"
-                                    stroke-linecap="round" stroke-linejoin="round" />
-                            </svg>
-                        </a>
-                        <ul class="sidebar-submenu">
-                            {% if perms.core.view_product %}
-                            <li><a href="{% url 'product_list' %}" class="submenu-link{% if request.resolver_match.url_name == 'product_list' %} active{% endif %}">Products Catalog</a></li>
-                            {% endif %}
-                            {% if perms.core.view_material %}
-                            <li><a href="{% url 'material_list' %}" class="submenu-link{% if request.resolver_match.url_name == 'material_list' %} active{% endif %}">Materials Hub</a></li>
-                            {% endif %}
-                        </ul>
-                    </li>
-                    {% endif %}
-
-                    <!-- Operations & Logistics -->
-                    {% if perms.core.view_shipment or perms.core.view_productrecipe or perms.core.add_batch or perms.core.change_batch %}
-                    <li
-                        class="nav-item{% if request.resolver_match.url_name in 'so_list,po_list,shipments,readiness,qa_dashboard' %} group-expanded{% endif %}">
-                        <a href="#"
-                            class="nav-btn nav-toggle{% if request.resolver_match.url_name in 'so_list,po_list,shipments,readiness,qa_dashboard' %} active{% endif %}">
-                            <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20">
-                                <rect x="1" y="3" width="15" height="13" rx="2" fill="none" stroke="currentColor"
-                                    stroke-width="2" />
-                                <polygon points="16 8 20 8 23 11 23 16 16 16 16 8" fill="none" stroke="currentColor"
-                                    stroke-width="2" />
-                                <circle cx="5.5" cy="18.5" r="2.5" fill="none" stroke="currentColor" stroke-width="2" />
-                                <circle cx="18.5" cy="18.5" r="2.5" fill="none" stroke="currentColor"
-                                    stroke-width="2" />
-                            </svg>
-                            <span>Operations &amp; Logistics</span>
-                            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
-                                <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"
-                                    stroke-linecap="round" stroke-linejoin="round" />
-                            </svg>
-                        </a>
-                        <ul class="sidebar-submenu">
-                            {% if perms.core.view_shipment %}
-                            <li><a href="{% url 'so_list' %}" class="submenu-link{% if request.resolver_match.url_name == 'so_list' %} active{% endif %}">Sales Orders</a></li>
-                            <li><a href="{% url 'po_list' %}" class="submenu-link{% if request.resolver_match.url_name == 'po_list' %} active{% endif %}">Purchase Orders</a></li>
-                            <li><a href="{% url 'shipments' %}" class="submenu-link{% if request.resolver_match.url_name == 'shipments' %} active{% endif %}">Logistics Tracker</a></li>
-                            {% endif %}
-                            {% if perms.core.view_productrecipe or perms.core.add_batch %}
-                            <li><a href="{% url 'readiness' %}" class="submenu-link{% if request.resolver_match.url_name == 'readiness' %} active{% endif %}">Manufacture</a></li>
-                            {% endif %}
-                            {% if perms.core.change_batch %}
-                            <li><a href="{% url 'qa_dashboard' %}" class="submenu-link warning-link{% if request.resolver_match.url_name == 'qa_dashboard' %} active{% endif %}">QA &amp; Spoilage Control</a></li>
-                            {% endif %}
-                        </ul>
-                    </li>
-                    {% endif %}
-
-                    <!-- Admin & System -->
-                    {% if user.is_superuser or request.user.roles.all.0.name == 'Admin' or request.user.role == 'Admin' or request.user.roles.all.0.name == 'Manager' or request.user.role == 'Manager' %}
-                    <li class="nav-item{% if request.resolver_match.url_name in 'user_management' %} group-expanded{% endif %}">
-                        <a href="#" class="nav-btn nav-toggle{% if request.resolver_match.url_name in 'user_management' %} active{% endif %}">
-                            <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20">
-                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/>
-                                <path d="M7 11V7a5 5 0 0 1 10 0v4" fill="none" stroke="currentColor" stroke-width="2"/>
-                            </svg>
-                            <span>Admin</span>
-                            <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
-                                <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                            </svg>
-                        </a>
-                        <ul class="sidebar-submenu">
-                            <li><a href="{% url 'user_management' %}" class="submenu-link{% if request.resolver_match.url_name == 'user_management' %} active{% endif %}">Users Management</a></li>
-                        </ul>
-                    </li>
-                    {% endif %}
-
+                    {% endfor %}
                 </ul>
             </nav>
 
             <!-- Sidebar User Footer -->
             <div class="sidebar-footer">
-                <a href="{% url 'profile' %}" style="text-decoration:none; color:inherit; display:flex; align-items:center; gap:0.75rem; flex:1;">
+                <a href="{% url 'profile' %}" class="sidebar-footer-link">
                     <div class="user-avatar-placeholder">
                         {{ user.username|slice:":1"|upper }}
                     </div>
@@ -225,12 +106,21 @@
                 </form>
             </div>
         </aside>
+        <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
 
         <!-- Dashboard Main Container -->
         <div class="main-container">
             <header class="topbar">
                 <div class="topbar-left">
-                    <span class="status-indicator"><span class="status-pulse-dot"></span> System Live</span>
+                    <button type="button" id="sidebar-toggle-btn" class="btn-icon-topbar sidebar-toggle-btn"
+                        aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="app-sidebar">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="3" y1="12" x2="21" y2="12" />
+                            <line x1="3" y1="6" x2="21" y2="6" />
+                            <line x1="3" y1="18" x2="21" y2="18" />
+                        </svg>
+                    </button>
                 </div>
                 <div class="topbar-right">
                     <span class="user-branch-badge">{{ user.branch }} Department</span>
@@ -326,28 +216,126 @@
     </footer>
     {% endif %}
     {% block extra_js %}{% endblock %}
+    {% include "partials/_sortable_tables.html" %}
     <script>
-        // Collapsible sidebar nav — toggle with max 3 open at once
-        document.querySelectorAll('.nav-toggle').forEach(function (btn) {
-            btn.addEventListener('click', function (e) {
-                e.preventDefault();
-                var item = this.closest('.nav-item');
-                var isOpen = item.classList.contains('group-expanded');
+        // Collapsible sidebar nav — toggle with max 3 open at once, persisted across page loads
+        (function () {
+            var STORAGE_KEY = 'th_sidebar_open_groups';
 
-                if (isOpen) {
-                    // Close this section
-                    item.classList.remove('group-expanded');
-                } else {
-                    // Check how many are currently open
-                    var openItems = document.querySelectorAll('.nav-item.group-expanded');
-                    if (openItems.length >= 3) {
-                        // Close the first open one to stay within limit
-                        openItems[0].classList.remove('group-expanded');
-                    }
-                    item.classList.add('group-expanded');
+            function saveOpenGroups() {
+                var ids = Array.prototype.map.call(
+                    document.querySelectorAll('.nav-item.group-expanded'),
+                    function (el) { return el.dataset.navGroup; }
+                ).filter(Boolean);
+                try { localStorage.setItem(STORAGE_KEY, JSON.stringify(ids)); } catch (e) {}
+            }
+
+            try {
+                var stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+                stored.forEach(function (id) {
+                    var item = document.querySelector('.nav-item[data-nav-group="' + id + '"]');
+                    if (item) item.classList.add('group-expanded');
+                });
+            } catch (e) {}
+
+            var openItems = document.querySelectorAll('.nav-item.group-expanded');
+            for (var i = 0; i < openItems.length - 3; i++) {
+                openItems[i].classList.remove('group-expanded');
+            }
+
+            function openGroup(item, btn) {
+                var currentlyOpen = document.querySelectorAll('.nav-item.group-expanded');
+                if (currentlyOpen.length >= 3) {
+                    currentlyOpen[0].classList.remove('group-expanded');
+                    var firstBtn = currentlyOpen[0].querySelector('.nav-toggle');
+                    if (firstBtn) firstBtn.setAttribute('aria-expanded', 'false');
                 }
+                item.classList.add('group-expanded');
+                btn.setAttribute('aria-expanded', 'true');
+            }
+
+            document.querySelectorAll('.nav-toggle').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    var item = this.closest('.nav-item');
+                    var wrapperEl = document.getElementById('dashboard-wrapper');
+
+                    // Collapsed rail: clicking an icon expands the sidebar and
+                    // drops that group's list open, instead of a flyout popup.
+                    if (wrapperEl && wrapperEl.classList.contains('sidebar-collapsed')) {
+                        wrapperEl.classList.remove('sidebar-collapsed');
+                        try { localStorage.setItem('th_sidebar_collapsed', '0'); } catch (e) {}
+                        var collapseBtn = document.getElementById('sidebar-collapse-btn');
+                        if (collapseBtn) {
+                            collapseBtn.setAttribute('aria-expanded', 'true');
+                            collapseBtn.setAttribute('aria-label', 'Collapse sidebar');
+                        }
+                        if (!item.classList.contains('group-expanded')) {
+                            openGroup(item, this);
+                            saveOpenGroups();
+                        }
+                        return;
+                    }
+
+                    var isOpen = item.classList.contains('group-expanded');
+                    if (isOpen) {
+                        item.classList.remove('group-expanded');
+                        this.setAttribute('aria-expanded', 'false');
+                    } else {
+                        openGroup(item, this);
+                    }
+                    saveOpenGroups();
+                });
             });
-        });
+        })();
+
+        // Mobile off-canvas sidebar
+        (function () {
+            var wrapperEl = document.getElementById('dashboard-wrapper');
+            var toggleBtn = document.getElementById('sidebar-toggle-btn');
+            var overlayEl = document.getElementById('sidebar-overlay');
+            if (!wrapperEl || !toggleBtn) return;
+
+            function closeMobileSidebar() {
+                wrapperEl.classList.remove('sidebar-mobile-open');
+                toggleBtn.setAttribute('aria-expanded', 'false');
+            }
+            function openMobileSidebar() {
+                wrapperEl.classList.add('sidebar-mobile-open');
+                toggleBtn.setAttribute('aria-expanded', 'true');
+            }
+
+            toggleBtn.addEventListener('click', function () {
+                if (wrapperEl.classList.contains('sidebar-mobile-open')) closeMobileSidebar();
+                else openMobileSidebar();
+            });
+            if (overlayEl) overlayEl.addEventListener('click', closeMobileSidebar);
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') closeMobileSidebar();
+            });
+            document.querySelectorAll('.sidebar .submenu-link, .sidebar-footer a').forEach(function (link) {
+                link.addEventListener('click', function () {
+                    if (window.matchMedia('(max-width: 1024px)').matches) closeMobileSidebar();
+                });
+            });
+        })();
+
+        // Desktop icon-only collapse rail, persisted across page loads
+        (function () {
+            var wrapperEl = document.getElementById('dashboard-wrapper');
+            var collapseBtn = document.getElementById('sidebar-collapse-btn');
+            var STORAGE_KEY = 'th_sidebar_collapsed';
+            if (!wrapperEl || !collapseBtn) return;
+
+            collapseBtn.setAttribute('aria-expanded', wrapperEl.classList.contains('sidebar-collapsed') ? 'false' : 'true');
+
+            collapseBtn.addEventListener('click', function () {
+                var collapsed = wrapperEl.classList.toggle('sidebar-collapsed');
+                collapseBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                collapseBtn.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+                try { localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0'); } catch (e) {}
+            });
+        })();
+
         // Notification bell dropdown
         var bellBtn = document.getElementById('notif-bell-btn');
         var notifDrop = document.getElementById('notif-dropdown');

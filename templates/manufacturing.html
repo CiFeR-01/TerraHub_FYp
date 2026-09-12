@@ -32,6 +32,8 @@
     </div>
 </header>
 
+{% include "partials/_insight_link.html" with link_url='production_yield' link_label='Yield variance' %}
+
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
@@ -87,7 +89,7 @@
                         <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.6rem; flex-wrap:wrap;">
                             <span style="font-weight:700; font-size:0.9rem;">{{ si.item.product.name }}</span>
                             <span style="font-size:0.78rem; color:var(--text-muted); font-family:monospace;">{{ si.item.product.sku }}</span>
-                            <span style="font-size:0.82rem; font-weight:600; color:var(--text-muted);">x {{ si.item.quantity_ordered|floatformat:0 }} {{ si.item.product.unit_of_measure }}</span>
+                            <span style="font-size:0.82rem; font-weight:600; color:var(--text-muted);">{{ si.deficit|floatformat:0 }} {{ si.item.product.unit_of_measure }} still needed <span style="font-weight:400;">(of {{ si.item.quantity_ordered|floatformat:0 }} ordered{% if si.allocated > 0 %}, {{ si.allocated|floatformat:0 }} already allocated{% endif %})</span></span>
                             {% if si.bom_ready %}<span class="badge badge-emerald" style="font-size:0.72rem;">BOM OK</span>
                             {% else %}<span class="badge badge-rose" style="font-size:0.72rem;">Shortage</span>{% endif %}
                             <span style="font-size:0.78rem; color:{% if si.bom_ready %}#059669{% else %}#dc2626{% endif %}; font-weight:700;">Can make: {{ si.can_make }} units</span>
@@ -164,7 +166,7 @@
                             {% endif %}
                         </div>
                         {% else %}
-                        <button onclick="openScheduleModal('{{ entry.so.id }}', '{{ si.item.product.id }}', '{{ si.item.product.name }}', '{{ si.item.quantity_ordered|floatformat:0 }}')" class="btn btn-primary" style="width:100%; font-size:0.82rem; padding:0.5rem 0.75rem;">
+                        <button onclick="openScheduleModal('{{ entry.so.id }}', '{{ si.item.product.id }}', '{{ si.item.product.name }}', '{{ si.deficit|floatformat:0 }}')" class="btn btn-primary" style="width:100%; font-size:0.82rem; padding:0.5rem 0.75rem;">
                             Schedule Run
                         </button>
                         {% endif %}

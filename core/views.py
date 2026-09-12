@@ -5,8 +5,8 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django import forms
 from django.db import transaction
-from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q
-from django.db.models.functions import Coalesce
+from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q, Avg
+from django.db.models.functions import Coalesce, TruncWeek
 from django.core.paginator import Paginator
 from datetime import date, timedelta
 import csv
@@ -15,37 +15,20 @@ import uuid
 from django.utils import timezone
 from .models import (
     CustomUser, Warehouse, WarehouseLocation, Material, Product,
-    ProductRecipe, ProductionRun, ProductionConsumption, Batch,
+    ProductRecipe, ProductionRun, ProductionRunYieldLog, RunMaterialUsage,
+    ProductionConsumption, Batch,
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
-    Shipment, ShipmentItem, StockAudit, RegistryLog, OrderTimeline, Notification, Role,
-    StockAllocation
+    Shipment, ShipmentItem, ShipmentItemReceipt, StockAudit, RegistryLog, OrderTimeline, Notification, Role,
+    StockAllocation, Supplier, SupplierMaterial, Client
 )
 from .utils import generate_next_code
 
 
 @login_required
 def dashboard_view(request):
-    used_mt_annotation = Coalesce(
-        Sum(
-            Case(
-                When(
-                    batches__status='Active',
-                    batches__material__isnull=False,
-                    then=F('batches__quantity') * F('batches__material__weight_mt_per_unit')
-                ),
-                When(
-                    batches__status='Active',
-                    batches__product__isnull=False,
-                    then=F('batches__quantity') * F('batches__product__weight_mt_per_unit')
-                ),
-                default=Value(0),
-                output_field=DecimalField()
-            )
-        ),
-        Value(0, output_field=DecimalField())
-    )
+    from .analytics import used_mt_expr
 
-    warehouses = Warehouse.objects.annotate(used_mt=used_mt_annotation).order_by('name')
+    warehouses = Warehouse.objects.annotate(used_mt=used_mt_expr()).order_by('name')
 
     warehouse_stats = []
     total_capacity = 0.0
@@ -130,6 +113,147 @@ def dashboard_view(request):
                 b.threshold_days = b.material.safe_storage_days if b.material else 30
                 degrading_batches.append(b)
 
+    # ------------------------------------------------------------------
+    # Analytics upgrade: attention panel, live production progress,
+    # period-over-period KPI deltas, real sparklines, output trend.
+    # ------------------------------------------------------------------
+    tomorrow = today + timedelta(days=1)
+    prev30 = today - timedelta(days=30)
+    prev60 = today - timedelta(days=60)
+
+    def _reg_sum(action, start, end):
+        return float(RegistryLog.objects.filter(
+            action_type=action, timestamp__date__gte=start, timestamp__date__lt=end
+        ).aggregate(s=Sum('quantity_changed'))['s'] or 0)
+
+    def _pct_delta(cur, prev):
+        if not prev:
+            return None
+        return (cur - prev) / prev * 100
+
+    # A. "Needs attention" counters (each links to a filtered work list)
+    attention = {
+        'approvals': (
+            PurchaseOrder.objects.filter(status='Pending Approval').count()
+            + SalesOrder.objects.filter(status='Pending Approval').count()
+            + ProductionRun.objects.filter(status='Pending Approval').count()
+            + Shipment.objects.filter(status='Pending Approval').count()
+        ),
+        'overdue_pos': PurchaseOrder.objects.filter(
+            expected_delivery_date__lt=today
+        ).exclude(status__in=['Completed', 'Rejected', 'Draft']).count(),
+        'late_sos': SalesOrder.objects.filter(
+            fulfillment_deadline__lt=today
+        ).exclude(status__in=['Shipped', 'Delivered', 'Rejected', 'Draft']).count(),
+        'delayed_shipments': Shipment.objects.filter(
+            status__in=['Delayed', 'Discrepant']
+        ).count(),
+        'awaiting_materials': ProductionRun.objects.filter(status='Awaiting Materials').count(),
+        'quarantined': Batch.objects.filter(status='Quarantined').count(),
+        'pending_audits': StockAudit.objects.filter(status='Pending').count(),
+    }
+    attention_total = sum(attention.values())
+
+    # B. Production in progress — % of target reached from dated yield logs
+    active_runs = (
+        ProductionRun.objects
+        .filter(status__in=['InProgress', 'Paused', 'Awaiting Materials'])
+        .select_related('target_product', 'supervisor')
+        .annotate(made=Coalesce(
+            Sum('yield_logs__quantity'),
+            Value(0, output_field=DecimalField()),
+        ))
+        .order_by('status', 'run_number')
+    )
+    run_progress = []
+    for r in active_runs:
+        expected = float(r.expected_yield or 0)
+        made = float(r.made or 0)
+        pct = (made / expected * 100) if expected > 0 else 0
+        run_progress.append({
+            'run_number': r.run_number,
+            'pk': r.pk,
+            'product': r.target_product.name if r.target_product else '—',
+            'status': r.status,
+            'status_display': r.get_status_display(),
+            'supervisor': r.supervisor.username if r.supervisor else 'Unassigned',
+            'made': made,
+            'expected': expected,
+            'unit': r.target_product.unit_of_measure if r.target_product else '',
+            'pct': min(pct, 100),
+            'pct_raw': pct,
+            'days_running': (today - r.start_time.date()).days if r.start_time else None,
+        })
+
+    # C. KPI deltas — last 30 days vs the 30 days before that
+    rm_in_cur, rm_in_prev = _reg_sum('Inbound', prev30, tomorrow), _reg_sum('Inbound', prev60, prev30)
+    fg_cur, fg_prev = _reg_sum('Produced', prev30, tomorrow), _reg_sum('Produced', prev60, prev30)
+
+    kpi_deltas = {
+        'raw_materials': _pct_delta(rm_in_cur, rm_in_prev),
+        'finished_goods': _pct_delta(fg_cur, fg_prev),
+    }
+
+    # D. Real sparklines — weekly totals for the last 6 weeks (normalised heights)
+    def _weekly_heights(action):
+        raw = []
+        for i in range(6, 0, -1):
+            wk_start = today - timedelta(days=i * 7)
+            wk_end = today - timedelta(days=(i - 1) * 7)
+            raw.append(_reg_sum(action, wk_start, wk_end))
+        peak = max(raw) or 1
+        return [max(round(v / peak * 100), 4) for v in raw]
+
+    raw_spark = _weekly_heights('Inbound')
+    fg_spark = _weekly_heights('Produced')
+
+    # E. Weekly finished-goods output trend (12 weeks) for a real line chart
+    twelve_weeks_ago = today - timedelta(weeks=12)
+    weekly_output_qs = (
+        ProductionRunYieldLog.objects
+        .filter(log_date__gte=twelve_weeks_ago)
+        .annotate(wk=TruncWeek('log_date'))
+        .values('wk')
+        .annotate(qty=Sum('quantity'))
+        .order_by('wk')
+    )
+    output_trend = {
+        'labels': [row['wk'].strftime('%d %b') for row in weekly_output_qs],
+        'values': [float(row['qty'] or 0) for row in weekly_output_qs],
+    }
+
+    # F. Material usage variance leaderboard (completed runs)
+    material_variance = list(
+        RunMaterialUsage.objects
+        .filter(production_run__status='Completed')
+        .values('material__name', 'material__sku')
+        .annotate(avg_var=Avg('variance_pct'), runs=Count('id'))
+        .order_by('-avg_var')[:6]
+    )
+
+    # G. Inventory value in RM (not just tonnage)
+    rm_value = Batch.objects.filter(status='Active', material__isnull=False).aggregate(
+        v=Coalesce(Sum(F('quantity') * F('material__cost_per_unit'),
+                       output_field=DecimalField()), Value(0, output_field=DecimalField()))
+    )['v']
+    fg_value = Batch.objects.filter(status='Active', product__isnull=False).aggregate(
+        v=Coalesce(Sum(F('quantity') * F('product__price_per_unit'),
+                       output_field=DecimalField()), Value(0, output_field=DecimalField()))
+    )['v']
+    inventory_value = float(rm_value) + float(fg_value)
+
+    def _compact_rm(amount):
+        """Executive-style short money label, e.g. 34_089_550 -> 'RM 34.1M'."""
+        amount = float(amount)
+        for divisor, suffix in ((1_000_000_000, 'B'), (1_000_000, 'M'), (1_000, 'K')):
+            if abs(amount) >= divisor:
+                return f"RM {amount / divisor:.1f}{suffix}"
+        return f"RM {amount:,.0f}"
+
+    inventory_value_compact = _compact_rm(inventory_value)
+
+    last_activity = RegistryLog.objects.order_by('-timestamp').values_list('timestamp', flat=True).first()
+
     # 6. Sales order stats
     so_counts = SalesOrder.objects.values('status').annotate(count=Count('id'))
     counts_dict = {item['status']: item['count'] for item in so_counts}
@@ -148,12 +272,25 @@ def dashboard_view(request):
         'chart_data': chart_data,
         'inventory_metrics': inventory_metrics,
         'global_utilization': global_utilization,
+        'global_utilization_bar': min(global_utilization, 100),
         'total_daily_cost': total_daily_cost,
         'recent_logs': recent_logs,
         'active_shipments': active_shipments,
         'degrading_batches': degrading_batches,
         'sales_order_stats': sales_order_stats,
         'current_timestamp': date.today().strftime('%Y-%m-%d'),
+        # analytics upgrade
+        'attention': attention,
+        'attention_total': attention_total,
+        'run_progress': run_progress,
+        'kpi_deltas': kpi_deltas,
+        'raw_spark': raw_spark,
+        'fg_spark': fg_spark,
+        'output_trend': output_trend,
+        'material_variance': material_variance,
+        'inventory_value': inventory_value,
+        'inventory_value_compact': inventory_value_compact,
+        'last_activity': last_activity,
     }
 
     return render(request, 'dashboard.html', context)
@@ -183,6 +320,62 @@ def system_view(request):
         'db_status': db_status,
         'db_logs': initial_logs,
     })
+
+
+@login_required
+def system_settings_view(request):
+    """
+    In-site editor for the operational tunables registered in
+    core.settings_store.REGISTRY (stored in SystemSetting). Superuser-only, same
+    as the System Console. Django admin remains available as a fallback.
+    """
+    if not request.user.is_superuser:
+        messages.error(request, "Permission Denied. System settings are superuser-only.")
+        return redirect('dashboard')
+
+    from .models import SystemSetting
+    from .settings_store import REGISTRY, cast_value, get_setting
+
+    if request.method == 'POST':
+        updated = 0
+        for key, (default, value_type, description) in REGISTRY.items():
+            raw = request.POST.get(key, 'false' if value_type == 'bool' else None)
+            if raw is None:
+                continue
+            cast = cast_value(raw.strip(), value_type)
+            if cast is None:
+                messages.error(request, f"'{raw}' is not a valid {value_type} value for {key}.")
+                continue
+            SystemSetting.objects.update_or_create(
+                key=key,
+                defaults={
+                    'value': str(cast),
+                    'value_type': value_type,
+                    'description': description,
+                    'updated_by': request.user,
+                },
+            )
+            updated += 1
+        if updated:
+            messages.success(request, f"Saved {updated} setting{'s' if updated != 1 else ''}.")
+        return redirect('system_settings')
+
+    rows = SystemSetting.objects.in_bulk(field_name='key')
+    settings_list = [
+        {
+            'key': key,
+            'label': key.replace('_', ' ').title(),
+            'value': get_setting(key),
+            'default': default,
+            'value_type': value_type,
+            'description': description,
+            'updated_at': rows[key].updated_at if key in rows else None,
+            'updated_by': rows[key].updated_by if key in rows else None,
+            'is_overridden': key in rows and str(get_setting(key)) != str(default),
+        }
+        for key, (default, value_type, description) in REGISTRY.items()
+    ]
+    return render(request, 'system_settings.html', {'settings_list': settings_list})
 
 
 from django.http import JsonResponse
@@ -248,8 +441,10 @@ def warehouse_inventory_view(request):
                 return redirect('warehouse_inventory')
                 
             try:
+                log_material = None
                 if material_id:
                     mat = get_object_or_404(Material, id=material_id)
+                    log_material = mat
                     b = Batch.objects.create(
                         batch_number=f"M-ADJ-{mat.sku}-{date.today().strftime('%Y%m%d')}",
                         status='Active',
@@ -281,6 +476,7 @@ def warehouse_inventory_view(request):
                 RegistryLog.objects.create(
                     action_type='Adjusted',
                     item_name=f"Manual Receipt of {log_item}",
+                    material=log_material,
                     quantity_changed=float(qty),
                     warehouse_id=wh_id,
                     user=request.user
@@ -369,20 +565,52 @@ def batch_detail_view(request, batch_number):
                 batch.save()
                 RegistryLog.objects.create(
                     action_type='Adjusted',
-                    item_name=batch.batch_number,
+                    item_name=f"{batch.batch_number} — {', '.join(changes)}",
                     quantity_changed=0,
+                    warehouse=batch.warehouse if batch.warehouse else None,
                     user=request.user,
-                    notes=", ".join(changes)
                 )
                 messages.success(request, "Batch details updated successfully.")
             return redirect('batch_detail', batch_number=batch.batch_number)
 
     logs = RegistryLog.objects.filter(item_name__icontains=batch.batch_number).select_related('user', 'warehouse').order_by('-timestamp')
-    
+
+    reservations = []
+    for alloc in StockAllocation.objects.filter(batch=batch).select_related('sales_order', 'production_run', 'shipment'):
+        if alloc.sales_order:
+            reservations.append({'quantity': alloc.quantity, 'label': f"Sales Order {alloc.sales_order.so_number}", 'type': 'Sales Order', 'url_name': 'so_detail', 'url_pk': alloc.sales_order.pk})
+        elif alloc.production_run:
+            reservations.append({'quantity': alloc.quantity, 'label': f"Production Run {alloc.production_run.run_number}", 'type': 'Production', 'url_name': 'production_run_detail', 'url_pk': alloc.production_run.pk})
+        elif alloc.shipment:
+            reservations.append({'quantity': alloc.quantity, 'label': f"Shipment {alloc.shipment.tracking_number}", 'type': 'Shipment', 'url_name': 'shipment_detail', 'url_pk': alloc.shipment.pk})
+        else:
+            reservations.append({'quantity': alloc.quantity, 'label': "Unlinked reservation", 'type': '—', 'url_name': None, 'url_pk': None})
+
+    shipment_history = []
+    for si in batch.shipment_items.select_related('shipment').order_by('-shipment__dispatch_date', '-id'):
+        shipment_history.append({
+            'shipment': si.shipment,
+            'quantity': si.quantity,
+            'received_quantity': si.received_quantity,
+            'date_confirmed': si.date_confirmed,
+        })
+
+    unit_cost = None
+    if batch.material:
+        unit_cost = batch.material.cost_per_unit
+    elif batch.product:
+        unit_cost = batch.product.price_per_unit
+    est_value = (unit_cost * batch.quantity) if unit_cost is not None else None
+
     context = {
         'batch': batch,
         'logs': logs,
         'statuses': Batch.STATUS_CHOICES,
+        'reservations': reservations,
+        'shipment_history': shipment_history,
+        'unit_cost': unit_cost,
+        'est_value': est_value,
+        'available_quantity': batch.quantity - batch.allocated_quantity,
     }
     return render(request, 'batch_detail.html', context)
 
@@ -559,6 +787,7 @@ def stock_audit_view(request):
                     RegistryLog.objects.create(
                         action_type='Adjusted',
                         item_name=f"Batch {b.batch_number} ({b.material or b.product})",
+                        material=b.material,
                         quantity_changed=variance,
                         warehouse=wh,
                         user=request.user
@@ -1294,8 +1523,18 @@ def product_detail_view(request, pk):
         return redirect('product_detail', pk=pk)
 
     # Inventory Overview
-    active_batches = Batch.objects.filter(product=product, status='Active').select_related().order_by('expiry_date')
+    active_batches = Batch.objects.filter(product=product, status='Active').select_related('warehouse', 'produced_in').order_by('expiry_date')
     total_stock = sum(b.quantity for b in active_batches)
+
+    from .utils import get_batch_reservations, get_batch_produced_for
+    batch_rows = []
+    for b in active_batches:
+        batch_rows.append({
+            'batch': b,
+            'available': b.quantity - b.allocated_quantity,
+            'reservations': get_batch_reservations(b),
+            'produced_for': get_batch_produced_for(b),
+        })
 
     # Manufacturing History
     production_runs = ProductionRun.objects.filter(target_product=product).select_related('supervisor', 'sales_order').order_by('-id')[:10]
@@ -1324,6 +1563,7 @@ def product_detail_view(request, pk):
         'products': Product.objects.all().order_by('name'),
         'materials': Material.objects.all().order_by('name'),
         'active_batches': active_batches,
+        'batch_rows': batch_rows,
         'total_stock': total_stock,
         'production_runs': production_runs,
         'chart_labels': chart_labels,
@@ -1431,6 +1671,7 @@ def material_edit_view(request, pk):
             RegistryLog.objects.create(
                 action_type='Adjusted',
                 item_name=f"Updated Material '{material.name}' (SKU: {material.sku})",
+                material=material,
                 quantity_changed=0,
                 warehouse=None,
                 user=request.user if request.user.is_authenticated else None
@@ -1456,7 +1697,150 @@ def material_edit_view(request, pk):
             'cost_per_unit': float(material.cost_per_unit),
         })
 
-    return render(request, 'material_form.html', {'material': material, 'edit_mode': True})
+    from .utils import get_batch_reservations
+    material_batches = Batch.objects.filter(material=material, status='Active').select_related('warehouse', 'purchase_order').order_by('expiry_date')
+    material_batch_rows = []
+    for b in material_batches:
+        material_batch_rows.append({
+            'batch': b,
+            'available': b.quantity - b.allocated_quantity,
+            'reservations': get_batch_reservations(b),
+            'source_po': b.purchase_order,
+        })
+
+    return render(request, 'material_form.html', {
+        'material': material, 'edit_mode': True, 'material_batch_rows': material_batch_rows,
+    })
+
+
+# --------------------------------------------------------------------------
+# SUPPLIERS
+# --------------------------------------------------------------------------
+@login_required
+def supplier_list_view(request):
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'toggle_active':
+            if request.user.role in ['Admin', 'Manager']:
+                supplier_id = request.POST.get('supplier_id')
+                sup = get_object_or_404(Supplier, id=supplier_id)
+                sup.is_active = not sup.is_active
+                sup.save()
+                messages.success(request, f"Supplier {sup.name} is now {'Active' if sup.is_active else 'Deactivated'}.")
+            else:
+                messages.error(request, "Permission denied. Only Managers and Admins can toggle status.")
+            return redirect('supplier_list')
+
+        name = request.POST.get('name', '').strip()
+        try:
+            if not name:
+                messages.error(request, "Supplier name is required.")
+                return redirect('supplier_list')
+            Supplier.objects.create(
+                name=name,
+                contact_person=request.POST.get('contact_person', '').strip(),
+                email=request.POST.get('email', '').strip(),
+                phone=request.POST.get('phone', '').strip(),
+                address=request.POST.get('address', '').strip(),
+            )
+            messages.success(request, f"Supplier '{name}' registered.")
+        except Exception as e:
+            messages.error(request, f"Error registering supplier: {e}")
+        return redirect('supplier_list')
+
+    suppliers = Supplier.objects.all().order_by('name')
+    context = {'suppliers': suppliers}
+    return render(request, 'supplier_list.html', context)
+
+
+@login_required
+def supplier_edit_view(request, pk):
+    supplier = get_object_or_404(Supplier, pk=pk)
+
+    if request.method == 'POST':
+        name = request.POST.get('name', '').strip()
+        try:
+            if not name:
+                messages.error(request, "Supplier name is required.")
+                return redirect('supplier_list')
+
+            supplier.name = name
+            supplier.contact_person = request.POST.get('contact_person', '').strip()
+            supplier.email = request.POST.get('email', '').strip()
+            supplier.phone = request.POST.get('phone', '').strip()
+            supplier.address = request.POST.get('address', '').strip()
+            supplier.save()
+
+            messages.success(request, f"Supplier '{supplier.name}' updated successfully.")
+        except Exception as e:
+            messages.error(request, f"Error updating supplier: {e}")
+
+    return redirect('supplier_list')
+
+
+# --------------------------------------------------------------------------
+# CLIENTS
+# --------------------------------------------------------------------------
+@login_required
+def client_list_view(request):
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'toggle_active':
+            if request.user.role in ['Admin', 'Manager']:
+                client_id = request.POST.get('client_id')
+                cli = get_object_or_404(Client, id=client_id)
+                cli.is_active = not cli.is_active
+                cli.save()
+                messages.success(request, f"Client {cli.name} is now {'Active' if cli.is_active else 'Deactivated'}.")
+            else:
+                messages.error(request, "Permission denied. Only Managers and Admins can toggle status.")
+            return redirect('client_list')
+
+        name = request.POST.get('name', '').strip()
+        try:
+            if not name:
+                messages.error(request, "Client name is required.")
+                return redirect('client_list')
+            Client.objects.create(
+                name=name,
+                contact_person=request.POST.get('contact_person', '').strip(),
+                email=request.POST.get('email', '').strip(),
+                phone=request.POST.get('phone', '').strip(),
+                delivery_address=request.POST.get('delivery_address', '').strip(),
+            )
+            messages.success(request, f"Client '{name}' registered.")
+        except Exception as e:
+            messages.error(request, f"Error registering client: {e}")
+        return redirect('client_list')
+
+    clients = Client.objects.all().order_by('name')
+    context = {'clients': clients}
+    return render(request, 'client_list.html', context)
+
+
+@login_required
+def client_edit_view(request, pk):
+    client = get_object_or_404(Client, pk=pk)
+
+    if request.method == 'POST':
+        name = request.POST.get('name', '').strip()
+        try:
+            if not name:
+                messages.error(request, "Client name is required.")
+                return redirect('client_list')
+
+            client.name = name
+            client.contact_person = request.POST.get('contact_person', '').strip()
+            client.email = request.POST.get('email', '').strip()
+            client.phone = request.POST.get('phone', '').strip()
+            client.delivery_address = request.POST.get('delivery_address', '').strip()
+            client.save()
+
+            messages.success(request, f"Client '{client.name}' updated successfully.")
+        except Exception as e:
+            messages.error(request, f"Error updating client: {e}")
+
+    return redirect('client_list')
 
 
 # --------------------------------------------------------------------------
@@ -1472,11 +1856,13 @@ def sales_order_list_view(request):
             if so_number_auto or not so_number:
                 so_number = generate_next_code(SalesOrder, 'so_number', 'SO', 1001)
             client_name = request.POST.get('client_name')
+            client_id = request.POST.get('client_id')
             warehouse_id = request.POST.get('origin_warehouse_id')
             try:
                 wh = get_object_or_404(Warehouse, id=warehouse_id)
+                client_obj = Client.objects.filter(id=client_id).first() if client_id else None
                 so = SalesOrder.objects.create(
-                    so_number=so_number, client_name=client_name,
+                    so_number=so_number, client_name=client_name, client=client_obj,
                     origin_warehouse=wh, status='Draft', created_by=request.user
                 )
                 OrderTimeline.objects.create(sales_order=so, action="Sales Order Created (Draft)", user=request.user)
@@ -1502,7 +1888,7 @@ def sales_order_list_view(request):
             
             from .utils import deduct_stock_from_allocation
             if old_status not in ['Shipped', 'Delivered'] and new_status in ['Shipped', 'Delivered']:
-                deduct_stock_from_allocation('sales_order', so)
+                deduct_stock_from_allocation('sales_order', so, user=request.user)
                 
             messages.success(request, f"Sales Order {so.so_number} updated to {new_status}.")
 
@@ -1522,12 +1908,14 @@ def sales_order_list_view(request):
         sales_orders = sales_orders.filter(status=status_filter)
 
     warehouses = Warehouse.objects.all().order_by('name')
+    clients = Client.objects.filter(is_active=True).order_by('name')
 
     context = {
         'search_query': search_query,
         'status_filter': status_filter,
         'sales_orders': sales_orders,
         'warehouses': warehouses,
+        'clients': clients,
         'so_status_choices': SalesOrder.STATUS_CHOICES,
         'next_so_number': generate_next_code(SalesOrder, 'so_number', 'SO', 1001),
     }
@@ -1547,11 +1935,13 @@ def purchase_order_list_view(request):
             if po_number_auto or not po_number:
                 po_number = generate_next_code(PurchaseOrder, 'po_number', 'PO', 5001)
             supplier_name = request.POST.get('supplier_name')
+            supplier_id = request.POST.get('supplier_id')
             warehouse_id = request.POST.get('target_warehouse_id')
             try:
                 wh = get_object_or_404(Warehouse, id=warehouse_id)
+                supplier_obj = Supplier.objects.filter(id=supplier_id).first() if supplier_id else None
                 po = PurchaseOrder.objects.create(
-                    po_number=po_number, supplier_name=supplier_name,
+                    po_number=po_number, supplier_name=supplier_name, supplier=supplier_obj,
                     target_warehouse=wh, status='Draft', created_by=request.user
                 )
                 OrderTimeline.objects.create(purchase_order=po, action="Purchase Order Created (Draft)", user=request.user)
@@ -1586,12 +1976,14 @@ def purchase_order_list_view(request):
         purchase_orders = purchase_orders.filter(status=status_filter)
 
     warehouses = Warehouse.objects.all().order_by('name')
+    suppliers = Supplier.objects.filter(is_active=True).order_by('name')
 
     context = {
         'search_query': search_query,
         'status_filter': status_filter,
         'purchase_orders': purchase_orders,
         'warehouses': warehouses,
+        'suppliers': suppliers,
         'po_status_choices': PurchaseOrder.STATUS_CHOICES,
         'next_po_number': generate_next_code(PurchaseOrder, 'po_number', 'PO', 5001),
     }
@@ -1603,7 +1995,7 @@ def purchase_order_list_view(request):
 # --------------------------------------------------------------------------
 @login_required
 def so_detail_view(request, pk):
-    so = get_object_or_404(SalesOrder.objects.prefetch_related('items__product', 'timeline__user'), pk=pk)
+    so = get_object_or_404(SalesOrder.objects.prefetch_related('items__product', 'timeline__user', 'shipments', 'production_runs'), pk=pk)
     products = Product.objects.all().order_by('name')
     warehouses = Warehouse.objects.all().order_by('name')
 
@@ -1632,7 +2024,12 @@ def so_detail_view(request, pk):
             try:
                 item = get_object_or_404(SalesOrderDetail, id=item_id, sales_order=so)
                 name = item.product.name
+                product = item.product
                 item.delete()
+
+                from .utils import handle_so_item_removed
+                handle_so_item_removed(so, product, request.user)
+
                 OrderTimeline.objects.create(sales_order=so, action=f"Line item removed: {name}", user=request.user)
                 messages.success(request, f"Removed {name} from {so.so_number}.")
             except Exception as e:
@@ -1653,7 +2050,7 @@ def so_detail_view(request, pk):
             
             from .utils import deduct_stock_from_allocation
             if old_status not in ['Shipped', 'Delivered'] and new_status in ['Shipped', 'Delivered']:
-                deduct_stock_from_allocation('sales_order', so)
+                deduct_stock_from_allocation('sales_order', so, user=request.user)
 
             # Notify followers of status change
             for follower in so.followers.all():
@@ -1735,12 +2132,35 @@ def so_detail_view(request, pk):
                 so.followers.remove(user_to_remove)
                 messages.success(request, f"Removed {user_to_remove.username} from followers.")
 
+        elif action == 'unallocate_so_stock':
+            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
+                messages.error(request, "Only Managers can unallocate stock from an order.")
+                return redirect('so_detail', pk=so.pk)
+
+            alloc_id = request.POST.get('alloc_id')
+            qty_str = request.POST.get('quantity')
+            target_so_id = request.POST.get('target_so_id')
+            try:
+                allocation = get_object_or_404(StockAllocation, id=alloc_id, sales_order=so)
+                target_so = SalesOrder.objects.filter(id=target_so_id).first() if target_so_id else None
+
+                from .utils import unallocate_so_batch
+                unallocate_so_batch(allocation, qty_str, request.user, target_so=target_so)
+
+                if target_so:
+                    messages.success(request, f"Transferred {qty_str} to {target_so.so_number}.")
+                else:
+                    messages.success(request, f"Released {qty_str} back to available stock.")
+            except Exception as e:
+                messages.error(request, f"Error unallocating stock: {e}")
+
         return redirect('so_detail', pk=so.pk)
 
     # BOM readiness and Allocation logic
     line_items_with_bom = []
     from django.db.models import Sum, F
-    
+    from .utils import get_batch_produced_for
+
     for item in so.items.select_related('product').all():
         allocations_qs = StockAllocation.objects.filter(sales_order=so, batch__product=item.product).select_related('batch', 'batch__produced_in', 'batch__purchase_order')
         allocated = float(allocations_qs.aggregate(s=Sum('quantity'))['s'] or 0)
@@ -1753,7 +2173,19 @@ def so_detail_view(request, pk):
                 source = f"Existing Stock (PO {a.batch.purchase_order.po_number})"
             else:
                 source = "Existing Stock"
-            allocation_rows.append({'batch': a.batch, 'quantity': a.quantity, 'source': source})
+
+            produced_for = get_batch_produced_for(a.batch)
+            if produced_for and produced_for['so_number'] == so.so_number:
+                produced_for = None  # only worth flagging when it differs from the order you're looking at
+
+            allocation_rows.append({
+                'alloc_id': a.id, 'batch': a.batch, 'quantity': a.quantity, 'source': source,
+                'produced_for': produced_for,
+            })
+
+        transfer_targets = SalesOrder.objects.filter(items__product=item.product).exclude(pk=so.pk).exclude(
+            status__in=['Draft', 'Cancelled', 'Rejected', 'Shipped', 'Delivered']
+        ).distinct().order_by('so_number')
 
         fulfilled = (allocated + float(item.quantity_shipped)) >= float(item.quantity_ordered)
 
@@ -1802,6 +2234,7 @@ def so_detail_view(request, pk):
             'deficit': deficit,
             'fulfilled': fulfilled,
             'allocation_rows': allocation_rows,
+            'transfer_targets': transfer_targets,
         })
 
     has_deficit = any(row['deficit'] > 0 for row in line_items_with_bom)
@@ -1826,7 +2259,7 @@ def so_detail_view(request, pk):
 # --------------------------------------------------------------------------
 @login_required
 def po_detail_view(request, pk):
-    po = get_object_or_404(PurchaseOrder.objects.prefetch_related('items__material', 'timeline__user'), pk=pk)
+    po = get_object_or_404(PurchaseOrder.objects.prefetch_related('items__material', 'timeline__user', 'shipments'), pk=pk)
     materials = Material.objects.all().order_by('name')
     warehouses = Warehouse.objects.all().order_by('name')
 
@@ -1877,34 +2310,10 @@ def po_detail_view(request, pk):
                 old_qty = float(item.quantity_received)
                 new_qty = float(qty_received)
                 delta = new_qty - old_qty
-                
-                item.quantity_received = new_qty
-                item.save()
+
+                from .utils import apply_po_material_receipt
+                apply_po_material_receipt(item, delta, request.user)
                 OrderTimeline.objects.create(purchase_order=po, action=f"Received {new_qty} of {item.material.name}", user=request.user)
-                
-                if delta > 0:
-                    loc = WarehouseLocation.objects.filter(warehouse=po.target_warehouse).first()
-                    Batch.objects.create(
-                        batch_number=f"B-{po.po_number}-{item.material.sku}-{int(new_qty)}",
-                        status='Active',
-                        material=item.material,
-                        quantity=delta,
-                        manufacturing_date=date.today(),
-                        expiry_date=date.today() + timedelta(days=365),
-                        warehouse=po.target_warehouse,
-                        purchase_order=po,
-                        location=f"Zone {loc.zone_name} Aisle {loc.aisle}" if loc else None
-                    )
-                
-                # Auto update PO status
-                all_items = po.items.all()
-                total_ordered = sum(float(i.quantity_ordered) for i in all_items)
-                total_received = sum(float(i.quantity_received) for i in all_items)
-                if total_received >= total_ordered:
-                    po.status = 'Completed'
-                elif total_received > 0:
-                    po.status = 'Partially Received'
-                po.save()
                 messages.success(request, f"Updated received quantity for {item.material.name} and added {delta} to inventory.")
             except Exception as e:
                 messages.error(request, f"Error updating received qty: {e}")
@@ -2053,20 +2462,8 @@ def manufacturing_view(request):
             run_id = request.POST.get('run_id')
             run = get_object_or_404(ProductionRun, id=run_id)
 
-            # Delete StockAllocation records for this run
-            allocs = StockAllocation.objects.filter(production_run=run)
-            for alloc in allocs:
-                batch = alloc.batch
-                batch.allocated_quantity -= alloc.quantity
-                if batch.allocated_quantity < 0:
-                    batch.allocated_quantity = 0
-                batch.save()
-                alloc.delete()
-
-            # Cancel any auto-generated Draft transfer shipments left over from this allocation
-            Shipment.objects.filter(
-                linked_production_run=run, is_auto_generated=True, status='Draft'
-            ).update(status='Cancelled')
+            from .utils import release_production_run_allocations
+            release_production_run_allocations(run)
 
             # Revert to Pending Allocation
             run.status = 'Pending Allocation'
@@ -2146,8 +2543,8 @@ def manufacturing_view(request):
             with transaction.atomic():
                 po = PurchaseOrder.objects.create(
                     po_number=po_number,
-                    supplier="To Be Determined",
-                    destination_warehouse=run.manufacturing_plant,
+                    supplier_name="To Be Determined",
+                    target_warehouse=run.manufacturing_plant,
                     status='Draft',
                     created_by=request.user,
                     assigned_to=purchaser,
@@ -2306,13 +2703,36 @@ def manufacturing_view(request):
     for so in so_queue_raw:
         so_items = []
         for item in so.items.all():
+            # A run only "handles" this item once it's actually finished — a run still
+            # stuck at e.g. Awaiting Materials or Pending Approval still needs attention,
+            # so it shouldn't make the SO disappear from this queue. A Cancelled run
+            # doesn't count either, since it never produced anything.
+            existing_run = so.production_runs.filter(target_product=item.product).exclude(status='Cancelled').order_by('-id').first()
+            run_resolved = existing_run is not None and existing_run.status == 'Completed'
+            run_pending = existing_run is not None and not run_resolved
+
+            # How much of this line is still uncovered — by stock already allocated
+            # directly to the SO, and by yield already expected from a run in flight.
+            # Producing against the full ordered quantity here would double-count
+            # whatever's already been allocated (or is already being made).
+            allocated = float(StockAllocation.objects.filter(sales_order=so, batch__product=item.product).aggregate(s=Sum('quantity'))['s'] or 0)
+            incoming_production = float(ProductionRun.objects.filter(
+                sales_order=so, target_product=item.product, status__in=['Pending Approval', 'Planned', 'InProgress']
+            ).aggregate(s=Sum('expected_yield'))['s'] or 0)
+            deficit = max(0.0, float(item.quantity_ordered) - allocated - incoming_production)
+
+            # Nothing left to do for this item — fully covered by stock allocation
+            # and/or an in-flight run, and no unresolved run needs attention.
+            if deficit <= 0 and not run_pending:
+                continue
+
             recipes = item.product.recipe_items.select_related('material').all()
             bom_rows = []
             can_make = None
             for r in recipes:
                 avail = float(Batch.objects.filter(material=r.material, status='Active').annotate(avail=F('quantity')-F('allocated_quantity')).aggregate(s=Sum('avail'))['s'] or 0)
                 needed_per_unit = float(r.quantity_required)
-                needed_total = needed_per_unit * float(item.quantity_ordered)
+                needed_total = needed_per_unit * deficit
                 sufficient = avail >= needed_total
                 if needed_per_unit > 0:
                     from_this = int(avail / needed_per_unit)
@@ -2323,16 +2743,17 @@ def manufacturing_view(request):
                     'available': avail,
                     'sufficient': sufficient,
                 })
-            # Check if a run already exists for this product+SO
-            existing_run = so.production_runs.filter(target_product=item.product).first()
             so_items.append({
                 'item': item,
                 'bom_rows': bom_rows,
                 'can_make': can_make if can_make is not None else '∞',
                 'bom_ready': all(r['sufficient'] for r in bom_rows),
                 'existing_run': existing_run,
+                'run_resolved': run_resolved,
+                'allocated': allocated,
+                'deficit': deficit,
             })
-        if any(not i['existing_run'] for i in so_items):
+        if so_items:
             so_queue.append({
                 'so': so,
                 'items': so_items,
@@ -2398,6 +2819,17 @@ def shipments_view(request):
                 po = PurchaseOrder.objects.filter(id=po_id).first() if po_id else None
                 so = SalesOrder.objects.filter(id=so_id).first() if so_id else None
 
+                # Pull the delivery contact/address from the linked Client record — the
+                # contact PERSON's name and phone are kept as separate fields, distinct
+                # from the client/company name shown elsewhere.
+                client_contact_name_val = None
+                client_contact_phone_val = None
+                client_address_val = None
+                if so and so.client:
+                    client_contact_name_val = so.client.contact_person or None
+                    client_contact_phone_val = so.client.phone or None
+                    client_address_val = so.client.delivery_address or None
+
                 shipment = Shipment.objects.create(
                     tracking_number=tracking_number,
                     direction=direction,
@@ -2409,20 +2841,55 @@ def shipments_view(request):
                     dispatch_date=dispatch_dt if dispatch_dt else date.today(),
                     expected_eta_date=eta if eta else None,
                     actual_arrival_date=actual_arrival_dt if (status == 'Arrived' and actual_arrival_dt) else None,
-                    external_origin=external_origin if external_origin else None
+                    external_origin=external_origin if external_origin else None,
+                    client_contact_name=client_contact_name_val,
+                    client_contact_phone=client_contact_phone_val,
+                    client_address=client_address_val,
                 )
                 
-                # Auto update Sales Order status based on Shipment
+                # Auto update Sales Order status based on Shipment.
+                # 'Dispatched' is handled after cargo items are pre-filled below, since it
+                # needs the actual item quantities to update quantity_shipped accurately.
                 if so:
                     if status == 'Preparing':
                         so.status = 'Ready to Ship'
-                    elif status == 'Dispatched':
-                        so.status = 'Shipped'
+                        so.save()
                     elif status == 'Arrived':
                         so.status = 'Delivered'
-                    so.save()
-                    
-                messages.success(request, f"Shipment '{tracking_number}' registered. Now you can add items.")
+                        so.save()
+
+                # Pre-fill cargo items from the linked order's outstanding quantities.
+                # No batch is assigned here (same as manually adding an item without one) —
+                # the coordinator still picks/confirms batches on the shipment detail page.
+                items_added = 0
+                if po:
+                    for detail in po.items.all():
+                        remaining = float(detail.quantity_ordered) - float(detail.quantity_received)
+                        if remaining > 0:
+                            ShipmentItem.objects.create(shipment=shipment, material=detail.material, quantity=remaining)
+                            items_added += 1
+                elif so:
+                    for detail in so.items.all():
+                        remaining = float(detail.quantity_ordered) - float(detail.quantity_shipped)
+                        if remaining > 0:
+                            ShipmentItem.objects.create(shipment=shipment, product=detail.product, quantity=remaining)
+                            items_added += 1
+
+                # This shipment was created already-Dispatched — count its cargo as shipped
+                # against the SO now (accumulates correctly across multiple shipments/SO).
+                if so and status == 'Dispatched':
+                    from .utils import apply_so_product_shipment
+                    for si in shipment.items.all():
+                        if si.product:
+                            so_detail = SalesOrderDetail.objects.filter(sales_order=so, product=si.product).first()
+                            if so_detail:
+                                apply_so_product_shipment(so_detail, si.quantity)
+
+                if items_added:
+                    OrderTimeline.objects.create(shipment=shipment, action=f"Pre-filled {items_added} cargo item(s) from the linked order.", user=request.user)
+                    messages.success(request, f"Shipment '{tracking_number}' registered with {items_added} item(s) pulled from the order. Review quantities and batches before dispatch.")
+                else:
+                    messages.success(request, f"Shipment '{tracking_number}' registered. Now you can add items.")
                 return redirect('shipment_detail', pk=shipment.pk)
             except Exception as e:
                 messages.error(request, f"Error registering shipment: {e}")
@@ -2478,6 +2945,15 @@ def shipments_view(request):
         'arrived': Shipment.objects.filter(status='Arrived').count(),
     }
 
+    # Only statuses that make sense to hand-pick when manually creating a shipment here.
+    # 'Draft' is reserved for system auto-generated shipments (see is_auto_generated),
+    # and 'Pending Approval' / 'Logistics Review' / etc. are set by other workflows.
+    initial_status_choices = [
+        ('Preparing', 'Approved / Preparing'),
+        ('Dispatched', 'Dispatched'),
+        ('Arrived', 'Arrived'),
+    ]
+
     context = {
         'shipments': shipments,
         'warehouses': warehouses,
@@ -2488,6 +2964,7 @@ def shipments_view(request):
         'batches': batches,
         'stats': stats,
         'status_choices': Shipment.STATUS_CHOICES,
+        'initial_status_choices': initial_status_choices,
         'direction_choices': Shipment.DIRECTION_CHOICES,
         'next_tracking_number': generate_next_code(Shipment, 'tracking_number', 'TRK', 101, pad=4),
     }
@@ -2513,6 +2990,7 @@ def qa_dashboard_view(request):
                 RegistryLog.objects.create(
                     action_type='QA_Extension',
                     item_name=f"Batch {batch.batch_number} (+{days} days)",
+                    material=batch.material,
                     quantity_changed=batch.quantity,
                     warehouse=batch.warehouse if batch.warehouse else None,
                     user=request.user
@@ -2537,6 +3015,7 @@ def qa_dashboard_view(request):
             RegistryLog.objects.create(
                 action_type='Spoiled_Disposal',
                 item_name=f"Batch {batch.batch_number} Disposed",
+                material=batch.material,
                 quantity_changed=batch.quantity,
                 warehouse=batch.warehouse if batch.warehouse else None,
                 user=request.user
@@ -2645,6 +3124,8 @@ def approvals_inbox_view(request):
                         Notification.objects.create(user=run.supervisor, message=f"Rejected: Variance rejected for {run.run_number}. Rework required.", link=f"/operations/manufacture/run/{run.id}/")
                     messages.warning(request, f"Production Run {run.run_number} variance rejected. Returned to In Progress.")
                 else:
+                    from .utils import release_production_run_allocations
+                    release_production_run_allocations(run)
                     run.status = 'Cancelled'
                     run.save()
                     messages.warning(request, f"Production Run {run.run_number} rejected.")
@@ -2844,36 +3325,41 @@ def shipment_detail_view(request, pk):
             
             # New Logistics Fields
             client_address = request.POST.get('client_address')
-            client_contact = request.POST.get('client_contact')
+            client_contact_name = request.POST.get('client_contact_name')
+            client_contact_phone = request.POST.get('client_contact_phone')
             external_tracking_id = request.POST.get('external_tracking_id')
             departure_datetime = request.POST.get('departure_datetime')
-            
+
             core_changed = False
-            
+
             # Check string fields
             if client_address is not None and (shipment.client_address or "") != client_address.strip(): core_changed = True
-            if client_contact is not None and (shipment.client_contact or "") != client_contact.strip(): core_changed = True
+            if client_contact_name is not None and (shipment.client_contact_name or "") != client_contact_name.strip(): core_changed = True
+            if client_contact_phone is not None and (shipment.client_contact_phone or "") != client_contact_phone.strip(): core_changed = True
             if external_tracking_id is not None and (shipment.external_tracking_id or "") != external_tracking_id.strip(): core_changed = True
-            
+
             # Check FK fields
             if origin_id is not None and str(shipment.origin_warehouse_id or "") != origin_id: core_changed = True
             if dest_id is not None and str(shipment.destination_warehouse_id or "") != dest_id: core_changed = True
-            
+
             # Check departure_datetime
             if departure_datetime:
                 current_dep = shipment.departure_datetime.strftime('%Y-%m-%dT%H:%M') if shipment.departure_datetime else ""
                 if current_dep != departure_datetime: core_changed = True
                 shipment.departure_datetime = departure_datetime
-            
+
             if eta: shipment.expected_eta_date = eta
             if arrival: shipment.actual_arrival_date = arrival
             if origin_id: shipment.origin_warehouse_id = origin_id
             if dest_id: shipment.destination_warehouse_id = dest_id
             if client_address is not None: shipment.client_address = client_address
-            if client_contact is not None: shipment.client_contact = client_contact
+            if client_contact_name is not None: shipment.client_contact_name = client_contact_name
+            if client_contact_phone is not None: shipment.client_contact_phone = client_contact_phone
             if external_tracking_id is not None: shipment.external_tracking_id = external_tracking_id
                 
-            if core_changed and shipment.status in ['Preparing', 'Dispatched', 'Delayed']:
+            # Inbound shipments are just a record of what the supplier is sending — we don't
+            # control their dispatch, so editing details shouldn't force a manager re-approval.
+            if core_changed and shipment.status in ['Preparing', 'Dispatched', 'Delayed'] and shipment.direction != 'Inbound':
                 shipment.status = 'Logistics Review'
                 messages.warning(request, "Core logistics details were modified. The shipment has been returned to Logistics Review and must be re-approved.")
                 OrderTimeline.objects.create(shipment=shipment, action="Core logistics details modified. Status reverted to Logistics Review.", user=request.user)
@@ -2898,35 +3384,46 @@ def shipment_detail_view(request, pk):
                     batch = item.batch
                     if batch:
                         qty_dec = Decimal(str(qty))
+                        # Only ever release what's actually found in the allocation ledger, and
+                        # shrink the batch's counter by that same real amount — not by qty_dec
+                        # outright. Previously this deducted qty_dec from the counter regardless
+                        # of what the matching allocation(s) actually held, and — worse — could
+                        # deduct qty_dec from BOTH a shipment-level and a sales-order-level
+                        # allocation for the same batch independently while only decrementing the
+                        # counter once, silently leaving allocated_quantity stuck too high.
+                        remaining = qty_dec
                         if shipment.linked_production_run:
                             alloc = StockAllocation.objects.filter(production_run=shipment.linked_production_run, shipment=shipment, batch=batch).first()
-                            if alloc:
-                                deduct = min(qty_dec, alloc.quantity)
+                            if alloc and remaining > 0:
+                                deduct = min(remaining, alloc.quantity)
                                 alloc.quantity -= deduct
                                 if alloc.quantity <= 0: alloc.delete()
                                 else: alloc.save(update_fields=['quantity'])
-                            batch.allocated_quantity -= qty_dec
-                            if batch.allocated_quantity < 0: batch.allocated_quantity = 0
-                            batch.save(update_fields=['allocated_quantity'])
-                            
+                                remaining -= deduct
+
                         elif shipment.sales_order:
                             # If we moved allocations to the shipment
                             alloc = StockAllocation.objects.filter(shipment=shipment, batch=batch).first()
-                            if alloc:
-                                deduct = min(qty_dec, alloc.quantity)
+                            if alloc and remaining > 0:
+                                deduct = min(remaining, alloc.quantity)
                                 alloc.quantity -= deduct
                                 if alloc.quantity <= 0: alloc.delete()
                                 else: alloc.save(update_fields=['quantity'])
-                            
-                            # For auto-drafted SO shipments, the allocations might still be on the sales order
+                                remaining -= deduct
+
+                            # For auto-drafted SO shipments, the allocations might still be on the
+                            # sales order — only take what's still needed after the above, not qty_dec again.
                             so_alloc = StockAllocation.objects.filter(sales_order=shipment.sales_order, batch=batch).first()
-                            if so_alloc:
-                                deduct = min(qty_dec, so_alloc.quantity)
+                            if so_alloc and remaining > 0:
+                                deduct = min(remaining, so_alloc.quantity)
                                 so_alloc.quantity -= deduct
                                 if so_alloc.quantity <= 0: so_alloc.delete()
                                 else: so_alloc.save(update_fields=['quantity'])
-                            
-                            batch.allocated_quantity -= qty_dec
+                                remaining -= deduct
+
+                        if shipment.linked_production_run or shipment.sales_order:
+                            released = qty_dec - remaining
+                            batch.allocated_quantity -= released
                             if batch.allocated_quantity < 0: batch.allocated_quantity = 0
                             batch.save(update_fields=['allocated_quantity'])
                 
@@ -2941,14 +3438,23 @@ def shipment_detail_view(request, pk):
                 shipment.save()
                 
             messages.success(request, "Shipment scrapped. Cargo locks released and linked orders updated.")
-            
+
+        elif action == 'skip_approval':
+            if shipment.direction != 'Inbound':
+                messages.error(request, "Only inbound (supplier) shipments can skip manager approval.")
+            else:
+                shipment.status = 'Preparing'
+                shipment.save()
+                OrderTimeline.objects.create(shipment=shipment, action="Inbound shipment confirmed without manager approval (outside our control).", user=request.user)
+                messages.success(request, "Shipment confirmed and marked as Preparing.")
+
         elif action == 'submit_for_approval':
             approver_id = request.POST.get('approver_id')
             if shipment.direction == 'Transfer' and (not shipment.origin_warehouse or not shipment.destination_warehouse):
                 messages.error(request, "Origin and Destination facilities MUST be selected before submitting for approval.")
                 route_error = True
-            elif shipment.direction == 'Outbound' and (not shipment.client_address or not shipment.client_contact):
-                messages.error(request, "Client Address and Contact MUST be completed before submitting an outbound shipment for approval.")
+            elif shipment.direction == 'Outbound' and (not shipment.client_address or not shipment.client_contact_name or not shipment.client_contact_phone):
+                messages.error(request, "Client Address, Contact Name, and Contact Phone MUST be completed before submitting an outbound shipment for approval.")
                 route_error = True
             elif not approver_id:
                 messages.error(request, "You must select a Manager for approval.")
@@ -3002,8 +3508,21 @@ def shipment_detail_view(request, pk):
             if new_st in ['Preparing', 'Dispatched', 'Delayed', 'Arrived', 'Completed', 'Discrepant']:
                 shipment.status = new_st
                 shipment.save()
+
+                # First time crossing into Dispatched — count this shipment's cargo as
+                # shipped against the SO (guarded so re-saving/Delayed-then-Dispatched
+                # again doesn't double-count).
+                if (new_st == 'Dispatched' and old_status not in ['Dispatched', 'Delayed', 'Arrived', 'Completed', 'Discrepant']
+                        and shipment.direction == 'Outbound' and shipment.sales_order):
+                    from .utils import apply_so_product_shipment
+                    for si in shipment.items.all():
+                        if si.product:
+                            so_detail = SalesOrderDetail.objects.filter(sales_order=shipment.sales_order, product=si.product).first()
+                            if so_detail:
+                                apply_so_product_shipment(so_detail, si.quantity)
+
                 messages.success(request, f"Operational status updated to {new_st}.")
-            
+
         elif action == 'complete_shipment':
             has_discrepancy = False
             for item in shipment.items.all():
@@ -3051,12 +3570,15 @@ def shipment_detail_view(request, pk):
                     )
 
                 shipment.save()
-                
+
                 # Release lock and deduct stock
                 if shipment.direction in ['Outbound', 'Transfer']:
-                    from .utils import deduct_stock_from_allocation
-                    deduct_stock_from_allocation('shipment', shipment)
-                
+                    from .utils import deduct_stock_from_allocation, mark_so_delivered_if_fully_shipped
+                    deduct_stock_from_allocation('shipment', shipment, user=request.user)
+
+                    if shipment.direction == 'Outbound' and shipment.sales_order:
+                        mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
+
                 if shipment.direction == 'Transfer' and shipment.destination_warehouse:
                     loc = WarehouseLocation.objects.filter(warehouse=shipment.destination_warehouse).first()
                     if loc:
@@ -3085,12 +3607,99 @@ def shipment_detail_view(request, pk):
                             RegistryLog.objects.create(
                                 action_type='Inbound',
                                 item_name=f"Internal Transfer Received: {new_batch.batch_number}",
+                                material=new_batch.material,
                                 quantity_changed=rcv_qty,
                                 warehouse=shipment.destination_warehouse,
                                 user=request.user
                             )
                 messages.success(request, "Shipment receipt confirmed and marked as Completed.")
-        
+
+        elif action == 'log_item_receipt':
+            from decimal import Decimal
+            from .utils import apply_po_material_receipt
+
+            item_id = request.POST.get('item_id')
+            qty_str = request.POST.get('quantity')
+            received_date_str = request.POST.get('received_date')
+            notes = request.POST.get('notes', '').strip()
+            try:
+                item = get_object_or_404(ShipmentItem, id=item_id, shipment=shipment)
+                qty = float(qty_str)
+                if qty <= 0:
+                    messages.error(request, "Enter a quantity greater than zero.")
+                else:
+                    received_date = received_date_str if received_date_str else date.today()
+                    ShipmentItemReceipt.objects.create(
+                        shipment_item=item, quantity=qty, received_date=received_date,
+                        received_by=request.user, notes=notes or None
+                    )
+                    item.received_quantity = (item.received_quantity or Decimal('0')) + Decimal(str(qty))
+                    item.date_confirmed = timezone.now()
+                    item.save(update_fields=['received_quantity', 'date_confirmed'])
+
+                    if shipment.direction == 'Inbound' and shipment.purchase_order and item.material:
+                        detail = PurchaseOrderDetail.objects.filter(purchase_order=shipment.purchase_order, material=item.material).first()
+                        if detail:
+                            apply_po_material_receipt(detail, qty, request.user)
+
+                    item_name = item.material.name if item.material else (item.product.name if item.product else 'item')
+                    OrderTimeline.objects.create(shipment=shipment, action=f"Logged receipt of {qty} for {item_name} on {received_date}.", user=request.user)
+                    messages.success(request, f"Logged {qty} received for {item_name}. Running total: {item.received_quantity}.")
+            except Exception as e:
+                messages.error(request, f"Error logging receipt: {e}")
+
+        elif action == 'finalize_shipment_receiving':
+            if shipment.direction not in ['Inbound', 'Outbound']:
+                messages.error(request, "This action is only for inbound or outbound shipments.")
+            else:
+                has_discrepancy = any(
+                    float(item.received_quantity) != float(item.quantity)
+                    for item in shipment.items.all()
+                )
+
+                if has_discrepancy:
+                    shipment.status = 'Discrepant'
+                    shipment.save()
+                    messages.warning(request, "Receiving finalized, but quantities don't fully match what was expected. You may log more receipts, or request a Manager Force Close.")
+                else:
+                    shipment.status = 'Completed'
+                    shipment.acknowledged_by = request.user
+                    shipment.last_edited_by = request.user
+
+                    if shipment.direction == 'Inbound' and shipment.purchase_order and shipment.purchase_order.linked_production_run:
+                        run = shipment.purchase_order.linked_production_run
+                        missing_materials = []
+                        for req in run.target_product.recipe_items.all():
+                            needed = float(req.quantity_required) * float(run.expected_yield)
+                            available = Batch.objects.filter(
+                                material=req.material,
+                                warehouse=run.manufacturing_plant,
+                                status='Active'
+                            ).aggregate(total=Sum(F('quantity') - F('allocated_quantity')))['total'] or 0
+                            if float(available) < needed:
+                                missing_materials.append(req.material.name)
+
+                        if not missing_materials:
+                            msg = f"Materials have arrived for Production Run {run.run_number}. You have sufficient materials to allocate and start the run."
+                        else:
+                            msg = f"Partial materials have arrived for Production Run {run.run_number}, but you are still short on: {', '.join(missing_materials)}."
+
+                        Notification.objects.create(
+                            user=run.supervisor,
+                            message=msg,
+                            link=f"/operations/manufacture/run/{run.id}/allocate/"
+                        )
+
+                    shipment.save()
+
+                    if shipment.direction == 'Outbound':
+                        from .utils import deduct_stock_from_allocation, mark_so_delivered_if_fully_shipped
+                        deduct_stock_from_allocation('shipment', shipment, user=request.user)
+                        if shipment.sales_order:
+                            mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
+
+                    messages.success(request, "Receiving finalized. Shipment marked Completed.")
+
         elif action == 'request_force_close':
             mgr_id = request.POST.get('assigned_manager_id')
             remarks = request.POST.get('discrepancy_remarks', '').strip()
@@ -3127,10 +3736,11 @@ def shipment_detail_view(request, pk):
                 else:
                     shipment.discrepancy_remarks = f"Manager Acknowledgment: {mgr_comment}"
             
+            from decimal import Decimal
             shipment.status = 'Completed'
             shipment.approved_by = request.user
             shipment.save()
-            
+
             # Manually handle discrepancy deduction and lock release
             if shipment.direction in ['Outbound', 'Transfer']:
                 allocs = StockAllocation.objects.filter(shipment=shipment)
@@ -3138,12 +3748,27 @@ def shipment_detail_view(request, pk):
                     batch = alloc.batch
                     item = shipment.items.filter(batch=batch).first()
                     rcv_qty = item.received_quantity if item else 0
-                    
+
                     batch.quantity -= Decimal(str(rcv_qty))
                     batch.allocated_quantity -= alloc.quantity
                     batch.save(update_fields=['quantity', 'allocated_quantity'])
+
+                    item_name = batch.material.name if batch.material else (batch.product.name if batch.product else batch.batch_number)
+                    RegistryLog.objects.create(
+                        action_type='Outbound',
+                        item_name=f"{item_name} (Batch {batch.batch_number}) — force closed",
+                        material=batch.material,
+                        quantity_changed=-Decimal(str(rcv_qty)),
+                        warehouse=batch.warehouse,
+                        user=request.user
+                    )
+
                     alloc.delete()
-                    
+
+                if shipment.direction == 'Outbound' and shipment.sales_order:
+                    from .utils import mark_so_delivered_if_fully_shipped
+                    mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
+
             if shipment.direction == 'Transfer' and shipment.destination_warehouse:
                 loc = WarehouseLocation.objects.filter(warehouse=shipment.destination_warehouse).first()
                 if loc:
@@ -3419,6 +4044,9 @@ def so_allocate_view(request, pk):
                     total_allocated = prev_allocated + allocated_now
                     unfulfilled = qty_needed - total_allocated
                     total_unfulfilled_across_so += unfulfilled
+
+                    from .utils import sync_production_run_yield
+                    sync_production_run_yield(so, item.product, unfulfilled, request.user)
                 
                 send_to_mfg = request.POST.get('send_to_manufacturing') == 'true'
                 plant_id = request.POST.get('manufacturing_plant_id')
@@ -3692,13 +4320,18 @@ def production_run_detail_view(request, pk):
             all_shipments_arrived = False
             pending_shipments_count += 1
             
-    # Calculate BOM for usage form
+    # Calculate BOM for usage form and the pre-start preview
     bom_materials = []
     for req in run.target_product.recipe_items.all():
         needed = float(req.quantity_required) * float(run.expected_yield)
+        avail = float(Batch.objects.filter(material=req.material, status='Active').annotate(
+            avail=F('quantity') - F('allocated_quantity')
+        ).aggregate(s=Sum('avail'))['s'] or 0)
         bom_materials.append({
             'material': req.material,
-            'needed': needed
+            'needed': needed,
+            'available': avail,
+            'sufficient': avail >= needed,
         })
             
     if request.method == 'POST':
@@ -3725,7 +4358,70 @@ def production_run_detail_view(request, pk):
             run.save()
             messages.success(request, f"Production Run {run.run_number} started.")
             return redirect('production_run_detail', pk=pk)
-            
+
+        elif action == 'scrap_run':
+            if run.status in ['InProgress', 'Paused', 'Completed', 'Cancelled']:
+                messages.error(request, "This run has already started (or finished) and can't be scrapped — use Pause or the normal completion flow instead.")
+                return redirect('production_run_detail', pk=pk)
+
+            reason = request.POST.get('reason', '').strip()
+            if not reason:
+                messages.error(request, "A reason is required to scrap a production run.")
+                return redirect('production_run_detail', pk=pk)
+
+            from .utils import release_production_run_allocations
+            release_production_run_allocations(run)
+            run.status = 'Cancelled'
+            run.save()
+            OrderTimeline.objects.create(production_run=run, action=f"Run scrapped before starting. Reason: {reason}", user=request.user)
+            messages.success(request, f"Production Run {run.run_number} scrapped.")
+            return redirect('readiness')
+
+        elif action == 'pause_production':
+            if run.status != 'InProgress':
+                messages.error(request, "Only a run that's In Progress can be paused.")
+                return redirect('production_run_detail', pk=pk)
+            run.status = 'Paused'
+            run.save()
+            OrderTimeline.objects.create(production_run=run, action="Production paused.", user=request.user)
+            messages.success(request, f"Production Run {run.run_number} paused.")
+            return redirect('production_run_detail', pk=pk)
+
+        elif action == 'resume_production':
+            if run.status != 'Paused':
+                messages.error(request, "This run isn't paused.")
+                return redirect('production_run_detail', pk=pk)
+            run.status = 'InProgress'
+            run.save()
+            OrderTimeline.objects.create(production_run=run, action="Production resumed.", user=request.user)
+            messages.success(request, f"Production Run {run.run_number} resumed.")
+            return redirect('production_run_detail', pk=pk)
+
+        elif action == 'log_yield':
+            from .models import ProductionRunYieldLog
+            if run.status not in ['InProgress', 'Paused']:
+                messages.error(request, "Yield can only be logged while a run is In Progress or Paused.")
+                return redirect('production_run_detail', pk=pk)
+
+            qty_str = request.POST.get('quantity')
+            log_date_str = request.POST.get('log_date')
+            notes = request.POST.get('notes', '').strip()
+            try:
+                qty = Decimal(qty_str)
+                if qty <= 0:
+                    messages.error(request, "Enter a quantity greater than zero.")
+                else:
+                    log_date = log_date_str if log_date_str else timezone.now().date()
+                    ProductionRunYieldLog.objects.create(
+                        production_run=run, quantity=qty, log_date=log_date,
+                        logged_by=request.user, notes=notes or None
+                    )
+                    OrderTimeline.objects.create(production_run=run, action=f"Logged {qty} {run.target_product.unit_of_measure} of yield on {log_date}.", user=request.user)
+                    messages.success(request, f"Logged {qty} {run.target_product.unit_of_measure}.")
+            except Exception as e:
+                messages.error(request, f"Error logging yield: {e}")
+            return redirect('production_run_detail', pk=pk)
+
         elif action == 'complete_production':
             # 1. Process Material Usage and Variances
             has_high_variance = False
@@ -3884,6 +4580,22 @@ def production_run_detail_view(request, pk):
     if run.actual_yield is not None and run.expected_yield:
         yield_efficiency = (Decimal(str(run.actual_yield)) / Decimal(str(run.expected_yield))) * 100
 
+    yield_logs = run.yield_logs.all()
+    yield_logs_sum = sum((y.quantity for y in yield_logs), Decimal('0'))
+    yield_progress_pct = None
+    if run.expected_yield:
+        yield_progress_pct = min(100, float((yield_logs_sum / Decimal(str(run.expected_yield))) * 100))
+
+    priority = None
+    if run.sales_order and run.sales_order.fulfillment_deadline and run.status not in ['Completed', 'Cancelled']:
+        days_left = (run.sales_order.fulfillment_deadline - timezone.now().date()).days
+        if days_left < 0:
+            priority = 'Overdue'
+        elif days_left <= 3:
+            priority = 'Due Soon'
+        else:
+            priority = 'On Track'
+
     return render(request, 'production_run_detail.html', {
         'run': run,
         'linked_shipments': linked_shipments,
@@ -3898,6 +4610,10 @@ def production_run_detail_view(request, pk):
         'total_material_cost': total_material_cost,
         'produced_batches': run.produced_batches.all(),
         'yield_efficiency': yield_efficiency,
+        'yield_logs': yield_logs,
+        'yield_logs_sum': yield_logs_sum,
+        'yield_progress_pct': yield_progress_pct,
+        'priority': priority,
     })
 
 @login_required
