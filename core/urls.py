@@ -1,6 +1,6 @@
 from django.urls import path
 from django.contrib.auth import views as auth_views
-from . import views
+from . import views, views_analytics
 
 urlpatterns = [
     path('', views.home_view, name='home'),
@@ -8,6 +8,7 @@ urlpatterns = [
     path('logout/', auth_views.LogoutView.as_view(next_page='home'), name='logout'),
     path('dashboard/', views.dashboard_view, name='dashboard'),
     path('system/', views.system_view, name='system'),
+    path('system/settings/', views.system_settings_view, name='system_settings'),
     path('system/users/', views.user_management_view, name='user_management'),
     path('profile/', views.profile_view, name='profile'),
     path('system/db-logs/', views.db_logs_api_view, name='db_logs_api'),
@@ -21,6 +22,10 @@ urlpatterns = [
     path('warehouse/create/', views.warehouse_create_view, name='warehouse_create'),
     path('warehouse/<int:pk>/edit/', views.warehouse_edit_view, name='warehouse_edit'),
     path('warehouse/stock-audit/', views.stock_audit_view, name='stock_audit'),
+    path('warehouse/stock-audit/accuracy/', views_analytics.audit_accuracy_view, name='audit_accuracy'),
+    path('warehouse/forecast/', views_analytics.forecast_view, name='forecast'),
+    path('warehouse/capacity/', views_analytics.capacity_forecast_view, name='capacity_forecast'),
+    path('assistant/briefing/', views_analytics.ops_briefing_view, name='ops_briefing'),
     path('warehouse/registry/', views.registry_ledger_view, name='registry'),
     path('catalog/products/', views.product_list_view, name='product_list'),
     path('catalog/products/<int:pk>/', views.product_detail_view, name='product_detail'),
@@ -32,11 +37,17 @@ urlpatterns = [
     path('catalog/materials/export/', views.export_materials_csv, name='export_materials_csv'),
     path('catalog/materials/template/', views.export_material_template, name='export_material_template'),
     path('catalog/materials/import/', views.import_materials, name='import_materials'),
+    path('catalog/suppliers/', views.supplier_list_view, name='supplier_list'),
+    path('catalog/suppliers/scorecard/', views_analytics.supplier_scorecard_view, name='supplier_scorecard'),
+    path('catalog/suppliers/<int:pk>/edit/', views.supplier_edit_view, name='supplier_edit'),
+    path('catalog/clients/', views.client_list_view, name='client_list'),
+    path('catalog/clients/<int:pk>/edit/', views.client_edit_view, name='client_edit'),
     path('catalog/recipes/export/', views.export_product_recipes_csv, name='export_recipes_csv'),
     # path('catalog/recipes/import/', views.import_product_recipes, name='import_recipes'),
     path('catalog/products/<int:product_id>/recipe/get/', views.get_product_recipe_api, name='get_product_recipe_api'),
     path('catalog/products/recipe/save/', views.save_product_recipe_api, name='save_product_recipe_api'),
     path('operations/sales-orders/', views.sales_order_list_view, name='so_list'),
+    path('operations/sales-orders/risk/', views_analytics.sales_order_delivery_risk_view, name='so_delivery_risk'),
     path('operations/orders/so/<int:pk>/', views.so_detail_view, name='so_detail'),
     path('operations/orders/so/<int:pk>/allocate/', views.so_allocate_view, name='so_allocate'),
     path('operations/orders/so/<int:pk>/create_shipment/', views.so_create_shipment_view, name='so_create_shipment'),
@@ -46,6 +57,7 @@ urlpatterns = [
     path('operations/shipments/<int:pk>/', views.shipment_detail_view, name='shipment_detail'),
     path('operations/shipments/<int:pk>/picklist/', views.shipment_pick_list_view, name='shipment_pick_list'),
     path('operations/manufacture/', views.manufacturing_view, name='readiness'),
+    path('operations/manufacture/yield/', views_analytics.production_yield_view, name='production_yield'),
     path('operations/manufacture/run/<int:pk>/', views.production_run_detail_view, name='production_run_detail'),
     path('operations/manufacture/run/<int:pk>/allocate/', views.production_run_allocate_view, name='production_run_allocate'),
     path('operations/qa/', views.qa_dashboard_view, name='qa_dashboard'),

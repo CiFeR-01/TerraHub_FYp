@@ -81,4 +81,52 @@
         </div>
     </form>
 </div>
+
+<div class="pane-card animate-fade-in-up" style="max-width: 900px; margin: 0 auto 3rem; padding: 2.25rem; background:#fff; border-radius:12px; border:1px solid var(--border-light);">
+    <h3 style="margin-bottom: 0.5rem; font-family: 'Outfit', sans-serif; font-weight: 700; color: var(--text-main);">📦 Batch Traceability</h3>
+    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.5rem;">
+        Every active batch of {{ material.sku }} — where it is, how much is reserved, and what it's reserved for.
+    </p>
+    <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+        <thead>
+            <tr style="border-bottom:1px solid var(--border-light); text-align:left; color:var(--text-muted);">
+                <th style="padding:0.5rem 0;">Batch</th>
+                <th style="padding:0.5rem 0;">Warehouse</th>
+                <th style="padding:0.5rem 0; text-align:right;">Quantity</th>
+                <th style="padding:0.5rem 0; text-align:right;">Allocated</th>
+                <th style="padding:0.5rem 0; text-align:right;">Available</th>
+                <th style="padding:0.5rem 0;">Reserved For</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in material_batch_rows %}
+            <tr style="border-bottom:1px solid var(--border-light);">
+                <td style="padding:0.6rem 0;">
+                    <a href="{% url 'batch_detail' row.batch.batch_number %}" style="color:var(--primary); font-weight:600; text-decoration:none;">{{ row.batch.batch_number }}</a>
+                    {% if row.source_po %}
+                    <div style="font-size:0.75rem;"><a href="{% url 'po_detail' row.source_po.pk %}" style="color:var(--text-muted); text-decoration:none;">via {{ row.source_po.po_number }}</a></div>
+                    {% endif %}
+                </td>
+                <td style="padding:0.6rem 0;">{{ row.batch.warehouse.name|default:row.batch.location|default:"—" }}</td>
+                <td style="padding:0.6rem 0; text-align:right;">{{ row.batch.quantity|floatformat:2 }} {{ material.unit_of_measure }}</td>
+                <td style="padding:0.6rem 0; text-align:right;">{{ row.batch.allocated_quantity|floatformat:2 }}</td>
+                <td style="padding:0.6rem 0; text-align:right; font-weight:600; color:{% if row.available > 0 %}#059669{% else %}var(--text-muted){% endif %};">{{ row.available|floatformat:2 }}</td>
+                <td style="padding:0.6rem 0;">
+                    {% if row.reservations %}
+                    <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                        {% for res in row.reservations %}
+                        <a href="{{ res.url }}" style="color:var(--primary); text-decoration:none; font-size:0.8rem;">{{ res.quantity|floatformat:2 }} → {{ res.label }}</a>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <span style="color:#059669; font-size:0.8rem;">Fully available</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6" style="padding:1.5rem; text-align:center; color:var(--text-muted);">No active batches of this material.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 {% endblock %}

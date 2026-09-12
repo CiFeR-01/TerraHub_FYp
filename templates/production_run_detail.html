@@ -16,18 +16,27 @@
             {{ run.run_number }} - {{ run.target_product.name }}
         </h1>
         <p style="font-size:0.9rem; color:var(--text-muted);">
-            Yield: {{ run.expected_yield|floatformat:2 }} {{ run.target_product.unit_of_measure }} | 
-            Plant: {{ run.manufacturing_plant.name|default:"Not Set" }}
+            SKU: {{ run.target_product.sku }}
         </p>
     </div>
     
     <div style="display:flex; align-items:center; gap:1rem;">
+        {% if priority %}
+        <span class="badge" style="font-size:0.78rem; padding:0.35rem 0.85rem;
+            {% if priority == 'Overdue' %}background:#fee2e2; color:#b91c1c; border:1px solid #fecaca;
+            {% elif priority == 'Due Soon' %}background:#fef3c7; color:#92400e; border:1px solid #fde68a;
+            {% else %}background:#dcfce7; color:#166534; border:1px solid #bbf7d0;{% endif %}">
+            {{ priority }}
+        </span>
+        {% endif %}
         {% if run.status == 'Pending Allocation' or run.status == 'Planned' %}
         <a href="{% url 'production_run_allocate' run.id %}" class="btn btn-primary" style="padding:0.4rem 1rem; font-size:0.85rem;">Allocate Materials</a>
         {% endif %}
         <span class="badge" style="font-size:0.85rem; padding:0.4rem 1rem;
             {% if run.status == 'InProgress' %}background:#dbeafe; color:#1e40af; border:1px solid #bfdbfe;
+            {% elif run.status == 'Paused' %}background:#fef3c7; color:#92400e; border:1px solid #fde68a;
             {% elif run.status == 'Completed' %}background:#dcfce7; color:#166534; border:1px solid #bbf7d0;
+            {% elif run.status == 'Cancelled' %}background:#fee2e2; color:#b91c1c; border:1px solid #fecaca;
             {% else %}background:#f1f5f9; color:#475569; border:1px solid #e2e8f0;{% endif %}">
             {{ run.status }}
         </span>
@@ -47,6 +56,30 @@
 <!-- Info Card -->
 <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:2rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); max-width:1200px;">
     <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1.5rem;">
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Target Product</div>
+            <div style="font-size:0.95rem; font-weight:600;">
+                <a href="{% url 'product_detail' run.target_product.pk %}" style="color:var(--primary); text-decoration:none;">{{ run.target_product.name }}</a>
+                <span style="font-size:0.78rem; color:var(--text-muted); font-weight:500; margin-left:0.35rem;">({{ run.target_product.sku }})</span>
+            </div>
+        </div>
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Expected Yield</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ run.expected_yield|floatformat:2 }} {{ run.target_product.unit_of_measure }}</div>
+        </div>
+        {% if run.status in 'InProgress,Paused,Completed' %}
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Progress</div>
+            <div style="font-size:0.95rem; font-weight:600; margin-bottom:0.3rem;">{{ yield_logs_sum|floatformat:2 }} / {{ run.expected_yield|floatformat:2 }} {{ run.target_product.unit_of_measure }}</div>
+            <div style="width:100%; height:6px; background:#e2e8f0; border-radius:10px; overflow:hidden;">
+                <div style="height:100%; border-radius:10px; width:{{ yield_progress_pct|floatformat:0 }}%; background:{% if yield_progress_pct >= 100 %}#059669{% else %}var(--primary){% endif %};"></div>
+            </div>
+        </div>
+        {% endif %}
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Manufacturing Plant</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ run.manufacturing_plant.name|default:"Not Set" }}</div>
+        </div>
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Linked Sales Order</div>
             <div style="font-size:0.95rem; font-weight:600;">
@@ -83,6 +116,35 @@
         {% endif %}
     </div>
 </div>
+
+<!-- Bill of Materials Preview -->
+{% if bom_materials %}
+<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); max-width:1200px;">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Bill of Materials</h3>
+    <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+        <thead>
+            <tr style="border-bottom:1px solid var(--border-light); text-align:left; color:var(--text-muted);">
+                <th style="padding:0.5rem 0;">Material</th>
+                <th style="padding:0.5rem 0; text-align:right;">Required</th>
+                <th style="padding:0.5rem 0; text-align:right;">Available</th>
+                <th style="padding:0.5rem 0; text-align:right;">Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for bom in bom_materials %}
+            <tr style="border-bottom:1px solid var(--border-light);">
+                <td style="padding:0.6rem 0; font-weight:600;">{{ bom.material.name }}</td>
+                <td style="padding:0.6rem 0; text-align:right;">{{ bom.needed|floatformat:2 }} {{ bom.material.unit_of_measure }}</td>
+                <td style="padding:0.6rem 0; text-align:right;">{{ bom.available|floatformat:2 }} {{ bom.material.unit_of_measure }}</td>
+                <td style="padding:0.6rem 0; text-align:right;">
+                    <span class="badge {% if bom.sufficient %}badge-emerald{% else %}badge-rose{% endif %}" style="font-size:0.7rem;">{% if bom.sufficient %}Sufficient{% else %}Short{% endif %}</span>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
 
 <!-- Scheduler Card -->
 {% if run.status != 'Completed' %}
@@ -146,11 +208,72 @@
                         </button>
                     </form>
                 </div>
-            {% elif run.status == 'InProgress' %}
+
+                <details style="margin-top:1.25rem;">
+                    <summary style="cursor:pointer; font-size:0.85rem; color:#b91c1c; font-weight:600;">Scrap this run instead</summary>
+                    <form method="post" action="{% url 'production_run_detail' run.pk %}" style="margin-top:0.75rem; padding:1rem; border:1px solid #fecaca; background:#fef2f2; border-radius:8px;">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="scrap_run">
+                        <label style="display:block; font-size:0.8rem; font-weight:600; color:#991b1b; margin-bottom:0.4rem;">Reason</label>
+                        <textarea name="reason" required class="form-input" style="width:100%; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:0.75rem; height:60px;" placeholder="Why is this run no longer needed?"></textarea>
+                        <button type="submit" class="btn" style="width:100%; padding:0.6rem; background:#fff; border:1px solid #dc2626; color:#dc2626; border-radius:6px; font-weight:600;" onclick="return confirm('Scrap this production run? This releases any allocated materials and cannot be undone.')">Scrap Run</button>
+                    </form>
+                </details>
+            {% elif run.status == 'InProgress' or run.status == 'Paused' %}
+                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; padding:1.5rem; margin-bottom:1.5rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+                        <h4 style="font-size:1rem; font-weight:700; color:var(--text-main); margin:0;">Yield Log</h4>
+                        {% if run.status == 'InProgress' %}
+                        <form method="post" action="{% url 'production_run_detail' run.pk %}">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="pause_production">
+                            <button type="submit" class="btn btn-secondary" style="padding:0.35rem 0.9rem; font-size:0.8rem;">⏸ Pause</button>
+                        </form>
+                        {% else %}
+                        <form method="post" action="{% url 'production_run_detail' run.pk %}">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="resume_production">
+                            <button type="submit" class="btn btn-primary" style="padding:0.35rem 0.9rem; font-size:0.8rem;">▶ Resume</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                    <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">Production can span more than one session — log what's actually been made as you go, then finalize once the run is done.</p>
+
+                    {% if yield_logs %}
+                    <div style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-bottom:1rem;">
+                        {% for y in yield_logs reversed %}
+                        <div style="background:#fff; border:1px solid var(--border-light); border-radius:6px; padding:0.35rem 0.7rem; font-size:0.78rem;">
+                            <strong style="color:var(--primary);">+{{ y.quantity|floatformat:2 }}</strong>
+                            <span style="color:var(--text-muted);">· {{ y.log_date|date:"Y-m-d" }} · {{ y.logged_by.get_full_name|default:y.logged_by.username|default:"—" }}{% if y.notes %} · {{ y.notes }}{% endif %}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+
+                    <form method="post" action="{% url 'production_run_detail' run.pk %}" style="display:flex; align-items:flex-end; flex-wrap:wrap; gap:0.75rem;">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="log_yield">
+                        <div>
+                            <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.3rem;">Quantity ({{ run.target_product.unit_of_measure }})</label>
+                            <input type="number" step="0.01" min="0.01" name="quantity" required class="form-input" style="width:120px; padding:0.5rem;">
+                        </div>
+                        <div>
+                            <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.3rem;">Date</label>
+                            <input type="date" name="log_date" value="{% now 'Y-m-d' %}" required class="form-input" style="width:150px; padding:0.5rem;">
+                        </div>
+                        <div style="flex:1; min-width:150px;">
+                            <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.3rem;">Notes (optional)</label>
+                            <input type="text" name="notes" class="form-input" style="width:100%; padding:0.5rem;" placeholder="e.g. Batch 1 of 3">
+                        </div>
+                        <button type="submit" class="btn btn-secondary" style="padding:0.5rem 1rem; font-size:0.85rem;">+ Log Yield</button>
+                    </form>
+                </div>
+
+                {% if run.status == 'InProgress' %}
                 <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; padding:1.5rem;">
-                    <h4 style="font-size:1rem; font-weight:700; color:var(--text-main); margin-bottom:1rem;">Record Material Usage</h4>
-                    <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Production started at {{ run.exact_start_time|date:"M d, Y H:i" }}. Enter the actual poured quantities below.</p>
-                    
+                    <h4 style="font-size:1rem; font-weight:700; color:var(--text-main); margin-bottom:1rem;">Record Material Usage &amp; Finalize</h4>
+                    <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Production started at {{ run.exact_start_time|date:"M d, Y H:i" }}. Enter the actual poured quantities below to complete the run.</p>
+
                     <form method="post" action="{% url 'production_run_detail' run.pk %}">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="complete_production">
@@ -181,8 +304,11 @@
                         
                         <div style="margin-bottom:1.5rem; background:#fff; padding:1rem; border:1px solid var(--border-light); border-radius:8px;">
                             <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-main); margin-bottom:0.5rem;">Actual Yield (Finished Goods)</label>
+                            {% if yield_logs_sum %}
+                            <p style="font-size:0.78rem; color:var(--text-muted); margin-bottom:0.5rem;">Pre-filled from your logged yield entries — adjust if needed.</p>
+                            {% endif %}
                             <div style="display:flex; align-items:center; gap:0.5rem;">
-                                <input type="number" step="0.01" name="actual_yield" required class="form-input" style="flex:1; padding:0.5rem;" value="{{ run.expected_yield }}">
+                                <input type="number" step="0.01" name="actual_yield" required class="form-input" style="flex:1; padding:0.5rem;" value="{% if yield_logs_sum %}{{ yield_logs_sum|floatformat:2 }}{% else %}{{ run.expected_yield }}{% endif %}">
                                 <span style="font-size:0.85rem; color:var(--text-muted);">{{ run.target_product.unit_of_measure }}</span>
                             </div>
                         </div>
@@ -216,6 +342,7 @@
                           </button>
                     </form>
                 </div>
+                {% endif %}
             {% elif run.status == 'Pending Approval' %}
                   <div style="background:#fefce8; border:1px solid #fde047; border-radius:8px; padding:1.5rem; text-align:center;">
                       <svg width="48" height="48" fill="none" stroke="#a16207" viewBox="0 0 24 24" style="margin:0 auto 1rem;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>

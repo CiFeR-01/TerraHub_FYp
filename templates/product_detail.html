@@ -211,16 +211,38 @@
     <!-- Bottom Left: Inventory & Production -->
     <div class="detail-card dark-panel">
         <h3 class="section-title">Active Batches (Inventory)</h3>
-        <div class="table-container" style="max-height: 200px; margin-bottom: 1.5rem;">
-            {% for batch in active_batches %}
-            <div class="list-item">
-                <span><strong style="color: #38bdf8;">{{ batch.batch_number }}</strong> @ {{ batch.location|default:"Unassigned" }}</span>
-                <span>
-                    <strong>{{ batch.quantity|floatformat:2 }}</strong>
-                    {% if batch.days_until_expiry %}
-                        <span class="badge {% if batch.days_until_expiry < 30 %}badge-warning{% else %}badge-success{% endif %}" style="margin-left: 0.5rem;">Exp in {{ batch.days_until_expiry }}d</span>
-                    {% endif %}
-                </span>
+        <div class="table-container" style="max-height: 320px; margin-bottom: 1.5rem; overflow-y: auto;">
+            {% for row in batch_rows %}
+            <div class="list-item" style="flex-direction: column; align-items: stretch; gap: 0.35rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span>
+                        <strong style="color: #38bdf8;">{{ row.batch.batch_number }}</strong>
+                        <span style="color:#94a3b8; font-size:0.85em;"> @ {{ row.batch.warehouse.name|default:row.batch.location|default:"Unassigned" }}</span>
+                    </span>
+                    <span>
+                        <strong>{{ row.batch.quantity|floatformat:2 }}</strong>
+                        {% if row.batch.days_until_expiry %}
+                            <span class="badge {% if row.batch.days_until_expiry < 30 %}badge-warning{% else %}badge-success{% endif %}" style="margin-left: 0.5rem;">Exp in {{ row.batch.days_until_expiry }}d</span>
+                        {% endif %}
+                    </span>
+                </div>
+                <div style="display:flex; justify-content:space-between; font-size:0.8em; color:#94a3b8;">
+                    <span>Allocated: {{ row.batch.allocated_quantity|floatformat:2 }} · Available: {{ row.available|floatformat:2 }}</span>
+                </div>
+                {% if row.produced_for %}
+                <div style="font-size:0.8em;">
+                    <a href="{{ row.produced_for.url }}" style="color:#f59e0b; text-decoration:none;">⚠ Originally produced for {{ row.produced_for.so_number }} (Run {{ row.produced_for.run_number }})</a>
+                </div>
+                {% endif %}
+                {% if row.reservations %}
+                <div style="display:flex; flex-wrap:wrap; gap:0.4rem; font-size:0.8em;">
+                    {% for res in row.reservations %}
+                    <a href="{{ res.url }}" style="color:#38bdf8; text-decoration:none; background:rgba(56,189,248,0.1); padding:0.15rem 0.5rem; border-radius:4px;">{{ res.quantity|floatformat:2 }} → {{ res.label }}</a>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div style="font-size:0.8em; color:#4ade80;">Fully available — not reserved</div>
+                {% endif %}
             </div>
             {% empty %}
             <div class="list-item" style="color:#64748b;">No active inventory batches.</div>

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}System Settings - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <a href="{% url 'system' %}">System Console</a>
+            <span class="separator">/</span>
+            <span class="current-page">Settings</span>
+        </nav>
+        <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
+            Operational Settings
+        </h1>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:64ch;">
+            Tunables that change how analytics and forecasting behave, editable without a
+            deploy. Each takes effect on the next page load.
+        </p>
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom:1.5rem;">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.2); color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.2); color:#d97706;{% else %}background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.2); color:#059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<form method="post" class="animate-fade-in-up" style="animation-delay:0.1s;">
+    {% csrf_token %}
+    <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); overflow:hidden;">
+        {% for s in settings_list %}
+        <div style="display:flex; flex-wrap:wrap; gap:1rem 2rem; padding:1.5rem; {% if not forloop.last %}border-bottom:1px solid var(--border-light);{% endif %}">
+            <div style="flex:1 1 22rem; min-width:16rem;">
+                <label for="setting-{{ s.key }}" style="display:block; font-weight:700; color:var(--text-main); font-size:0.95rem;">
+                    {{ s.label }}
+                    {% if s.is_overridden %}
+                    <span style="font-size:0.6rem; font-weight:700; background:#eef2ff; color:#4338ca; padding:0.05rem 0.4rem; border-radius:4px; margin-left:0.4rem; vertical-align:middle;">CUSTOM</span>
+                    {% endif %}
+                </label>
+                <code style="font-size:0.72rem; color:var(--text-muted);">{{ s.key }}</code>
+                <p style="color:var(--text-muted); font-size:0.82rem; margin-top:0.4rem;">{{ s.description }}</p>
+                <p style="color:var(--text-muted); font-size:0.72rem; margin-top:0.3rem;">
+                    Default: <strong>{{ s.default }}</strong>
+                    {% if s.updated_by %} &middot; last changed {{ s.updated_at|date:"d M Y H:i" }} by {{ s.updated_by.username }}{% endif %}
+                </p>
+            </div>
+            <div style="flex:0 0 12rem; align-self:center;">
+                {% if s.value_type == 'bool' %}
+                <select id="setting-{{ s.key }}" name="{{ s.key }}" style="width:100%; padding:0.55rem 0.75rem; border:1px solid var(--border-light); border-radius:8px; font-size:0.9rem;">
+                    <option value="true" {% if s.value %}selected{% endif %}>Enabled</option>
+                    <option value="false" {% if not s.value %}selected{% endif %}>Disabled</option>
+                </select>
+                {% elif s.value_type == 'int' or s.value_type == 'float' %}
+                <input id="setting-{{ s.key }}" name="{{ s.key }}" type="number"
+                       step="{% if s.value_type == 'int' %}1{% else %}any{% endif %}"
+                       value="{{ s.value }}"
+                       style="width:100%; padding:0.55rem 0.75rem; border:1px solid var(--border-light); border-radius:8px; font-size:0.9rem;">
+                {% else %}
+                <input id="setting-{{ s.key }}" name="{{ s.key }}" type="text" value="{{ s.value }}"
+                       style="width:100%; padding:0.55rem 0.75rem; border:1px solid var(--border-light); border-radius:8px; font-size:0.9rem;">
+                {% endif %}
+                <span style="display:block; font-size:0.68rem; color:var(--text-muted); margin-top:0.3rem;">type: {{ s.value_type }}</span>
+            </div>
+        </div>
+        {% empty %}
+        <p style="padding:2rem 1.5rem; text-align:center; color:var(--text-muted);">No configurable settings registered.</p>
+        {% endfor %}
+    </div>
+
+    {% if settings_list %}
+    <div style="margin-top:1.25rem; display:flex; gap:0.75rem; align-items:center;">
+        <button type="submit" class="btn btn-primary" style="padding:0.55rem 1.5rem; font-size:0.9rem;">Save Settings</button>
+        <a href="{% url 'system' %}" style="font-size:0.85rem; color:var(--text-muted); text-decoration:none;">Cancel</a>
+    </div>
+    {% endif %}
+</form>
+{% endblock %}

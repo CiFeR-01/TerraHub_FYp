@@ -62,7 +62,7 @@
     <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Purchase
         Orders (Supplier Procurement)</h3>
     <div class="table-responsive">
-        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr
                     style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
@@ -151,11 +151,23 @@
                     readonly>
             </div>
             <div style="margin-bottom:0.85rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Existing
+                    Supplier (optional)</label>
+                <select id="po_supplier_select" onchange="autofillSupplier(this)" class="form-select"
+                    style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                    <option value="">-- Select a supplier to autofill, or type below --</option>
+                    {% for s in suppliers %}
+                    <option value="{{ s.id }}" data-name="{{ s.name|escapejs }}">{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="margin-bottom:0.85rem;">
                 <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Supplier
                     Name</label>
-                <input type="text" name="supplier_name" required placeholder="e.g. Chemical Global Industries"
+                <input type="text" id="po_supplier_name" name="supplier_name" required placeholder="e.g. Chemical Global Industries"
                     class="form-input"
                     style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                <input type="hidden" id="po_supplier_id" name="supplier_id" value="">
             </div>
             <div style="margin-bottom:1.25rem;">
                 <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Destination
@@ -177,6 +189,25 @@
 </div>
 
 <script>
+    function autofillSupplier(select) {
+        var opt = select.options[select.selectedIndex];
+        var nameInput = document.getElementById('po_supplier_name');
+        var idInput = document.getElementById('po_supplier_id');
+        idInput.value = select.value;
+        if (select.value) {
+            nameInput.value = opt.dataset.name;
+        }
+    }
+    (function () {
+        var nameInput = document.getElementById('po_supplier_name');
+        if (nameInput) {
+            nameInput.addEventListener('input', function () {
+                document.getElementById('po_supplier_id').value = '';
+                document.getElementById('po_supplier_select').value = '';
+            });
+        }
+    })();
+
     function toggleIdMode(inputId, toggleId, autoVal) {
         var input = document.getElementById(inputId);
         var toggle = document.getElementById(toggleId);

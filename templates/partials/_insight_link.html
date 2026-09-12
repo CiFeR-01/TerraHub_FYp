@@ -1,0 +1,15 @@
+{% comment %}
+Header link from a domain page into its analytics view (Insights section).
+Usage: {% include "partials/_insight_link.html" with link_url='so_delivery_risk' link_label='Delivery risk board' %}
+{% endcomment %}
+<div class="animate-fade-in-up" style="margin:-0.35rem 0 1.5rem;">
+    <a href="{% url link_url %}" class="btn btn-secondary"
+       style="padding:0.45rem 0.9rem; font-size:0.82rem; text-decoration:none; display:inline-flex; align-items:center; gap:0.45rem;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 5-7"/>
+        </svg>
+        {{ link_label }}
+        <span aria-hidden="true" style="opacity:0.6;">&rarr;</span>
+    </a>
+</div>

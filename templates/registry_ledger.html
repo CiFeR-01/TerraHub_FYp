@@ -68,7 +68,7 @@
     </form>
 
     <div class="table-responsive">
-        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
                     <th style="padding:0.75rem 1rem;">Timestamp</th>
@@ -102,7 +102,7 @@
                     </td>
                     <td style="padding:0.85rem 1rem; font-weight:600; color:var(--text-main);">{{ log.item_name }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:700; {% if log.action_type in 'Inbound,Produced,QA_Extension' %}color:#10b981;{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal' %}color:#ef4444;{% endif %}">
-                        {% if log.action_type in 'Inbound,Produced' %}+{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal' %}-{% endif %}{{ log.quantity_changed|floatformat:2 }}
+                        {% if log.action_type in 'Inbound,Produced' %}+{{ log.quantity_changed|floatformat:2|cut:"-" }}{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal' %}-{{ log.quantity_changed|floatformat:2|cut:"-" }}{% else %}{{ log.quantity_changed|floatformat:2 }}{% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem;">{{ log.warehouse.name|default:"—" }}</td>
                     <td style="padding:0.85rem 1rem;">{{ log.user.username|default:"System Engine" }}</td>
