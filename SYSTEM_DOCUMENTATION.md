@@ -138,6 +138,7 @@ D:\TerraHub
 | `/operations/manufacture/yield/` | `production_yield` | `views_analytics.production_yield_view` | Production yield variance — "Yield" tab of the Manufacturing hub (see §8) |
 | `/warehouse/forecast/` | `forecast` | `views_analytics.forecast_view` | Consumption-rate stockout & reorder forecast (see §8) |
 | `/warehouse/capacity/` | `capacity_forecast` | `views_analytics.capacity_forecast_view` | Warehouse capacity runway — daily-snapshot trend (see §8) |
+| `/assistant/briefing/` | `ops_briefing` | `views_analytics.ops_briefing_view` | AI Ops Briefing — Claude narration of the Tier 1/2 signals; *Overview → Digital Assistant (AI)* (see §8.9) |
 | `/admin/` | — | Django admin | Django admin site |
 
 ---
@@ -159,6 +160,7 @@ Defined in `core/models.py`:
 - **Messaging**: `Notification`
 - **Configuration**: `SystemSetting` (key/value store for admin-editable operational tunables; read via `core/settings_store.py` — see §8)
 - **Analytics snapshots**: `WarehouseUtilizationSnapshot` (one row per warehouse per day, written by `manage.py snapshot_utilization`; see §8)
+- **AI briefings**: `OpsBriefing` (one row per `generate_ops_briefing` run — stored Claude narration of the Tier 1/2 signals plus its input `signals_json` and token counts; see §8.9)
 
 ---
 
@@ -241,14 +243,15 @@ Three tiers:
 | **2** | Statistical forecasting by plain arithmetic (no ML library) | consumption-rate stockout ETA, reorder-by date, warehouse capacity runway |
 | **3** | LLM reasoning over the Tier 1/2 signals | daily "AI Ops Briefing" in plain English |
 
-**Navigation.** All analytics views live in the **Insights** sidebar section
-(second, after Overview): Stockout Forecast, Supplier Scorecard, Delivery Risk,
-Yield Variance, Audit Accuracy (Capacity Runway and AI Ops Briefing land there in
-Phases 2b / 3). Each domain page — Suppliers, Sales Orders, Stock Tally,
-Manufacture, Materials Hub — links into its analytic via a single header
-call-out (`templates/partials/_insight_link.html`); the analytics pages
-themselves are standalone (breadcrumb `Dashboard / <Parent> / <Analytic>`, no tab
-strip). Exactly one sidebar item highlights per page.
+**Navigation.** The six Tier 1/2 views live in the **Insights** sidebar section
+(second, after Overview): Stockout Forecast, Capacity Runway, Supplier Scorecard,
+Delivery Risk, Yield Variance, Audit Accuracy. Each domain page — Suppliers,
+Sales Orders, Stock Tally, Manufacture, Materials Hub — links into its analytic
+via a single header call-out (`templates/partials/_insight_link.html`); the
+analytics pages themselves are standalone (breadcrumb
+`Dashboard / <Parent> / <Analytic>`, no tab strip). Exactly one sidebar item
+highlights per page. The Tier 3 **AI Ops Briefing** that narrates these signals
+sits on the **Digital Assistant (AI)** link in Overview, not in Insights.
 
 ### 8.1. The RegistryLog material spine  *(Phase 0 — implemented)*
 
@@ -441,10 +444,48 @@ status = no_data   if < 3 snapshots
 Sorted `(status rank, days_to_full, -current, name)`. The UI shows a "collecting
 data" banner until a warehouse has 7 snapshots.
 
-### 8.9. Planned algorithms  *(Phase 3 — not yet implemented)*
+### 8.9. AI Ops Briefing  *(Phase 3 — implemented)*
 
-- **AI Ops Briefing** — `generate_ops_briefing` command aggregates the signals
-  above into a structured payload, sends it to Claude with a constrained prompt
-  ("use only the numbers provided"), stores the result in `OpsBriefing`; the
-  `ops_briefing` view renders the latest. This is the target of the currently
-  inert `Digital Assistant (AI)` sidebar link.
+`core/briefing.py` → `generate_ops_briefing` command / `ops_briefing_view` →
+`/assistant/briefing/` (nav: *Overview → Digital Assistant (AI)* — the formerly
+inert link is now wired here).
+
+Two steps, **one stateless LLM call**, no agent loop and no tools:
+
+1. **`collect_signals(window_days=180)`** calls the six §8.3–§8.8 functions and
+   keeps only the rows worth a manager's attention —
+   `stockout_forecast` rows `critical|reorder_now|watch`, `capacity_forecast`
+   rows `critical|watch`, `supplier_reliability` rows `poor|watch`,
+   `sales_order_delivery_risk` rows `late|at_risk`, `audit_accuracy` warehouses
+   with chronic shrinkage or accuracy < 0.8 (+ worst items), and
+   `production_yield_variance` products `poor|watch`. Each section is capped at
+   12 rows and reduced to the few fields the narration needs (name + figures,
+   dates as ISO strings). The result is one JSON-serialisable dict with a
+   `signal_count`.
+
+2. **`generate_briefing(period, user)`** renders that dict as text and makes a
+   single `anthropic` `client.messages.create()` call with `BRIEFING_SYSTEM_PROMPT`
+   ("use ONLY the figures in the payload; never invent a number/name/date").
+   The model gets **no database access and no tools** — only the pre-computed
+   dict — so it can narrate the numbers but cannot fabricate them. The reply
+   (headline + 3–6 bullet lines + optional `Watch:` line) is stored verbatim.
+
+**`OpsBriefing`** row per run: `period`, `status`
+(`ok|empty|skipped|error`), `headline`, `body_text`, `signals_json`,
+`signal_count`, `model_id`, `input_tokens`/`output_tokens` (cost trace),
+`error_detail`, `generated_by` (null for the scheduled job). The view renders the
+latest `ok` row; a newer failed run shows a "last good briefing" notice.
+
+Config in `settings_store.REGISTRY` (editable at `/system/settings/`):
+`ops_briefing_enabled` (bool; off → `skipped` run, no API call) and
+`ops_briefing_model` (default `claude-opus-5`; `claude-sonnet-5` /
+`claude-haiku-4-5` are cheaper for this job). The API key is the
+**`ANTHROPIC_API_KEY` environment variable** — a secret, deliberately not a
+`SystemSetting`.
+
+`generate_briefing()` never raises for a config/API/network problem — it records
+the failure on the row so the scheduled job stays green. **Like
+`snapshot_utilization`, this command has no scheduler wired** — run it daily
+(`python manage.py generate_ops_briefing`, or `--period weekly`) via Heroku
+Scheduler, cron, or a scheduled GitHub Action. Admin/Manager can also trigger a
+run from the page. `--dry-run` prints the signal payload without calling the API.

@@ -45,8 +45,11 @@ except ImportError:  # pragma: no cover - exercised via the "not installed" path
 SIGNAL_WINDOW_DAYS = 180
 # Hard cap on rows per section so the prompt stays small and cheap.
 MAX_ROWS_PER_SECTION = 12
-# Response ceiling - a briefing is a short bulleted summary.
-MAX_OUTPUT_TOKENS = 1200
+# Response ceiling. The briefing text itself is short (~400-600 tokens), but
+# reasoning-capable models (claude-opus-5) spend thinking tokens against this
+# budget first - too low and the whole budget is consumed before any text block
+# is emitted. Keep generous headroom.
+MAX_OUTPUT_TOKENS = 4000
 
 BRIEFING_SYSTEM_PROMPT = """\
 You write the operations briefing for TerraHub, a warehouse and manufacturing
@@ -325,14 +328,32 @@ def generate_briefing(*, period="daily", user=None, window_days=SIGNAL_WINDOW_DA
         text = "".join(
             block.text for block in resp.content if getattr(block, "type", None) == "text"
         ).strip()
+        stop_reason = getattr(resp, "stop_reason", None)
+        in_tok = getattr(resp.usage, "input_tokens", None)
+        out_tok = getattr(resp.usage, "output_tokens", None)
+
+        if not text:
+            # Usually means max_tokens was consumed by reasoning before any text
+            # block was emitted - record it rather than saving a blank "ok".
+            detail = "Model returned no text block"
+            if stop_reason:
+                detail += f" (stop_reason={stop_reason})"
+            if stop_reason == "max_tokens":
+                detail += "; raise MAX_OUTPUT_TOKENS or use a lighter model."
+            return OpsBriefing.objects.create(
+                status="error", model_id=getattr(resp, "model", model_id) or model_id,
+                input_tokens=in_tok, output_tokens=out_tok,
+                error_detail=detail[:500], **base,
+            )
+
         headline, body = _split_headline(text)
         return OpsBriefing.objects.create(
             status="ok",
             headline=headline or "Operations briefing",
             body_text=body or text,
             model_id=getattr(resp, "model", model_id) or model_id,
-            input_tokens=getattr(resp.usage, "input_tokens", None),
-            output_tokens=getattr(resp.usage, "output_tokens", None),
+            input_tokens=in_tok,
+            output_tokens=out_tok,
             **base,
         )
     except Exception as exc:  # noqa: BLE001 - any API/network error is recorded, not raised

@@ -451,7 +451,60 @@ The first genuinely predictive view — a moving-average burn rate turned into
   horizon). Nav entry active; table auto-sorts; no console errors. The status
   bands are exercised by the tests rather than the demo data.
 
-## Phase 3 — Tier 3 AI ops briefing  ·  _pending_
+## Phase 3 — Tier 3 AI ops briefing  ·  2026-09-10
 
-`OpsBriefing` model + `generate_ops_briefing` command + `core/briefing.py`.
-Wires the dead `Digital Assistant (AI)` nav link to a real view.
+**Goal:** turn the Tier 1/2 signals into a plain-English briefing a manager reads
+in 20 seconds, and wire the long-dead `Digital Assistant (AI)` nav link to it.
+The LLM does **only** narration — no numeric prediction, no DB access, no tools,
+no agent loop. One stateless `messages.create` call over a pre-computed dict.
+
+### Changed
+
+| File | Change |
+| :--- | :--- |
+| `core/briefing.py` | **New module.** `collect_signals(window_days=180)` — calls the six analytics functions, keeps only notable rows (`critical`/`reorder_now`/`watch` stockout, `critical`/`watch` capacity, `poor`/`watch` supplier, `late`/`at_risk` SO, chronic-shrinkage or <0.8-accuracy warehouses + worst items, `poor`/`watch` yield), caps each section at 12 rows, reduces to name + figures (dates as ISO strings) → one JSON-serialisable dict with `signal_count`. `render_prompt()` — one-line frame + `json.dumps(indent=2)`. `generate_briefing(period, user)` — single `anthropic` `client.messages.create()` with `BRIEFING_SYSTEM_PROMPT` ("use ONLY the figures in the payload"); parses headline + body from the plain-text reply; persists an `OpsBriefing`. Never raises for a config/API/network problem — records `status='error'` on the row. Import of `anthropic` is guarded (`None` if not installed). |
+| `core/models.py` | **New `OpsBriefing`** — `generated_at`, `period` (`daily`/`weekly`), `status` (`ok`/`empty`/`skipped`/`error`), `headline`, `body_text`, `signals_json`, `signal_count`, `model_id`, `input_tokens`/`output_tokens`, `error_detail`, `generated_by` (null for the scheduled job). `ordering = ['-generated_at']`. |
+| `core/management/commands/generate_ops_briefing.py` | **New.** `--period daily\|weekly`, `--dry-run` (prints the signal payload, no API call, nothing saved). Exit code stays 0 on a recorded failure so a scheduler stays green; `error` prints to stderr. |
+| `core/views_analytics.py` | `ops_briefing_view` — renders the latest `status='ok'` row (bullet points + `Watch:` line parsed from `body_text`), a "last good briefing" notice when a newer run failed, per-section back-links to the Insights pages, a recent-runs table, and (Admin/Manager only) a POST "Generate now" button. `os` / `messages` / `redirect` / `get_setting` imports added. |
+| `core/urls.py` | `+ assistant/briefing/` → `ops_briefing`. |
+| `core/context_processors.py` | `Digital Assistant (AI)` overview item: `url_name` `None` → `'ops_briefing'` (the link is finally live). Comment in the Insights block updated — the briefing lives in Overview, not Insights. |
+| `core/settings_store.py` | `REGISTRY` += `ops_briefing_enabled` (bool, default `True`; off → `skipped` run, no API call) and `ops_briefing_model` (str, default `claude-opus-5`). |
+| `core/admin.py` | `OpsBriefing` registered read-only (`has_add_permission` → False), `date_hierarchy='generated_at'`, token/status/model columns. |
+| `core/migrations/0041_opsbriefing.py` | `CreateModel`. |
+| `core/migrations/0042_seed_ops_briefing_settings.py` | Seeds the two new `SystemSetting` rows from `REGISTRY` (idempotent; reverse deletes just those keys). |
+| `requirements.txt` | `+ anthropic>=0.40.0`. |
+| `templates/analytics/ops_briefing.html` | **New.** Breadcrumb `Dashboard / Digital Assistant (AI)`; "not configured" / "paused" / stale-run banners; briefing card (headline, bullets, Watch line, "drawn from" chips linking each Insights page, model + token footnote); generate form; recent-runs table; method footnote. |
+| `core/tests.py` | +17 tests (`OpsBriefingTests`) with a fake `anthropic` module: notable-only signal collection, empty-payload short-circuit (no API call), missing-key / package-missing / disabled → recorded `error`/`skipped` not raised, successful generation stores body + tokens + model, API exception caught, `model_id` from the setting, command `--dry-run` / real run, view auth + empty state + rendered briefing + back-links, generate-button gating, and the once-dead nav link now resolving. |
+
+### How it works
+
+`ANTHROPIC_API_KEY` is read from the **environment** (a secret — deliberately not
+a `SystemSetting`). The model sees only `signals_json`, so it can restate the
+numbers but cannot invent them; every line of a briefing traces back to a figure
+on an Insights page. Model choice and on/off are `SystemSetting`s so cost can be
+tuned (`claude-sonnet-5` / `claude-haiku-4-5`) or the paid daily call paused
+without a deploy. One run ≈ 4K in + ~1K out tokens ≈ $0.05/day on `claude-opus-5`.
+
+### Deliberately left for later
+
+- **No scheduler.** Like `snapshot_utilization`, `generate_ops_briefing` must be
+  wired to a daily job at deploy time (Heroku Scheduler / cron / GitHub Action).
+  Until then the page shows "No briefing yet"; Admin/Manager can generate on
+  demand.
+- **Prompt caching / adaptive thinking** not used — the system prompt is well
+  under the cache floor and the task is simple summarisation.
+- **Phase 3b (not built)** — a constrained natural-language query box routing a
+  question to one of the existing analytics functions (never free-form SQL).
+
+### Verification
+
+- `manage.py makemigrations` → `0041`; `migrate` → `0041`, `0042` OK.
+  `manage.py check` clean. `manage.py test core` → **131 passed** (was 114).
+- `generate_ops_briefing --dry-run` against dev data: 3 notable signals
+  (1 late SO, 1 low-accuracy warehouse + item). Real run with no key →
+  `Briefing #1: failed - The 'anthropic' package is not installed` (recorded,
+  exit 0); test rows cleared.
+- Live at `/assistant/briefing/`: header, "Not configured" banner, empty state,
+  disabled "Generate now" button; sidebar highlights only
+  *Overview → Digital Assistant (AI)* and the link resolves to
+  `/assistant/briefing/`; no console errors.
