@@ -1343,3 +1343,245 @@ class CapacityForecastTests(TestCase):
         fac = self.client.get(reverse('warehouse_list'))
         self.assertContains(fac, reverse('capacity_forecast'))
         self.assertContains(fac, 'Capacity runway')
+
+
+import os as _os
+import types as _types
+from unittest import mock as _mock
+
+from core.models import OpsBriefing
+from core import briefing as briefing_mod
+
+
+class _FakeUsage:
+    def __init__(self, i, o):
+        self.input_tokens, self.output_tokens = i, o
+
+
+class _FakeTextBlock:
+    type = "text"
+
+    def __init__(self, text):
+        self.text = text
+
+
+class _FakeResponse:
+    def __init__(self, text, model="claude-opus-5", i=1234, o=210):
+        self.content = [_FakeTextBlock(text)]
+        self.usage = _FakeUsage(i, o)
+        self.model = model
+
+
+class _FakeAnthropicModule:
+    """Stand-in for the top-level ``anthropic`` module used by core.briefing."""
+
+    def __init__(self, response=None, boom=None):
+        self._response = response or _FakeResponse(
+            "Depot 1 fills in 12 days.\n- Depot 1 at 92% and rising\nWatch: SO-9 slack -1d"
+        )
+        self._boom = boom
+        self.calls = []
+
+    def Anthropic(self, *args, **kwargs):
+        module = self
+
+        class _Client:
+            def __init__(self):
+                self.messages = _Messages()
+
+        class _Messages:
+            def create(self, **kw):
+                module.calls.append(kw)
+                if module._boom is not None:
+                    raise module._boom
+                return module._response
+
+        return _Client()
+
+
+class OpsBriefingTests(TestCase):
+    """Phase 3: collect_signals(), generate_briefing(), the command and the view."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='briefer', password='pw')
+        self.manager = User.objects.create_user(username='mgr', password='pw', role='Manager')
+        self.wh = Warehouse.objects.create(name='FG Store', location_type='Storage')
+        self.product = Product.objects.create(
+            name='Blend A', sku='PRD-A', unit_of_measure='pcs', price_per_unit=10,
+        )
+
+    def _late_so(self, number='SO-LATE'):
+        so = SalesOrder.objects.create(
+            so_number=number, client_name='Acme', origin_warehouse=self.wh,
+            status='In Production', fulfillment_deadline=date.today() - timedelta(days=9),
+        )
+        SalesOrderDetail.objects.create(
+            sales_order=so, product=self.product,
+            quantity_ordered=Decimal('10'), quantity_shipped=Decimal('0'),
+        )
+        return so
+
+    # -- collect_signals -----------------------------------------------------
+
+    def test_collect_signals_keeps_only_notable_rows(self):
+        self._late_so('SO-LATE')
+        SalesOrder.objects.create(  # on-track, far-off deadline -> must be excluded
+            so_number='SO-OK', client_name='Fine', origin_warehouse=self.wh,
+            status='Pending', fulfillment_deadline=date.today() + timedelta(days=90),
+        )
+        signals = briefing_mod.collect_signals()
+        risk = signals['sales_order_delivery_risk']
+        self.assertEqual([r['sales_order'] for r in risk], ['SO-LATE'])
+        self.assertGreaterEqual(signals['signal_count'], 1)
+        self.assertEqual(signals['generated_for'], date.today().isoformat())
+
+    def test_collect_signals_empty_when_nothing_notable(self):
+        signals = briefing_mod.collect_signals()
+        self.assertEqual(signals['signal_count'], 0)
+        self.assertEqual(signals['sales_order_delivery_risk'], [])
+
+    # -- generate_briefing -------------------------------------------------
+
+    def test_empty_signals_records_empty_without_api_call(self):
+        fake = _FakeAnthropicModule()
+        with _mock.patch.object(briefing_mod, 'anthropic', fake):
+            b = briefing_mod.generate_briefing()
+        self.assertEqual(b.status, 'empty')
+        self.assertEqual(fake.calls, [])
+
+    def test_missing_api_key_records_error_not_exception(self):
+        self._late_so()
+        with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
+             _mock.patch.dict(_os.environ, {}, clear=False):
+            _os.environ.pop('ANTHROPIC_API_KEY', None)
+            b = briefing_mod.generate_briefing()
+        self.assertEqual(b.status, 'error')
+        self.assertIn('ANTHROPIC_API_KEY', b.error_detail)
+
+    def test_package_missing_records_error(self):
+        self._late_so()
+        with _mock.patch.object(briefing_mod, 'anthropic', None), \
+             _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            b = briefing_mod.generate_briefing()
+        self.assertEqual(b.status, 'error')
+        self.assertIn('anthropic', b.error_detail)
+
+    def test_disabled_setting_records_skipped(self):
+        self._late_so()
+        SystemSetting.objects.update_or_create(
+            key='ops_briefing_enabled',
+            defaults={'value': 'False', 'value_type': 'bool'},
+        )
+        with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()) as _f, \
+             _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            b = briefing_mod.generate_briefing()
+        self.assertEqual(b.status, 'skipped')
+
+    def test_successful_generation_stores_body_and_tokens(self):
+        self._late_so()
+        fake = _FakeAnthropicModule()
+        with _mock.patch.object(briefing_mod, 'anthropic', fake), \
+             _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            b = briefing_mod.generate_briefing(period='daily', user=self.manager)
+        self.assertEqual(b.status, 'ok')
+        self.assertEqual(b.headline, 'Depot 1 fills in 12 days.')
+        self.assertIn('Depot 1 at 92%', b.body_text)
+        self.assertEqual(b.input_tokens, 1234)
+        self.assertEqual(b.output_tokens, 210)
+        self.assertEqual(b.model_id, 'claude-opus-5')
+        self.assertEqual(b.generated_by, self.manager)
+        # the model was handed the signal JSON, not a DB handle
+        sent = fake.calls[0]['messages'][0]['content']
+        self.assertIn('sales_order_delivery_risk', sent)
+        self.assertIn('SO-LATE', sent)
+
+    def test_api_exception_is_caught_and_recorded(self):
+        self._late_so()
+        fake = _FakeAnthropicModule(boom=RuntimeError('rate limited'))
+        with _mock.patch.object(briefing_mod, 'anthropic', fake), \
+             _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            b = briefing_mod.generate_briefing()
+        self.assertEqual(b.status, 'error')
+        self.assertIn('rate limited', b.error_detail)
+
+    def test_model_id_comes_from_system_setting(self):
+        self._late_so()
+        SystemSetting.objects.update_or_create(
+            key='ops_briefing_model',
+            defaults={'value': 'claude-haiku-4-5', 'value_type': 'str'},
+        )
+        fake = _FakeAnthropicModule(response=_FakeResponse('Head.\n- point', model='claude-haiku-4-5'))
+        with _mock.patch.object(briefing_mod, 'anthropic', fake), \
+             _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            briefing_mod.generate_briefing()
+        self.assertEqual(fake.calls[0]['model'], 'claude-haiku-4-5')
+
+    # -- command ----------------------------------------------------------
+
+    def test_command_dry_run_prints_signals_and_saves_nothing(self):
+        from django.core.management import call_command
+        from io import StringIO
+        self._late_so()
+        out = StringIO()
+        call_command('generate_ops_briefing', '--dry-run', stdout=out)
+        self.assertIn('sales_order_delivery_risk', out.getvalue())
+        self.assertEqual(OpsBriefing.objects.count(), 0)
+
+    def test_command_generates_row(self):
+        from django.core.management import call_command
+        from io import StringIO
+        self._late_so()
+        with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
+             _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            call_command('generate_ops_briefing', stdout=StringIO(), stderr=StringIO())
+        self.assertEqual(OpsBriefing.objects.filter(status='ok').count(), 1)
+
+    # -- view -----------------------------------------------------------
+
+    def test_view_requires_login(self):
+        self.assertEqual(self.client.get(reverse('ops_briefing')).status_code, 302)
+
+    def test_view_empty_state(self):
+        self.client.login(username='briefer', password='pw')
+        resp = self.client.get(reverse('ops_briefing'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'No briefing yet')
+
+    def test_view_renders_latest_ok_briefing(self):
+        OpsBriefing.objects.create(
+            status='ok', headline='Depot 1 fills in 12 days.',
+            body_text='- Depot 1 at 92% and rising\nWatch: SO-9 slack -1d',
+            signal_count=3, model_id='claude-opus-5',
+            signals_json={'capacity_runway': [{'warehouse': 'Depot 1'}]},
+        )
+        self.client.login(username='briefer', password='pw')
+        resp = self.client.get(reverse('ops_briefing'))
+        self.assertContains(resp, 'Depot 1 fills in 12 days.')
+        self.assertContains(resp, 'Depot 1 at 92% and rising')
+        self.assertContains(resp, 'SO-9 slack -1d')  # watch line
+        self.assertContains(resp, reverse('capacity_forecast'))  # signal back-link
+
+    def test_generate_button_hidden_for_plain_user_and_post_forbidden(self):
+        self.client.login(username='briefer', password='pw')
+        resp = self.client.get(reverse('ops_briefing'))
+        self.assertNotContains(resp, 'Generate now')
+        with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
+             _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            self.client.post(reverse('ops_briefing'), {'period': 'daily'})
+        self.assertEqual(OpsBriefing.objects.count(), 0)
+
+    def test_manager_can_generate_from_view(self):
+        self._late_so()
+        self.client.login(username='mgr', password='pw')
+        with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
+             _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            resp = self.client.post(reverse('ops_briefing'), {'period': 'daily'}, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(OpsBriefing.objects.filter(status='ok', generated_by=self.manager).count(), 1)
+
+    def test_dead_nav_link_is_now_wired(self):
+        self.client.login(username='briefer', password='pw')
+        resp = self.client.get(reverse('dashboard'))
+        self.assertContains(resp, reverse('ops_briefing'))
+        self.assertContains(resp, 'Digital Assistant (AI)')

@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Operations Briefing - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <span class="current-page">Operations Briefing</span>
+        </nav>
+        <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
+            AI Ops Briefing
+        </h1>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:70ch;">
+            A plain-English read of the operations signals &mdash; materials near stock-out,
+            warehouses near capacity, unreliable suppliers, at-risk orders, count drift and
+            yield problems. Written by Claude from the <em>already-computed</em> figures on the
+            Insights pages; every claim traces back to one of them.
+        </p>
+    </div>
+</header>
+
+{% if not has_api_key %}
+<div class="animate-fade-in-up" style="background:#fef9c3; border:1px solid rgba(202,138,4,0.25); border-radius:10px; padding:1rem 1.25rem; margin-bottom:1.25rem; font-size:0.86rem; color:#854d0e;">
+    <strong>Not configured.</strong> Set the <code>ANTHROPIC_API_KEY</code> environment variable
+    on the server (it is a secret &mdash; not a system setting). Until then, briefings cannot be generated.
+</div>
+{% elif not briefing_enabled %}
+<div class="animate-fade-in-up" style="background:#f1f5f9; border:1px solid var(--border-light); border-radius:10px; padding:1rem 1.25rem; margin-bottom:1.25rem; font-size:0.86rem; color:#475569;">
+    <strong>Paused.</strong> <code>ops_briefing_enabled</code> is off in
+    <a href="{% url 'system_settings' %}">System Settings</a>, so the scheduled job records a
+    &ldquo;skipped&rdquo; run instead of calling the API.
+</div>
+{% endif %}
+
+{% if stale_attempt %}
+<div class="animate-fade-in-up" style="background:#fee2e2; border:1px solid rgba(185,28,28,0.25); border-radius:10px; padding:0.9rem 1.15rem; margin-bottom:1.25rem; font-size:0.84rem; color:#991b1b;">
+    The most recent run ({{ stale_attempt.generated_at|naturaltime }}) ended
+    <strong>{{ stale_attempt.get_status_display|lower }}</strong>{% if stale_attempt.error_detail %} &mdash; {{ stale_attempt.error_detail }}{% endif %}.
+    The briefing below is the last one that succeeded.
+</div>
+{% endif %}
+
+{% if briefing %}
+<section class="animate-fade-in-up" style="background:#fff; border:1px solid var(--border-light); border-radius:12px; padding:1.75rem; margin-bottom:1.5rem;">
+    <div style="display:flex; align-items:flex-start; gap:0.75rem;">
+        <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="flex-shrink:0; margin-top:0.15rem; color:var(--accent,#4f46e5);">
+            <path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15.5 10.1 10.9 5.5 9l4.6-1.4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        </svg>
+        <div>
+            <h2 style="font-family:'Outfit',sans-serif; font-size:1.2rem; font-weight:700; margin:0; color:var(--text-main); line-height:1.4;">
+                {{ briefing.headline }}
+            </h2>
+            <p style="color:var(--text-muted); font-size:0.75rem; margin:0.35rem 0 0;">
+                {{ briefing.get_period_display }} &middot; {{ briefing.generated_at|naturaltime }}
+                &middot; {{ briefing.signal_count }} signal{{ briefing.signal_count|pluralize }}
+            </p>
+        </div>
+    </div>
+
+    {% if points %}
+    <ul style="margin:1.25rem 0 0; padding-left:1.1rem; display:flex; flex-direction:column; gap:0.6rem;">
+        {% for p in points %}
+        <li style="font-size:0.92rem; color:var(--text-main); line-height:1.55;">{{ p }}</li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p style="margin:1.25rem 0 0; font-size:0.92rem; color:var(--text-main); line-height:1.6; white-space:pre-wrap;">{{ briefing.body_text }}</p>
+    {% endif %}
+
+    {% if watch %}
+    <p style="margin:1.25rem 0 0; padding-top:0.9rem; border-top:1px dashed var(--border-light); font-size:0.85rem; color:var(--text-muted);">
+        <strong style="color:var(--text-main);">Watch:</strong> {{ watch }}
+    </p>
+    {% endif %}
+
+    {% if signal_sections %}
+    <div style="margin-top:1.4rem; padding-top:1rem; border-top:1px solid var(--border-light);">
+        <p style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin:0 0 0.5rem;">Drawn from</p>
+        <div style="display:flex; flex-wrap:wrap; gap:0.5rem;">
+            {% for s in signal_sections %}
+            <a href="{% url s.url_name %}" style="font-size:0.78rem; font-weight:600; text-decoration:none; padding:0.28rem 0.7rem; border-radius:999px; border:1px solid var(--border-light); color:{% if s.count %}var(--accent,#4f46e5){% else %}var(--text-muted){% endif %};">
+                {{ s.label }} <span style="opacity:0.7;">{{ s.count }}</span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <p style="margin:1.2rem 0 0; font-size:0.7rem; color:var(--text-muted);">
+        Generated with {{ briefing.model_id|default:model_setting }}{% if briefing.input_tokens %} &middot; {{ briefing.input_tokens }} in / {{ briefing.output_tokens }} out tokens{% endif %}.
+        The model is given only the numbers above &mdash; it cannot query the database.
+    </p>
+</section>
+{% elif last_attempt %}
+<section class="animate-fade-in-up" style="background:#fff; border:1px solid var(--border-light); border-radius:12px; padding:1.75rem; margin-bottom:1.5rem;">
+    <h2 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin:0 0 0.5rem;">No briefing yet</h2>
+    <p style="color:var(--text-muted); font-size:0.88rem; margin:0;">
+        The last run ({{ last_attempt.generated_at|naturaltime }}) ended
+        <strong>{{ last_attempt.get_status_display|lower }}</strong>{% if last_attempt.error_detail %} &mdash; {{ last_attempt.error_detail }}{% endif %}.
+    </p>
+</section>
+{% else %}
+<section class="animate-fade-in-up" style="background:#fff; border:1px solid var(--border-light); border-radius:12px; padding:1.75rem; margin-bottom:1.5rem;">
+    <h2 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin:0 0 0.5rem;">No briefing yet</h2>
+    <p style="color:var(--text-muted); font-size:0.88rem; margin:0;">
+        Run <code>python manage.py generate_ops_briefing</code> (schedule it daily, like
+        <code>snapshot_utilization</code>){% if can_generate %}, or use the button below{% endif %}.
+    </p>
+</section>
+{% endif %}
+
+{% if can_generate %}
+<form method="post" class="animate-fade-in-up" style="margin-bottom:1.5rem; display:flex; align-items:center; gap:0.75rem;">
+    {% csrf_token %}
+    <select name="period" style="padding:0.45rem 0.7rem; border:1px solid var(--border-light); border-radius:8px; font-size:0.85rem; background:#fff;">
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+    </select>
+    <button type="submit" {% if not has_api_key %}disabled{% endif %}
+        style="padding:0.5rem 1.1rem; border:none; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; color:#fff; background:var(--accent,#4f46e5); {% if not has_api_key %}opacity:0.5; cursor:not-allowed;{% endif %}">
+        Generate now
+    </button>
+    <span style="font-size:0.76rem; color:var(--text-muted);">One Claude call &mdash; a few cents.</span>
+</form>
+{% endif %}
+
+{% if recent %}
+<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.25rem;">
+    <p style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin:0 0 0.75rem;">Recent runs</p>
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.78rem; color:var(--text-muted);">
+                    <th style="padding:0.5rem 0.75rem;">When</th>
+                    <th style="padding:0.5rem 0.75rem;">Period</th>
+                    <th style="padding:0.5rem 0.75rem;">Status</th>
+                    <th style="padding:0.5rem 0.75rem;">Signals</th>
+                    <th style="padding:0.5rem 0.75rem;">Model</th>
+                    <th style="padding:0.5rem 0.75rem;">Summary</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for b in recent %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.82rem;">
+                    <td style="padding:0.5rem 0.75rem; white-space:nowrap;" title="{{ b.generated_at }}">{{ b.generated_at|naturaltime }}</td>
+                    <td style="padding:0.5rem 0.75rem;">{{ b.get_period_display }}</td>
+                    <td style="padding:0.5rem 0.75rem;">
+                        {% if b.status == 'ok' %}<span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px;">OK</span>
+                        {% elif b.status == 'empty' %}<span style="font-size:0.7rem; font-weight:700; background:#e0e7ff; color:#4338ca; padding:0.15rem 0.55rem; border-radius:999px;">Clear</span>
+                        {% elif b.status == 'skipped' %}<span style="font-size:0.7rem; font-weight:700; background:#f1f5f9; color:#64748b; padding:0.15rem 0.55rem; border-radius:999px;">Skipped</span>
+                        {% else %}<span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px;">Failed</span>{% endif %}
+                    </td>
+                    <td style="padding:0.5rem 0.75rem;">{{ b.signal_count }}</td>
+                    <td style="padding:0.5rem 0.75rem; color:var(--text-muted);">{{ b.model_id|default:"&mdash;" }}</td>
+                    <td style="padding:0.5rem 0.75rem; color:var(--text-muted); max-width:34ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ b.headline|default:b.error_detail|default:"&mdash;" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<p style="color:var(--text-muted); font-size:0.75rem; margin-top:1rem; max-width:80ch;">
+    <strong>How it works.</strong> <code>generate_ops_briefing</code> calls the same
+    <code>analytics.py</code> functions the Insights pages use, keeps only the rows flagged
+    critical / watch / poor / at-risk, and sends that JSON to Claude with a prompt that forbids
+    inventing figures. The reply is stored as-is. No forecasting happens here &mdash; the numbers
+    are Tier 1/2's; this layer only narrates them.
+</p>
+{% endblock %}

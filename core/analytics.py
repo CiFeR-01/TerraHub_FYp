@@ -21,6 +21,9 @@ Delivered so far:
   Phase 2a - stockout_forecast(): consumption-rate days-of-cover + reorder-by date.
   Phase 2b - capacity_forecast(): linear-fit of WarehouseUtilizationSnapshot -> date
              each warehouse crosses 100%.
+  Phase 3  - core/briefing.py: collect_signals() bundles the notable rows from the
+             functions here; generate_ops_briefing sends them to Claude for a
+             plain-English "AI Ops Briefing" (narration only - no new numbers).
 """
 from __future__ import annotations
 
