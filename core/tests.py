@@ -483,7 +483,8 @@ from core.models import (
 from core.analytics import (
     supplier_reliability, sales_order_delivery_risk,
     audit_accuracy, production_yield_variance, stockout_forecast,
-    capacity_forecast, warehouse_utilization,
+    capacity_forecast, warehouse_utilization, shipment_logistics, my_open_jobs,
+    product_sales_trend,
 )
 from core.settings_store import get_setting
 
@@ -588,7 +589,7 @@ class SupplierScorecardTests(TestCase):
         resp = self.client.get(reverse('supplier_scorecard'))
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Laggard Supplies')
-        self.assertContains(resp, 'Supplier Scorecard')
+        self.assertContains(resp, 'Supplier Performance')
 
     def test_view_requires_login(self):
         resp = self.client.get(reverse('supplier_scorecard'))
@@ -700,7 +701,7 @@ class SupplierHubNavTests(TestCase):
         resp = self.client.get(reverse('supplier_list'))
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, reverse('supplier_scorecard'))
-        self.assertContains(resp, 'Supplier scorecard')
+        self.assertContains(resp, 'Supplier performance')
 
     def test_scorecard_lives_under_suppliers_path(self):
         self.assertEqual(reverse('supplier_scorecard'), '/catalog/suppliers/scorecard/')
@@ -850,7 +851,7 @@ class SalesOrderDeliveryRiskTests(TestCase):
         resp = self.client.get(reverse('so_list'))
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, reverse('so_delivery_risk'))
-        self.assertContains(resp, 'Delivery risk board')
+        self.assertContains(resp, 'Delivery performance')
 
 
 class AuditAccuracyTests(TestCase):
@@ -1150,7 +1151,7 @@ class StockoutForecastTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'MK-V')
         self.assertContains(resp, 'MK-Z')
-        resp = self.client.get(reverse('forecast') + '?status=critical')
+        resp = self.client.get(reverse('forecast') + '?status=action_required')
         self.assertContains(resp, 'MK-V')
         self.assertNotContains(resp, 'MK-Z')
 
@@ -1342,7 +1343,7 @@ class CapacityForecastTests(TestCase):
         # facility page links to it
         fac = self.client.get(reverse('warehouse_list'))
         self.assertContains(fac, reverse('capacity_forecast'))
-        self.assertContains(fac, 'Capacity runway')
+        self.assertContains(fac, 'Inventory capacity')
 
 
 import os as _os
@@ -1399,8 +1400,198 @@ class _FakeAnthropicModule:
         return _Client()
 
 
-class OpsBriefingTests(TestCase):
-    """Phase 3: collect_signals(), generate_briefing(), the command and the view."""
+class ProductSalesTrendAnalyticsTests(TestCase):
+    """Phase 5: product_sales_trend() - monthly volume trend per product, declining first."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='trendcheck', password='pw')
+        self.wh = Warehouse.objects.create(name='Trend WH', location_type='Storage')
+        self.product = Product.objects.create(
+            name='Trend Product', sku='PRD-TREND', unit_of_measure='pcs', price_per_unit=10,
+        )
+
+    def _month_date(self, months_ago, day=15):
+        y, m = date.today().year, date.today().month - months_ago
+        while m <= 0:
+            m += 12
+            y -= 1
+        return date(y, m, day)
+
+    def _so(self, number, product, qty, months_ago, status='Delivered', unit_price=None):
+        so = SalesOrder.objects.create(
+            so_number=number, client_name='Acme', origin_warehouse=self.wh, status=status,
+        )
+        SalesOrder.objects.filter(pk=so.pk).update(order_date=self._month_date(months_ago))
+        SalesOrderDetail.objects.create(
+            sales_order=so, product=product, quantity_ordered=Decimal(str(qty)),
+            quantity_shipped=Decimal(str(qty)), unit_price=unit_price,
+        )
+        return so
+
+    def _row(self, sku='PRD-TREND'):
+        return next(r for r in product_sales_trend() if r['sku'] == sku)
+
+    def test_declining_product_flagged(self):
+        for i, m in enumerate((5, 4, 3)):
+            self._so(f'SO-DEC-{i}', self.product, 100, m)
+        for i, m in enumerate((2, 1, 0)):
+            self._so(f'SO-DEC2-{i}', self.product, 20, m)
+        row = self._row()
+        self.assertEqual(row['status'], 'declining')
+        self.assertLess(row['pct_change'], -15)
+
+    def test_rising_product_flagged(self):
+        for i, m in enumerate((5, 4, 3)):
+            self._so(f'SO-RIS-{i}', self.product, 20, m)
+        for i, m in enumerate((2, 1, 0)):
+            self._so(f'SO-RIS2-{i}', self.product, 100, m)
+        row = self._row()
+        self.assertEqual(row['status'], 'rising')
+        self.assertGreater(row['pct_change'], 15)
+
+    def test_flat_product_not_flagged(self):
+        for i, m in enumerate((5, 4, 3, 2, 1, 0)):
+            self._so(f'SO-FLAT-{i}', self.product, 50, m)
+        self.assertEqual(self._row()['status'], 'flat')
+
+    def test_new_product_no_earlier_history(self):
+        for i, m in enumerate((2, 1, 0)):
+            self._so(f'SO-NEW-{i}', self.product, 50, m)
+        row = self._row()
+        self.assertEqual(row['status'], 'new')
+        self.assertIsNone(row['pct_change'])
+
+    def test_insufficient_data_when_too_few_months(self):
+        self._so('SO-THIN-0', self.product, 50, 0)
+        self._so('SO-THIN-1', self.product, 50, 1)
+        self.assertEqual(self._row()['status'], 'insufficient_data')
+
+    def test_revenue_none_when_a_month_has_an_unpriced_line(self):
+        for i, m in enumerate((5, 4, 3)):
+            self._so(f'SO-REV-{i}', self.product, 10, m, unit_price=Decimal('5'))
+        self._so('SO-REV-NOPRICE', self.product, 10, 2, unit_price=None)
+        self._so('SO-REV-3', self.product, 10, 1, unit_price=Decimal('5'))
+        self._so('SO-REV-4', self.product, 10, 0, unit_price=Decimal('5'))
+        self.assertIsNone(self._row()['monthly_revenue'])
+        self.assertIsNone(self._row()['total_revenue'])
+
+    def test_revenue_present_when_fully_priced(self):
+        for i, m in enumerate((5, 4, 3, 2, 1, 0)):
+            self._so(f'SO-PRICED-{i}', self.product, 10, m, unit_price=Decimal('5'))
+        row = self._row()
+        self.assertIsNotNone(row['monthly_revenue'])
+        self.assertEqual(row['total_revenue'], 300.0)  # 6 months * 10 qty * 5 price
+
+    def test_excludes_draft_and_rejected_orders(self):
+        for i, m in enumerate((5, 4, 3, 2, 1, 0)):
+            self._so(f'SO-REAL-{i}', self.product, 50, m)
+        self._so('SO-DRAFT', self.product, 99999, 0, status='Draft')
+        self._so('SO-REJECTED', self.product, 99999, 0, status='Rejected')
+        self.assertEqual(self._row()['total_qty'], 300.0)
+
+    def test_sort_order_declining_first(self):
+        rising = Product.objects.create(name='Riser', sku='PRD-RISE', unit_of_measure='pcs', price_per_unit=1)
+        for i, m in enumerate((5, 4, 3)):
+            self._so(f'SO-A-{i}', self.product, 100, m)
+        for i, m in enumerate((2, 1, 0)):
+            self._so(f'SO-B-{i}', self.product, 20, m)
+        for i, m in enumerate((5, 4, 3)):
+            self._so(f'SO-C-{i}', rising, 20, m)
+        for i, m in enumerate((2, 1, 0)):
+            self._so(f'SO-D-{i}', rising, 100, m)
+        rows = product_sales_trend()
+        self.assertEqual(rows[0]['sku'], 'PRD-TREND')  # declining ranks before rising
+
+    def test_view_renders(self):
+        self._so('SO-VIEW', self.product, 50, 0)
+        self.client.login(username='trendcheck', password='pw')
+        resp = self.client.get(reverse('product_sales_trend'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'PRD-TREND')
+
+
+class ShipmentLogisticsAnalyticsTests(TestCase):
+    """Phase 4: shipment_logistics() - in-flight shipment risk, any direction."""
+
+    def setUp(self):
+        self.wh1 = Warehouse.objects.create(name='Alpha', location_type='Storage')
+        self.wh2 = Warehouse.objects.create(name='Beta', location_type='Storage')
+
+    def _ship(self, trk, **kwargs):
+        defaults = dict(tracking_number=trk, direction='Transfer', status='Draft',
+                        origin_warehouse=self.wh1, destination_warehouse=self.wh2)
+        defaults.update(kwargs)
+        return Shipment.objects.create(**defaults)
+
+    def _row(self, trk):
+        return next(r for r in shipment_logistics() if r['tracking_number'] == trk)
+
+    def test_discrepant_ranks_first(self):
+        self._ship('S-1', status='Dispatched', has_discrepancy=True)
+        self._ship('S-2', status='Delayed')
+        self.assertEqual(shipment_logistics()[0]['tracking_number'], 'S-1')
+        self.assertEqual(self._row('S-1')['risk'], 'discrepant')
+
+    def test_overdue_when_delayed_status(self):
+        self._ship('S-3', status='Delayed')
+        self.assertEqual(self._row('S-3')['risk'], 'overdue')
+
+    def test_overdue_when_dispatched_past_eta_with_no_arrival(self):
+        self._ship('S-4', status='Dispatched', expected_eta_date=date.today() - timedelta(days=2))
+        self.assertEqual(self._row('S-4')['risk'], 'overdue')
+
+    def test_at_risk_window_setting_respected(self):
+        self._ship('S-5', status='Dispatched', expected_eta_date=date.today() + timedelta(days=2))
+        self.assertEqual(self._row('S-5')['risk'], 'at_risk')  # default window is 3 days
+        SystemSetting.objects.update_or_create(
+            key='logistics_at_risk_window_days', defaults={'value': '1', 'value_type': 'int'},
+        )
+        self.assertEqual(self._row('S-5')['risk'], 'on_track')
+
+    def test_stalled_arrived_shipment(self):
+        self._ship('S-6', status='Arrived', actual_arrival_date=date.today() - timedelta(days=10))
+        self.assertEqual(self._row('S-6')['risk'], 'stalled')
+
+    def test_recently_arrived_is_on_track(self):
+        self._ship('S-7', status='Arrived', actual_arrival_date=date.today())
+        self.assertEqual(self._row('S-7')['risk'], 'on_track')
+
+    def test_pending_pre_dispatch(self):
+        self._ship('S-8', status='Preparing')
+        self.assertEqual(self._row('S-8')['risk'], 'pending')
+
+    def test_transfer_shipment_has_no_so_or_po(self):
+        self._ship('S-9', direction='Transfer')
+        row = self._row('S-9')
+        self.assertTrue(row['is_transfer'])
+        self.assertIsNone(row['so_number'])
+        self.assertIsNone(row['po_number'])
+
+    def test_completed_and_cancelled_excluded(self):
+        self._ship('S-10', status='Completed')
+        self._ship('S-11', status='Cancelled')
+        numbers = [r['tracking_number'] for r in shipment_logistics()]
+        self.assertNotIn('S-10', numbers)
+        self.assertNotIn('S-11', numbers)
+
+    def test_sort_order_worst_first(self):
+        self._ship('S-OK', status='Dispatched', expected_eta_date=date.today() + timedelta(days=30))
+        self._ship('S-BAD', status='Delayed')
+        self.assertEqual(shipment_logistics()[0]['tracking_number'], 'S-BAD')
+
+    def test_view_renders(self):
+        self._ship('S-VIEW', status='Delayed')
+        client = Client()
+        user = User.objects.create_user(username='logi', password='pw')
+        client.login(username='logi', password='pw')
+        resp = client.get(reverse('shipment_logistics'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'S-VIEW')
+
+
+class OpsBriefingCategoryTests(TestCase):
+    """Phase 4: collect_signals(category), generate_briefing(category=...), the command."""
 
     def setUp(self):
         self.client = Client()
@@ -1424,30 +1615,96 @@ class OpsBriefingTests(TestCase):
 
     # -- collect_signals -----------------------------------------------------
 
-    def test_collect_signals_keeps_only_notable_rows(self):
+    def test_collect_signals_materials_only_includes_stockout(self):
+        signals = briefing_mod.collect_signals('materials')
+        self.assertEqual(signals['category'], 'materials')
+        self.assertIn('stockout_forecast', signals)
+        self.assertNotIn('capacity_runway', signals)
+        self.assertNotIn('sales_order_delivery_risk', signals)
+
+    def test_collect_signals_warehouse_includes_capacity_and_audit(self):
+        signals = briefing_mod.collect_signals('warehouse')
+        self.assertIn('capacity_runway', signals)
+        self.assertIn('stock_audit_accuracy', signals)
+
+    def test_collect_signals_sales_includes_product_trend(self):
+        signals = briefing_mod.collect_signals('sales')
+        self.assertIn('product_sales_trend', signals)
+
+    def test_collect_signals_sales_keeps_only_notable_rows(self):
         self._late_so('SO-LATE')
         SalesOrder.objects.create(  # on-track, far-off deadline -> must be excluded
             so_number='SO-OK', client_name='Fine', origin_warehouse=self.wh,
             status='Pending', fulfillment_deadline=date.today() + timedelta(days=90),
         )
-        signals = briefing_mod.collect_signals()
+        signals = briefing_mod.collect_signals('sales')
         risk = signals['sales_order_delivery_risk']
         self.assertEqual([r['sales_order'] for r in risk], ['SO-LATE'])
         self.assertGreaterEqual(signals['signal_count'], 1)
         self.assertEqual(signals['generated_for'], date.today().isoformat())
 
     def test_collect_signals_empty_when_nothing_notable(self):
-        signals = briefing_mod.collect_signals()
+        signals = briefing_mod.collect_signals('sales')
         self.assertEqual(signals['signal_count'], 0)
         self.assertEqual(signals['sales_order_delivery_risk'], [])
+
+    def test_unknown_category_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            briefing_mod.collect_signals('not-a-category')
+
+    def test_prompt_intro_differs_per_category(self):
+        self.assertNotEqual(
+            briefing_mod._system_prompt('materials'), briefing_mod._system_prompt('sales')
+        )
+
+    def test_stockout_signals_include_burn_trend(self):
+        m = Material.objects.create(
+            name='Trend Mat', sku='MAT-TREND', category='X', unit_of_measure='kg',
+            safe_storage_days=90,
+        )
+        Batch.objects.create(
+            batch_number='B-TREND', material=m, quantity=Decimal('10'),
+            allocated_quantity=Decimal('0'), status='Active', warehouse=self.wh,
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=300),
+        )
+        row = RegistryLog.objects.create(
+            action_type='Consumed_For_Manufacturing', item_name=f'{m.name} (Run X)',
+            material=m, quantity_changed=Decimal('50'), warehouse=self.wh,
+        )
+        RegistryLog.objects.filter(pk=row.pk).update(timestamp=timezone.now() - timedelta(days=5))
+
+        signals = briefing_mod._stockout_signals(None)
+        trend_row = next(r for r in signals if r['material'].startswith('MAT-TREND'))
+        self.assertIn('burn_trend_weekly', trend_row)
+        self.assertEqual(len(trend_row['burn_trend_weekly']), briefing_mod.TREND_WEEKS)
+
+    def test_capacity_signals_include_utilization_trend(self):
+        wh2 = Warehouse.objects.create(
+            name='Fast Fill', location_type='Storage', total_capacity_mt=Decimal('100'),
+        )
+        base = date.today()
+        for i, pct in enumerate([80, 90, 97]):
+            WarehouseUtilizationSnapshot.objects.create(
+                warehouse=wh2, snapshot_date=base - timedelta(days=(2 - i)),
+                used_mt=Decimal(str(pct)), capacity_mt=Decimal('100'),
+                utilization_percent=Decimal(str(pct)),
+            )
+
+        signals = briefing_mod._capacity_signals(None)
+        trend_row = next(r for r in signals if r['warehouse'] == 'Fast Fill')
+        self.assertIn('utilization_trend', trend_row)
+        self.assertEqual(len(trend_row['utilization_trend']), 3)
+        self.assertEqual(trend_row['utilization_trend'][0]['percent'], 80.0)
+        self.assertEqual(trend_row['utilization_trend'][-1]['percent'], 97.0)
 
     # -- generate_briefing -------------------------------------------------
 
     def test_empty_signals_records_empty_without_api_call(self):
         fake = _FakeAnthropicModule()
         with _mock.patch.object(briefing_mod, 'anthropic', fake):
-            b = briefing_mod.generate_briefing()
+            b = briefing_mod.generate_briefing(category='sales')
         self.assertEqual(b.status, 'empty')
+        self.assertEqual(b.category, 'sales')
         self.assertEqual(fake.calls, [])
 
     def test_missing_api_key_records_error_not_exception(self):
@@ -1455,7 +1712,7 @@ class OpsBriefingTests(TestCase):
         with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
              _mock.patch.dict(_os.environ, {}, clear=False):
             _os.environ.pop('ANTHROPIC_API_KEY', None)
-            b = briefing_mod.generate_briefing()
+            b = briefing_mod.generate_briefing(category='sales')
         self.assertEqual(b.status, 'error')
         self.assertIn('ANTHROPIC_API_KEY', b.error_detail)
 
@@ -1463,7 +1720,7 @@ class OpsBriefingTests(TestCase):
         self._late_so()
         with _mock.patch.object(briefing_mod, 'anthropic', None), \
              _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
-            b = briefing_mod.generate_briefing()
+            b = briefing_mod.generate_briefing(category='sales')
         self.assertEqual(b.status, 'error')
         self.assertIn('anthropic', b.error_detail)
 
@@ -1473,18 +1730,19 @@ class OpsBriefingTests(TestCase):
             key='ops_briefing_enabled',
             defaults={'value': 'False', 'value_type': 'bool'},
         )
-        with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()) as _f, \
+        with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
              _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
-            b = briefing_mod.generate_briefing()
+            b = briefing_mod.generate_briefing(category='sales')
         self.assertEqual(b.status, 'skipped')
 
-    def test_successful_generation_stores_body_and_tokens(self):
+    def test_successful_generation_stores_body_tokens_and_category(self):
         self._late_so()
         fake = _FakeAnthropicModule()
         with _mock.patch.object(briefing_mod, 'anthropic', fake), \
              _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
-            b = briefing_mod.generate_briefing(period='daily', user=self.manager)
+            b = briefing_mod.generate_briefing(category='sales', period='daily', user=self.manager)
         self.assertEqual(b.status, 'ok')
+        self.assertEqual(b.category, 'sales')
         self.assertEqual(b.headline, 'Depot 1 fills in 12 days.')
         self.assertIn('Depot 1 at 92%', b.body_text)
         self.assertEqual(b.input_tokens, 1234)
@@ -1501,7 +1759,7 @@ class OpsBriefingTests(TestCase):
         fake = _FakeAnthropicModule(boom=RuntimeError('rate limited'))
         with _mock.patch.object(briefing_mod, 'anthropic', fake), \
              _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
-            b = briefing_mod.generate_briefing()
+            b = briefing_mod.generate_briefing(category='sales')
         self.assertEqual(b.status, 'error')
         self.assertIn('rate limited', b.error_detail)
 
@@ -1514,74 +1772,270 @@ class OpsBriefingTests(TestCase):
         fake = _FakeAnthropicModule(response=_FakeResponse('Head.\n- point', model='claude-haiku-4-5'))
         with _mock.patch.object(briefing_mod, 'anthropic', fake), \
              _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
-            briefing_mod.generate_briefing()
+            briefing_mod.generate_briefing(category='sales')
         self.assertEqual(fake.calls[0]['model'], 'claude-haiku-4-5')
 
     # -- command ----------------------------------------------------------
 
-    def test_command_dry_run_prints_signals_and_saves_nothing(self):
+    def test_command_dry_run_single_category(self):
         from django.core.management import call_command
         from io import StringIO
         self._late_so()
         out = StringIO()
-        call_command('generate_ops_briefing', '--dry-run', stdout=out)
+        call_command('generate_ops_briefing', '--category', 'sales', '--dry-run', stdout=out)
         self.assertIn('sales_order_delivery_risk', out.getvalue())
         self.assertEqual(OpsBriefing.objects.count(), 0)
 
-    def test_command_generates_row(self):
+    def test_command_dry_run_all_categories(self):
+        from django.core.management import call_command
+        from io import StringIO
+        out = StringIO()
+        call_command('generate_ops_briefing', '--category', 'all', '--dry-run', stdout=out)
+        text = out.getvalue()
+        for category in ('materials', 'products', 'sales', 'purchase', 'logistics', 'warehouse'):
+            self.assertIn(f'--- {category} ---', text)
+
+    def test_command_generate_all_creates_six_rows(self):
         from django.core.management import call_command
         from io import StringIO
         self._late_so()
         with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
              _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
-            call_command('generate_ops_briefing', stdout=StringIO(), stderr=StringIO())
-        self.assertEqual(OpsBriefing.objects.filter(status='ok').count(), 1)
+            call_command('generate_ops_briefing', '--category', 'all', stdout=StringIO(), stderr=StringIO())
+        self.assertEqual(OpsBriefing.objects.exclude(category='my_checklist').count(), 6)
+
+    def test_command_never_creates_my_checklist_rows(self):
+        from django.core.management import call_command
+        from io import StringIO
+        with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
+             _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            call_command('generate_ops_briefing', '--category', 'all', stdout=StringIO(), stderr=StringIO())
+        self.assertEqual(OpsBriefing.objects.filter(category='my_checklist').count(), 0)
+
+
+class CategoryBriefingViewTests(TestCase):
+    """Phase 4: category_briefing_view - the six domain briefing tabs."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='viewer', password='pw')
+        self.manager = User.objects.create_user(username='mgr2', password='pw', role='Manager')
+        self.wh = Warehouse.objects.create(name='FG Store 2', location_type='Storage')
+
+    def _late_so(self, number='SO-CB-LATE'):
+        return SalesOrder.objects.create(
+            so_number=number, client_name='Acme', origin_warehouse=self.wh,
+            status='In Production', fulfillment_deadline=date.today() - timedelta(days=9),
+        )
+
+    def test_view_requires_login(self):
+        resp = self.client.get(reverse('category_briefing', args=['sales']))
+        self.assertEqual(resp.status_code, 302)
+
+    def test_unknown_category_404s(self):
+        self.client.login(username='viewer', password='pw')
+        resp = self.client.get(reverse('category_briefing', args=['not-a-category']))
+        self.assertEqual(resp.status_code, 404)
+
+    def test_all_six_tabs_render(self):
+        self.client.login(username='viewer', password='pw')
+        for category in ('materials', 'products', 'sales', 'purchase', 'logistics', 'warehouse'):
+            resp = self.client.get(reverse('category_briefing', args=[category]))
+            self.assertEqual(resp.status_code, 200, category)
+            self.assertContains(resp, 'My Open Jobs')
+
+    def test_generate_gated_to_admin_manager(self):
+        self.client.login(username='viewer', password='pw')
+        resp = self.client.get(reverse('category_briefing', args=['sales']))
+        self.assertNotContains(resp, 'Generate now')
+        with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
+             _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            self.client.post(reverse('category_briefing', args=['sales']), {'period': 'daily'})
+        self.assertEqual(OpsBriefing.objects.count(), 0)
+
+    def test_manager_can_generate_a_category(self):
+        self._late_so()
+        self.client.login(username='mgr2', password='pw')
+        with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
+             _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            resp = self.client.post(reverse('category_briefing', args=['sales']), {'period': 'daily'}, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(OpsBriefing.objects.filter(status='ok', category='sales').count(), 1)
+
+    def test_recent_runs_scoped_by_category(self):
+        OpsBriefing.objects.create(category='sales', status='ok', headline='Sales one', signal_count=1)
+        OpsBriefing.objects.create(category='purchase', status='ok', headline='Purchase one', signal_count=1)
+        self.client.login(username='viewer', password='pw')
+        resp = self.client.get(reverse('category_briefing', args=['sales']))
+        self.assertContains(resp, 'Sales one')
+        self.assertNotContains(resp, 'Purchase one')
+
+    def test_outlook_section_renders_when_present(self):
+        OpsBriefing.objects.create(
+            category='sales', status='ok', headline='Head', signal_count=1,
+            body_text='- point one\nWatch: watch line\nOutlook (estimate):\n- likely to worsen based on X',
+        )
+        self.client.login(username='viewer', password='pw')
+        resp = self.client.get(reverse('category_briefing', args=['sales']))
+        self.assertContains(resp, 'likely to worsen based on X')
+        self.assertContains(resp, 'Outlook')
+
+    def test_outlook_absent_when_no_section(self):
+        OpsBriefing.objects.create(
+            category='sales', status='ok', headline='Head', signal_count=1,
+            body_text='- point one\nWatch: watch line',
+        )
+        self.client.login(username='viewer', password='pw')
+        resp = self.client.get(reverse('category_briefing', args=['sales']))
+        self.assertNotContains(resp, 'Outlook')
+
+
+class MyChecklistTests(TestCase):
+    """Phase 4: analytics.my_open_jobs(), generate_my_checklist(), the checklist view."""
+
+    def setUp(self):
+        self.client = Client()
+        self.owner = User.objects.create_user(username='owner', password='pw')
+        self.other = User.objects.create_user(username='other', password='pw')
+        self.wh = Warehouse.objects.create(name='FG Store', location_type='Storage')
+        self.product = Product.objects.create(
+            name='Blend A', sku='PRD-A', unit_of_measure='pcs', price_per_unit=10,
+        )
+
+    def test_live_table_includes_users_open_sales_order(self):
+        SalesOrder.objects.create(
+            so_number='SO-OWN', client_name='Acme', origin_warehouse=self.wh,
+            status='Pending', created_by=self.owner,
+        )
+        jobs = my_open_jobs(self.owner)
+        self.assertEqual([j['reference'] for j in jobs], ['SO-OWN'])
+        self.assertEqual(jobs[0]['ownership'], 'created')
+
+    def test_live_table_excludes_closed_status_records(self):
+        SalesOrder.objects.create(
+            so_number='SO-DONE', client_name='Acme', origin_warehouse=self.wh,
+            status='Delivered', created_by=self.owner,
+        )
+        self.assertEqual(my_open_jobs(self.owner), [])
+
+    def test_live_table_includes_shipment_last_edited_by_user_labeled_touched(self):
+        Shipment.objects.create(
+            tracking_number='SHP-OWN', direction='Transfer', status='Draft',
+            last_edited_by=self.owner,
+        )
+        jobs = my_open_jobs(self.owner)
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]['kind'], 'Shipment')
+        self.assertEqual(jobs[0]['ownership'], 'touched')
+
+    def test_live_table_excludes_shipment_created_by_other_user(self):
+        Shipment.objects.create(
+            tracking_number='SHP-OTHER', direction='Transfer', status='Draft',
+            last_edited_by=self.other,
+        )
+        self.assertEqual(my_open_jobs(self.owner), [])
+
+    def test_context_cross_references_delivery_risk(self):
+        so = SalesOrder.objects.create(
+            so_number='SO-RISK', client_name='Acme', origin_warehouse=self.wh,
+            status='In Production', fulfillment_deadline=date.today() - timedelta(days=5),
+            created_by=self.owner,
+        )
+        SalesOrderDetail.objects.create(
+            sales_order=so, product=self.product,
+            quantity_ordered=Decimal('10'), quantity_shipped=Decimal('0'),
+        )
+        jobs = my_open_jobs(self.owner)
+        self.assertEqual(jobs[0]['context']['risk'], 'late')
+
+    def test_empty_signals_records_empty_without_api_call(self):
+        fake = _FakeAnthropicModule()
+        with _mock.patch.object(briefing_mod, 'anthropic', fake):
+            b = briefing_mod.generate_my_checklist(user=self.owner)
+        self.assertEqual(b.status, 'empty')
+        self.assertEqual(b.category, 'my_checklist')
+        self.assertEqual(b.generated_by, self.owner)
+        self.assertEqual(fake.calls, [])
+
+    def test_successful_generation_sends_only_real_identifiers(self):
+        SalesOrder.objects.create(
+            so_number='SO-REAL', client_name='Acme', origin_warehouse=self.wh,
+            status='Pending', created_by=self.owner,
+        )
+        fake = _FakeAnthropicModule(response=_FakeResponse('Clear SO-REAL first.\n- SO-REAL: follow up'))
+        with _mock.patch.object(briefing_mod, 'anthropic', fake), \
+             _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            b = briefing_mod.generate_my_checklist(user=self.owner)
+        self.assertEqual(b.status, 'ok')
+        self.assertEqual(b.category, 'my_checklist')
+        self.assertEqual(b.generated_by, self.owner)
+        sent = fake.calls[0]['messages'][0]['content']
+        self.assertIn('SO-REAL', sent)
+        self.assertNotIn('sales_order_delivery_risk', sent)  # a different payload shape than the category briefings
 
     # -- view -----------------------------------------------------------
 
     def test_view_requires_login(self):
         self.assertEqual(self.client.get(reverse('ops_briefing')).status_code, 302)
 
-    def test_view_empty_state(self):
-        self.client.login(username='briefer', password='pw')
-        resp = self.client.get(reverse('ops_briefing'))
-        self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, 'No briefing yet')
-
-    def test_view_renders_latest_ok_briefing(self):
-        OpsBriefing.objects.create(
-            status='ok', headline='Depot 1 fills in 12 days.',
-            body_text='- Depot 1 at 92% and rising\nWatch: SO-9 slack -1d',
-            signal_count=3, model_id='claude-opus-5',
-            signals_json={'capacity_runway': [{'warehouse': 'Depot 1'}]},
+    def test_view_shows_only_this_users_live_items(self):
+        SalesOrder.objects.create(
+            so_number='SO-MINE', client_name='Acme', origin_warehouse=self.wh,
+            status='Pending', created_by=self.owner,
         )
-        self.client.login(username='briefer', password='pw')
+        SalesOrder.objects.create(
+            so_number='SO-THEIRS', client_name='Acme', origin_warehouse=self.wh,
+            status='Pending', created_by=self.other,
+        )
+        self.client.login(username='owner', password='pw')
         resp = self.client.get(reverse('ops_briefing'))
-        self.assertContains(resp, 'Depot 1 fills in 12 days.')
-        self.assertContains(resp, 'Depot 1 at 92% and rising')
-        self.assertContains(resp, 'SO-9 slack -1d')  # watch line
-        self.assertContains(resp, reverse('capacity_forecast'))  # signal back-link
+        self.assertContains(resp, 'SO-MINE')
+        self.assertNotContains(resp, 'SO-THEIRS')
 
-    def test_generate_button_hidden_for_plain_user_and_post_forbidden(self):
-        self.client.login(username='briefer', password='pw')
+    def test_view_empty_state(self):
+        self.client.login(username='owner', password='pw')
         resp = self.client.get(reverse('ops_briefing'))
-        self.assertNotContains(resp, 'Generate now')
+        self.assertContains(resp, 'Nothing open right now')
+
+    def test_any_authenticated_user_can_generate_own_checklist(self):
+        SalesOrder.objects.create(
+            so_number='SO-GEN', client_name='Acme', origin_warehouse=self.wh,
+            status='Pending', created_by=self.owner,
+        )
+        self.client.login(username='owner', password='pw')  # plain Staff_View user, not Admin/Manager
         with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
              _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
-            self.client.post(reverse('ops_briefing'), {'period': 'daily'})
-        self.assertEqual(OpsBriefing.objects.count(), 0)
-
-    def test_manager_can_generate_from_view(self):
-        self._late_so()
-        self.client.login(username='mgr', password='pw')
-        with _mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
-             _mock.patch.dict(_os.environ, {'ANTHROPIC_API_KEY': 'k'}):
-            resp = self.client.post(reverse('ops_briefing'), {'period': 'daily'}, follow=True)
+            resp = self.client.post(reverse('ops_briefing'), follow=True)
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(OpsBriefing.objects.filter(status='ok', generated_by=self.manager).count(), 1)
+        self.assertEqual(OpsBriefing.objects.filter(status='ok', generated_by=self.owner).count(), 1)
 
-    def test_dead_nav_link_is_now_wired(self):
-        self.client.login(username='briefer', password='pw')
-        resp = self.client.get(reverse('dashboard'))
+    def test_checklist_scoped_to_generating_user_only(self):
+        OpsBriefing.objects.create(category='my_checklist', status='ok', headline='Owner one',
+                                    signal_count=1, generated_by=self.owner)
+        OpsBriefing.objects.create(category='my_checklist', status='ok', headline='Other one',
+                                    signal_count=1, generated_by=self.other)
+        self.client.login(username='owner', password='pw')
+        resp = self.client.get(reverse('ops_briefing'))
+        self.assertContains(resp, 'Owner one')
+        self.assertNotContains(resp, 'Other one')
+
+
+class AICopilotNavTests(TestCase):
+    """Phase 4: the sidebar link is renamed and stays wired."""
+
+    def test_nav_link_wired_and_renamed(self):
+        user = User.objects.create_user(username='navcheck', password='pw')
+        client = Client()
+        client.login(username='navcheck', password='pw')
+        resp = client.get(reverse('dashboard'))
         self.assertContains(resp, reverse('ops_briefing'))
-        self.assertContains(resp, 'Digital Assistant (AI)')
+        self.assertContains(resp, 'AI Copilot')
+        self.assertNotContains(resp, 'Digital Assistant')
+
+    def test_tabs_render_on_checklist_page(self):
+        user = User.objects.create_user(username='tabcheck', password='pw')
+        client = Client()
+        client.login(username='tabcheck', password='pw')
+        resp = client.get(reverse('ops_briefing'))
+        for label in ('Materials', 'Products', 'Sales', 'Purchase', 'Logistics', 'Warehouse'):
+            self.assertContains(resp, label)

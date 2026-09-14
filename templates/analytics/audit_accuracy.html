@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Audit Accuracy - TerraHub{% endblock %}
+{% block title %}Inventory Audit Accuracy - TerraHub{% endblock %}
 
 {% block content %}
 <header class="dashboard-header-row animate-fade-in-up">
@@ -10,10 +10,10 @@
             <span class="separator">/</span>
             <a href="{% url 'stock_audit' %}">Stock Audit</a>
             <span class="separator">/</span>
-            <span class="current-page">Audit Accuracy</span>
+            <span class="current-page">Inventory Audit Accuracy</span>
         </nav>
         <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
-            Audit Accuracy
+            Inventory Audit Accuracy
         </h1>
         <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:64ch;">
             How closely physical counts match the system, by warehouse and by item.
@@ -21,6 +21,8 @@
         </p>
     </div>
 </header>
+
+{% include "analytics/partials/_analytics_tabs.html" %}
 
 <div class="animate-fade-in-up" style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center; margin-bottom:1.25rem;">
     <span style="font-size:0.8rem; color:var(--text-muted); margin-right:0.25rem;">Audited within:</span>

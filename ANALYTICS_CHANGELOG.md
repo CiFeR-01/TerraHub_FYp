@@ -508,3 +508,150 @@ without a deploy. One run ≈ 4K in + ~1K out tokens ≈ $0.05/day on `claude-op
   disabled "Generate now" button; sidebar highlights only
   *Overview → Digital Assistant (AI)* and the link resolves to
   `/assistant/briefing/`; no console errors.
+
+## Phase 4 — Category briefings + personal checklist  ·  2026-09-12
+
+**Goal:** the single Phase 3 briefing mixed six domains into one paragraph.
+Split it into six domain-scoped briefings (Materials, Products, Sales,
+Purchase, Logistics, Warehouse) that can be read independently, and repurpose
+"the ops briefing" itself into a personal tool: "what have I created that's
+still open," a live checklist with an optional Claude layer that prioritises
+and annotates it — not a company-wide report, an assistant working for the
+person looking at it.
+
+### Changed
+
+| File | Change |
+| :--- | :--- |
+| `core/analytics.py` | **New `shipment_logistics()`** — the first analytics function to look at every in-flight `Shipment` regardless of direction (Inbound/Outbound/Transfer); previously only surfaced indirectly (outbound leg inside `sales_order_delivery_risk`, inbound leg inside `supplier_reliability`), so a `Transfer` shipment was invisible everywhere. Status `discrepant`/`overdue`/`at_risk`/`stalled`/`pending`/`on_track`, worst first (see §8.10). **New `my_open_jobs(user)`** — one person's own open/in-process records across Sales/Purchase Orders, Production Runs (`created_by`), Stock Audits (`auditor`), and Shipments (`last_edited_by` — the only available proxy, tagged `ownership='touched'` not `'created'`). Each row optionally carries a `context` dict cross-referencing that same SO's delivery-risk row or that PO's supplier-reliability row, when notable — reused, not recomputed. |
+| `core/settings_store.py` | `REGISTRY` += `logistics_at_risk_window_days` (default 3) and `logistics_stall_days` (default 5). |
+| `core/briefing.py` | Restructured around a category registry. `CATEGORY_SIGNAL_BUILDERS` maps each of the 6 categories to the existing `_stockout_signals`/`_capacity_signals`/`_supplier_signals`/`_delivery_signals`/`_audit_signals`/`_yield_signals` helpers (now uniformly `(since)`-shaped) plus a new `_logistics_signals`. `collect_signals(category, ...)` replaces the old no-argument version (raises `ValueError` for an unknown category). `BRIEFING_SYSTEM_PROMPT` became `_BRIEFING_PROMPT_TEMPLATE` + `CATEGORY_INTROS[category]`, formatted per category via `_system_prompt()`. `generate_briefing(category, ...)` — same empty/skipped/no-package/no-key/API-call/empty-text-guard control flow as Phase 3, now category-aware and always stamping `category` on the row. New, separate path for the checklist: `CHECKLIST_SYSTEM_PROMPT`, `_checklist_signals(user)`, `generate_my_checklist(user)` — same never-raises discipline, always `category='my_checklist'` and `generated_by=user`. Extracted a shared `_call_claude()` helper used by both `generate_briefing` and `generate_my_checklist` to remove duplication. |
+| `core/models.py` | `OpsBriefing.category` — new required `CharField` (`materials`/`products`/`sales`/`purchase`/`logistics`/`warehouse`/`my_checklist`/`legacy`), `db_index=True`, no Python-level default (every `.create()` call must pass it explicitly). Two new `Meta.indexes` (`category, -generated_at` and `category, generated_by, -generated_at`) matching how every view now queries. Docstring/help_text reworded off the old "Digital Assistant" framing. |
+| `core/views_analytics.py` | `CATEGORY_TABS` + `_CATEGORY_SIGNAL_LINKS` replace the old flat `_BRIEFING_SIGNAL_LINKS`. New `category_briefing_view(request, category)` — 404s on an unknown category, Admin/Manager-gated generation, same shape as the old single view but scoped by `category`. `ops_briefing_view` repurposed as the personal checklist — always computes `live_items = analytics.my_open_jobs(request.user)` (no API dependency), generation gated only on the API key being configured (any authenticated user can generate their own). New `shipment_logistics_view` (KPI tiles + sortable table, same idiom as `forecast_view`). |
+| `core/urls.py` | `+ assistant/briefing/<str:category>/` → `category_briefing`. `+ operations/shipments/logistics/` → `shipment_logistics`. `ops_briefing` path unchanged (now the checklist). |
+| `core/context_processors.py` | Sidebar label **"Digital Assistant (AI)" → "AI Copilot"**, with `alias_url_names: ['category_briefing']` (using the pre-existing but previously-unused alias mechanism) so the sidebar highlights on every category sub-page, not just the checklist. `+ 'Logistics Risk'` in Insights (gated on `core.view_shipment`, alongside Delivery Risk). |
+| `core/management/commands/generate_ops_briefing.py` | `+ --category` (`materials`/`products`/.../`all`, default `all`) — loops and generates one or all category briefings. Docstring states plainly that the personal checklist is on-demand-only and this command never produces one. |
+| `core/admin.py` | `OpsBriefingAdmin` gains `category` in `list_display`/`list_filter`/`readonly_fields`. |
+| `core/migrations/0043_opsbriefing_category.py` | `AddField` for `category` with `preserve_default=False` (the one-off `'legacy'` default is a migration-time value only — existing Phase 3 test rows become invisible to every new page, not a real loss since none were real operational history), an `AlterField` for `generated_by`'s reworded `help_text`, and the two new indexes. |
+| `core/migrations/0044_seed_logistics_settings.py` | Seeds the two new `SystemSetting` rows (same idiom as `0042`). |
+| `templates/analytics/partials/_briefing_tabs.html` | **New** — the shared tab strip (My Open Jobs + the six categories), included by both templates below. |
+| `templates/analytics/ops_briefing.html` | Rewritten as the personal checklist: always-live table of `live_items` (Type/Reference/Status/Age, Shipment rows captioned "(last touched by you)", each `context` row shown inline), the optional Claude card on top when a `my_checklist` row exists, generation gated only on the API key. |
+| `templates/analytics/category_briefing.html` | **New** — near-identical shape to the old single-briefing template (banners, card, "Drawn from" chips, generate form, recent-runs table, footer), parameterized by `category`/`category_label`, plus the tab strip. |
+| `templates/analytics/shipment_logistics.html` | **New** — KPI tiles (in flight / discrepant / overdue+at-risk / stalled) + sortable worst-first table, same idiom as `forecast.html`. |
+| `core/tests.py` | `OpsBriefingTests` → `OpsBriefingCategoryTests` (ported forward, now category-parameterized, + unknown-category/`ValueError` test). +11 `ShipmentLogisticsAnalyticsTests`. +6 `CategoryBriefingViewTests`. +12 `MyChecklistTests` (ownership queries, the Shipment `last_edited_by` proxy, context cross-referencing, generation open to any authenticated user, per-user scoping). `AICopilotNavTests` replaces the old nav test — asserts "AI Copilot", asserts "Digital Assistant" is gone, and asserts the tab strip renders. |
+
+### How it works
+
+Same anti-hallucination discipline throughout: every category briefing's model
+sees only that category's pre-computed signal dict; the checklist's model sees
+only one user's own real records (plus small, already-computed `context`
+cross-references) and is explicitly told to refer to items only by their real
+identifier. Nothing here computes a new number — Tier 1/2 still own every
+figure; Tier 3 only narrates or prioritises what already exists.
+
+### Deliberately left for later
+
+- No scheduler for the six category briefings (same story as
+  `snapshot_utilization`/Phase 3 — a deploy-time job to wire).
+- The personal checklist is on-demand only by design (no per-user scheduled
+  job) — API cost stays bounded to actual clicks rather than scaling with
+  headcount.
+
+### Verification
+
+- `manage.py check` clean; `makemigrations core --check --dry-run` → no
+  changes (hand-written `0043`/`0044` fully capture the model edit); `migrate`
+  → `0043`, `0044` OK. `manage.py test core` → **162 passed** (was 131).
+- `generate_ops_briefing --category all --dry-run`: all six categories collect
+  cleanly against dev data (materials 7, products 2, sales 6, purchase 3,
+  logistics 2, warehouse 13 notable signals).
+- Real generation (all six categories + the personal checklist) against live
+  `claude-opus-5` calls: correct headline/bullets/Watch line, correct
+  `category`/token counts on every row; the checklist for a user with real
+  `created_by` data produced a prioritised, grouped, correctly-referenced list
+  (verified no invented item).
+- Browser: sidebar shows "AI Copilot" (no "Digital Assistant" anywhere live),
+  highlights correctly via the alias on every category sub-page; all 6 tabs +
+  the checklist render with no console errors; `/operations/shipments/logistics/`
+  renders the new Logistics Risk board; an unknown category 404s.
+
+## Outlook (estimate) — hedged trend extrapolation  ·  2026-09-14
+
+**Goal:** every briefing so far only narrates a current-state number - no
+prediction happens in Tier 3 at all (the real forecasting, `stockout_forecast`
+and `capacity_forecast`, already lives in Tier 2 as plain arithmetic). This adds
+one narrow, explicit exception: for the two categories with real trend data,
+Claude may add a clearly-labelled *estimate*, never blended with the grounded
+facts above it.
+
+| File | Change |
+| :--- | :--- |
+| `core/briefing.py` | `_weekly_burn_trend(material)` — 6 weekly average burn figures from `analytics.daily_consumption()`. `_stockout_signals` attaches `burn_trend_weekly` per notable material. `_capacity_signals` attaches `utilization_trend` (last 8 `WarehouseUtilizationSnapshot` points) per notable warehouse. `_BRIEFING_PROMPT_TEMPLATE` gains an `Outlook (estimate):` contract - allowed only when a trend field is present anywhere in the payload, 1-3 hedged lines ("likely"/"could"/"may"), each naming its basis, never a new number/date. |
+| `core/views_analytics.py` | `_parse_briefing_body` now returns `(points, watch, outlook)` instead of `(points, watch)` - both call sites and both templates updated. |
+| `templates/analytics/category_briefing.html`, `templates/analytics/ops_briefing.html` | New dashed-purple "Outlook — estimate, not a fact" block, rendered only when `outlook` is non-empty - visually distinct from the grounded card above it. |
+| `core/tests.py` | `test_stockout_signals_include_burn_trend`, `test_capacity_signals_include_utilization_trend`, `test_outlook_section_renders_when_present`, `test_outlook_absent_when_no_section`. |
+
+### How it works
+
+Materials and Warehouse are first because they're the only categories with a
+real time series already computed (weekly burn history; daily capacity
+snapshots). Sales/Purchase/Products/Logistics have no trend field yet, so the
+same shared prompt naturally omits Outlook there without any prompt change -
+extending this to another category is purely an analytics-side job (compute
+and attach that category's own trend field to its signal payload).
+
+### Verification
+
+- `manage.py test core` → **166 passed** (was 162).
+- Real `claude-opus-5` generation for both categories produced correctly
+  hedged, correctly separated Outlook sections; one line even caught a data
+  artefact (the current, partial week's burn figure reading low) and flagged
+  it as a caveat rather than treating it as a real trend - exactly the
+  "estimate, not a fact" behaviour intended.
+- Browser: the Outlook box renders distinctly (dashed purple, labelled) below
+  the grounded card; absent entirely on categories/rows with no trend data;
+  no console errors.
+
+## Product sales trend  ·  2026-09-14
+
+**Goal:** Sales only had a point-in-time view (`sales_order_delivery_risk` -
+is *this* order late) with no sense of whether a product's sales are actually
+growing or shrinking over time. This adds that, and reuses it as the trend
+field that unlocks Sales' own Outlook (estimate) section.
+
+| File | Change |
+| :--- | :--- |
+| `core/analytics.py` | **New `product_sales_trend(window_months=6)`** - per product, monthly `quantity_ordered` (Draft/Rejected orders excluded) bucketed by `order_date`, split into an earlier and a recent half; `declining`/`rising` at a ±15% swing between the two halves, `new` if the earlier half is empty, `insufficient_data` below 3 active months, else `flat`. Revenue is populated only for a product when every active month has `unit_price` on every line - `None` otherwise, never a silently-partial total. Declining-first sort, same `_XXX_RANK` house style as everything else here. |
+| `core/views_analytics.py` | `product_sales_trend_view` - new Insights page, same KPI-tile + sortable-table shape as the other Tier 1/2 pages. |
+| `core/urls.py` | `+ catalog/products/sales-trend/` → `product_sales_trend`. |
+| `core/context_processors.py` | `+ 'Product Sales Trend'` in Insights (gated `core.view_product`). |
+| `templates/analytics/product_sales_trend.html` | **New.** |
+| `core/briefing.py` | `_product_trend_signals()` - feeds `declining`/`rising` rows (with their `monthly_qty_trend` series) into the **Sales** category builder, alongside `sales_order_delivery_risk`. `CATEGORY_INTROS['sales']` and the Outlook prompt's trend-field examples updated to mention it. |
+| `core/views_analytics.py` | Sales' `_CATEGORY_SIGNAL_LINKS` gains a "Product Sales Trend" back-link. |
+| `core/tests.py` | +11 `ProductSalesTrendAnalyticsTests` (declining/rising/flat/new/insufficient_data classification, revenue-only-when-fully-priced, Draft/Rejected exclusion, sort order, view render) + a Sales `collect_signals` test confirming the new key is present. |
+
+### Bug found and fixed along the way: cross-page message leakage
+
+While testing this, "Briefing generated" success messages started appearing
+on **unrelated pages** (e.g. the Products Catalog list) instead of the
+briefing page that generated them. Root cause: `category_briefing.html` and
+`ops_briefing.html` never rendered Django's `{% if messages %}` block at all -
+`views_analytics.py`'s POST handlers call `messages.success/error/warning()`
+and redirect back to the same page expecting to show it there, but since nothing
+consumed the queued message on that page, it sat in the session until whatever
+page the user next visited that *did* render the messages block (a pattern this
+codebase's older templates - `product_list.html` etc. - each implement
+individually; `base.html` itself never has). Fixed by adding the same
+messages block (copied verbatim from `product_list.html` for visual
+consistency) to `category_briefing.html`, `ops_briefing.html`,
+`shipment_logistics.html`, and `product_sales_trend.html`. Verified live:
+clicking "Generate now" now shows the success message immediately on the
+briefing page itself, and the Products Catalog page is clean.
+
+### Verification
+
+- `manage.py check` clean.
+- Real dev data: every product currently shows `insufficient_data` (the seed
+  data's sales orders all fall in a single month) - correct, conservative
+  behaviour given genuinely insufficient history, not a bug.
+- `manage.py test core` → **177 passed** (was 166).

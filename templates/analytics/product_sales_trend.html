@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}Demand & Sales Trends - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <a href="{% url 'product_list' %}">Products Catalog</a>
+            <span class="separator">/</span>
+            <span class="current-page">Demand & Sales Trends</span>
+        </nav>
+        <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
+            Demand &amp; Sales Trends
+        </h1>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:70ch;">
+            Each product's ordered quantity over the trailing {{ window_months }} months, split into a recent
+            and an earlier average to flag what's rising or declining. Declining first.
+        </p>
+    </div>
+</header>
+
+{% include "analytics/partials/_analytics_tabs.html" %}
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: #d97706;{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: #059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay:0.05s; margin-bottom:1.5rem;">
+    <div class="kpi-item-card">
+        <span class="kpi-label">Products tracked</span>
+        <div class="kpi-value-row"><span class="kpi-value">{{ summary.product_count }}</span></div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Declining</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value" style="color:{% if summary.declining %}#dc2626{% else %}var(--text-main){% endif %};">{{ summary.declining }}</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Rising</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value" style="color:{% if summary.rising %}#15803d{% else %}var(--text-main){% endif %};">{{ summary.rising }}</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">New</span>
+        <div class="kpi-value-row"><span class="kpi-value">{{ summary.new }}</span></div>
+    </div>
+</section>
+
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+    <div class="table-responsive">
+        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th data-sort="text" style="padding:0.6rem 1rem;">Product</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem;">Trend</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Change</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Recent avg / mo</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Earlier avg / mo</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Total qty ({{ window_months }}mo)</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Total revenue</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Months active</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in rows %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                    <td style="padding:0.6rem 1rem;">
+                        <a href="{% url 'product_detail' r.product_id %}" style="font-weight:700; color:var(--primary); text-decoration:none;">{{ r.sku }}</a>
+                        <div style="color:var(--text-muted); font-size:0.78rem;">{{ r.name }}</div>
+                    </td>
+                    <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.status == 'declining' %}0{% elif r.status == 'rising' %}1{% elif r.status == 'flat' %}2{% elif r.status == 'new' %}3{% else %}4{% endif %}">
+                        {% if r.status == 'declining' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px;">Declining</span>
+                        {% elif r.status == 'rising' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px;">Rising</span>
+                        {% elif r.status == 'flat' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#f1f5f9; color:#64748b; padding:0.15rem 0.55rem; border-radius:999px;">Flat</span>
+                        {% elif r.status == 'new' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#e0e7ff; color:#4338ca; padding:0.15rem 0.55rem; border-radius:999px;">New</span>
+                        {% else %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px;">Not enough data</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; color:{% if r.status == 'declining' %}#dc2626{% elif r.status == 'rising' %}#15803d{% endif %};" data-sort-value="{{ r.pct_change|default_if_none:'' }}">
+                        {% if r.pct_change is not None %}{% if r.pct_change > 0 %}+{% endif %}{{ r.pct_change|floatformat:1 }}%{% else %}<span style="color:var(--text-muted); font-weight:400;">&mdash;</span>{% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right;">{{ r.recent_avg_qty|floatformat:1 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right; color:var(--text-muted);">{{ r.earlier_avg_qty|floatformat:1 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right;">{{ r.total_qty|floatformat:1 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right; color:var(--text-muted);">
+                        {% if r.total_revenue is not None %}{{ r.total_revenue|floatformat:2 }}{% else %}&mdash;{% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right; color:var(--text-muted);">{{ r.months_with_sales }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="8" style="padding:2rem 1rem; text-align:center; color:var(--text-muted);">No sales orders in the trend window.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<p style="color:var(--text-muted); font-size:0.75rem; margin-top:1rem; max-width:78ch;">
+    <strong>How it's classified.</strong> Each month's ordered quantity (Draft/Rejected orders excluded)
+    is bucketed by order date. <em>Recent avg</em> is the second half of the {{ window_months }}-month
+    window; <em>Earlier avg</em> is the first half. <em>Declining</em>/<em>Rising</em> = recent vs earlier
+    differs by 15% or more; <em>Flat</em> = within that band; <em>New</em> = no sales in the earlier
+    months but some recently; <em>Not enough data</em> = sales in fewer than 3 of the {{ window_months }}
+    months. Revenue is shown only for months where every line has a unit price on file.
+</p>
+{% endblock %}
