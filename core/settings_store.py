@@ -37,9 +37,23 @@ REGISTRY: dict[str, tuple[object, str, str]] = {
     "ops_briefing_model": (
         "claude-opus-5",
         "str",
-        "Claude model id the AI Ops Briefing (Tier 3) is generated with. "
-        "claude-opus-5 is the default; claude-sonnet-5 or claude-haiku-4-5 are "
-        "cheaper for this structured-summarisation job.",
+        "Claude model id the AI Copilot (Tier 3) briefings and checklist are "
+        "generated with. claude-opus-5 is the default; claude-sonnet-5 or "
+        "claude-haiku-4-5 are cheaper for this structured-summarisation job.",
+    ),
+    "logistics_at_risk_window_days": (
+        3,
+        "int",
+        "A Dispatched shipment with an expected_eta_date this many days out "
+        "(or nearer) and not yet arrived is flagged 'at risk' on the Logistics "
+        "Risk board / Logistics briefing.",
+    ),
+    "logistics_stall_days": (
+        5,
+        "int",
+        "A shipment that has been 'Arrived' for at least this many days without "
+        "being marked Completed is flagged 'stalled' on the Logistics Risk "
+        "board / Logistics briefing.",
     ),
 }
 

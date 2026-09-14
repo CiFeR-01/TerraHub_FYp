@@ -70,11 +70,11 @@ class SystemSettingAdmin(admin.ModelAdmin):
 
 @admin.register(OpsBriefing)
 class OpsBriefingAdmin(admin.ModelAdmin):
-    list_display = ('generated_at', 'period', 'status', 'model_id', 'signal_count',
-                    'input_tokens', 'output_tokens', 'headline')
-    list_filter = ('status', 'period', 'model_id')
+    list_display = ('generated_at', 'category', 'period', 'status', 'model_id',
+                    'signal_count', 'input_tokens', 'output_tokens', 'generated_by', 'headline')
+    list_filter = ('category', 'status', 'period', 'model_id')
     date_hierarchy = 'generated_at'
-    readonly_fields = ('generated_at', 'period', 'status', 'headline', 'body_text',
+    readonly_fields = ('generated_at', 'category', 'period', 'status', 'headline', 'body_text',
                        'signals_json', 'signal_count', 'model_id', 'input_tokens',
                        'output_tokens', 'error_detail', 'generated_by')
 

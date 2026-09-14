@@ -84,13 +84,8 @@ def allocate_stock(order_type, order, material_or_product, required_qty, warehou
     return total_allocated
 
 def create_shortage_production_runs(so, plant, user):
-    """
-    For each line item on `so` not yet fully covered by StockAllocations, create a
-    Production Run to manufacture the shortfall (unless one already exists for that
-    SO+product). Runs are created as 'Pending Approval' — same as every other manual
-    production run — so a manager reviews them in the Approvals Inbox before anyone
-    can start allocating materials against them. Returns True if any run was created.
-    """
+    """Creates a 'Pending Approval' Production Run for each SO line item not
+    yet covered by StockAllocations. Returns True if any run was created."""
     from django.utils import timezone
     from datetime import timedelta
     from django.db.models import Sum
@@ -126,13 +121,8 @@ def create_shortage_production_runs(so, plant, user):
 
 
 def release_production_run_allocations(run):
-    """
-    Releases every StockAllocation held by a run back to available stock, and cancels
-    any auto-generated Draft transfer shipments left over from allocating it. Shared by
-    every path that stops a run before it's produced anything — manual "cancel
-    allocation", scrapping a run outright, and auto-cancelling a run whose need
-    disappeared (fully covered by direct allocation, or its SO line item was removed).
-    """
+    """Releases every StockAllocation held by a run back to stock, and cancels
+    any auto-generated Draft transfer shipments left over from allocating it."""
     from .models import StockAllocation, Shipment
 
     allocs = StockAllocation.objects.filter(production_run=run)
@@ -150,16 +140,8 @@ def release_production_run_allocations(run):
 
 
 def sync_production_run_yield(so, product, unfulfilled, user):
-    """
-    Keeps an already-created Production Run's expected_yield in sync with the SO's
-    actual remaining shortfall. Without this, a run created when 480 MT was missing
-    stays at 480 MT forever even if someone later manually allocates existing stock
-    that covers part (or all) of that gap — silently asking the plant to over-produce.
-
-    Only touches runs that haven't started consuming materials yet (Pending Approval /
-    Pending Allocation / Awaiting Materials / Planned) — once a run is InProgress or
-    Completed its yield reflects what's actually being/been made, not a target to move.
-    """
+    """Keeps a not-yet-started run's expected_yield in sync with the SO's
+    remaining shortfall (cancels it if the shortfall reaches zero)."""
     from .models import ProductionRun, OrderTimeline
 
     run = ProductionRun.objects.filter(
@@ -192,15 +174,8 @@ def sync_production_run_yield(so, product, unfulfilled, user):
 
 
 def handle_so_item_removed(so, product, user):
-    """
-    Called when a line item is deleted from a Sales Order. A Production Run created
-    for that SO+product would otherwise be silently orphaned — still expected to
-    produce something the order no longer needs. If the run hasn't started yet, cancel
-    it outright (releasing any allocated materials). If it's already InProgress or
-    Completed, leave it alone (the goods aren't wasted — they can still go to stock or
-    another order) but note on its timeline that its SO link no longer has this item,
-    so anyone looking at the run isn't misled about why it exists.
-    """
+    """Called when a Sales Order line item is deleted. Cancels its linked
+    Production Run if not yet started; otherwise just notes it on the timeline."""
     from .models import ProductionRun, OrderTimeline
 
     run = ProductionRun.objects.filter(sales_order=so, target_product=product).exclude(status='Cancelled').first()
@@ -225,18 +200,9 @@ def handle_so_item_removed(so, product, user):
 
 
 def consume_materials_for_run(run, user):
-    """
-    Physically deducts the raw materials a completed run used. For each material
-    in the run's recipe: consumes from whatever's still allocated to this run
-    (releasing any unused portion back to availability), then — for materials
-    whose allocation was already resolved by an arrived transfer shipment, or
-    where actual usage exceeded what was allocated — draws the remainder from
-    the plant's current stock via FEFO. Uses RunMaterialUsage.actual_qty when
-    available (the detailed completion form), otherwise assumes the allocated
-    amount was used as planned (the quick-complete path). Records a
-    ProductionConsumption row per batch drawn from and a RegistryLog entry per
-    material.
-    """
+    """Deducts the raw materials a completed run used: consumes from its
+    allocations first, then tops up from plant stock via FEFO if actual usage
+    exceeded what was allocated. Logs a ProductionConsumption + RegistryLog entry."""
     from django.db.models import F
     from .models import Batch, StockAllocation, ProductionConsumption, RunMaterialUsage, Material, RegistryLog
 
@@ -316,12 +282,8 @@ def consume_materials_for_run(run, user):
 
 
 def approve_production_run(run, user):
-    """
-    Approves a 'Pending Approval' production run, clearing it for material
-    allocation via the FEFO allocation screen (production_run_allocate_view),
-    which already handles both local and cross-warehouse sourcing correctly —
-    so approval itself doesn't need its own separate material check.
-    """
+    """Approves a 'Pending Approval' run, clearing it for material allocation
+    via the FEFO allocation screen."""
     from .models import OrderTimeline
     run.status = 'Pending Allocation'
     run.save()
@@ -333,13 +295,9 @@ def approve_production_run(run, user):
 
 
 def finalize_production_run(run, user):
-    """
-    Completes a production run: creates the finished-goods batch, marks the run
-    Completed, and — if the run is linked to a SalesOrder — allocates the new
-    batch directly against that order's matching line item (not a generic FEFO
-    sweep, since this stock was produced specifically for it) and advances the
-    order's status. Returns the created batch (or None if there was no yield).
-    """
+    """Completes a run: creates the finished-goods batch, marks it Completed,
+    and (if linked to a SalesOrder) allocates the batch to that order's line
+    item and advances its status. Returns the batch, or None if no yield."""
     import uuid
     from django.utils import timezone
     from datetime import timedelta
@@ -418,12 +376,8 @@ def finalize_production_run(run, user):
 
 
 def get_batch_reservations(batch):
-    """
-    Every current reservation against a batch (StockAllocation rows), each resolved
-    to a human label + URL for whatever it's held for — a Sales Order, a Production
-    Run's material draw, or a Shipment. Used by the Product/Material traceability
-    views and the SO detail page's batch breakdown.
-    """
+    """Every current reservation against a batch, resolved to a human label +
+    URL (Sales Order, Production Run, or Shipment)."""
     from django.urls import reverse
     from .models import StockAllocation
 
@@ -451,12 +405,8 @@ def get_batch_reservations(batch):
 
 
 def get_batch_produced_for(batch):
-    """
-    If this batch was manufactured (not received via PO), returns the SO its own
-    Production Run was originally linked to — even if the batch's allocation has
-    since moved elsewhere. This is the "originally intended for" signal distinct
-    from "currently reserved for" (get_batch_reservations).
-    """
+    """If manufactured (not received via PO), the SO its Production Run was
+    originally linked to - "intended for", distinct from get_batch_reservations."""
     if batch.produced_in and batch.produced_in.sales_order:
         so = batch.produced_in.sales_order
         from django.urls import reverse
@@ -465,14 +415,8 @@ def get_batch_produced_for(batch):
 
 
 def unallocate_so_batch(allocation, quantity, user, target_so=None):
-    """
-    Releases (or transfers) a quantity of an SO-level StockAllocation. If target_so
-    is given, the released amount is immediately re-allocated to it in the same
-    transaction (a direct transfer); otherwise it's simply freed back to available
-    stock, where it becomes visible to any SO's normal allocation screen. Logs to
-    both orders' timelines either way, and recomputes each order's fulfillment
-    status afterward. Returns (source_so, target_so_or_None).
-    """
+    """Releases a quantity of an SO-level StockAllocation, or transfers it
+    directly to target_so if given. Returns (source_so, target_so_or_None)."""
     from .models import StockAllocation, OrderTimeline, SalesOrder
 
     if allocation.sales_order is None:
@@ -527,11 +471,8 @@ def unallocate_so_batch(allocation, quantity, user, target_so=None):
 
 
 def _resync_so_fulfillment_status(so, user):
-    """
-    After allocations change, nudges an SO's status to reflect whether it's now
-    fully covered — mirrors the same check finalize_production_run already does at
-    completion time, factored out so unallocate/transfer can trigger it too.
-    """
+    """After allocations change, nudges an SO's status to reflect whether it's
+    now fully covered (same check finalize_production_run does at completion)."""
     from django.db.models import Sum
     from .models import StockAllocation, OrderTimeline
 
@@ -573,12 +514,8 @@ def deallocate_stock(order_type, order):
             alloc.delete()
 
 def deduct_stock_from_allocation(order_type, order, user=None):
-    """
-    Permanently deducts the allocated stock from the physical batch quantities,
-    typically when an order is shipped or a production run is completed. Logs one
-    RegistryLog entry per batch so the Outbound movement actually shows up in the
-    Registry Ledger — this previously deducted stock silently.
-    """
+    """Permanently deducts allocated stock from physical batch quantities
+    (order shipped / run completed), logging an Outbound RegistryLog entry per batch."""
     from .models import StockAllocation, RegistryLog
     with transaction.atomic():
         if order_type == 'sales_order':
@@ -608,14 +545,9 @@ def deduct_stock_from_allocation(order_type, order, user=None):
 
 
 def apply_po_material_receipt(po_detail, delta_qty, user):
-    """
-    Adds delta_qty to a PurchaseOrderDetail's quantity_received, creates a Batch for
-    the delta at the PO's target warehouse, and recomputes the parent PO's status
-    (Partially Received / Completed). This is the single source of truth for "goods
-    received against a PO" — used both by the PO page's own "mark received" action
-    and by Shipment-side receipt logging, so quantities/batches/status stay
-    consistent no matter which page was used to record it.
-    """
+    """Single source of truth for "goods received against a PO": adds
+    delta_qty to quantity_received, creates a Batch for it, and recomputes
+    the PO's status (Partially Received / Completed)."""
     import uuid
     from datetime import date, timedelta
     from .models import Batch, WarehouseLocation, RegistryLog
@@ -663,13 +595,8 @@ def apply_po_material_receipt(po_detail, delta_qty, user):
 
 
 def apply_so_product_shipment(so_detail, delta_qty):
-    """
-    Adds delta_qty to a SalesOrderDetail's quantity_shipped and recomputes the parent
-    SO's status (Partially Shipped / Shipped). Called when a linked Outbound shipment
-    actually dispatches, so an SO fulfilled across several shipments over time (partial
-    deliveries) accumulates correctly instead of the status flipping to "Shipped" on
-    the first truck regardless of how much was actually sent.
-    """
+    """Adds delta_qty to quantity_shipped and recomputes the SO's status
+    (Partially Shipped / Shipped), accumulating correctly across several shipments."""
     so = so_detail.sales_order
     delta_qty = Decimal(str(delta_qty))
 
@@ -688,12 +615,8 @@ def apply_so_product_shipment(so_detail, delta_qty):
 
 
 def mark_so_delivered_if_fully_shipped(so, completing_shipment=None):
-    """
-    Marks a SalesOrder Delivered once a linked Outbound shipment actually completes
-    (delivery confirmed) — but only if no other shipment against the same SO is still
-    outstanding, so a partially-fulfilled SO with a second truck still in transit
-    correctly stays at Shipped/Partially Shipped instead of jumping to Delivered early.
-    """
+    """Marks a SalesOrder Delivered once its Outbound shipment(s) all complete -
+    not early, while another shipment against it is still in transit."""
     outstanding = so.shipments.filter(direction='Outbound').exclude(status__in=['Completed', 'Cancelled'])
     if completing_shipment is not None:
         outstanding = outstanding.exclude(pk=completing_shipment.pk)

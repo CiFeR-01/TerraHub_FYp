@@ -1,29 +1,9 @@
 """
 core/analytics.py — computation layer for TerraHub's analytics & forecasting.
 
-Pure functions over the ORM: no request/response objects, no side effects. Meant to
-be called from web views (core/views_analytics.py), management commands (daily
-snapshots, the AI ops briefing), the shell, and tests.
-
-Roadmap (see SYSTEM_DOCUMENTATION.md section 8):
-  Tier 1 - roll-ups of data already stored: supplier reliability, sales-order
-           delivery risk, audit accuracy, production yield variance.
-  Tier 2 - statistical forecasting by plain arithmetic: consumption-rate stockout
-           ETA, reorder-by date, warehouse capacity runway.
-  Tier 3 - an LLM ops briefing that narrates the Tier 1/2 signals.
-
-Delivered so far:
-  Phase 0 - RegistryLog.material spine + consumption_rate() / daily_consumption().
-  Phase 1 - supplier_reliability() scorecard, with a lead-time-derived expected
-            delivery date fallback (po_default_lead_time_days system setting);
-            sales_order_delivery_risk() board; audit_accuracy();
-            production_yield_variance().
-  Phase 2a - stockout_forecast(): consumption-rate days-of-cover + reorder-by date.
-  Phase 2b - capacity_forecast(): linear-fit of WarehouseUtilizationSnapshot -> date
-             each warehouse crosses 100%.
-  Phase 3  - core/briefing.py: collect_signals() bundles the notable rows from the
-             functions here; generate_ops_briefing sends them to Claude for a
-             plain-English "AI Ops Briefing" (narration only - no new numbers).
+Pure functions over the ORM: no request/response objects, no side effects.
+Used by web views, management commands, the shell, and tests. Algorithms,
+row shapes, and status bands are documented in SYSTEM_DOCUMENTATION.md §8.
 """
 from __future__ import annotations
 
@@ -34,8 +14,7 @@ from decimal import Decimal
 from django.db.models import Sum
 from django.utils import timezone
 
-# RegistryLog.action_type value written every time materials are drawn into a
-# production run (see core/utils.py :: consume_materials_for_run).
+# RegistryLog.action_type for material draws into a run (see core/utils.py).
 CONSUMPTION_ACTION = "Consumed_For_Manufacturing"
 
 # Trailing window used for burn-rate calculations unless the caller overrides it.
@@ -43,11 +22,8 @@ DEFAULT_WINDOW_DAYS = 30
 
 
 # --------------------------------------------------------------------------------
-# RegistryLog.item_name -> Material resolution
+# RegistryLog.item_name -> Material resolution (used by migration 0036's backfill)
 # --------------------------------------------------------------------------------
-# Used by migration 0036 to backfill RegistryLog.material for history written
-# before the FK existed, and available for any later reconciliation pass. Kept
-# here (not in the migration) so it is importable and unit-tested.
 
 _UPDATED_MATERIAL_RE = re.compile(r"Updated Material '(.+?)'")
 _AUDIT_RESOLVE_RE = re.compile(r"^Batch \S+ \(.+? - (.+?)\)$")
@@ -55,20 +31,8 @@ _AUDIT_RESOLVE_RE = re.compile(r"^Batch \S+ \(.+? - (.+?)\)$")
 
 def resolve_material_from_label(item_name, by_name):
     """
-    Map a free-text RegistryLog.item_name back to a material, using ``by_name``:
-    a dict keyed by ``material.name.strip().lower()`` whose values are whatever the
-    caller wants back (a Material instance, an id, an sku...).
-
-    Recognises the label shapes the pre-Phase-0 code produced:
-      "<name> (Run <run>)"                      - Consumed_For_Manufacturing
-      "<name> (Batch <batch>)" [" - force closed"] - Inbound / Outbound
-      "Manual Receipt of <name>"                - Adjusted (manual receive)
-      "Updated Material '<name>' (SKU: <sku>)"  - Adjusted (material edit)
-      "Batch <batch> (<sku> - <name>)"          - Adjusted (audit resolve)
-      "<name>"                                  - exact match
-
-    Returns the mapped value, or ``None`` when nothing matches (batch-only labels,
-    bulk-import summaries, finished-goods movements).
+    Map a free-text RegistryLog.item_name back to a material via ``by_name``
+    (keyed by lowercased material name). Returns None if nothing matches.
     """
     if not item_name:
         return None
@@ -102,16 +66,8 @@ def resolve_material_from_label(item_name, by_name):
 
 def daily_consumption(material, *, window_days: int = DEFAULT_WINDOW_DAYS, end=None) -> dict:
     """
-    Total quantity of ``material`` consumed for manufacturing per calendar day over
-    the trailing ``window_days`` ending on ``end`` (default: today).
-
-    Returns ``{date: Decimal}``. Days with no consumption are absent from the dict;
-    callers that need a dense series should zero-fill themselves.
-
-    Reads ``RegistryLog`` rows via the ``material`` FK added in Phase 0, so only
-    movements that were tagged with a material are counted. Rows left untagged by
-    the backfill (older history the parser could not resolve) are silently skipped
-    - this makes the rate conservative rather than wrong.
+    {date: Decimal} of material consumed for manufacturing per day over the
+    trailing window ending on ``end``. Untagged RegistryLog rows are skipped.
     """
     end = end or timezone.now().date()
     start = end - _dt.timedelta(days=window_days)
@@ -128,14 +84,7 @@ def daily_consumption(material, *, window_days: int = DEFAULT_WINDOW_DAYS, end=N
 
 
 def consumption_rate(material, *, window_days: int = DEFAULT_WINDOW_DAYS, end=None) -> Decimal:
-    """
-    Mean daily consumption of ``material`` over the window: total consumed divided
-    by the full ``window_days`` (not just the days that had activity), so idle days
-    correctly pull the burn rate down.
-
-    Returns a non-negative ``Decimal``. Returns ``0`` when there is no consumption
-    in the window or ``window_days`` is not positive.
-    """
+    """Mean daily consumption over the window (idle days included); 0 if none or window_days <= 0."""
     if window_days <= 0:
         return Decimal("0")
     series = daily_consumption(material, window_days=window_days, end=end)
@@ -148,12 +97,8 @@ def consumption_rate(material, *, window_days: int = DEFAULT_WINDOW_DAYS, end=No
 # --------------------------------------------------------------------------------
 # Tier 1 - Supplier reliability scorecard
 # --------------------------------------------------------------------------------
-# Rolls PurchaseOrder / PurchaseOrderDetail / linked inbound Shipment data up per
-# supplier. Nothing new is recorded - this is aggregation of data the PO and
-# logistics flows already capture.
 
-# PO statuses that represent a real, approved order with fulfilment activity worth
-# measuring. Draft / Pending Approval / Rejected carry no fulfilment signal.
+# Statuses with real fulfilment activity - Draft/Pending Approval/Rejected excluded.
 SCORECARD_PO_STATUSES = ("Pending", "Partially Received", "Completed")
 _OPEN_PO_STATUSES = ("Pending", "Partially Received")
 
@@ -161,13 +106,8 @@ _RATING_RANK = {"poor": 0, "watch": 1, "good": 2, "n/a": 3}
 
 
 def _po_actual_arrival(po):
-    """
-    Best available "goods actually arrived" date for a PO:
-      1. po.completed_date (stamped when receipts flip the PO to 'Completed');
-      2. else latest actual_arrival_date across linked inbound shipments;
-      3. else latest manufacturing_date across batches received against the PO;
-      4. else None (timeliness cannot be assessed).
-    """
+    """Best available "goods arrived" date for a PO: completed_date, else the
+    latest inbound-shipment arrival, else the latest received-batch date."""
     if po.completed_date is not None:
         return po.completed_date
     dates = [s.actual_arrival_date for s in po.shipments.all() if s.actual_arrival_date]
@@ -190,16 +130,8 @@ def _supplier_lead_map():
 
 
 def _expected_delivery(po, lead_map, default_lead_days):
-    """
-    ``(expected_date, is_estimated)`` for a PO.
-
-      * ``po.expected_delivery_date`` if set                    -> (date, False)
-      * else ``po.order_date + lead``                           -> (date, True)
-        where ``lead`` is the largest ``SupplierMaterial.lead_time_days`` across
-        the PO's line-item materials for its supplier, or ``default_lead_days``
-        when none is on file.
-      * ``(None, False)`` if there is no basis at all.
-    """
+    """(expected_date, is_estimated) - the PO's own expected_delivery_date if
+    set, else order_date + a lead time (per-supplier/material, else default)."""
     if po.expected_delivery_date is not None:
         return po.expected_delivery_date, False
     if po.order_date is None:
@@ -229,30 +161,8 @@ def _rate_supplier(on_time_rate, fill_rate):
 
 def supplier_reliability(*, since=None, until=None):
     """
-    Per-supplier fulfilment scorecard, worst performer first.
-
-    ``since`` / ``until`` (``date``, optional) bound the POs considered by
-    ``order_date``.
-
-    Each row is a dict:
-      supplier_id, supplier_name, is_active,
-      po_count, open_count, completed_count,
-      ordered_qty, received_qty, fill_rate      (received / ordered; None if none ordered)
-      assessable_count, on_time_count, late_count,
-      on_time_rate                              (on_time / assessable; None if none assessable)
-      avg_delay_days                            (signed mean; +ve = late; None if none assessable)
-      estimated_count, estimated_share          (assessable POs whose expected date was derived
-                                                 from a lead time rather than set explicitly)
-      last_delivery                             (date or None)
-      rating                                    ('good' | 'watch' | 'poor' | 'n/a')
-
-    A PO's expected date is its ``expected_delivery_date`` when set, otherwise
-    ``order_date`` plus a lead time (per-supplier/material if on file, else the
-    editable ``po_default_lead_time_days`` system setting). Its arrival is
-    ``completed_date`` / linked-shipment arrival / receipt date.
-
-    Grouped by the ``supplier`` FK where set; POs with only a free-text
-    ``supplier_name`` roll up under that name (case-insensitively).
+    Per-supplier fulfilment scorecard, worst first. ``since``/``until`` bound
+    the POs by order_date. See SYSTEM_DOCUMENTATION.md §8.3 for the row shape.
     """
     from .models import PurchaseOrder
     from .settings_store import get_setting
@@ -343,28 +253,21 @@ def supplier_reliability(*, since=None, until=None):
 # --------------------------------------------------------------------------------
 # Tier 1 - Sales-order delivery risk
 # --------------------------------------------------------------------------------
-# Per open sales order, does the projected arrival beat the fulfilment deadline?
-# Uses fulfillment_deadline vs. linked outbound Shipment ETAs and production state.
 
-# SO statuses that are still "in flight" and worth risk-tracking. Draft / Pending
-# Approval / Rejected have no commitment yet; Delivered is done.
+# Still "in flight" and worth risk-tracking; Delivered/Rejected/Draft excluded.
 _OPEN_SO_STATUSES = (
     "Pending", "Awaiting Acknowledgement", "In Production",
     "Ready to Ship", "Partially Shipped", "Shipped",
 )
-# While an order is still pre-shipment, these statuses mean production/prep is the
-# thing standing between it and its deadline.
+# Pre-shipment statuses where production/prep stands between the SO and its deadline.
 _PRE_SHIPMENT_SO_STATUSES = ("Pending", "Awaiting Acknowledgement", "In Production")
 
 _RISK_RANK = {"late": 0, "at_risk": 1, "on_track": 2, "no_deadline": 3}
 
 
 def _so_projected_arrival(so):
-    """
-    ``(date, is_actual)`` best estimate of when the client receives the order, from
-    its outbound shipments: an ``actual_arrival_date`` if any shipment has landed,
-    else the latest ``expected_eta_date``. ``(None, False)`` if nothing has shipped.
-    """
+    """(date, is_actual) best estimate of arrival from outbound shipments -
+    an actual_arrival_date if landed, else the latest expected_eta_date."""
     actual, expected = [], []
     for s in so.shipments.all():
         if s.direction != "Outbound":
@@ -399,14 +302,7 @@ def _classify_so_risk(deadline, arrival, arrival_is_actual, shipped_fraction,
 
 
 def sales_order_delivery_risk():
-    """
-    Delivery-risk row per open sales order, worst first.
-
-    Row keys: so_id, so_number, client_name, status, deadline, arrival,
-    arrival_is_actual, shipped_fraction, days_slack (deadline - arrival/today;
-    negative = behind), production_summary (str or None), risk
-    ('late' | 'at_risk' | 'on_track' | 'no_deadline').
-    """
+    """Delivery-risk row per open sales order, worst first. See §8.4 for the row shape."""
     from .models import SalesOrder
     from .settings_store import get_setting
 
@@ -470,8 +366,6 @@ def sales_order_delivery_risk():
 # --------------------------------------------------------------------------------
 # Tier 1 - Stock-audit accuracy
 # --------------------------------------------------------------------------------
-# Rolls StockAudit.variance (actual - expected) up per warehouse and per item, plus
-# a monthly trend, to surface where counts chronically drift.
 
 
 def _audit_bucket_init(name):
@@ -491,19 +385,8 @@ def _audit_finalize(b):
 
 
 def audit_accuracy(*, since=None):
-    """
-    Stock-count accuracy from ``StockAudit``.
-
-    Returns ``{"by_warehouse": [...], "by_item": [...], "trend": [...]}``.
-    ``by_warehouse`` / ``by_item`` rows: name, audit_count, exact_count,
-    accuracy_rate (exact / total; None if no audits), net_variance (signed sum,
-    +ve = found more than expected), shrinkage (sum of negative variances),
-    overage (sum of positive), mean_abs_variance, chronic_shrinkage (bool).
-    ``trend`` rows: bucket 'YYYY-MM', audit_count, mean_abs_variance,
-    net_variance - chronological.
-
-    Worst first: lowest accuracy_rate, then largest mean_abs_variance.
-    """
+    """Stock-count accuracy from StockAudit, grouped by warehouse/item plus a
+    monthly trend, worst first. See §8.5 for the row shape."""
     from .models import StockAudit
 
     audits = StockAudit.objects.select_related(
@@ -569,8 +452,6 @@ def audit_accuracy(*, since=None):
 # --------------------------------------------------------------------------------
 # Tier 1 - Production yield variance
 # --------------------------------------------------------------------------------
-# expected_yield vs actual_yield and RunMaterialUsage.variance_pct, per product and
-# per supervisor, to flag recipes / runs that consistently overconsume or under-yield.
 
 _YIELD_RATING_RANK = {"poor": 0, "watch": 1, "good": 2, "n/a": 3}
 
@@ -595,15 +476,8 @@ def _yield_bucket_init(name):
 
 
 def production_yield_variance():
-    """
-    Yield performance of completed production runs, grouped by target product and by
-    supervisor. Worst first.
-
-    Row keys: name, run_count, expected_total, actual_total,
-    mean_yield_pct (actual/expected, %), mean_yield_variance_pct (signed, %),
-    mean_material_overuse_pct (mean RunMaterialUsage.variance_pct; +ve = overused),
-    rating ('good' | 'watch' | 'poor' | 'n/a').
-    """
+    """Yield performance of completed runs, grouped by product and supervisor,
+    worst first. See §8.6 for the row shape."""
     from .models import ProductionRun
 
     runs = (
@@ -665,9 +539,6 @@ def production_yield_variance():
 # --------------------------------------------------------------------------------
 # Tier 2 - Consumption-rate stockout forecast
 # --------------------------------------------------------------------------------
-# Turns the RegistryLog consumption history into a forward-looking "runs out in N
-# days" estimate per material, plus a "reorder by" date once lead time is folded
-# in. Pure arithmetic - a moving average, not a model.
 
 _STOCKOUT_RANK = {"critical": 0, "reorder_now": 1, "watch": 2, "ok": 3, "no_usage": 4}
 
@@ -675,18 +546,13 @@ _STOCKOUT_RANK = {"critical": 0, "reorder_now": 1, "watch": 2, "ok": 3, "no_usag
 _REORDER_NOW_DAYS = 2
 _REORDER_WATCH_DAYS = 14
 
-# Beyond this many days of cover we don't bother projecting a stockout date - the
-# burn rate is so low the estimate is noise.
+# Beyond this many days of cover, don't bother projecting a date - it's noise.
 _FORECAST_HORIZON_DAYS = 3650
 
 
 def consumption_rates(material_ids, *, window_days=DEFAULT_WINDOW_DAYS, end=None):
-    """
-    Mean daily consumption for many materials in one query.
-
-    Returns ``{material_id: Decimal}`` (rate per calendar day over the full
-    window). Materials with no consumption in the window are absent.
-    """
+    """Mean daily consumption for many materials in one query. {material_id:
+    Decimal}, absent if there was no consumption in the window."""
     ids = list(material_ids)
     if not ids or window_days <= 0:
         return {}
@@ -714,21 +580,8 @@ def consumption_rates(material_ids, *, window_days=DEFAULT_WINDOW_DAYS, end=None
 
 
 def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
-    """
-    Per active material: on-hand vs. burn rate -> days of cover, projected stockout
-    date, and a reorder-by date (stockout minus lead time). Most urgent first.
-
-    Row keys: material_id, sku, name, unit, on_hand, allocated, available,
-    on_order, daily_rate, days_cover, stockout_date, lead_time_days,
-    lead_time_estimated (bool), reorder_by_date, safe_storage_days, status
-    ('critical' | 'reorder_now' | 'watch' | 'ok' | 'no_usage').
-
-      critical    - days_cover < lead time: cannot be replenished in time
-      reorder_now - reorder-by date is today or past
-      watch       - reorder-by date within the next 14 days
-      ok          - further out
-      no_usage    - no consumption in the window; nothing to forecast
-    """
+    """Per active material: days of cover, stockout date, and reorder-by date
+    from burn rate. Worst first - see §8.7 for the row shape and status bands."""
     from django.db.models import F, Max
     from .models import Material, Batch, SupplierMaterial, PurchaseOrderDetail
     from .settings_store import get_setting
@@ -832,9 +685,6 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
 # --------------------------------------------------------------------------------
 # Tier 2 - Warehouse capacity runway
 # --------------------------------------------------------------------------------
-# Snapshots utilization_percent per warehouse daily (management command
-# snapshot_utilization), then linear-fits the trend to project when each
-# warehouse crosses 100%.
 
 _CAPACITY_RANK = {"critical": 0, "watch": 1, "ok": 2, "stable": 3, "no_data": 4}
 
@@ -846,11 +696,8 @@ _CAPACITY_HORIZON_DAYS = 3650
 
 
 def used_mt_expr():
-    """
-    ORM expression for a Warehouse's active-stock tonnage: Σ over active batches of
-    quantity × the material's or product's weight_mt_per_unit. Shared by
-    dashboard_view and warehouse_utilization() so the number is defined once.
-    """
+    """ORM expression for a Warehouse's active-stock tonnage (Σ quantity ×
+    unit weight). Shared by dashboard_view and warehouse_utilization()."""
     from django.db.models import Case, When, F, Value, DecimalField
     from django.db.models.functions import Coalesce
 
@@ -867,10 +714,8 @@ def used_mt_expr():
 
 
 def warehouse_utilization():
-    """
-    Current point-in-time utilization per warehouse:
-    ``[{warehouse_id, name, used_mt, capacity_mt, utilization_percent}, ...]``.
-    """
+    """Current point-in-time utilization per warehouse: [{warehouse_id, name,
+    used_mt, capacity_mt, utilization_percent}, ...]."""
     from .models import Warehouse
 
     rows = []
@@ -905,21 +750,8 @@ def _linreg(points):
 
 
 def capacity_forecast():
-    """
-    Per warehouse, fit utilization_percent over its snapshot history and project
-    when it reaches 100%. Most urgent first.
-
-    Row keys: warehouse_id, name, snapshot_count, first_date, latest_date,
-    current_percent, weekly_rate_pp (slope × 7; +ve = filling), days_to_full,
-    projected_full_date, status
-    ('critical' | 'watch' | 'ok' | 'stable' | 'no_data').
-
-      critical  - current >= 95%, or projected full within 14 days
-      watch     - projected full within 60 days
-      ok        - filling, but further out
-      stable    - flat or emptying
-      no_data   - fewer than 3 snapshots
-    """
+    """Per warehouse, projects when it reaches 100% from its snapshot history.
+    Worst first - see §8.8 for the row shape and status bands."""
     from .models import Warehouse, WarehouseUtilizationSnapshot
 
     snaps = {}
@@ -972,4 +804,308 @@ def capacity_forecast():
         -(r["current_percent"] or 0),
         r["name"].lower(),
     ))
+    return rows
+
+
+# --------------------------------------------------------------------------------
+# Phase 4 - Logistics: in-flight shipment risk
+# --------------------------------------------------------------------------------
+# First function to see every direction (Inbound/Outbound/Transfer) - previously
+# Shipment only surfaced indirectly inside sales_order_delivery_risk/supplier_reliability.
+
+_LOGISTICS_RANK = {
+    "discrepant": 0, "overdue": 1, "at_risk": 2, "stalled": 3, "pending": 4, "on_track": 5,
+}
+# Shipment statuses still "in flight" - Completed/Cancelled are terminal and excluded.
+_OPEN_SHIPMENT_STATUSES = (
+    "Draft", "Logistics Review", "Pending Approval", "Preparing",
+    "Dispatched", "Arrived", "Delayed", "Discrepant",
+)
+
+
+def shipment_logistics():
+    """Per in-flight Shipment (any direction), worst first. See §8.10 for the
+    row shape and risk bands."""
+    from .models import Shipment
+    from .settings_store import get_setting
+
+    today = timezone.now().date()
+    at_risk_window = get_setting("logistics_at_risk_window_days")
+    stall_days = get_setting("logistics_stall_days")
+
+    ships = (
+        Shipment.objects.filter(status__in=_OPEN_SHIPMENT_STATUSES)
+        .select_related("purchase_order", "sales_order", "origin_warehouse", "destination_warehouse")
+    )
+
+    rows = []
+    for s in ships:
+        overdue_by_date = (
+            s.status in ("Dispatched", "Arrived")
+            and s.expected_eta_date is not None
+            and s.actual_arrival_date is None
+            and s.expected_eta_date < today
+        )
+        if s.has_discrepancy or s.status == "Discrepant":
+            risk = "discrepant"
+        elif s.status == "Delayed" or overdue_by_date:
+            risk = "overdue"
+        elif (s.status == "Dispatched" and s.expected_eta_date is not None
+              and s.actual_arrival_date is None
+              and 0 <= (s.expected_eta_date - today).days <= at_risk_window):
+            risk = "at_risk"
+        elif (s.status == "Arrived" and s.actual_arrival_date is not None
+              and (today - s.actual_arrival_date).days >= stall_days):
+            risk = "stalled"
+        elif s.status in ("Draft", "Logistics Review", "Pending Approval", "Preparing") and not s.dispatch_date:
+            risk = "pending"
+        else:
+            risk = "on_track"
+
+        rows.append({
+            "shipment_id": s.id,
+            "tracking_number": s.tracking_number,
+            "direction": s.direction,
+            "status": s.status,
+            "is_transfer": s.direction == "Transfer",
+            "so_number": s.sales_order.so_number if s.sales_order_id else None,
+            "po_number": s.purchase_order.po_number if s.purchase_order_id else None,
+            "origin": s.origin_warehouse.name if s.origin_warehouse_id else (s.external_origin or None),
+            "destination": s.destination_warehouse.name if s.destination_warehouse_id else (
+                s.client_address.strip().splitlines()[0] if s.client_address else None
+            ),
+            "dispatch_date": s.dispatch_date,
+            "expected_eta_date": s.expected_eta_date,
+            "actual_arrival_date": s.actual_arrival_date,
+            "has_discrepancy": s.has_discrepancy,
+            "risk": risk,
+        })
+
+    rows.sort(key=lambda r: (
+        _LOGISTICS_RANK[r["risk"]],
+        r["expected_eta_date"] or r["dispatch_date"] or _dt.date.max,
+        r["tracking_number"],
+    ))
+    return rows
+
+
+# --------------------------------------------------------------------------------
+# Phase 4 - Personal checklist: "my open jobs"
+# --------------------------------------------------------------------------------
+# One user's own records, not a company-wide roll-up. Shipment has no creator
+# field, so last_edited_by is used as a labelled proxy (ownership='touched').
+
+_SO_CLOSED_STATUSES = ("Delivered", "Rejected")
+_PO_CLOSED_STATUSES = ("Completed", "Rejected")
+_RUN_CLOSED_STATUSES = ("Completed", "Cancelled")
+_SHIPMENT_CLOSED_STATUSES = ("Completed", "Cancelled")
+
+
+def my_open_jobs(user):
+    """One user's own open/in-process records across every domain, oldest
+    first. See §8.11 for the row shape and how `context` is populated."""
+    from .models import SalesOrder, PurchaseOrder, ProductionRun, StockAudit, Shipment
+
+    today = timezone.now().date()
+
+    def _age(d):
+        return (today - d).days if d else None
+
+    rows = []
+
+    so_risk_by_number = {r["so_number"]: r for r in sales_order_delivery_risk()}
+    for so in (SalesOrder.objects.filter(created_by=user)
+               .exclude(status__in=_SO_CLOSED_STATUSES)):
+        ctx = None
+        risk = so_risk_by_number.get(so.so_number)
+        if risk and risk["risk"] in ("late", "at_risk"):
+            ctx = {"risk": risk["risk"], "days_slack": risk["days_slack"]}
+        rows.append({
+            "kind": "Sales Order", "reference": so.so_number, "url_name": "so_detail",
+            "pk": so.id, "status": so.status, "opened_on": so.order_date,
+            "age_days": _age(so.order_date), "ownership": "created", "context": ctx,
+        })
+
+    supplier_by_name = {r["supplier_name"]: r for r in supplier_reliability()}
+    for po in (PurchaseOrder.objects.filter(created_by=user)
+               .exclude(status__in=_PO_CLOSED_STATUSES).select_related("supplier")):
+        ctx = None
+        supplier_row = supplier_by_name.get(po.supplier.name if po.supplier_id else po.supplier_name)
+        if supplier_row and supplier_row["rating"] in ("poor", "watch"):
+            ctx = {"rating": supplier_row["rating"], "on_time_rate": supplier_row["on_time_rate"]}
+        rows.append({
+            "kind": "Purchase Order", "reference": po.po_number, "url_name": "po_detail",
+            "pk": po.id, "status": po.status, "opened_on": po.order_date,
+            "age_days": _age(po.order_date), "ownership": "created", "context": ctx,
+        })
+
+    for run in (ProductionRun.objects.filter(created_by=user)
+                .exclude(status__in=_RUN_CLOSED_STATUSES)):
+        opened = run.start_time.date() if run.start_time else None
+        rows.append({
+            "kind": "Production Run", "reference": run.run_number,
+            "url_name": "production_run_detail", "pk": run.id, "status": run.status,
+            "opened_on": opened, "age_days": _age(opened), "ownership": "created", "context": None,
+        })
+
+    for audit in (StockAudit.objects.filter(auditor=user, status="Pending")
+                  .select_related("batch")):
+        opened = audit.audit_date.date() if audit.audit_date else None
+        rows.append({
+            # stock_audit is a list page (no per-record detail view), so pk is
+            # None here - the template links to the list, not one record.
+            "kind": "Stock Audit", "reference": f"Batch {audit.batch.batch_number}" if audit.batch_id else f"Audit #{audit.id}",
+            "url_name": "stock_audit", "pk": None, "status": audit.status,
+            "opened_on": opened, "age_days": _age(opened), "ownership": "created", "context": None,
+        })
+
+    for ship in (Shipment.objects.filter(last_edited_by=user)
+                 .exclude(status__in=_SHIPMENT_CLOSED_STATUSES)):
+        opened = ship.dispatch_date
+        rows.append({
+            "kind": "Shipment", "reference": ship.tracking_number, "url_name": "shipment_detail",
+            "pk": ship.id, "status": ship.status, "opened_on": opened,
+            "age_days": _age(opened), "ownership": "touched", "context": None,
+        })
+
+    rows.sort(key=lambda r: (
+        -(r["age_days"] if r["age_days"] is not None else -1),
+        r["kind"], r["reference"],
+    ))
+    return rows
+
+
+# --------------------------------------------------------------------------------
+# Phase 5 - Product sales trend
+# --------------------------------------------------------------------------------
+# Per product, monthly sales volume (and revenue, where pricing is on file) over
+# a trailing window, classified rising/declining/flat - the only genuinely
+# time-series view of Sales, as opposed to sales_order_delivery_risk()'s
+# point-in-time snapshot of currently-open orders.
+
+_PRODUCT_TREND_RANK = {"declining": 0, "rising": 1, "flat": 2, "new": 3, "insufficient_data": 4}
+
+TREND_WINDOW_MONTHS = 6
+# Need sales activity in at least this many months to classify a trend at all.
+_MIN_MONTHS_FOR_TREND = 3
+# +/- this % change (recent months' average vs earlier months') counts as a
+# real trend rather than noise.
+_TREND_SIGNIFICANT_PCT = 15.0
+# SO statuses that never became a real commitment - excluded from the trend.
+_TREND_EXCLUDED_SO_STATUSES = ("Draft", "Rejected")
+
+
+def _trailing_month_keys(end, window_months):
+    """window_months "YYYY-MM" keys ending on end's month, oldest first."""
+    y, m = end.year, end.month
+    keys = []
+    for _ in range(window_months):
+        keys.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    keys.reverse()
+    return keys
+
+
+def product_sales_trend(*, window_months=TREND_WINDOW_MONTHS, end=None):
+    """
+    Per product, monthly quantity_ordered (and revenue, if unit_price is on
+    every line that month) over the trailing window, worst (declining) first.
+
+    Row keys: product_id, sku, name, monthly_qty (list, oldest first),
+    monthly_revenue (list, or None if any month has an unpriced line),
+    total_qty, total_revenue (or None), recent_avg_qty, earlier_avg_qty,
+    pct_change (recent vs earlier average; None if not computable),
+    months_with_sales, status
+    ('declining' | 'rising' | 'flat' | 'new' | 'insufficient_data').
+
+      declining/rising - recent-average vs earlier-average differs by at least
+                          _TREND_SIGNIFICANT_PCT
+      flat              - real history, but change is within that band
+      new               - no sales in the earlier months, some in the recent ones
+      insufficient_data - sales activity in fewer than _MIN_MONTHS_FOR_TREND months
+    """
+    from .models import SalesOrderDetail
+
+    end = end or timezone.now().date()
+    month_keys = _trailing_month_keys(end, window_months)
+    earliest = _dt.date(*(int(p) for p in month_keys[0].split("-")), 1)
+    recent_n = max(1, window_months // 2)
+
+    details = (
+        SalesOrderDetail.objects.filter(sales_order__order_date__gte=earliest)
+        .exclude(sales_order__status__in=_TREND_EXCLUDED_SO_STATUSES)
+        .values_list("product_id", "product__sku", "product__name",
+                     "sales_order__order_date", "quantity_ordered", "unit_price")
+    )
+
+    buckets = {}
+    for product_id, sku, name, order_date, qty, unit_price in details:
+        key = order_date.strftime("%Y-%m")
+        if key not in month_keys:
+            continue
+        b = buckets.setdefault(product_id, {
+            "sku": sku, "name": name,
+            "qty": {k: Decimal("0") for k in month_keys},
+            "rev": {k: Decimal("0") for k in month_keys},
+            "priced": {k: True for k in month_keys},
+        })
+        qty = qty or Decimal("0")
+        b["qty"][key] += qty
+        if unit_price is not None:
+            b["rev"][key] += qty * unit_price
+        else:
+            b["priced"][key] = False
+
+    rows = []
+    for product_id, b in buckets.items():
+        monthly_qty = [float(b["qty"][k]) for k in month_keys]
+        has_full_pricing = all(b["priced"][k] for k in month_keys if b["qty"][k] > 0)
+        monthly_revenue = [float(b["rev"][k]) for k in month_keys] if has_full_pricing else None
+
+        months_with_sales = sum(1 for v in monthly_qty if v > 0)
+        recent = monthly_qty[-recent_n:]
+        earlier = monthly_qty[:-recent_n]
+        recent_avg = sum(recent) / len(recent) if recent else 0.0
+        earlier_avg = sum(earlier) / len(earlier) if earlier else 0.0
+
+        if months_with_sales < _MIN_MONTHS_FOR_TREND:
+            status, pct_change = "insufficient_data", None
+        elif earlier_avg == 0:
+            status, pct_change = ("new", None) if recent_avg > 0 else ("insufficient_data", None)
+        else:
+            pct_change = (recent_avg - earlier_avg) / earlier_avg * 100.0
+            if pct_change >= _TREND_SIGNIFICANT_PCT:
+                status = "rising"
+            elif pct_change <= -_TREND_SIGNIFICANT_PCT:
+                status = "declining"
+            else:
+                status = "flat"
+
+        rows.append({
+            "product_id": product_id,
+            "sku": b["sku"],
+            "name": b["name"],
+            "monthly_qty": [round(v, 2) for v in monthly_qty],
+            "monthly_revenue": [round(v, 2) for v in monthly_revenue] if monthly_revenue is not None else None,
+            "total_qty": round(sum(monthly_qty), 2),
+            "total_revenue": round(sum(monthly_revenue), 2) if monthly_revenue is not None else None,
+            "recent_avg_qty": round(recent_avg, 2),
+            "earlier_avg_qty": round(earlier_avg, 2),
+            "pct_change": round(pct_change, 1) if pct_change is not None else None,
+            "months_with_sales": months_with_sales,
+            "status": status,
+        })
+
+    def _sort_key(r):
+        if r["status"] == "declining":
+            magnitude = r["pct_change"]
+        elif r["status"] == "rising":
+            magnitude = -r["pct_change"]
+        else:
+            magnitude = 0.0
+        return (_PRODUCT_TREND_RANK[r["status"]], magnitude, -r["total_qty"], r["name"].lower())
+
+    rows.sort(key=_sort_key)
     return rows

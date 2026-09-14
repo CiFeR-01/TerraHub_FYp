@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Supplier Scorecard - TerraHub{% endblock %}
+{% block title %}Supplier Performance - TerraHub{% endblock %}
 
 {% block content %}
 <header class="dashboard-header-row animate-fade-in-up">
@@ -10,10 +10,10 @@
             <span class="separator">/</span>
             <a href="{% url 'supplier_list' %}">Suppliers</a>
             <span class="separator">/</span>
-            <span class="current-page">Supplier Scorecard</span>
+            <span class="current-page">Supplier Performance</span>
         </nav>
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
-            Supplier Scorecard
+            Supplier Performance
         </h1>
         <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.35rem; max-width: 60ch;">
             On-time delivery and order fill performance, rolled up from purchase orders and
@@ -22,6 +22,7 @@
     </div>
 </header>
 
+{% include "analytics/partials/_analytics_tabs.html" %}
 
 <div class="animate-fade-in-up" style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center; margin-bottom:1.25rem;">
     <span style="font-size:0.8rem; color:var(--text-muted); margin-right:0.25rem;">Ordered within:</span>

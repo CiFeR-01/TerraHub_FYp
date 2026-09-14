@@ -53,12 +53,49 @@ NAV_ICONS = {
         '<rect x="3" y="11" width="18" height="11" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/>'
         '<path d="M7 11V7a5 5 0 0 1 10 0v4" fill="none" stroke="currentColor" stroke-width="2"/>'
     ),
-    'insights': mark_safe(
+    'analytics': mark_safe(
         '<path d="M3 3v18h18" fill="none" stroke="currentColor" stroke-width="2"/>'
         '<path d="M7 14l3-4 3 3 5-7" fill="none" stroke="currentColor" stroke-width="2" '
         'stroke-linecap="round" stroke-linejoin="round"/>'
     ),
 }
+
+
+def _perm_ok(user, perm):
+    """perm may be None (always visible), a permission string, a tuple/list
+    of permission strings (OR semantics), or a callable(user) -> bool."""
+    if perm is None:
+        return True
+    if callable(perm):
+        return perm(user)
+    if isinstance(perm, (list, tuple)):
+        return any(user.has_perm(p) for p in perm)
+    return user.has_perm(perm)
+
+
+# Analytics taxonomy: (category label, [(url_name, page label, permission), ...]).
+# Single source of truth for both the sidebar (one collapsed link per
+# category, landing on the first report the user can see) and the tab strip
+# each analytics page renders for its sibling reports in the same category
+# (see core/views_analytics.py's `_analytics_tabs`).
+ANALYTICS_CATEGORIES = [
+    ('Inventory', [
+        ('forecast', 'Stockout & Reorder', 'core.view_material'),
+        ('capacity_forecast', 'Inventory Capacity', 'core.view_warehouse'),
+    ]),
+    ('Supply Chain', [
+        ('supplier_scorecard', 'Supplier Performance', 'core.view_supplier'),
+        ('so_delivery_risk', 'Delivery Performance', 'core.view_shipment'),
+        ('shipment_logistics', 'Logistics Performance', 'core.view_shipment'),
+    ]),
+    ('Demand', [
+        ('product_sales_trend', 'Demand & Sales Trends', 'core.view_product'),
+    ]),
+    ('Operations', [
+        ('production_yield', 'Yield Performance', ('core.view_productrecipe', 'core.add_batch')),
+        ('audit_accuracy', 'Inventory Audit Accuracy', ('core.view_stockaudit', 'core.add_stockaudit')),
+    ]),
+]
 
 
 def _has_any_role(user, *role_names):
@@ -84,7 +121,10 @@ def sidebar_nav(request):
 
     # Overview
     overview_items = [{'label': 'Dashboard & Analytics', 'url_name': 'dashboard'}]
-    overview_items.append({'label': 'Digital Assistant (AI)', 'url_name': 'ops_briefing', 'css_class': 'ai-link'})
+    overview_items.append({
+        'label': 'AI Copilot', 'url_name': 'ops_briefing',
+        'alias_url_names': ['category_briefing'], 'css_class': 'ai-link',
+    })
     if _has_any_role(user, 'Admin', 'Manager'):
         overview_items.append({
             'label': 'Action Center',
@@ -93,27 +133,29 @@ def sidebar_nav(request):
         })
     groups.append({'id': 'overview', 'label': 'Overview', 'icon': NAV_ICONS['overview'], 'items': overview_items})
 
-    # Insights - the single home for the analytics & forecasting views. Each
-    # domain page (Suppliers, Sales Orders, Stock Tally, Manufacture, Materials
-    # Hub) links into its analytic via _insight_link.html, but the sidebar
-    # highlight and canonical location is here.
-    # The Tier 3 AI Ops Briefing that narrates these signals lives on the
-    # "Digital Assistant (AI)" link in Overview (Phase 3), not in this section.
-    insights_items = []
-    if user.has_perm('core.view_material'):
-        insights_items.append({'label': 'Stockout Forecast', 'url_name': 'forecast'})
-    if user.has_perm('core.view_warehouse'):
-        insights_items.append({'label': 'Capacity Runway', 'url_name': 'capacity_forecast'})
-    if user.has_perm('core.view_supplier'):
-        insights_items.append({'label': 'Supplier Scorecard', 'url_name': 'supplier_scorecard'})
-    if user.has_perm('core.view_shipment'):
-        insights_items.append({'label': 'Delivery Risk', 'url_name': 'so_delivery_risk'})
-    if user.has_perm('core.view_productrecipe') or user.has_perm('core.add_batch'):
-        insights_items.append({'label': 'Yield Variance', 'url_name': 'production_yield'})
-    if user.has_perm('core.view_stockaudit') or user.has_perm('core.add_stockaudit'):
-        insights_items.append({'label': 'Audit Accuracy', 'url_name': 'audit_accuracy'})
-    if insights_items:
-        groups.append({'id': 'insights', 'label': 'Insights', 'icon': NAV_ICONS['insights'], 'items': insights_items})
+    # Analytics - the single home for the analytics & forecasting views, one
+    # collapsed link per domain category (Inventory, Supply Chain, Demand,
+    # Operations). Each link lands on the first report in its category the
+    # user can see; the sibling reports in that category are reachable as
+    # tabs on the page itself (see core/views_analytics.py's
+    # `_analytics_tabs`), not as separate sidebar entries. Each domain page
+    # (Suppliers, Sales Orders, Stock Tally, Manufacture, Materials Hub,
+    # Products, Warehouses, Shipments) also links into its analytic via
+    # _insight_link.html.
+    # The Tier 3 AI Copilot (category briefings + the personal checklist that
+    # narrate these signals) lives on the "AI Copilot" link in Overview
+    # (Phase 3/4), not in this section.
+    analytics_items = []
+    for category_label, item_specs in ANALYTICS_CATEGORIES:
+        visible = [url_name for url_name, label, perm in item_specs if _perm_ok(user, perm)]
+        if visible:
+            analytics_items.append({
+                'label': category_label,
+                'url_name': visible[0],
+                'alias_url_names': visible[1:],
+            })
+    if analytics_items:
+        groups.append({'id': 'analytics', 'label': 'Analytics', 'icon': NAV_ICONS['analytics'], 'items': analytics_items})
 
     # Inventory & Facilities
     inventory_items = []
