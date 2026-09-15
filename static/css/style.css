@@ -1684,6 +1684,63 @@ button.nav-btn:focus-visible {
     border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
+/* Compact coverage bars (e.g. "Projected Stock Coverage") */
+.coverage-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.coverage-row-label {
+    width: 90px;
+    flex-shrink: 0;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.coverage-track {
+    position: relative;
+    flex: 1;
+    height: 10px;
+    background: #f1f5f9;
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.coverage-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    border-radius: 999px;
+}
+
+.coverage-fill.rose { background: #ef4444; }
+.coverage-fill.amber { background: #f59e0b; }
+.coverage-fill.emerald { background: #10b981; }
+.coverage-fill.slate { background: #94a3b8; }
+
+.coverage-threshold-tick {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    width: 0;
+    border-left: 2px dashed #475569;
+}
+
+.coverage-row-value {
+    width: 36px;
+    flex-shrink: 0;
+    text-align: right;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--text-muted);
+}
+
 /* Progress bar system */
 .micro-progress-container {
     width: 100%;

@@ -176,12 +176,8 @@ class ProductionRun(models.Model):
         return f"Run {self.run_number} - {self.target_product.sku}"
 
 class ProductionRunYieldLog(models.Model):
-    """
-    One dated finished-goods yield entry against a run — production can span several
-    sessions (a day, pause, resume a week later), so this is a running record of how
-    much was actually made and when, instead of a single number typed in once at the
-    very end.
-    """
+    """One dated finished-goods yield entry against a run - a running record
+    for production that spans several sessions, not one number at the end."""
     production_run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, related_name='yield_logs')
     quantity = models.DecimalField(max_digits=12, decimal_places=2)
     log_date = models.DateField()
@@ -238,6 +234,17 @@ class Batch(models.Model):
     warehouse = models.ForeignKey('Warehouse', on_delete=models.PROTECT, null=True, blank=True, related_name='batches', help_text='Facility')
     location = models.CharField(max_length=255, null=True, blank=True, help_text='Zone/Aisle (Free Text)')
     allocated_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    rental_rate_per_mt = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Rate charged for this batch's rent (RM/MT/day), locked in at receipt "
+                   "(warehouse's rate at the time, or the PO line's negotiated override). "
+                   "Immune to later changes to Warehouse.rental_cost_per_mt."
+    )
+    closed_date = models.DateField(
+        null=True, blank=True,
+        help_text="Date this batch stopped costing rent - fully consumed to zero, or "
+                   "spoiled/disposed. Null while the batch is still open (Active/Quarantined)."
+    )
 
     @property
     def available_quantity(self):
@@ -256,6 +263,14 @@ class Batch(models.Model):
             return self.quantity * self.material.weight_mt_per_unit
         if self.product:
             return self.quantity * self.product.weight_mt_per_unit
+        return 0
+
+    @property
+    def available_weight_mt(self):
+        if self.material:
+            return self.available_quantity * self.material.weight_mt_per_unit
+        if self.product:
+            return self.available_quantity * self.product.weight_mt_per_unit
         return 0
 
     def __str__(self):
@@ -277,9 +292,8 @@ class PurchaseOrder(models.Model):
     target_warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
     order_date = models.DateField(auto_now_add=True)
     expected_delivery_date = models.DateField(null=True, blank=True)
-    # Stamped the first time cumulative receipts flip this PO to 'Completed'
-    # (see core/utils.py :: apply_po_material_receipt). Authoritative "arrived"
-    # date for the supplier scorecard, independent of later batch edits.
+    # Authoritative "arrived" date for the supplier scorecard - stamped once by
+    # core/utils.py :: apply_po_material_receipt.
     completed_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Draft')
     
@@ -303,6 +317,12 @@ class PurchaseOrderDetail(models.Model):
     quantity_ordered = models.DecimalField(max_digits=12, decimal_places=2)
     quantity_received = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    negotiated_rental_rate_per_mt = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Custom negotiated rental rate (RM/MT/day) for batches received against "
+                   "this line. Leave blank to use the destination warehouse's standard "
+                   "rate at time of receipt."
+    )
 
     @property
     def quantity_in_transit(self):
@@ -433,12 +453,8 @@ class ShipmentItem(models.Model):
         return f"{self.shipment.tracking_number} - {item_name} (Qty: {self.quantity})"
 
 class ShipmentItemReceipt(models.Model):
-    """
-    One dated receiving event against a ShipmentItem — a single inbound truck can be
-    received across multiple rounds (e.g. partial unload, supplier sends the remainder
-    later). ShipmentItem.received_quantity/date_confirmed stay as a running total kept
-    in sync with these entries, so existing code reading those fields still works.
-    """
+    """One dated receiving event against a ShipmentItem - a truck can be received
+    in multiple rounds. Kept in sync with ShipmentItem.received_quantity."""
     shipment_item = models.ForeignKey(ShipmentItem, on_delete=models.CASCADE, related_name='receipts')
     quantity = models.DecimalField(max_digits=12, decimal_places=2)
     received_date = models.DateField()
@@ -481,11 +497,7 @@ class RegistryLog(models.Model):
     )
     action_type = models.CharField(max_length=50, choices=ACTION_CHOICES)
     item_name = models.CharField(max_length=255)
-    # Structured link to the raw material this movement concerns. item_name stays as
-    # the human-readable label; this FK is the machine-readable key that powers the
-    # consumption-rate / stockout / capacity analytics (see core/analytics.py).
-    # Null for movements that are not material-specific (bulk imports, finished-goods
-    # 'Produced' rows, summary entries).
+    # Machine-readable key behind the analytics engine; null for non-material movements.
     material = models.ForeignKey(
         Material, on_delete=models.SET_NULL, null=True, blank=True, related_name='registry_logs'
     )
@@ -533,14 +545,8 @@ class StockAllocation(models.Model):
 
 
 class SystemSetting(models.Model):
-    """
-    Small key/value store for operational tunables that staff need to change
-    without a code deploy (analytics lead times, thresholds, windows).
-
-    Edit at /admin/core/systemsetting/. Read through
-    core.settings_store.get_setting(key), which knows the registered default and
-    the type to cast to, so callers never touch this model directly.
-    """
+    """Key/value store for operational tunables changed without a deploy.
+    Read via core.settings_store.get_setting(key), never accessed directly."""
     TYPE_CHOICES = (
         ('int', 'Integer'),
         ('float', 'Float'),
@@ -562,12 +568,8 @@ class SystemSetting(models.Model):
 
 
 class WarehouseUtilizationSnapshot(models.Model):
-    """
-    One row per warehouse per day, written by `manage.py snapshot_utilization`.
-    Point-in-time utilization was computed on the fly in dashboard_view and
-    discarded; recording it daily lets analytics.capacity_forecast() trend it and
-    project when each warehouse crosses 100%.
-    """
+    """One row per warehouse per day, written by `manage.py snapshot_utilization`,
+    so analytics.capacity_forecast() has a trend to fit."""
     warehouse = models.ForeignKey(
         Warehouse, on_delete=models.CASCADE, related_name='utilization_snapshots'
     )
@@ -585,16 +587,8 @@ class WarehouseUtilizationSnapshot(models.Model):
 
 
 class OpsBriefing(models.Model):
-    """
-    A stored run of the Tier 3 "AI Ops Briefing" (see core/briefing.py).
-
-    `generate_ops_briefing` collects the Tier 1/2 analytics signals into
-    `signals_json`, sends them to Claude with a constrained prompt, and saves the
-    plain-English result here. `ops_briefing_view` renders the latest `ok` row -
-    it is the target of the "Digital Assistant (AI)" sidebar link. Nothing here
-    is computed on the fly; a claim in `body_text` traces back to `signals_json`
-    and to the analytics page it came from.
-    """
+    """A stored run of the Tier 3 "AI Copilot" (core/briefing.py) - a company-wide
+    category briefing or one person's checklist. See SYSTEM_DOCUMENTATION.md §8.9-§8.11."""
     PERIOD_CHOICES = (('daily', 'Daily'), ('weekly', 'Weekly'))
     STATUS_CHOICES = (
         ('ok', 'Generated'),
@@ -602,7 +596,19 @@ class OpsBriefing(models.Model):
         ('skipped', 'Skipped (disabled)'),
         ('error', 'Failed'),
     )
+    # 'legacy' = rows from before this field existed; invisible to every page.
+    CATEGORY_CHOICES = (
+        ('legacy', 'Legacy (pre-category)'),
+        ('materials', 'Materials'),
+        ('products', 'Products'),
+        ('sales', 'Sales'),
+        ('purchase', 'Purchase'),
+        ('logistics', 'Logistics'),
+        ('warehouse', 'Warehouse'),
+        ('my_checklist', 'My Checklist'),
+    )
     generated_at = models.DateTimeField(auto_now_add=True)
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, db_index=True)
     period = models.CharField(max_length=10, choices=PERIOD_CHOICES, default='daily')
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='ok')
     headline = models.CharField(max_length=255, blank=True)
@@ -615,12 +621,17 @@ class OpsBriefing(models.Model):
     error_detail = models.CharField(max_length=500, blank=True)
     generated_by = models.ForeignKey(
         CustomUser, on_delete=models.SET_NULL, null=True, blank=True,
-        help_text="The user who triggered a manual run; null for the scheduled job.",
+        help_text="Who triggered a manual run (always set for 'my_checklist' - "
+                  "it is who the checklist is for); null for a scheduled category run.",
     )
 
     class Meta:
         ordering = ['-generated_at']
+        indexes = [
+            models.Index(fields=['category', '-generated_at']),
+            models.Index(fields=['category', 'generated_by', '-generated_at']),
+        ]
 
     def __str__(self):
-        return f"OpsBriefing #{self.pk} ({self.period}, {self.status}) @ {self.generated_at:%Y-%m-%d %H:%M}"
+        return f"OpsBriefing #{self.pk} ({self.category}/{self.period}, {self.status}) @ {self.generated_at:%Y-%m-%d %H:%M}"
 

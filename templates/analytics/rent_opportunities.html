@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block title %}Rent Reduction - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <a href="{% url 'warehouse_list' %}">Facility Management</a>
+            <span class="separator">/</span>
+            <span class="current-page">Rent Reduction</span>
+        </nav>
+        <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
+            Rent Reduction Opportunities
+        </h1>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:66ch;">
+            Batches sitting in Critical/Watch warehouses that could move to spare Internal
+            capacity, worst rent-burn first.
+        </p>
+    </div>
+</header>
+
+{% include "analytics/partials/_analytics_tabs.html" %}
+
+<div class="animate-fade-in-up" style="background:#fef3c7; border:1px solid rgba(180,83,9,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.85rem; color:#854d0e;">
+    <strong>Estimated potential savings only.</strong> Does not account for transfer/freight
+    cost, lead time, or contractual minimum-billing floors. This is a signal for manual
+    review, not an auto-executable transfer order.
+</div>
+
+<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay:0.05s; margin-bottom:1.5rem;">
+    <div class="kpi-item-card">
+        <span class="kpi-label">Warehouses Flagged</span>
+        <div class="kpi-value-row"><span class="kpi-value">{{ summary.opportunity_count }}</span></div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Potential Daily Saving</span>
+        <div class="kpi-value-row"><span class="kpi-value" style="color:#059669;">RM {{ summary.total_potential_daily_saving|floatformat:2 }}</span></div>
+    </div>
+</section>
+
+{% if rows %}
+    {% for o in rows %}
+    <div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.25rem;">
+        <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:0.5rem; margin-bottom:1rem;">
+            <div>
+                <a href="{% url 'warehouse_edit' o.warehouse_id %}" style="font-weight:700; font-size:1.05rem; color:var(--primary); text-decoration:none;">{{ o.name }}</a>
+                {% if o.status == 'critical' %}
+                <span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">Critical</span>
+                {% else %}
+                <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">Watch</span>
+                {% endif %}
+            </div>
+            <div style="font-weight:700; color:#059669;">Up to RM {{ o.total_daily_saving|floatformat:2 }}/day if relocated</div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="modern-table" style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">
+                        <th style="padding:0.5rem 0.75rem;">Batch</th>
+                        <th style="padding:0.5rem 0.75rem;">Item</th>
+                        <th style="padding:0.5rem 0.75rem; text-align:right;">MT</th>
+                        <th style="padding:0.5rem 0.75rem; text-align:right;">Rate / MT</th>
+                        <th style="padding:0.5rem 0.75rem; text-align:right;">Daily Saving</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in o.candidate_batches %}
+                    <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                        <td style="padding:0.55rem 0.75rem; font-family:monospace; font-size:0.8rem;">{{ c.batch_number }}</td>
+                        <td style="padding:0.55rem 0.75rem;">{{ c.item }}</td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right;">{{ c.mt|floatformat:2 }}</td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right;">RM {{ c.rate_per_mt|floatformat:2 }}</td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right; font-weight:600; color:#059669;">RM {{ c.daily_saving|floatformat:2 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div style="margin-top:0.9rem; font-size:0.78rem; color:var(--text-muted);">
+            <strong>Candidate destinations (spare Internal capacity):</strong>
+            {% for d in o.destination_options %}{{ d.name }} ({{ d.spare_mt|floatformat:1 }} MT free){% if not forloop.last %}, {% endif %}{% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+{% else %}
+<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:2.5rem; text-align:center; color:var(--text-muted);">
+    No rent-reduction opportunities right now &mdash; either no warehouse is Critical/Watch,
+    or there's no spare Internal capacity to move stock into.
+</div>
+{% endif %}
+{% endblock %}

@@ -289,7 +289,19 @@
                     <label style="display:block; font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Location (Zone / Aisle)</label>
                     <input type="text" name="location" value="{{ batch.location|default:'' }}" class="form-input" style="width:100%; padding:0.5rem;" placeholder="e.g. Zone A, Aisle 3">
                 </div>
-                
+
+                <div style="margin-bottom: 1rem;">
+                    <label style="display:block; font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Rental Rate Override (RM/MT/day)</label>
+                    <input type="number" step="0.01" name="rental_rate_per_mt" value="{% if batch.rental_rate_per_mt is not None %}{{ batch.rental_rate_per_mt }}{% endif %}" class="form-input" style="width:100%; padding:0.5rem;" placeholder="Blank = track warehouse rate">
+                    <p style="font-size:0.72rem; color:var(--text-muted); margin-top:0.3rem;">
+                        {% if batch.rental_rate_per_mt is not None %}
+                        Locked at RM{{ batch.rental_rate_per_mt }}/MT/day — won't change if the warehouse's rate is edited. Clear this field to go back to tracking the warehouse's rate live.
+                        {% else %}
+                        Currently tracking {{ batch.warehouse.name|default:"its warehouse" }}'s live rate (RM{{ batch.warehouse.rental_cost_per_mt|default:"0.00" }}/MT/day). Enter a value (including 0) to lock this batch to a specific rate instead.
+                        {% endif %}
+                    </p>
+                </div>
+
                 <button type="submit" class="btn" style="width:100%; padding:0.6rem; background:transparent; border:1px solid var(--primary); color:var(--primary); font-weight:600; border-radius:6px;">Update Details</button>
             </form>
         </div>

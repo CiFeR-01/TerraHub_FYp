@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Delivery Risk - TerraHub{% endblock %}
+{% block title %}Delivery Performance - TerraHub{% endblock %}
 
 {% block content %}
 <header class="dashboard-header-row animate-fade-in-up">
@@ -10,16 +10,18 @@
             <span class="separator">/</span>
             <a href="{% url 'so_list' %}">Sales Orders</a>
             <span class="separator">/</span>
-            <span class="current-page">Delivery Risk</span>
+            <span class="current-page">Delivery Performance</span>
         </nav>
         <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
-            Delivery Risk
+            Delivery Performance
         </h1>
         <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:64ch;">
             Every open order's projected arrival against its fulfillment deadline. Most at-risk first.
         </p>
     </div>
 </header>
+
+{% include "analytics/partials/_analytics_tabs.html" %}
 
 <section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay:0.05s; margin-bottom:1.5rem;">
     <div class="kpi-item-card">

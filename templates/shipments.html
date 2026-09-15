@@ -21,6 +21,8 @@
     </div>
 </header>
 
+{% include "partials/_insight_link.html" with link_url='shipment_logistics' link_label='Logistics performance' %}
+
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
