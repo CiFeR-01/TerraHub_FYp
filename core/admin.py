@@ -27,9 +27,7 @@ admin.site.register(Product)
 admin.site.register(ProductRecipe)
 admin.site.register(ProductionRun)
 admin.site.register(ProductionConsumption)
-admin.site.register(Batch)
 admin.site.register(PurchaseOrder)
-admin.site.register(PurchaseOrderDetail)
 admin.site.register(SalesOrder)
 admin.site.register(SalesOrderDetail)
 admin.site.register(Shipment)
@@ -40,6 +38,22 @@ admin.site.register(Notification)
 admin.site.register(Supplier)
 admin.site.register(SupplierMaterial)
 admin.site.register(Client)
+
+
+@admin.register(Batch)
+class BatchAdmin(admin.ModelAdmin):
+    list_display = ('batch_number', 'status', 'material', 'product', 'quantity',
+                     'warehouse', 'rental_rate_per_mt', 'closed_date', 'expiry_date')
+    list_filter = ('status', 'warehouse')
+    search_fields = ('batch_number',)
+
+
+@admin.register(PurchaseOrderDetail)
+class PurchaseOrderDetailAdmin(admin.ModelAdmin):
+    list_display = ('purchase_order', 'material', 'quantity_ordered', 'quantity_received',
+                     'unit_price', 'negotiated_rental_rate_per_mt')
+    list_filter = ('purchase_order__status',)
+    search_fields = ('purchase_order__po_number', 'material__sku')
 
 
 @admin.register(WarehouseUtilizationSnapshot)
@@ -70,11 +84,11 @@ class SystemSettingAdmin(admin.ModelAdmin):
 
 @admin.register(OpsBriefing)
 class OpsBriefingAdmin(admin.ModelAdmin):
-    list_display = ('generated_at', 'period', 'status', 'model_id', 'signal_count',
-                    'input_tokens', 'output_tokens', 'headline')
-    list_filter = ('status', 'period', 'model_id')
+    list_display = ('generated_at', 'category', 'period', 'status', 'model_id',
+                    'signal_count', 'input_tokens', 'output_tokens', 'generated_by', 'headline')
+    list_filter = ('category', 'status', 'period', 'model_id')
     date_hierarchy = 'generated_at'
-    readonly_fields = ('generated_at', 'period', 'status', 'headline', 'body_text',
+    readonly_fields = ('generated_at', 'category', 'period', 'status', 'headline', 'body_text',
                        'signals_json', 'signal_count', 'model_id', 'input_tokens',
                        'output_tokens', 'error_detail', 'generated_by')
 

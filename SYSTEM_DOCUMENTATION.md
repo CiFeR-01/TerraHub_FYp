@@ -109,6 +109,7 @@ D:\TerraHub
 | `/catalog/products/export/` | `export_products_csv` | `export_products_csv` | Export products (CSV) |
 | `/catalog/products/template/` | `export_product_template` | `export_product_template` | Product import template |
 | `/catalog/products/import/` | `import_products` | `import_products` | Bulk import products |
+| `/catalog/products/sales-trend/` | `product_sales_trend` | `views_analytics.product_sales_trend_view` | Monthly sales-volume trend per product — "Analytics → Demand" (see §8.12) |
 | `/catalog/products/<id>/recipe/get/` | `get_product_recipe_api` | `get_product_recipe_api` | Fetch product recipe (JSON) |
 | `/catalog/products/recipe/save/` | `save_product_recipe_api` | `save_product_recipe_api` | Save product recipe (JSON) |
 | `/catalog/materials/` | `material_list` | `material_list_view` | Material catalog |
@@ -138,7 +139,9 @@ D:\TerraHub
 | `/operations/manufacture/yield/` | `production_yield` | `views_analytics.production_yield_view` | Production yield variance — "Yield" tab of the Manufacturing hub (see §8) |
 | `/warehouse/forecast/` | `forecast` | `views_analytics.forecast_view` | Consumption-rate stockout & reorder forecast (see §8) |
 | `/warehouse/capacity/` | `capacity_forecast` | `views_analytics.capacity_forecast_view` | Warehouse capacity runway — daily-snapshot trend (see §8) |
-| `/assistant/briefing/` | `ops_briefing` | `views_analytics.ops_briefing_view` | AI Ops Briefing — Claude narration of the Tier 1/2 signals; *Overview → Digital Assistant (AI)* (see §8.9) |
+| `/assistant/briefing/` | `ops_briefing` | `views_analytics.ops_briefing_view` | My Open Jobs — the personal checklist; *Overview → AI Copilot* (see §8.11) |
+| `/assistant/briefing/<category>/` | `category_briefing` | `views_analytics.category_briefing_view` | One of the six domain briefings (materials/products/sales/purchase/logistics/warehouse) — Claude narration of that category's Tier 1/2 signals (see §8.9) |
+| `/operations/shipments/logistics/` | `shipment_logistics` | `views_analytics.shipment_logistics_view` | In-flight shipment risk roll-up — "Analytics → Supply Chain" (see §8.10) |
 | `/admin/` | — | Django admin | Django admin site |
 
 ---
@@ -160,7 +163,7 @@ Defined in `core/models.py`:
 - **Messaging**: `Notification`
 - **Configuration**: `SystemSetting` (key/value store for admin-editable operational tunables; read via `core/settings_store.py` — see §8)
 - **Analytics snapshots**: `WarehouseUtilizationSnapshot` (one row per warehouse per day, written by `manage.py snapshot_utilization`; see §8)
-- **AI briefings**: `OpsBriefing` (one row per `generate_ops_briefing` run — stored Claude narration of the Tier 1/2 signals plus its input `signals_json` and token counts; see §8.9)
+- **AI Copilot**: `OpsBriefing` (one row per category-briefing run or per-user checklist run — stored Claude output plus its input `signals_json` and token counts, keyed by `category`; see §8.9/§8.11)
 
 ---
 
@@ -241,17 +244,30 @@ Three tiers:
 | :--- | :--- | :--- |
 | **1** | Roll-ups of stored data (ORM aggregation, no new math) | supplier reliability, sales-order delivery risk, audit-accuracy trend, production yield variance |
 | **2** | Statistical forecasting by plain arithmetic (no ML library) | consumption-rate stockout ETA, reorder-by date, warehouse capacity runway |
-| **3** | LLM reasoning over the Tier 1/2 signals | daily "AI Ops Briefing" in plain English |
+| **3** | LLM reasoning over the Tier 1/2 signals, organised by domain | six category briefings + a personal "My Open Jobs" checklist — the **AI Copilot** |
 
-**Navigation.** The six Tier 1/2 views live in the **Insights** sidebar section
-(second, after Overview): Stockout Forecast, Capacity Runway, Supplier Scorecard,
-Delivery Risk, Yield Variance, Audit Accuracy. Each domain page — Suppliers,
-Sales Orders, Stock Tally, Manufacture, Materials Hub — links into its analytic
-via a single header call-out (`templates/partials/_insight_link.html`); the
-analytics pages themselves are standalone (breadcrumb
-`Dashboard / <Parent> / <Analytic>`, no tab strip). Exactly one sidebar item
-highlights per page. The Tier 3 **AI Ops Briefing** that narrates these signals
-sits on the **Digital Assistant (AI)** link in Overview, not in Insights.
+**Navigation.** The eight Tier 1/2 views live in the **Analytics** sidebar section
+(second, after Overview), collapsed to one sidebar link per domain category —
+Inventory, Supply Chain, Demand, Operations (`core/context_processors.py`'s
+`ANALYTICS_CATEGORIES`) — each landing on the first report in that category the
+user can see. The category's other reports (Inventory: Stockout & Reorder +
+Inventory Capacity; Supply Chain: Supplier/Delivery/Logistics Performance;
+Demand: Demand & Sales Trends alone; Operations: Yield Performance + Inventory
+Audit Accuracy) are reached as a pill tab strip on the page itself
+(`templates/analytics/partials/_analytics_tabs.html`, computed per-request by
+`views_analytics._analytics_tabs`), not as separate sidebar entries — the strip
+only renders when a category has more than one report the user can see. Every
+domain hub page — Suppliers, Sales Orders, Stock Tally, Manufacture, Materials
+Hub, Products Catalog, Facility Management, Logistics Tracker — also links into
+its analytic via a single header call-out
+(`templates/partials/_insight_link.html`). The sidebar highlights the category
+link for every report inside it (via `alias_url_names`). The Tier 3
+**AI Copilot** — six domain-scoped briefings (Materials, Products, Sales,
+Purchase, Logistics, Warehouse) plus the personal "My Open Jobs" checklist that
+narrate these signals — sits on the **AI Copilot** link in Overview, not in
+Analytics; the six briefings share one page with the same tab-strip pattern
+(`/assistant/briefing/<category>/`), and the checklist is `/assistant/briefing/`
+itself.
 
 ### 8.1. The RegistryLog material spine  *(Phase 0 — implemented)*
 
@@ -299,7 +315,7 @@ current flat degradation threshold in `dashboard_view`
 ### 8.3. Supplier reliability scorecard  *(Phase 1 — implemented)*
 
 `supplier_reliability(since=None, until=None)` → `views_analytics.supplier_scorecard_view`
-→ `/catalog/suppliers/scorecard/` (nav: *Insights → Supplier Scorecard*; Suppliers links to it via a header call-out).
+→ `/catalog/suppliers/scorecard/` (nav: *Analytics → Supply Chain*, tab: Supplier Performance; Suppliers links to it via a header call-out).
 
 Considers POs in status `Pending` / `Partially Received` / `Completed`, optionally
 bounded by `order_date`. Grouped by the `supplier` FK, with free-text
@@ -340,7 +356,7 @@ migration seeds one row per registry entry so they are all editable from day one
 ### 8.4. Sales-order delivery risk  *(Phase 1 — implemented)*
 
 `sales_order_delivery_risk()` → `views_analytics.sales_order_delivery_risk_view`
-→ `/operations/sales-orders/risk/` (nav: *Insights → Delivery Risk*; Sales Orders links to it via a header call-out).
+→ `/operations/sales-orders/risk/` (nav: *Analytics → Supply Chain*, tab: Delivery Performance; Sales Orders links to it via a header call-out).
 
 ```
 arrival(so)   = max outbound Shipment.actual_arrival_date          -> is_actual
@@ -365,7 +381,7 @@ Ship / Partially Shipped / Shipped. Sorted `(risk rank, days_slack, so_number)`.
 ### 8.5. Stock-audit accuracy  *(Phase 1 — implemented)*
 
 `audit_accuracy(since=None)` → `views_analytics.audit_accuracy_view` →
-`/warehouse/stock-audit/accuracy/` (nav: *Insights → Audit Accuracy*; Stock Tally links to it via a header call-out).
+`/warehouse/stock-audit/accuracy/` (nav: *Analytics → Operations*, tab: Inventory Audit Accuracy; Stock Tally links to it via a header call-out).
 
 `variance = actual_quantity − expected_quantity` per `StockAudit`. Rolled up
 `by_warehouse` and `by_item` (`accuracy_rate` = zero-variance share, `shrinkage` =
@@ -376,7 +392,7 @@ Ship / Partially Shipped / Shipped. Sorted `(risk rank, days_slack, so_number)`.
 ### 8.6. Production yield variance  *(Phase 1 — implemented)*
 
 `production_yield_variance()` → `views_analytics.production_yield_view` →
-`/operations/manufacture/yield/` (nav: *Insights → Yield Variance*; Manufacture links to it via a header call-out).
+`/operations/manufacture/yield/` (nav: *Analytics → Operations*, tab: Yield Performance; Manufacture links to it via a header call-out).
 
 For `status='Completed'` runs with an `actual_yield`, grouped `by_product` and
 `by_supervisor`:
@@ -394,7 +410,7 @@ Sorted `(rating rank, yield_variance_pct, -material_overuse_pct, name)`.
 ### 8.7. Stockout & reorder forecast  *(Phase 2a — implemented)*
 
 `stockout_forecast(window_days=30)` → `views_analytics.forecast_view` →
-`/warehouse/forecast/` (nav: *Insights → Stockout Forecast*; Materials Hub links to it via a header call-out).
+`/warehouse/forecast/` (nav: *Analytics → Inventory*, tab: Stockout & Reorder; Materials Hub links to it via a header call-out).
 
 ```
 burn/day    = Σ Consumed_For_Manufacturing qty over window / window_days   (consumption_rates())
@@ -420,7 +436,7 @@ materials.
 ### 8.8. Capacity runway  *(Phase 2b — implemented)*
 
 `capacity_forecast()` → `views_analytics.capacity_forecast_view` →
-`/warehouse/capacity/` (nav: *Insights → Capacity Runway*; Facility Management
+`/warehouse/capacity/` (nav: *Analytics → Inventory*, tab: Inventory Capacity; Facility Management
 links to it via a header call-out).
 
 `manage.py snapshot_utilization` writes one `WarehouseUtilizationSnapshot` per
@@ -428,6 +444,20 @@ warehouse per day (idempotent on `(warehouse, snapshot_date)`), using the same
 active-stock-tonnage expression as `dashboard_view` (`analytics.used_mt_expr()`).
 **This command has no scheduler wired — run it daily** via Heroku Scheduler, cron,
 or a scheduled GitHub Action.
+
+`capacity_mt`/`utilization_percent` are frozen at snapshot time, not recomputed
+live — editing a warehouse's `total_capacity_mt` will not change past snapshot
+rows or the "current" percentage shown on the Capacity Runway page until the
+next snapshot runs. Run the command by hand after a capacity edit if you need
+the page to reflect it immediately.
+
+**On Railway**: add a second service in the same project pointing at this repo,
+override its start command (Settings → Deploy → Custom Start Command) to
+`python manage.py snapshot_utilization`, copy over the same environment
+variables as the web service (or use Railway's project-level Shared Variables),
+and set a Cron Schedule on that service (e.g. `0 0 * * *`). Railway cron runs
+in UTC. The job spins the container up, runs the one command, and exits — no
+persistent process needed.
 
 ```
 slope, _  = least-squares fit of utilization_percent over the snapshot dates
@@ -444,48 +474,187 @@ status = no_data   if < 3 snapshots
 Sorted `(status rank, days_to_full, -current, name)`. The UI shows a "collecting
 data" banner until a warehouse has 7 snapshots.
 
-### 8.9. AI Ops Briefing  *(Phase 3 — implemented)*
+### 8.9. AI Copilot — category briefings  *(Phase 3 — implemented; split into categories in Phase 4)*
 
-`core/briefing.py` → `generate_ops_briefing` command / `ops_briefing_view` →
-`/assistant/briefing/` (nav: *Overview → Digital Assistant (AI)* — the formerly
-inert link is now wired here).
+`core/briefing.py` → `generate_ops_briefing` command / `category_briefing_view` →
+`/assistant/briefing/<category>/` for `category` in `materials`, `products`,
+`sales`, `purchase`, `logistics`, `warehouse` (nav: *Overview → AI Copilot*,
+tab strip across the top of the page). Phase 3 shipped one company-wide
+briefing mixing all six domains; Phase 4 split it so each domain reads on its
+own, and added the previously-missing Logistics signal (§8.10).
 
-Two steps, **one stateless LLM call**, no agent loop and no tools:
+Two steps per category, **one stateless LLM call**, no agent loop and no tools:
 
-1. **`collect_signals(window_days=180)`** calls the six §8.3–§8.8 functions and
-   keeps only the rows worth a manager's attention —
-   `stockout_forecast` rows `critical|reorder_now|watch`, `capacity_forecast`
-   rows `critical|watch`, `supplier_reliability` rows `poor|watch`,
-   `sales_order_delivery_risk` rows `late|at_risk`, `audit_accuracy` warehouses
-   with chronic shrinkage or accuracy < 0.8 (+ worst items), and
-   `production_yield_variance` products `poor|watch`. Each section is capped at
-   12 rows and reduced to the few fields the narration needs (name + figures,
-   dates as ISO strings). The result is one JSON-serialisable dict with a
-   `signal_count`.
+1. **`collect_signals(category, window_days=180)`** looks up
+   `CATEGORY_SIGNAL_BUILDERS[category]` and calls only that category's
+   functions, keeping the rows worth a manager's attention:
+   materials → `stockout_forecast` (`critical|reorder_now|watch`); products →
+   `production_yield_variance` (`poor|watch`); sales →
+   `sales_order_delivery_risk` (`late|at_risk`); purchase →
+   `supplier_reliability` (`poor|watch`); logistics → `shipment_logistics`
+   (`discrepant|overdue|at_risk|stalled`); warehouse → `capacity_forecast`
+   (`critical|watch`) **and** `audit_accuracy` (chronic shrinkage or accuracy
+   < 0.8, + worst items). Each section is capped at 12 rows and reduced to the
+   few fields the narration needs (name + figures, dates as ISO strings). The
+   result is one JSON-serialisable dict with a `signal_count`.
 
-2. **`generate_briefing(period, user)`** renders that dict as text and makes a
-   single `anthropic` `client.messages.create()` call with `BRIEFING_SYSTEM_PROMPT`
-   ("use ONLY the figures in the payload; never invent a number/name/date").
-   The model gets **no database access and no tools** — only the pre-computed
-   dict — so it can narrate the numbers but cannot fabricate them. The reply
-   (headline + 3–6 bullet lines + optional `Watch:` line) is stored verbatim.
+2. **`generate_briefing(category, period, user)`** renders that dict as text
+   and makes a single `anthropic` `client.messages.create()` call with a
+   category-specific system prompt (`_system_prompt(category)`, built from
+   `_BRIEFING_PROMPT_TEMPLATE` + `CATEGORY_INTROS[category]`) — same discipline
+   as before: "use ONLY the figures in the payload; never invent a
+   number/name/date". The model gets **no database access and no tools** —
+   only the pre-computed dict for its one category — so it can narrate the
+   numbers but cannot fabricate them. The reply (headline + 3–6 bullet lines +
+   optional `Watch:` line) is stored verbatim.
 
-**`OpsBriefing`** row per run: `period`, `status`
-(`ok|empty|skipped|error`), `headline`, `body_text`, `signals_json`,
-`signal_count`, `model_id`, `input_tokens`/`output_tokens` (cost trace),
-`error_detail`, `generated_by` (null for the scheduled job). The view renders the
-latest `ok` row; a newer failed run shows a "last good briefing" notice.
+**Outlook (estimate) — the one deliberate exception.** For Materials and
+Warehouse, the payload also carries real history, not just a current-state
+number: `burn_trend_weekly` (six weekly average burn figures from
+`analytics.daily_consumption()`, via `_weekly_burn_trend()`) and
+`utilization_trend` (the last 8 `WarehouseUtilizationSnapshot` points). Only
+when a trend field is present may the model append one final section,
+`Outlook (estimate):` — 1–3 hedged lines ("likely", "could", "may"), each
+naming what it's based on, never a new invented number or date. This is the
+only place in the whole briefing system where the model is allowed to say
+something not already a fact in the payload, and the prompt, the parsing
+(`_parse_briefing_body` → `(points, watch, outlook)`), and the template all
+keep it visibly separate (a dashed purple box, "estimate, not a fact"). No
+trend field exists yet for Sales/Purchase/Products/Logistics, so the same
+prompt naturally omits Outlook there — adding it to another category is
+purely a matter of computing and attaching that category's own trend field;
+no prompt or template change is needed.
+
+**`OpsBriefing`** row per run: `category` (see §8.11 for `my_checklist`),
+`period`, `status` (`ok|empty|skipped|error`), `headline`, `body_text`,
+`signals_json`, `signal_count`, `model_id`, `input_tokens`/`output_tokens`
+(cost trace), `error_detail`, `generated_by` (null for the scheduled job).
+Each category page renders the latest `ok` row for its own `category`; a newer
+failed run shows a "last good briefing" notice. Pre-Phase-4 rows carry
+`category='legacy'` and are invisible to every page.
 
 Config in `settings_store.REGISTRY` (editable at `/system/settings/`):
-`ops_briefing_enabled` (bool; off → `skipped` run, no API call) and
-`ops_briefing_model` (default `claude-opus-5`; `claude-sonnet-5` /
-`claude-haiku-4-5` are cheaper for this job). The API key is the
-**`ANTHROPIC_API_KEY` environment variable** — a secret, deliberately not a
+`ops_briefing_enabled` (bool; off → `skipped` run, no API call, shared by every
+category and the checklist) and `ops_briefing_model` (default `claude-opus-5`;
+`claude-sonnet-5`/`claude-haiku-4-5` are cheaper for this job). The API key is
+the **`ANTHROPIC_API_KEY` environment variable** — a secret, deliberately not a
 `SystemSetting`.
 
-`generate_briefing()` never raises for a config/API/network problem — it records
-the failure on the row so the scheduled job stays green. **Like
+`generate_briefing()` never raises for a config/API/network problem — it
+records the failure on the row so the scheduled job stays green. **Like
 `snapshot_utilization`, this command has no scheduler wired** — run it daily
-(`python manage.py generate_ops_briefing`, or `--period weekly`) via Heroku
-Scheduler, cron, or a scheduled GitHub Action. Admin/Manager can also trigger a
-run from the page. `--dry-run` prints the signal payload without calling the API.
+(`python manage.py generate_ops_briefing --category all`, or `--period weekly`,
+or one category at a time) via Heroku Scheduler, cron, or a scheduled GitHub
+Action (on Railway: a second Cron Schedule service, same pattern as
+`snapshot_utilization` in §8.8 — remember to give it the `ANTHROPIC_API_KEY`
+env var too). Admin/Manager can also trigger a run for one category from its
+page. `--dry-run` prints the signal payload(s) without calling the API.
+
+### 8.10. Shipment logistics  *(Phase 4 — implemented)*
+
+`analytics.shipment_logistics()` → `views_analytics.shipment_logistics_view` →
+`/operations/shipments/logistics/` (nav: *Analytics → Supply Chain*, tab: Logistics
+Performance). Also feeds the Logistics category briefing (§8.9).
+
+Before this, `Shipment` was only read indirectly — the outbound leg inside
+`sales_order_delivery_risk()`, the inbound leg inside `supplier_reliability()`.
+Neither sees a `Transfer` shipment (warehouse-to-warehouse, no SO or PO at
+all). This function looks at every in-flight shipment regardless of direction:
+
+```
+scope = Shipment.status not in (Completed, Cancelled)
+risk = discrepant  if has_discrepancy or status == 'Discrepant'
+       overdue     if status == 'Delayed', or (Dispatched/Arrived and
+                    expected_eta_date already past with no actual_arrival_date)
+       at_risk     if status == 'Dispatched', not arrived, and
+                    expected_eta_date within logistics_at_risk_window_days
+       stalled     if status == 'Arrived' for >= logistics_stall_days without
+                    being marked Completed
+       pending     if pre-dispatch (Draft/Logistics Review/Pending
+                    Approval/Preparing) with no dispatch_date yet
+       on_track    otherwise
+```
+
+Sorted `(risk rank, expected_eta_date or dispatch_date, tracking_number)` —
+worst first. `logistics_at_risk_window_days` (default 3) and
+`logistics_stall_days` (default 5) are `SystemSetting`s, editable at
+`/system/settings/`.
+
+### 8.11. Personal checklist — "My Open Jobs"  *(Phase 4 — implemented)*
+
+`analytics.my_open_jobs(user)` + `core/briefing.py::generate_my_checklist()` →
+`ops_briefing_view` → `/assistant/briefing/` (nav: *Overview → AI Copilot*,
+the checklist tab). This is the target of the formerly inert "Digital
+Assistant (AI)" link, now renamed **AI Copilot**.
+
+Not a company-wide roll-up — one person's own records, still open or in
+process, across every domain:
+
+- `SalesOrder` / `PurchaseOrder` / `ProductionRun` — `created_by=user`, closed
+  statuses excluded (`Delivered`/`Rejected`, `Completed`/`Rejected`,
+  `Completed`/`Cancelled` respectively — each model's real ownership field).
+- `StockAudit` — `auditor=user`, `status='Pending'` (still unresolved).
+- `Shipment` — has **no creator field at all**, so `last_edited_by=user` is
+  used as an honest, clearly-labelled proxy (`ownership='touched'`, rendered
+  "(last touched by you)" rather than implying authorship).
+
+Each row optionally carries a `context` dict — a small, already-computed
+cross-reference into the same Tier 1 functions above (a Sales Order's own
+`sales_order_delivery_risk()` row when it's `late`/`at_risk`; a Purchase
+Order's supplier's own `supplier_reliability()` row when `poor`/`watch`) — so
+the checklist can point out that an open item is *also* flagged elsewhere,
+without computing anything new.
+
+Two layers, matching the "grounded, then narrated" pattern used everywhere
+else in this feature:
+
+1. **The live table** — always rendered straight from `my_open_jobs(user)`,
+   no API dependency, no cost. This is the accountable source of truth.
+2. **`generate_my_checklist(user)`** — one Claude call over that same list
+   (via `_checklist_signals(user)`), with `CHECKLIST_SYSTEM_PROMPT` telling the
+   model it may re-order, group, and suggest a next action per item, using
+   `context` when present, but must refer to every item only by the real
+   identifier already in the payload and must never invent one. Stored as
+   `OpsBriefing(category='my_checklist', generated_by=user)` — always
+   attributed to a specific person, unlike the category rows.
+
+Generation is **on-demand only**, by the person it's for (any authenticated
+user, not just Admin/Manager — it is only ever their own data and their own
+click) — never scheduled, since a per-user daily job would multiply the API
+cost by the number of active users. `generate_ops_briefing` explicitly never
+produces `my_checklist` rows.
+
+### 8.12. Product sales trend  *(Phase 5 — implemented)*
+
+`analytics.product_sales_trend()` → `views_analytics.product_sales_trend_view`
+→ `/catalog/products/sales-trend/` (nav: *Analytics → Demand*; the category's
+only report, so no tab strip).
+Also feeds the Sales category briefing (§8.9) and is the trend field that
+unlocks its Outlook section.
+
+The only genuinely time-series view in Sales — `sales_order_delivery_risk()`
+is a point-in-time snapshot of currently-open orders; this looks at ordered
+quantity across **all** real orders (Draft/Rejected excluded) over a trailing
+6-month window, bucketed by month, split into two halves:
+
+```
+earlier_avg = mean of the first half of the window's monthly quantities
+recent_avg  = mean of the second half
+pct_change  = (recent_avg − earlier_avg) / earlier_avg × 100
+status = insufficient_data  if sales activity in fewer than 3 of the 6 months
+         new                if earlier_avg == 0 and recent_avg > 0
+         declining          if pct_change <= −15%
+         rising             if pct_change >= +15%
+         flat               otherwise
+```
+
+Sorted declining-first (then rising, by largest swing within each group).
+Revenue (`monthly_revenue`/`total_revenue`) is computed alongside quantity but
+only populated for a product when every line in every active month has a
+`unit_price` on file — otherwise it's `None` rather than a silently-wrong
+partial total.
+
+`_product_trend_signals()` in `core/briefing.py` feeds the `declining`/`rising`
+rows (with their full `monthly_qty_trend` series) into the Sales briefing —
+the same real history a manager would want to know is behind the Outlook
+(estimate) section described in §8.9.

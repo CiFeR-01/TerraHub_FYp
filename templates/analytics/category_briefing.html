@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load humanize %}
 
-{% block title %}My Open Jobs - TerraHub{% endblock %}
+{% block title %}{{ category_label }} Briefing - TerraHub{% endblock %}
 
 {% block content %}
 <header class="dashboard-header-row animate-fade-in-up">
@@ -9,15 +9,17 @@
         <nav class="breadcrumb-nav">
             <a href="{% url 'dashboard' %}">Dashboard</a>
             <span class="separator">/</span>
-            <span class="current-page">AI Copilot</span>
+            <a href="{% url 'ops_briefing' %}">AI Copilot</a>
+            <span class="separator">/</span>
+            <span class="current-page">{{ category_label }}</span>
         </nav>
         <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
-            My Open Jobs
+            {{ category_label }} Briefing
         </h1>
         <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:70ch;">
-            What you've created that's still open or in process &mdash; sales orders, purchase
-            orders, production runs, stock audits, and shipments. The list below is always
-            live; Claude can also prioritise and annotate it for you on demand.
+            Claude's read of the {{ category_label|lower }} signals worth attention, from the
+            already-computed figures on the Analytics pages linked below. Every claim traces back
+            to one of them.
         </p>
     </div>
 </header>
@@ -32,69 +34,28 @@
 </div>
 {% endif %}
 
-{% include "analytics/partials/_briefing_tabs.html" with active="checklist" %}
+{% include "analytics/partials/_briefing_tabs.html" with active=category %}
 
 {% if not has_api_key %}
 <div class="animate-fade-in-up" style="background:#fef9c3; border:1px solid rgba(202,138,4,0.25); border-radius:10px; padding:1rem 1.25rem; margin-bottom:1.25rem; font-size:0.86rem; color:#854d0e;">
     <strong>Not configured.</strong> Set the <code>ANTHROPIC_API_KEY</code> environment variable
-    on the server (it is a secret &mdash; not a system setting) to enable Claude's prioritised
-    checklist. The live table below works regardless.
+    on the server (it is a secret &mdash; not a system setting). Until then, briefings cannot be generated.
 </div>
 {% elif not briefing_enabled %}
 <div class="animate-fade-in-up" style="background:#f1f5f9; border:1px solid var(--border-light); border-radius:10px; padding:1rem 1.25rem; margin-bottom:1.25rem; font-size:0.86rem; color:#475569;">
     <strong>Paused.</strong> <code>ops_briefing_enabled</code> is off in
-    <a href="{% url 'system_settings' %}">System Settings</a>, so Claude generation is disabled
-    for everyone (the live table below is unaffected).
+    <a href="{% url 'system_settings' %}">System Settings</a>, so the scheduled job records a
+    &ldquo;skipped&rdquo; run instead of calling the API.
 </div>
 {% endif %}
 
-<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
-    <div class="table-responsive">
-        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
-            <thead>
-                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
-                    <th data-sort="text" style="padding:0.6rem 1rem;">Type</th>
-                    <th data-sort="text" style="padding:0.6rem 1rem;">Reference</th>
-                    <th data-sort="text" style="padding:0.6rem 1rem;">Status</th>
-                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Age</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in live_items %}
-                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
-                    <td style="padding:0.6rem 1rem; color:var(--text-muted);">{{ item.kind }}</td>
-                    <td style="padding:0.6rem 1rem;">
-                        {% if item.pk %}
-                        <a href="{% url item.url_name pk=item.pk %}" style="font-weight:700; color:var(--primary); text-decoration:none;">{{ item.reference }}</a>
-                        {% else %}
-                        <a href="{% url item.url_name %}" style="font-weight:700; color:var(--primary); text-decoration:none;">{{ item.reference }}</a>
-                        {% endif %}
-                        {% if item.ownership == 'touched' %}
-                        <span style="color:var(--text-muted); font-size:0.72rem;"> (last touched by you)</span>
-                        {% endif %}
-                        {% if item.context %}
-                        <div style="color:#b45309; font-size:0.75rem; margin-top:0.15rem;">
-                            {% if item.context.risk %}{{ item.context.risk|title }} &middot; {{ item.context.days_slack }}d slack{% endif %}
-                            {% if item.context.rating %}Supplier {{ item.context.rating }}{% if item.context.on_time_rate is not None %} &middot; {{ item.context.on_time_rate|floatformat:0 }}% on-time{% endif %}{% endif %}
-                        </div>
-                        {% endif %}
-                    </td>
-                    <td style="padding:0.6rem 1rem;">{{ item.status }}</td>
-                    <td style="padding:0.6rem 1rem; text-align:right; color:var(--text-muted);" data-sort-value="{{ item.age_days|default_if_none:'' }}">
-                        {% if item.age_days is not None %}{{ item.age_days }}d{% else %}&mdash;{% endif %}
-                    </td>
-                </tr>
-                {% empty %}
-                <tr>
-                    <td colspan="4" style="padding:2rem 1rem; text-align:center; color:var(--text-muted);">
-                        Nothing open right now &mdash; nice work.
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+{% if stale_attempt %}
+<div class="animate-fade-in-up" style="background:#fee2e2; border:1px solid rgba(185,28,28,0.25); border-radius:10px; padding:0.9rem 1.15rem; margin-bottom:1.25rem; font-size:0.84rem; color:#991b1b;">
+    The most recent run ({{ stale_attempt.generated_at|naturaltime }}) ended
+    <strong>{{ stale_attempt.get_status_display|lower }}</strong>{% if stale_attempt.error_detail %} &mdash; {{ stale_attempt.error_detail }}{% endif %}.
+    The briefing below is the last one that succeeded.
 </div>
+{% endif %}
 
 {% if briefing %}
 <section class="animate-fade-in-up" style="background:#fff; border:1px solid var(--border-light); border-radius:12px; padding:1.75rem; margin-bottom:1.5rem;">
@@ -107,7 +68,8 @@
                 {{ briefing.headline }}
             </h2>
             <p style="color:var(--text-muted); font-size:0.75rem; margin:0.35rem 0 0;">
-                {{ briefing.generated_at|naturaltime }} &middot; {{ briefing.signal_count }} open item{{ briefing.signal_count|pluralize }}
+                {{ briefing.get_period_display }} &middot; {{ briefing.generated_at|naturaltime }}
+                &middot; {{ briefing.signal_count }} signal{{ briefing.signal_count|pluralize }}
             </p>
         </div>
     </div>
@@ -141,41 +103,68 @@
     </div>
     {% endif %}
 
+    {% if signal_sections %}
+    <div style="margin-top:1.4rem; padding-top:1rem; border-top:1px solid var(--border-light);">
+        <p style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin:0 0 0.5rem;">Drawn from</p>
+        <div style="display:flex; flex-wrap:wrap; gap:0.5rem;">
+            {% for s in signal_sections %}
+            <a href="{% url s.url_name %}" style="font-size:0.78rem; font-weight:600; text-decoration:none; padding:0.28rem 0.7rem; border-radius:999px; border:1px solid var(--border-light); color:{% if s.count %}var(--accent,#4f46e5){% else %}var(--text-muted){% endif %};">
+                {{ s.label }} <span style="opacity:0.7;">{{ s.count }}</span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
     <p style="margin:1.2rem 0 0; font-size:0.7rem; color:var(--text-muted);">
         Generated with {{ briefing.model_id|default:model_setting }}{% if briefing.input_tokens %} &middot; {{ briefing.input_tokens }} in / {{ briefing.output_tokens }} out tokens{% endif %}.
-        Claude sees only the table above &mdash; it cannot query the database.
+        The model is given only the numbers above &mdash; it cannot query the database.
     </p>
 </section>
 {% elif last_attempt %}
 <section class="animate-fade-in-up" style="background:#fff; border:1px solid var(--border-light); border-radius:12px; padding:1.75rem; margin-bottom:1.5rem;">
-    <h2 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin:0 0 0.5rem;">No prioritised checklist yet</h2>
+    <h2 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin:0 0 0.5rem;">No briefing yet</h2>
     <p style="color:var(--text-muted); font-size:0.88rem; margin:0;">
-        Your last run ({{ last_attempt.generated_at|naturaltime }}) ended
+        The last run ({{ last_attempt.generated_at|naturaltime }}) ended
         <strong>{{ last_attempt.get_status_display|lower }}</strong>{% if last_attempt.error_detail %} &mdash; {{ last_attempt.error_detail }}{% endif %}.
-        The live table above is unaffected.
+    </p>
+</section>
+{% else %}
+<section class="animate-fade-in-up" style="background:#fff; border:1px solid var(--border-light); border-radius:12px; padding:1.75rem; margin-bottom:1.5rem;">
+    <h2 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin:0 0 0.5rem;">No briefing yet</h2>
+    <p style="color:var(--text-muted); font-size:0.88rem; margin:0;">
+        Run <code>python manage.py generate_ops_briefing --category {{ category }}</code>
+        (schedule it daily, like <code>snapshot_utilization</code>){% if can_generate %}, or use the button below{% endif %}.
     </p>
 </section>
 {% endif %}
 
+{% if can_generate %}
 <form method="post" class="animate-fade-in-up" style="margin-bottom:1.5rem; display:flex; align-items:center; gap:0.75rem;">
     {% csrf_token %}
+    <select name="period" style="padding:0.45rem 0.7rem; border:1px solid var(--border-light); border-radius:8px; font-size:0.85rem; background:#fff;">
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+    </select>
     <button type="submit" {% if not has_api_key %}disabled{% endif %}
         style="padding:0.5rem 1.1rem; border:none; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; color:#fff; background:var(--accent,#4f46e5); {% if not has_api_key %}opacity:0.5; cursor:not-allowed;{% endif %}">
-        Generate my checklist
+        Generate now
     </button>
-
+    <span style="font-size:0.76rem; color:var(--text-muted);">One Claude call &mdash; a few cents.</span>
 </form>
+{% endif %}
 
 {% if recent %}
 <div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.25rem;">
-    <p style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin:0 0 0.75rem;">Your recent runs</p>
+    <p style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin:0 0 0.75rem;">Recent runs</p>
     <div class="table-responsive">
         <table class="modern-table" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.78rem; color:var(--text-muted);">
                     <th style="padding:0.5rem 0.75rem;">When</th>
+                    <th style="padding:0.5rem 0.75rem;">Period</th>
                     <th style="padding:0.5rem 0.75rem;">Status</th>
-                    <th style="padding:0.5rem 0.75rem;">Open items</th>
+                    <th style="padding:0.5rem 0.75rem;">Signals</th>
                     <th style="padding:0.5rem 0.75rem;">Model</th>
                     <th style="padding:0.5rem 0.75rem;">Summary</th>
                 </tr>
@@ -184,6 +173,7 @@
                 {% for b in recent %}
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.82rem;">
                     <td style="padding:0.5rem 0.75rem; white-space:nowrap;" title="{{ b.generated_at }}">{{ b.generated_at|naturaltime }}</td>
+                    <td style="padding:0.5rem 0.75rem;">{{ b.get_period_display }}</td>
                     <td style="padding:0.5rem 0.75rem;">
                         {% if b.status == 'ok' %}<span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px;">OK</span>
                         {% elif b.status == 'empty' %}<span style="font-size:0.7rem; font-weight:700; background:#e0e7ff; color:#4338ca; padding:0.15rem 0.55rem; border-radius:999px;">Clear</span>
@@ -202,10 +192,9 @@
 {% endif %}
 
 <p style="color:var(--text-muted); font-size:0.75rem; margin-top:1rem; max-width:80ch;">
-    <strong>How it works.</strong> The table above is a live query of your own records
-    (created by you, or &mdash; for shipments, which have no creator field &mdash; last touched by
-    you) that are not yet closed. "Generate my checklist" sends that same list to Claude, which
-    may re-order, group, and suggest a next action for each item, but can only refer to items
-    already in the table &mdash; it never invents one.
+    <strong>How it works.</strong> <code>generate_ops_briefing --category {{ category }}</code>
+    reads the {{ category_label|lower }} analytics above, keeps only the rows flagged critical /
+    watch / poor / at-risk / discrepant / overdue, and sends that JSON to Claude with a prompt
+    that forbids inventing figures. The reply is stored as-is.
 </p>
 {% endblock %}

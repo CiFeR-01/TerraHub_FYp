@@ -9,6 +9,7 @@ from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q, 
 from django.db.models.functions import Coalesce, TruncWeek
 from django.core.paginator import Paginator
 from datetime import date, timedelta
+from decimal import Decimal, InvalidOperation
 import csv
 import io
 import uuid
@@ -26,39 +27,29 @@ from .utils import generate_next_code
 
 @login_required
 def dashboard_view(request):
-    from .analytics import used_mt_expr
+    from .analytics import warehouse_rent_burn
 
-    warehouses = Warehouse.objects.annotate(used_mt=used_mt_expr()).order_by('name')
+    warehouses_by_id = Warehouse.objects.in_bulk()
 
     warehouse_stats = []
     total_capacity = 0.0
     total_used = 0.0
     total_daily_cost = 0.0
 
-    for w in warehouses:
-        used_mt = float(w.used_mt)
-        capacity_mt = float(w.total_capacity_mt)
+    for row in warehouse_rent_burn():
+        w = warehouses_by_id[row['warehouse_id']]
+        used_mt = row['used_mt']
+        capacity_mt = row['capacity_mt']
+        daily_cost = row['daily_cost']
         total_capacity += capacity_mt
         total_used += used_mt
-        
-        # Scale rental cost: 0 if Internal; capacity * cost if Overall; used * cost if Usage
-        if w.ownership_type == 'Internal':
-            daily_cost = 0.0
-            billing_mode = "Internal"
-        elif w.rental_billing_method == 'Overall':
-            daily_cost = float(w.total_capacity_mt * w.rental_cost_per_mt)
-            billing_mode = "Overall Capacity"
-        else: # Usage
-            daily_cost = float(w.used_mt * w.rental_cost_per_mt)
-            billing_mode = "Usage"
-            
         total_daily_cost += daily_cost
 
         if capacity_mt > 0:
             utilization_percent = (used_mt / capacity_mt) * 100
         else:
             utilization_percent = 0.0
-            
+
         warehouse_stats.append({
             'name': w.name,
             'type': w.get_ownership_type_display() if hasattr(w, 'get_ownership_type_display') else w.ownership_type,
@@ -66,7 +57,7 @@ def dashboard_view(request):
             'capacity_mt': capacity_mt,
             'used_mt': used_mt,
             'daily_cost': daily_cost,
-            'billing_mode': billing_mode,
+            'billing_mode': row['billing_mode'],
             'utilization_percent': utilization_percent,
         })
 
@@ -488,15 +479,23 @@ def warehouse_inventory_view(request):
 
     warehouses = Warehouse.objects.all().order_by('name')
     warehouse_id = request.GET.get('warehouse_id')
+    material_id = request.GET.get('material_id')
     selected_warehouse = None
+    selected_material = None
     batches = []
     global_kpis = None
+
+    if material_id:
+        try:
+            selected_material = Material.objects.get(id=material_id)
+        except Material.DoesNotExist:
+            pass
 
     if warehouse_id:
         try:
             selected_warehouse = Warehouse.objects.get(id=warehouse_id)
-            batches = Batch.objects.filter(warehouse=selected_warehouse, 
-status='Active').select_related('warehouse', 
+            batches = Batch.objects.filter(warehouse=selected_warehouse,
+status='Active').select_related('warehouse',
                 'material', 'product'
             ).order_by('location', '-manufacturing_date')
         except Warehouse.DoesNotExist:
@@ -506,7 +505,11 @@ status='Active').select_related('warehouse',
         batches = Batch.objects.filter(status='Active').select_related(
             'material', 'product'
         ).order_by('-manufacturing_date')
-        
+
+    if selected_material:
+        batches = batches.filter(material=selected_material)
+
+    if not selected_warehouse:
         from django.db.models import Sum
         total_cap = Warehouse.objects.aggregate(t=Sum('total_capacity_mt'))['t'] or 0
         global_kpis = {
@@ -522,6 +525,7 @@ status='Active').select_related('warehouse',
         'materials': Material.objects.all().order_by('name'),
         'products': Product.objects.all().order_by('name'),
         'selected_warehouse': selected_warehouse,
+        'selected_material': selected_material,
         'batches': batches,
         'global_kpis': global_kpis,
         'can_adjust': can_adjust,
@@ -560,7 +564,21 @@ def batch_detail_view(request, batch_number):
                 if batch.location != new_location:
                     batch.location = new_location
                     changes.append("Location updated")
-                    
+
+            if 'rental_rate_per_mt' in request.POST:
+                raw_rate = request.POST.get('rental_rate_per_mt', '').strip()
+                try:
+                    new_rate = Decimal(raw_rate) if raw_rate else None
+                except InvalidOperation:
+                    new_rate = batch.rental_rate_per_mt
+                    messages.error(request, "Invalid rental rate — leaving it unchanged.")
+                if batch.rental_rate_per_mt != new_rate:
+                    changes.append(
+                        f"Rental rate set to RM{new_rate}/MT" if new_rate is not None
+                        else "Rental rate cleared (now tracks warehouse rate)"
+                    )
+                    batch.rental_rate_per_mt = new_rate
+
             if changes:
                 batch.save()
                 RegistryLog.objects.create(
@@ -680,23 +698,16 @@ def warehouse_edit_view(request, pk):
 @login_required
 def facility_management_view(request):
     """Facility Management — overview of all warehouse facilities with capacity, cost, and zone data."""
+    from .analytics import warehouse_rent_burn
+
     warehouses = list(Warehouse.objects.annotate(zone_count=Count('locations', distinct=True)).order_by('name'))
-    active_batches = Batch.objects.filter(status='Active').select_related('material', 'product', 'warehouse')
-    
-    for w in warehouses:
-        w.used_mt = 0
-        w.batch_count = 0
-        
-    for b in active_batches:
-        if b.location:
-            for w in warehouses:
-                if w.name.lower() in b.location.lower():
-                    w.batch_count += 1
-                    if b.material:
-                        w.used_mt += b.quantity * b.material.weight_mt_per_unit
-                    elif b.product:
-                        w.used_mt += b.quantity * b.product.weight_mt_per_unit
-                    break
+    rent_by_id = {r['warehouse_id']: r for r in warehouse_rent_burn()}
+
+    batch_counts = {
+        row['warehouse_id']: row['cnt']
+        for row in (Batch.objects.filter(status='Active', warehouse__isnull=False)
+                    .values('warehouse_id').annotate(cnt=Count('id')))
+    }
 
     facility_list = []
     total_capacity = 0.0
@@ -704,18 +715,14 @@ def facility_management_view(request):
     total_daily_cost = 0.0
 
     for w in warehouses:
-        used = float(w.used_mt)
+        rent_row = rent_by_id.get(w.id, {'used_mt': 0.0, 'daily_cost': 0.0})
+        used = rent_row['used_mt']
         cap = float(w.total_capacity_mt)
         total_capacity += cap
         total_used += used
         util = (used / cap * 100) if cap > 0 else 0.0
 
-        if w.ownership_type == 'Internal':
-            daily_cost = 0.0
-        elif w.rental_billing_method == 'Overall':
-            daily_cost = float(w.total_capacity_mt * w.rental_cost_per_mt)
-        else:
-            daily_cost = float(w.used_mt * w.rental_cost_per_mt)
+        daily_cost = rent_row['daily_cost']
         total_daily_cost += daily_cost
 
         facility_list.append({
@@ -731,7 +738,7 @@ def facility_management_view(request):
             'billing_method': w.get_rental_billing_method_display(),
             'cost_per_mt': float(w.rental_cost_per_mt),
             'zone_count': w.zone_count,
-            'batch_count': w.batch_count,
+            'batch_count': batch_counts.get(w.id, 0),
         })
 
     global_util = (total_used / total_capacity * 100) if total_capacity > 0 else 0.0
@@ -2274,13 +2281,15 @@ def po_detail_view(request, pk):
             mat_id = request.POST.get('material_id')
             qty = request.POST.get('quantity_ordered', 0)
             unit_price = request.POST.get('unit_price', None)
+            rental_rate = request.POST.get('negotiated_rental_rate_per_mt', None)
             try:
                 mat = get_object_or_404(Material, id=mat_id)
                 PurchaseOrderDetail.objects.create(
                     purchase_order=po,
                     material=mat,
                     quantity_ordered=float(qty),
-                    unit_price=float(unit_price) if unit_price else None
+                    unit_price=float(unit_price) if unit_price else None,
+                    negotiated_rental_rate_per_mt=float(rental_rate) if rental_rate else None
                 )
                 OrderTimeline.objects.create(purchase_order=po, action=f"Line item added: {mat.name} x{qty}", user=request.user)
                 messages.success(request, f"Added {mat.name} to {po.po_number}.")
@@ -3011,6 +3020,7 @@ def qa_dashboard_view(request):
 
         elif action == 'spoil_dispose':
             batch.status = 'Spoiled'
+            batch.closed_date = date.today()
             batch.save()
             RegistryLog.objects.create(
                 action_type='Spoiled_Disposal',

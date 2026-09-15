@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}Logistics Performance - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <a href="{% url 'shipments' %}">Logistics Tracker</a>
+            <span class="separator">/</span>
+            <span class="current-page">Logistics Performance</span>
+        </nav>
+        <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
+            Logistics Performance
+        </h1>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:70ch;">
+            Every in-flight shipment &mdash; inbound, outbound, and internal transfers &mdash;
+            that is discrepant, overdue, at risk, or stalled. Worst first.
+        </p>
+    </div>
+</header>
+
+{% include "analytics/partials/_analytics_tabs.html" %}
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: #d97706;{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: #059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay:0.05s; margin-bottom:1.5rem;">
+    <div class="kpi-item-card">
+        <span class="kpi-label">In flight</span>
+        <div class="kpi-value-row"><span class="kpi-value">{{ summary.shipment_count }}</span></div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Discrepant</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value" style="color:{% if summary.discrepant %}#dc2626{% else %}var(--text-main){% endif %};">{{ summary.discrepant }}</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Overdue</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value" style="color:{% if summary.overdue %}#c2410c{% else %}var(--text-main){% endif %};">{{ summary.overdue }}</span>
+            <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.4rem;">+ {{ summary.at_risk }} at risk</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Stalled</span>
+        <div class="kpi-value-row"><span class="kpi-value">{{ summary.stalled }}</span></div>
+    </div>
+</section>
+
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+    <div class="table-responsive">
+        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th data-sort="text" style="padding:0.6rem 1rem;">Tracking #</th>
+                    <th data-sort="text" style="padding:0.6rem 1rem;">Direction</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem;">Risk</th>
+                    <th data-sort="text" style="padding:0.6rem 1rem;">Route</th>
+                    <th data-sort="text" style="padding:0.6rem 1rem;">Linked to</th>
+                    <th data-sort="date" style="padding:0.6rem 1rem; text-align:right;">Expected ETA</th>
+                    <th data-sort="text" style="padding:0.6rem 1rem;">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in rows %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                    <td style="padding:0.6rem 1rem;">
+                        <a href="{% url 'shipment_detail' r.shipment_id %}" style="font-weight:700; color:var(--primary); text-decoration:none;">{{ r.tracking_number }}</a>
+                    </td>
+                    <td style="padding:0.6rem 1rem; color:var(--text-muted);">{{ r.direction }}</td>
+                    <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.risk == 'discrepant' %}0{% elif r.risk == 'overdue' %}1{% elif r.risk == 'at_risk' %}2{% elif r.risk == 'stalled' %}3{% elif r.risk == 'pending' %}4{% else %}5{% endif %}">
+                        {% if r.risk == 'discrepant' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px;">Discrepant</span>
+                        {% elif r.risk == 'overdue' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#ffedd5; color:#c2410c; padding:0.15rem 0.55rem; border-radius:999px;">Overdue</span>
+                        {% elif r.risk == 'at_risk' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px;">At risk</span>
+                        {% elif r.risk == 'stalled' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#e0e7ff; color:#4338ca; padding:0.15rem 0.55rem; border-radius:999px;">Stalled</span>
+                        {% elif r.risk == 'pending' %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#f1f5f9; color:#64748b; padding:0.15rem 0.55rem; border-radius:999px;">Pending</span>
+                        {% else %}
+                        <span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px;">On track</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; color:var(--text-muted);">
+                        {{ r.origin|default:"&mdash;" }} <span aria-hidden="true">&rarr;</span> {{ r.destination|default:"&mdash;" }}
+                    </td>
+                    <td style="padding:0.6rem 1rem; color:var(--text-muted);">
+                        {% if r.so_number %}SO {{ r.so_number }}{% elif r.po_number %}PO {{ r.po_number }}{% else %}Transfer{% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right;" data-sort-value="{{ r.expected_eta_date|date:'Y-m-d' }}">
+                        {{ r.expected_eta_date|date:"d M Y"|default:"&mdash;" }}
+                    </td>
+                    <td style="padding:0.6rem 1rem; color:var(--text-muted);">{{ r.status }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="padding:2rem 1rem; text-align:center; color:var(--text-muted);">No in-flight shipments.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<p style="color:var(--text-muted); font-size:0.75rem; margin-top:1rem; max-width:78ch;">
+    <strong>How risk is assigned.</strong> <em>Discrepant</em> = flagged with a shortage/mismatch.
+    <em>Overdue</em> = explicitly marked Delayed, or dispatched/arrived past its expected ETA with
+    no arrival logged. <em>At risk</em> = dispatched and due within
+    <code>logistics_at_risk_window_days</code>. <em>Stalled</em> = arrived but not marked Completed
+    for at least <code>logistics_stall_days</code>. <em>Pending</em> = not yet dispatched.
+    Both thresholds are editable at <a href="{% url 'system_settings' %}">System Settings</a>.
+</p>
+{% endblock %}
