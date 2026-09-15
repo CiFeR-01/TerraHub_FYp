@@ -82,6 +82,7 @@ ANALYTICS_CATEGORIES = [
     ('Inventory', [
         ('forecast', 'Stockout & Reorder', 'core.view_material'),
         ('capacity_forecast', 'Inventory Capacity', 'core.view_warehouse'),
+        ('rent_opportunities', 'Rent Reduction', 'core.view_warehouse'),
     ]),
     ('Supply Chain', [
         ('supplier_scorecard', 'Supplier Performance', 'core.view_supplier'),

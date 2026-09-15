@@ -161,7 +161,7 @@
         <form method="post">
             {% csrf_token %}
             <input type="hidden" name="action" value="add_po_item">
-            <div style="display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0.75rem; align-items:end;">
+            <div style="display:grid; grid-template-columns:2fr 1fr 1fr 1fr auto; gap:0.75rem; align-items:end;">
                 <div>
                     <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Material</label>
                     <select name="material_id" required class="form-select" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
@@ -178,6 +178,10 @@
                 <div>
                     <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Unit Price (RM)</label>
                     <input type="number" step="0.01" name="unit_price" placeholder="Optional" class="form-input" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
+                </div>
+                <div>
+                    <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Rental Rate (RM/MT/day)</label>
+                    <input type="number" step="0.01" name="negotiated_rental_rate_per_mt" placeholder="Optional — uses warehouse rate" class="form-input" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
                 </div>
                 <button type="submit" class="btn btn-primary" style="padding:0.5rem 1rem; font-size:0.85rem; white-space:nowrap;">Add Item</button>
             </div>
@@ -196,6 +200,7 @@
                     <th style="padding:0.6rem 1rem;">Qty Received</th>
                     <th style="padding:0.6rem 1rem;">Receipt Progress</th>
                     <th style="padding:0.6rem 1rem;">Unit Price</th>
+                    <th style="padding:0.6rem 1rem;">Rental Rate</th>
                     <th style="padding:0.6rem 1rem;">Subtotal</th>
                     <th style="padding:0.6rem 1rem; text-align:right;">Actions</th>
                 </tr>
@@ -217,6 +222,7 @@
                         <div style="font-size:0.72rem; color:var(--text-muted); margin-top:0.2rem;">{{ row.pct_received }}% received</div>
                     </td>
                     <td style="padding:0.85rem 1rem;">{% if row.item.unit_price %}RM {{ row.item.unit_price|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
+                    <td style="padding:0.85rem 1rem;">{% if row.item.negotiated_rental_rate_per_mt %}RM {{ row.item.negotiated_rental_rate_per_mt|floatformat:2 }}{% else %}<span style="color:var(--text-muted); font-size:0.78rem;">warehouse rate</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{% if row.subtotal > 0 %}RM {{ row.subtotal|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
                         <!-- Receive form -->
@@ -231,7 +237,7 @@
                 </tr>
                 <!-- Receive quantity mini-form -->
                 <tr id="recv-{{ row.item.id }}" style="display:none; background:#fafff8;">
-                    <td colspan="9" style="padding:0.5rem 1rem 0.75rem 2rem;">
+                    <td colspan="10" style="padding:0.5rem 1rem 0.75rem 2rem;">
                         <form method="post" style="display:inline-flex; gap:0.75rem; align-items:center;">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="mark_received">

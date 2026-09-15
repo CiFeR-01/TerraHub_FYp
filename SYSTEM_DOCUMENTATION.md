@@ -445,6 +445,20 @@ active-stock-tonnage expression as `dashboard_view` (`analytics.used_mt_expr()`)
 **This command has no scheduler wired — run it daily** via Heroku Scheduler, cron,
 or a scheduled GitHub Action.
 
+`capacity_mt`/`utilization_percent` are frozen at snapshot time, not recomputed
+live — editing a warehouse's `total_capacity_mt` will not change past snapshot
+rows or the "current" percentage shown on the Capacity Runway page until the
+next snapshot runs. Run the command by hand after a capacity edit if you need
+the page to reflect it immediately.
+
+**On Railway**: add a second service in the same project pointing at this repo,
+override its start command (Settings → Deploy → Custom Start Command) to
+`python manage.py snapshot_utilization`, copy over the same environment
+variables as the web service (or use Railway's project-level Shared Variables),
+and set a Cron Schedule on that service (e.g. `0 0 * * *`). Railway cron runs
+in UTC. The job spins the container up, runs the one command, and exits — no
+persistent process needed.
+
 ```
 slope, _  = least-squares fit of utilization_percent over the snapshot dates
 weekly_rate_pp = slope × 7
@@ -531,8 +545,10 @@ records the failure on the row so the scheduled job stays green. **Like
 `snapshot_utilization`, this command has no scheduler wired** — run it daily
 (`python manage.py generate_ops_briefing --category all`, or `--period weekly`,
 or one category at a time) via Heroku Scheduler, cron, or a scheduled GitHub
-Action. Admin/Manager can also trigger a run for one category from its page.
-`--dry-run` prints the signal payload(s) without calling the API.
+Action (on Railway: a second Cron Schedule service, same pattern as
+`snapshot_utilization` in §8.8 — remember to give it the `ANTHROPIC_API_KEY`
+env var too). Admin/Manager can also trigger a run for one category from its
+page. `--dry-run` prints the signal payload(s) without calling the API.
 
 ### 8.10. Shipment logistics  *(Phase 4 — implemented)*
 

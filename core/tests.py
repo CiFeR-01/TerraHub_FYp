@@ -78,6 +78,65 @@ class DatabaseConsoleTests(TestCase):
 
 from core.models import Warehouse
 
+class WarehouseInventoryMaterialFilterTests(TestCase):
+    """?material_id= on warehouse_inventory - linked from the Stockout Forecast page."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='invfilter', password='pw')
+        self.client.login(username='invfilter', password='pw')
+        self.warehouse = Warehouse.objects.create(name='Filter WH', location_type='Storage')
+        self.wanted = Material.objects.create(
+            name='Wanted Material', sku='MAT-WANT', category='Bulk',
+            unit_of_measure='MT', safe_storage_days=365,
+        )
+        self.other = Material.objects.create(
+            name='Other Material', sku='MAT-OTHER', category='Bulk',
+            unit_of_measure='MT', safe_storage_days=365,
+        )
+        Batch.objects.create(
+            batch_number='B-WANT-1', material=self.wanted, quantity=10, status='Active',
+            manufacturing_date='2025-01-01', expiry_date='2026-01-01', warehouse=self.warehouse,
+        )
+        Batch.objects.create(
+            batch_number='B-OTHER-1', material=self.other, quantity=10, status='Active',
+            manufacturing_date='2025-01-01', expiry_date='2026-01-01', warehouse=self.warehouse,
+        )
+
+    def test_material_filter_shows_only_that_materials_batches(self):
+        resp = self.client.get(reverse('warehouse_inventory'), {'material_id': self.wanted.id})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'B-WANT-1')
+        self.assertNotContains(resp, 'B-OTHER-1')
+        self.assertContains(resp, 'Filtered by material')
+        self.assertContains(resp, 'MAT-WANT')
+
+    def test_no_material_filter_shows_everything(self):
+        resp = self.client.get(reverse('warehouse_inventory'))
+        self.assertContains(resp, 'B-WANT-1')
+        self.assertContains(resp, 'B-OTHER-1')
+
+    def test_material_filter_combines_with_warehouse_filter(self):
+        other_wh = Warehouse.objects.create(name='Other WH', location_type='Storage')
+        Batch.objects.create(
+            batch_number='B-WANT-2', material=self.wanted, quantity=5, status='Active',
+            manufacturing_date='2025-01-01', expiry_date='2026-01-01', warehouse=other_wh,
+        )
+        resp = self.client.get(reverse('warehouse_inventory'), {
+            'material_id': self.wanted.id, 'warehouse_id': self.warehouse.id,
+        })
+        self.assertContains(resp, 'B-WANT-1')
+        self.assertNotContains(resp, 'B-WANT-2')
+
+    def test_forecast_page_links_to_filtered_inventory(self):
+        resp = self.client.get(reverse('forecast'))
+        self.assertEqual(resp.status_code, 200)
+        expected = reverse('warehouse_inventory') + f'?material_id={self.wanted.id}'
+        # forecast_view only lists materials with consumption/forecast history; just
+        # confirm the link pattern it emits points at warehouse_inventory, not material_edit.
+        self.assertNotContains(resp, reverse('material_edit', kwargs={'pk': self.wanted.id}))
+
+
 class FacilityEditTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -370,6 +429,113 @@ class StockAllocationTests(TestCase):
         self.assertFalse(StockAllocation.objects.filter(sales_order=self.sales_order).exists())
 
 
+class BatchClosureTests(TestCase):
+    """quantity hitting zero must flip the batch to Depleted and stamp closed_date."""
+
+    def setUp(self):
+        self.warehouse = Warehouse.objects.create(name='Closure WH', location_type='Storage')
+        self.product = Product.objects.create(
+            name='Closure Product', sku='PRD-CLOSE', unit_of_measure='pcs', price_per_unit=10.0
+        )
+        self.sales_order = SalesOrder.objects.create(
+            so_number='SO-CLOSE-1', client_name='Test Client',
+            origin_warehouse=self.warehouse, status='Draft'
+        )
+        SalesOrderDetail.objects.create(
+            sales_order=self.sales_order, product=self.product, quantity_ordered=50.0
+        )
+
+    def _batch(self, qty):
+        return Batch.objects.create(
+            batch_number='B-CLOSE-1', product=self.product, quantity=qty, status='Active',
+            manufacturing_date='2025-01-01', expiry_date='2026-01-01',
+            warehouse=self.warehouse, location='Zone A',
+        )
+
+    def test_full_deduction_marks_depleted_and_stamps_closed_date(self):
+        batch = self._batch(50.0)
+        allocate_stock('sales_order', self.sales_order, self.product, 50.0)
+        deduct_stock_from_allocation('sales_order', self.sales_order)
+        batch.refresh_from_db()
+
+        self.assertEqual(float(batch.quantity), 0.0)
+        self.assertEqual(batch.status, 'Depleted')
+        self.assertEqual(batch.closed_date, date.today())
+
+    def test_partial_deduction_leaves_batch_open(self):
+        batch = self._batch(100.0)
+        allocate_stock('sales_order', self.sales_order, self.product, 50.0)
+        deduct_stock_from_allocation('sales_order', self.sales_order)
+        batch.refresh_from_db()
+
+        self.assertEqual(float(batch.quantity), 50.0)
+        self.assertEqual(batch.status, 'Active')
+        self.assertIsNone(batch.closed_date)
+
+    def test_spoil_dispose_stamps_closed_date(self):
+        batch = self._batch(50.0)
+        user = User.objects.create_user(username='qauser', password='pw')
+        client = Client()
+        client.login(username='qauser', password='pw')
+
+        resp = client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'batch_id': batch.id})
+        self.assertEqual(resp.status_code, 302)
+
+        batch.refresh_from_db()
+        self.assertEqual(batch.status, 'Spoiled')
+        self.assertEqual(batch.closed_date, date.today())
+
+
+class BatchRentalRateLockInTests(TestCase):
+    """apply_po_material_receipt() must lock in a batch's rental rate at receipt time."""
+
+    def setUp(self):
+        self.warehouse = Warehouse.objects.create(
+            name='Rate Lock WH', location_type='Storage', ownership_type='ExternalProvider',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('5.00'),
+            total_capacity_mt=Decimal('1000'),
+        )
+        self.material = Material.objects.create(
+            name='Rate Lock Material', sku='MAT-RATE', category='Bulk',
+            unit_of_measure='MT', safe_storage_days=365,
+        )
+        self.po = PurchaseOrder.objects.create(
+            po_number='PO-RATE-1', supplier_name='Rate Supplier', target_warehouse=self.warehouse,
+        )
+        self.user = User.objects.create_user(username='ratelockuser', password='pw')
+
+    def _detail(self, negotiated_rate=None):
+        return PurchaseOrderDetail.objects.create(
+            purchase_order=self.po, material=self.material, quantity_ordered=Decimal('100'),
+            negotiated_rental_rate_per_mt=negotiated_rate,
+        )
+
+    def test_receipt_with_no_negotiated_rate_leaves_batch_tracking_live(self):
+        # No negotiated rate -> rental_rate_per_mt stays None, meaning "track the
+        # warehouse's current rate live" (see open_batch_rent_expr()), not a snapshot.
+        detail = self._detail(negotiated_rate=None)
+        apply_po_material_receipt(detail, 100, self.user)
+        batch = Batch.objects.get(purchase_order=self.po)
+        self.assertIsNone(batch.rental_rate_per_mt)
+
+    def test_receipt_uses_negotiated_rate_when_set(self):
+        detail = self._detail(negotiated_rate=Decimal('3.25'))
+        apply_po_material_receipt(detail, 100, self.user)
+        batch = Batch.objects.get(purchase_order=self.po)
+        self.assertEqual(batch.rental_rate_per_mt, Decimal('3.25'))
+
+    def test_negotiated_rate_is_locked_in_not_live(self):
+        detail = self._detail(negotiated_rate=Decimal('3.25'))
+        apply_po_material_receipt(detail, 100, self.user)
+        batch = Batch.objects.get(purchase_order=self.po)
+
+        self.warehouse.rental_cost_per_mt = Decimal('99.00')
+        self.warehouse.save()
+
+        batch.refresh_from_db()
+        self.assertEqual(batch.rental_rate_per_mt, Decimal('3.25'))
+
+
 from datetime import timedelta
 from decimal import Decimal
 from django.utils import timezone
@@ -484,9 +650,10 @@ from core.analytics import (
     supplier_reliability, sales_order_delivery_risk,
     audit_accuracy, production_yield_variance, stockout_forecast,
     capacity_forecast, warehouse_utilization, shipment_logistics, my_open_jobs,
-    product_sales_trend,
+    product_sales_trend, warehouse_rent_burn, rent_reduction_opportunities,
 )
 from core.settings_store import get_setting
+from core.utils import apply_po_material_receipt
 
 
 class SupplierScorecardTests(TestCase):
@@ -1344,6 +1511,200 @@ class CapacityForecastTests(TestCase):
         fac = self.client.get(reverse('warehouse_list'))
         self.assertContains(fac, reverse('capacity_forecast'))
         self.assertContains(fac, 'Inventory capacity')
+
+
+class WarehouseRentBurnTests(TestCase):
+    """warehouse_rent_burn() - the batch-aware single source of truth for rent."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='rentburn', password='pw')
+        self.material = Material.objects.create(
+            name='Rent Sand', sku='MAT-RS', category='Bulk', unit_of_measure='MT',
+            safe_storage_days=365, weight_mt_per_unit=Decimal('1.0'),
+        )
+
+    def _wh(self, ownership='ExternalProvider', billing='Usage', rate='5.00', capacity='1000'):
+        return Warehouse.objects.create(
+            name=f'Rent WH {Warehouse.objects.count()}', location_type='Storage',
+            ownership_type=ownership, rental_billing_method=billing,
+            rental_cost_per_mt=Decimal(rate), total_capacity_mt=Decimal(capacity),
+        )
+
+    def _batch(self, wh, qty, rate, status='Active', closed=False):
+        return Batch.objects.create(
+            batch_number=f'B-{wh.id}-{qty}-{rate}', material=self.material,
+            quantity=Decimal(str(qty)), status=status, warehouse=wh,
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=300),
+            rental_rate_per_mt=None if rate is None else Decimal(str(rate)),
+            closed_date=date.today() if closed else None,
+        )
+
+    def _row(self, wh):
+        return next(r for r in warehouse_rent_burn() if r['warehouse_id'] == wh.id)
+
+    def test_internal_warehouse_is_zero_regardless_of_batches(self):
+        wh = self._wh(ownership='Internal', billing='Usage', rate='5.00')
+        self._batch(wh, 100, '5.00')
+        self.assertEqual(self._row(wh)['daily_cost'], 0.0)
+        self.assertEqual(self._row(wh)['billing_mode'], 'Internal')
+
+    def test_overall_billing_uses_capacity_times_rate_ignores_batches(self):
+        wh = self._wh(billing='Overall', rate='2.00', capacity='1000')
+        self._batch(wh, 999, '5.00')  # a very different batch rate must be ignored
+        self.assertEqual(self._row(wh)['daily_cost'], 2000.0)  # 1000 MT * 2.00
+        self.assertEqual(self._row(wh)['billing_mode'], 'Overall Capacity')
+
+    def test_usage_billing_sums_open_batches_at_locked_in_rate(self):
+        wh = self._wh(billing='Usage', rate='5.00')
+        self._batch(wh, 100, '3.00')
+        self._batch(wh, 50, '7.00')
+        # 100*3.00 + 50*7.00 = 650, NOT (100+50)*5.00 (the old flat warehouse-rate calc)
+        self.assertEqual(self._row(wh)['daily_cost'], 650.0)
+
+    def test_quarantined_batches_still_accrue_rent(self):
+        wh = self._wh(billing='Usage', rate='4.00')
+        self._batch(wh, 20, '4.00', status='Quarantined')
+        rent_row = self._row(wh)
+        util_row = next(r for r in warehouse_utilization() if r['warehouse_id'] == wh.id)
+        self.assertEqual(rent_row['daily_cost'], 80.0)   # still costs rent
+        self.assertEqual(util_row['used_mt'], 0.0)        # but excluded from usable capacity
+
+    def test_closed_batches_excluded_from_rent(self):
+        wh = self._wh(billing='Usage', rate='5.00')
+        self._batch(wh, 100, '5.00', status='Depleted', closed=True)
+        self.assertEqual(self._row(wh)['daily_cost'], 0.0)
+
+    def test_null_rate_batches_live_track_warehouse_rate(self):
+        wh = self._wh(billing='Usage', rate='5.00')
+        self._batch(wh, 100, None)
+        self.assertEqual(self._row(wh)['daily_cost'], 500.0)  # 100 MT * warehouse's 5.00
+
+    def test_null_rate_batches_reflect_a_later_warehouse_rate_edit(self):
+        wh = self._wh(billing='Usage', rate='5.00')
+        self._batch(wh, 100, None)
+        wh.rental_cost_per_mt = Decimal('9.00')
+        wh.save()
+        self.assertEqual(self._row(wh)['daily_cost'], 900.0)  # tracks the edit live
+
+    def test_explicit_rate_batches_ignore_a_later_warehouse_rate_edit(self):
+        wh = self._wh(billing='Usage', rate='5.00')
+        self._batch(wh, 100, '3.00')  # explicit rate, e.g. a negotiated PO rate
+        wh.rental_cost_per_mt = Decimal('9.00')
+        wh.save()
+        self.assertEqual(self._row(wh)['daily_cost'], 300.0)  # stays at its own locked rate
+
+
+class RentReductionOpportunitiesTests(TestCase):
+    """rent_reduction_opportunities() - the read-only DSS recommender."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='rentopp', password='pw')
+        self.material = Material.objects.create(
+            name='Opp Sand', sku='MAT-OS', category='Bulk', unit_of_measure='MT',
+            safe_storage_days=365, weight_mt_per_unit=Decimal('1.0'),
+        )
+        self.rented = Warehouse.objects.create(
+            name='Rented Depot', location_type='Storage', ownership_type='ExternalProvider',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('5.00'),
+            total_capacity_mt=Decimal('1000'),
+        )
+
+    def _batch(self, wh, qty, rate, allocated=0):
+        return Batch.objects.create(
+            batch_number=f'B-{wh.id}-{qty}-{rate}-{allocated}', material=self.material,
+            quantity=Decimal(str(qty)), allocated_quantity=Decimal(str(allocated)),
+            status='Active', warehouse=wh,
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=300),
+            rental_rate_per_mt=Decimal(str(rate)),
+        )
+
+    def _snap(self, wh, pct, days_ago):
+        return WarehouseUtilizationSnapshot.objects.create(
+            warehouse=wh, snapshot_date=date.today() - timedelta(days=days_ago),
+            used_mt=Decimal(str(pct * 10)), capacity_mt=Decimal('1000'),
+            utilization_percent=Decimal(str(pct)),
+        )
+
+    def _flag_critical(self, wh):
+        self._snap(wh, 80, 6)
+        self._snap(wh, 90, 3)
+        self._snap(wh, 97, 0)
+
+    def test_no_opportunities_when_nothing_flagged(self):
+        self._batch(self.rented, 100, '5.00')
+        self.assertEqual(rent_reduction_opportunities(), [])
+
+    def test_no_opportunities_without_internal_spare_capacity(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00')
+        # no Internal warehouse exists at all
+        self.assertEqual(rent_reduction_opportunities(), [])
+
+    def test_candidates_drawn_from_flagged_usage_warehouse(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00')
+        Warehouse.objects.create(
+            name='Internal Depot', location_type='Storage', ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
+            total_capacity_mt=Decimal('500'),
+        )
+        rows = rent_reduction_opportunities()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['warehouse_id'], self.rented.id)
+        self.assertEqual(rows[0]['total_daily_saving'], 500.0)  # 100 MT * 5.00
+
+    def test_highest_rate_batches_prioritized_when_spare_is_limited(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '3.00')
+        self._batch(self.rented, 100, '9.00')
+        Warehouse.objects.create(
+            name='Internal Depot Small', location_type='Storage', ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
+            total_capacity_mt=Decimal('100'),  # only enough spare for one batch
+        )
+        rows = rent_reduction_opportunities()
+        self.assertEqual(len(rows[0]['candidate_batches']), 1)
+        self.assertEqual(rows[0]['candidate_batches'][0]['rate_per_mt'], 9.0)
+        self.assertEqual(rows[0]['total_daily_saving'], 900.0)
+
+    def test_fully_allocated_batch_is_excluded(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00', allocated=100)  # nothing left to move
+        Warehouse.objects.create(
+            name='Internal Depot Alloc', location_type='Storage', ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
+            total_capacity_mt=Decimal('500'),
+        )
+        self.assertEqual(rent_reduction_opportunities(), [])
+
+    def test_partially_allocated_batch_only_counts_free_portion(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00', allocated=60)  # only 40 MT actually movable
+        Warehouse.objects.create(
+            name='Internal Depot Partial', location_type='Storage', ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
+            total_capacity_mt=Decimal('500'),
+        )
+        rows = rent_reduction_opportunities()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['candidate_batches'][0]['mt'], 40.0)
+        self.assertEqual(rows[0]['total_daily_saving'], 200.0)  # 40 MT * 5.00, not 100 * 5.00
+
+    def test_view_renders_with_caveat(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00')
+        Warehouse.objects.create(
+            name='Internal Depot View', location_type='Storage', ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
+            total_capacity_mt=Decimal('500'),
+        )
+        self.client.login(username='rentopp', password='pw')
+        resp = self.client.get(reverse('rent_opportunities'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Rented Depot')
+        self.assertContains(resp, 'Estimated potential savings only')
 
 
 import os as _os

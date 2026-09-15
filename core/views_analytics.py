@@ -279,6 +279,11 @@ def forecast_view(request):
 @login_required
 def capacity_forecast_view(request):
     rows = analytics.capacity_forecast()
+    rent_by_id = {r["warehouse_id"]: r for r in analytics.warehouse_rent_burn()}
+    for r in rows:
+        rent_row = rent_by_id.get(r["warehouse_id"])
+        r["daily_rent"] = rent_row["daily_cost"] if rent_row else None
+
     history_days = max((r["snapshot_count"] for r in rows), default=0)
     summary = {
         "warehouse_count": len(rows),
@@ -288,6 +293,8 @@ def capacity_forecast_view(request):
         "history_days": history_days,
         "empty": history_days == 0,
         "building": 0 < history_days < 7,
+        "total_daily_rent": sum(r["daily_rent"] or 0 for r in rows),
+        "has_rent_opportunities": any(r["status"] in ("critical", "watch") for r in rows),
     }
     analytics_category, analytics_tabs = _analytics_tabs(request, "capacity_forecast")
     return render(request, "analytics/capacity_forecast.html", {
@@ -296,6 +303,23 @@ def capacity_forecast_view(request):
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,
         "analytics_active": "capacity_forecast",
+    })
+
+
+@login_required
+def rent_opportunities_view(request):
+    rows = analytics.rent_reduction_opportunities()
+    summary = {
+        "opportunity_count": len(rows),
+        "total_potential_daily_saving": sum(o["total_daily_saving"] for o in rows),
+    }
+    analytics_category, analytics_tabs = _analytics_tabs(request, "rent_opportunities")
+    return render(request, "analytics/rent_opportunities.html", {
+        "rows": rows,
+        "summary": summary,
+        "analytics_category": analytics_category,
+        "analytics_tabs": analytics_tabs,
+        "analytics_active": "rent_opportunities",
     })
 
 

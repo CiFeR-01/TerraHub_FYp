@@ -234,6 +234,17 @@ class Batch(models.Model):
     warehouse = models.ForeignKey('Warehouse', on_delete=models.PROTECT, null=True, blank=True, related_name='batches', help_text='Facility')
     location = models.CharField(max_length=255, null=True, blank=True, help_text='Zone/Aisle (Free Text)')
     allocated_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    rental_rate_per_mt = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Rate charged for this batch's rent (RM/MT/day), locked in at receipt "
+                   "(warehouse's rate at the time, or the PO line's negotiated override). "
+                   "Immune to later changes to Warehouse.rental_cost_per_mt."
+    )
+    closed_date = models.DateField(
+        null=True, blank=True,
+        help_text="Date this batch stopped costing rent - fully consumed to zero, or "
+                   "spoiled/disposed. Null while the batch is still open (Active/Quarantined)."
+    )
 
     @property
     def available_quantity(self):
@@ -252,6 +263,14 @@ class Batch(models.Model):
             return self.quantity * self.material.weight_mt_per_unit
         if self.product:
             return self.quantity * self.product.weight_mt_per_unit
+        return 0
+
+    @property
+    def available_weight_mt(self):
+        if self.material:
+            return self.available_quantity * self.material.weight_mt_per_unit
+        if self.product:
+            return self.available_quantity * self.product.weight_mt_per_unit
         return 0
 
     def __str__(self):
@@ -298,6 +317,12 @@ class PurchaseOrderDetail(models.Model):
     quantity_ordered = models.DecimalField(max_digits=12, decimal_places=2)
     quantity_received = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    negotiated_rental_rate_per_mt = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Custom negotiated rental rate (RM/MT/day) for batches received against "
+                   "this line. Leave blank to use the destination warehouse's standard "
+                   "rate at time of receipt."
+    )
 
     @property
     def quantity_in_transit(self):
