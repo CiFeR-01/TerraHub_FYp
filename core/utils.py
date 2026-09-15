@@ -1,6 +1,21 @@
 import re
+from datetime import date
 from decimal import Decimal
 from django.db import transaction
+
+
+def _close_batch_if_depleted(batch):
+    """If a batch's quantity has been decremented to zero (or below, from a
+    rounding edge), marks it Depleted and stamps closed_date - the moment it
+    stops accruing rent. No-op if already closed (Depleted/Spoiled) so a
+    second decrement pass can't stomp an existing closed_date."""
+    if batch.quantity <= 0 and batch.status not in ('Depleted', 'Spoiled'):
+        batch.status = 'Depleted'
+        batch.closed_date = date.today()
+        return True
+    return False
+
+
 def generate_next_code(model_class, field_name, prefix, default_num=1001, pad=4):
     """
     Generates an automated unique ID like SO-1004, PO-5003, RUN-809, PRD-1001, MAT-1001.
@@ -241,7 +256,8 @@ def consume_materials_for_run(run, user):
             batch.allocated_quantity -= alloc.quantity
             if batch.allocated_quantity < 0:
                 batch.allocated_quantity = 0
-            batch.save(update_fields=['quantity', 'allocated_quantity'])
+            _close_batch_if_depleted(batch)
+            batch.save(update_fields=['quantity', 'allocated_quantity', 'status', 'closed_date'])
             alloc.delete()
 
         if remaining > 0 and run.manufacturing_plant:
@@ -257,7 +273,8 @@ def consume_materials_for_run(run, user):
                 if take <= 0:
                     continue
                 batch.quantity -= take
-                batch.save(update_fields=['quantity'])
+                _close_batch_if_depleted(batch)
+                batch.save(update_fields=['quantity', 'status', 'closed_date'])
                 ProductionConsumption.objects.create(production_run=run, consumed_batch=batch, quantity_used=take)
                 remaining -= take
 
@@ -529,7 +546,8 @@ def deduct_stock_from_allocation(order_type, order, user=None):
             batch = alloc.batch
             batch.quantity -= alloc.quantity
             batch.allocated_quantity -= alloc.quantity
-            batch.save(update_fields=['quantity', 'allocated_quantity'])
+            _close_batch_if_depleted(batch)
+            batch.save(update_fields=['quantity', 'allocated_quantity', 'status', 'closed_date'])
 
             item_name = batch.material.name if batch.material else (batch.product.name if batch.product else batch.batch_number)
             RegistryLog.objects.create(
@@ -560,6 +578,12 @@ def apply_po_material_receipt(po_detail, delta_qty, user):
 
     if delta_qty > 0:
         loc = WarehouseLocation.objects.filter(warehouse=po.target_warehouse).first()
+        # None means "track the warehouse's current rate live" (open_batch_rent_expr()
+        # falls back to Warehouse.rental_cost_per_mt for null-rate batches). Only a
+        # genuine per-PO negotiated rate gets locked in permanently - the warehouse's
+        # own standing rate can still be corrected/edited later without stranding
+        # existing batches at a stale snapshot.
+        rental_rate = po_detail.negotiated_rental_rate_per_mt
         batch = Batch.objects.create(
             batch_number=f"B-{po.po_number}-{po_detail.material.sku}-{uuid.uuid4().hex[:6].upper()}",
             status='Active',
@@ -569,7 +593,8 @@ def apply_po_material_receipt(po_detail, delta_qty, user):
             expiry_date=date.today() + timedelta(days=365),
             warehouse=po.target_warehouse,
             purchase_order=po,
-            location=f"Zone {loc.zone_name} Aisle {loc.aisle}" if loc else None
+            location=f"Zone {loc.zone_name} Aisle {loc.aisle}" if loc else None,
+            rental_rate_per_mt=rental_rate
         )
         RegistryLog.objects.create(
             action_type='Inbound',

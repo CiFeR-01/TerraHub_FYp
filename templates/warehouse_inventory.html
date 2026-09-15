@@ -34,6 +34,7 @@
 <div class="pane-card animate-fade-in-up" style="margin-bottom: 2rem; animation-delay: 0.05s;">
     <h3 style="margin-bottom: 1rem;">🏢 Select Warehouse Facility</h3>
     <form method="GET" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+        {% if selected_material %}<input type="hidden" name="material_id" value="{{ selected_material.id }}">{% endif %}
         <div style="flex: 1; min-width: 250px;">
             <label style="display: block; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.5rem; text-transform: uppercase;">
                 Active Warehouses
@@ -51,6 +52,12 @@
             Scan Inventory
         </button>
     </form>
+    {% if selected_material %}
+    <div style="margin-top: 1rem; display: inline-flex; align-items: center; gap: 0.5rem; background: var(--accent-wash, #eef2ff); border: 1px solid rgba(79,70,229,0.2); border-radius: 999px; padding: 0.4rem 0.9rem; font-size: 0.82rem; color: var(--text-main);">
+        Filtered by material: <strong>{{ selected_material.sku }} — {{ selected_material.name }}</strong>
+        <a href="?{% if selected_warehouse %}warehouse_id={{ selected_warehouse.id }}{% endif %}" style="color: var(--text-muted); text-decoration: none; font-weight: 700; margin-left: 0.25rem;" title="Clear material filter">✕</a>
+    </div>
+    {% endif %}
 </div>
 
     <!-- Summary stats -->
@@ -91,7 +98,7 @@
     {% if batches %}
     <div class="pane-card animate-fade-in-up" style="animation-delay: 0.15s; margin-top: 1rem;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
-            <h3 style="margin-bottom: 0;">📋 {% if selected_warehouse %}Physical Stock Ledger: {{ selected_warehouse.name }}{% else %}Global Physical Stock Ledger{% endif %}</h3>
+            <h3 style="margin-bottom: 0;">📋 {% if selected_warehouse %}Physical Stock Ledger: {{ selected_warehouse.name }}{% else %}Global Physical Stock Ledger{% endif %}{% if selected_material %} — {{ selected_material.sku }}{% endif %}</h3>
             {% if selected_warehouse and perms.core.change_warehouse %}
             <a href="{% url 'warehouse_edit' selected_warehouse.id %}" class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 0.4rem;">
                 ⚙️ Edit Constraints

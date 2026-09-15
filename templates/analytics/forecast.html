@@ -116,7 +116,7 @@
                 {% for r in rows %}
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
                     <td style="padding:0.6rem 1rem;">
-                        <a href="{% url 'material_edit' r.material_id %}" style="font-weight:700; color:var(--primary); text-decoration:none;">{{ r.sku }}</a>
+                        <a href="{% url 'warehouse_inventory' %}?material_id={{ r.material_id }}" style="font-weight:700; color:var(--primary); text-decoration:none;" title="View {{ r.sku }} in Warehouse Inventory">{{ r.sku }}</a>
                         <div style="color:var(--text-muted); font-size:0.78rem;">{{ r.name }}</div>
                     </td>
                     <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.status == 'critical' %}0{% elif r.status == 'reorder_now' %}1{% elif r.status == 'watch' %}2{% elif r.status == 'ok' %}3{% else %}4{% endif %}">

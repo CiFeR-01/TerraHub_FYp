@@ -732,6 +732,66 @@ def warehouse_utilization():
     return rows
 
 
+def open_batch_rent_expr():
+    """ORM expression: Sum (batch tonnage x effective rate) across a
+    warehouse's currently-open batches - Active OR Quarantined (deliberately
+    wider than used_mt_expr()'s Active-only capacity filter: a Quarantined
+    batch still occupies space and still costs rent even though it isn't
+    "usable" stock - do not "fix" this to match used_mt_expr()).
+
+    "Effective rate" = the batch's own rental_rate_per_mt if it has one
+    (a genuine per-PO negotiated rate, locked in permanently at receipt),
+    else the warehouse's CURRENT rental_cost_per_mt (live-tracked - a batch
+    that just used the warehouse's fallback rate should reflect a later
+    correction/edit to that rate, not be stranded at a stale snapshot)."""
+    from django.db.models import Case, When, F, Value, DecimalField, Q
+    from django.db.models.functions import Coalesce
+
+    open_q = Q(batches__status__in=['Active', 'Quarantined'])
+    effective_rate = Coalesce(F('batches__rental_rate_per_mt'), F('rental_cost_per_mt'))
+    return Coalesce(
+        Sum(Case(
+            When(open_q & Q(batches__material__isnull=False),
+                 then=F('batches__quantity') * F('batches__material__weight_mt_per_unit') * effective_rate),
+            When(open_q & Q(batches__product__isnull=False),
+                 then=F('batches__quantity') * F('batches__product__weight_mt_per_unit') * effective_rate),
+            default=Value(0), output_field=DecimalField(max_digits=14, decimal_places=4),
+        )),
+        Value(0, output_field=DecimalField(max_digits=14, decimal_places=4)),
+    )
+
+
+def warehouse_rent_burn():
+    """Per-warehouse true daily rent burn - the single source of truth for
+    rental cost, replacing the flat "used_mt * warehouse.rental_cost_per_mt"
+    calculations that used to live in views.dashboard_view and
+    views.facility_management_view. Internal=0 and Overall=capacity*rate are
+    unchanged; Usage is now batch-aware (sums each open batch's own
+    locked-in rate, via open_batch_rent_expr(), instead of applying one flat
+    rate to the warehouse's current total)."""
+    from .models import Warehouse
+
+    rows = []
+    for w in Warehouse.objects.annotate(used_mt=used_mt_expr(), batch_rent=open_batch_rent_expr()).order_by('name'):
+        used_mt = float(w.used_mt or 0)
+        if w.ownership_type == 'Internal':
+            daily_cost, billing_mode = 0.0, 'Internal'
+        elif w.rental_billing_method == 'Overall':
+            daily_cost, billing_mode = float(w.total_capacity_mt * w.rental_cost_per_mt), 'Overall Capacity'
+        else:
+            daily_cost, billing_mode = float(w.batch_rent or 0), 'Usage'
+        rows.append({
+            'warehouse_id': w.id,
+            'name': w.name,
+            'ownership_type': w.ownership_type,
+            'billing_mode': billing_mode,
+            'used_mt': round(used_mt, 3),
+            'capacity_mt': float(w.total_capacity_mt),
+            'daily_cost': round(daily_cost, 2),
+        })
+    return rows
+
+
 def _linreg(points):
     """Ordinary least-squares (slope, intercept) for [(x, y), ...]. slope=None if degenerate."""
     n = len(points)
@@ -805,6 +865,85 @@ def capacity_forecast():
         r["name"].lower(),
     ))
     return rows
+
+
+def rent_reduction_opportunities():
+    """DSS: for warehouses capacity_forecast() flags critical/watch, finds
+    batches that could relocate to an Internal (rent-free) warehouse with
+    spare capacity, and estimates the daily rent that would stop accruing.
+    Magnitude-of-opportunity signal only, worst-first, greedy pack by
+    highest per-batch rate first into total Internal spare capacity across
+    the whole network (a rough network-level ceiling, not a proposed route).
+
+    Only counts each batch's available_weight_mt (unallocated portion) as
+    moveable - the allocated portion is already committed to an outgoing
+    SO/production run and isn't actually free to relocate."""
+    from .models import Warehouse, Batch
+
+    forecast_rows = {r['warehouse_id']: r for r in capacity_forecast()}
+    flagged = [wid for wid, r in forecast_rows.items() if r['status'] in ('critical', 'watch')]
+    if not flagged:
+        return []
+
+    util_by_wh = {r['warehouse_id']: r for r in warehouse_utilization()}
+    internal_spare = []
+    for w in Warehouse.objects.filter(ownership_type='Internal'):
+        u = util_by_wh.get(w.id)
+        spare = float(w.total_capacity_mt) - (u['used_mt'] if u else 0.0)
+        if spare > 0:
+            internal_spare.append({'warehouse_id': w.id, 'name': w.name, 'spare_mt': round(spare, 3)})
+    internal_spare.sort(key=lambda x: -x['spare_mt'])
+    total_spare = sum(x['spare_mt'] for x in internal_spare)
+
+    opportunities = []
+    for wid in flagged:
+        w = Warehouse.objects.get(id=wid)
+        if w.ownership_type == 'Internal' or w.rental_billing_method != 'Usage' or total_spare <= 0:
+            continue  # nothing to save moving off a free or flat-Overall-billed warehouse
+
+        remaining_spare = total_spare
+        candidates = []
+        # Effective rate = the batch's own locked-in rate if it has one, else this
+        # warehouse's current standing rate (same fallback as open_batch_rent_expr()).
+        qs = (Batch.objects.filter(warehouse=w, status__in=['Active', 'Quarantined'])
+              .select_related('material', 'product'))
+        scored = sorted(
+            qs,
+            key=lambda b: float(b.rental_rate_per_mt if b.rental_rate_per_mt is not None else w.rental_cost_per_mt),
+            reverse=True,
+        )
+        for b in scored:
+            if remaining_spare <= 0:
+                break
+            # available_weight_mt, not total_weight_mt: the allocated portion of a
+            # batch is already committed to an outgoing SO/production run, so only
+            # what's still unallocated is actually free to relocate.
+            mt = float(b.available_weight_mt)
+            if mt <= 0:
+                continue
+            rate = float(b.rental_rate_per_mt if b.rental_rate_per_mt is not None else w.rental_cost_per_mt)
+            take_mt = min(mt, remaining_spare)
+            saving = round(take_mt * rate, 2)
+            candidates.append({
+                'batch_id': b.id,
+                'batch_number': b.batch_number,
+                'item': (b.material.name if b.material else b.product.name),
+                'mt': round(mt, 3),
+                'rate_per_mt': rate,
+                'daily_saving': saving,
+            })
+            remaining_spare -= take_mt
+        if candidates:
+            opportunities.append({
+                'warehouse_id': w.id,
+                'name': w.name,
+                'status': forecast_rows[wid]['status'],
+                'candidate_batches': candidates,
+                'total_daily_saving': round(sum(c['daily_saving'] for c in candidates), 2),
+                'destination_options': internal_spare,
+            })
+    opportunities.sort(key=lambda o: -o['total_daily_saving'])
+    return opportunities
 
 
 # --------------------------------------------------------------------------------
