@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load quantity_extras %}
 
 {% block title %}Products Catalog - TerraHub{% endblock %}
 
@@ -57,14 +58,16 @@
                     <th style="padding:0.75rem 1rem;">Product Name</th>
                     <th style="padding:0.75rem 1rem;">Description</th>
                     <th style="padding:0.75rem 1rem;">Unit of Measure</th>
-                    <th style="padding:0.75rem 1rem;">Unit Weight (MT)</th>
+                    <th style="padding:0.75rem 1rem;">Unit Weight</th>
+                    <th style="padding:0.75rem 1rem;">Active Inventory</th>
                     <th style="padding:0.75rem 1rem;">Price / Unit</th>
                     <th style="padding:0.75rem 1rem;">Bill of Materials (Recipe)</th>
                     <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
                 </tr>
             </thead>
             <tbody>
-                {% for prod in products %}
+                {% for item in product_data %}
+                {% with prod=item.product %}
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">
                         {{ prod.sku }}
@@ -75,7 +78,8 @@
                     <td style="padding:0.85rem 1rem; font-weight:600;">{{ prod.name }}</td>
                     <td style="padding:0.85rem 1rem; color:var(--text-muted);">{{ prod.description|default:"—" }}</td>
                     <td style="padding:0.85rem 1rem;"><span class="badge badge-sky">{{ prod.get_unit_of_measure_display }}</span></td>
-                    <td style="padding:0.85rem 1rem;">{{ prod.weight_mt_per_unit|floatformat:4 }} MT</td>
+                    <td style="padding:0.85rem 1rem;">{{ 1|weight_display:prod }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600; color:var(--primary);">{{ item.stock_display }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">RM{{ prod.price_per_unit|floatformat:2 }}</td>
                     <td style="padding:0.85rem 1rem;">
                         {% for item in prod.recipe_items.all %}
@@ -104,9 +108,10 @@
                         </div>
                     </td>
                 </tr>
+                {% endwith %}
                 {% empty %}
                 <tr>
-                    <td colspan="8" style="padding:2rem; text-align:center; color:var(--text-muted);">No products registered yet.</td>
+                    <td colspan="9" style="padding:2rem; text-align:center; color:var(--text-muted);">No products registered yet.</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -259,4 +264,66 @@
 {% endcomment %}
 
 {% include 'partials/recipe_studio_modal.html' %}
+
+<script>
+function runProductDryRun() {
+    var fileInput = document.getElementById('prod_csv_file');
+    if (!fileInput.files || fileInput.files.length === 0) {
+        alert('Please select a CSV file first.');
+        return;
+    }
+    var form = document.getElementById('prod-import-form');
+    var formData = new FormData(form);
+    formData.append('dry_run', '1');
+
+    fetch("{% url 'import_products' %}", {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (!data.success) {
+            alert('Dry run failed.');
+            return;
+        }
+        var container = document.getElementById('prod-dryrun-container');
+        var tbody = document.getElementById('prod-dryrun-tbody');
+        var badges = document.getElementById('prod-dryrun-badges');
+
+        container.style.display = 'block';
+        tbody.innerHTML = '';
+        badges.innerHTML = `
+            <span style="color:#059669; font-weight:700;">+${data.created_count} New</span> |
+            <span style="color:#2563eb; font-weight:700;">~${data.updated_count} Update</span> |
+            <span style="color:#d97706; font-weight:700;">=${data.skipped_count} Skip</span> |
+            <span style="color:#dc2626; font-weight:700;">!${data.error_count} Error</span>
+        `;
+
+        data.results.forEach(r => {
+            var tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid #cbd5e1';
+            var statusBadge = '';
+            if (r.status === 'created') statusBadge = '<span style="background:#d1fae5; color:#065f46; padding:2px 6px; border-radius:4px; font-weight:600;">NEW</span>';
+            else if (r.status === 'updated') statusBadge = '<span style="background:#dbeafe; color:#1e40af; padding:2px 6px; border-radius:4px; font-weight:600;">UPDATE</span>';
+            else if (r.status === 'duplicate') statusBadge = '<span style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-weight:600;">SKIP</span>';
+            else statusBadge = '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-weight:600;">ERROR</span>';
+
+            tr.innerHTML = `
+                <td style="padding:0.4rem 0.6rem; font-weight:600;">L${r.line}</td>
+                <td style="padding:0.4rem 0.6rem;">${r.name}</td>
+                <td style="padding:0.4rem 0.6rem; font-weight:600;">${r.sku}</td>
+                <td style="padding:0.4rem 0.6rem;">${statusBadge}</td>
+                <td style="padding:0.4rem 0.6rem; color:var(--text-muted);">${r.msg}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    })
+    .catch(err => {
+        alert('Error performing dry run: ' + err);
+    });
+}
+</script>
 {% endblock %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load quantity_extras %}
 
 {% block title %}Production Run {{ run.run_number }}{% endblock %}
 
@@ -65,12 +66,12 @@
         </div>
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Expected Yield</div>
-            <div style="font-size:0.95rem; font-weight:600;">{{ run.expected_yield|floatformat:2 }} {{ run.target_product.unit_of_measure }}</div>
+            <div style="font-size:0.95rem; font-weight:600;">{{ run.expected_yield|floatformat:2 }} units <span style="font-size:0.78rem; color:var(--text-muted); font-weight:500;">(≈ {{ run.expected_yield|weight_display:run.target_product }})</span></div>
         </div>
         {% if run.status in 'InProgress,Paused,Completed' %}
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Progress</div>
-            <div style="font-size:0.95rem; font-weight:600; margin-bottom:0.3rem;">{{ yield_logs_sum|floatformat:2 }} / {{ run.expected_yield|floatformat:2 }} {{ run.target_product.unit_of_measure }}</div>
+            <div style="font-size:0.95rem; font-weight:600; margin-bottom:0.3rem;">{{ yield_logs_sum|floatformat:2 }} / {{ run.expected_yield|floatformat:2 }} units <span style="font-size:0.78rem; color:var(--text-muted); font-weight:500;">(≈ {{ yield_logs_sum|weight_display:run.target_product }} / {{ run.expected_yield|weight_display:run.target_product }})</span></div>
             <div style="width:100%; height:6px; background:#e2e8f0; border-radius:10px; overflow:hidden;">
                 <div style="height:100%; border-radius:10px; width:{{ yield_progress_pct|floatformat:0 }}%; background:{% if yield_progress_pct >= 100 %}#059669{% else %}var(--primary){% endif %};"></div>
             </div>
@@ -254,7 +255,7 @@
                         {% csrf_token %}
                         <input type="hidden" name="action" value="log_yield">
                         <div>
-                            <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.3rem;">Quantity ({{ run.target_product.unit_of_measure }})</label>
+                            <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.3rem;">Quantity (units, 1 = {{ 1|weight_display:run.target_product }})</label>
                             <input type="number" step="0.01" min="0.01" name="quantity" required class="form-input" style="width:120px; padding:0.5rem;">
                         </div>
                         <div>
@@ -309,7 +310,7 @@
                             {% endif %}
                             <div style="display:flex; align-items:center; gap:0.5rem;">
                                 <input type="number" step="0.01" name="actual_yield" required class="form-input" style="flex:1; padding:0.5rem;" value="{% if yield_logs_sum %}{{ yield_logs_sum|floatformat:2 }}{% else %}{{ run.expected_yield }}{% endif %}">
-                                <span style="font-size:0.85rem; color:var(--text-muted);">{{ run.target_product.unit_of_measure }}</span>
+                                <span style="font-size:0.85rem; color:var(--text-muted);">units</span>
                             </div>
                         </div>
                         <div style="margin-bottom:1.5rem; padding:1rem; border:1px solid #fde047; background:#fefce8; border-radius:8px;">
@@ -473,7 +474,7 @@
                                     <td style="padding:0.75rem; font-size:0.85rem; font-weight:600;">
                                         <a href="{% url 'batch_detail' batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ batch.batch_number }}</a>
                                     </td>
-                                    <td style="padding:0.75rem; font-size:0.85rem; text-align:right;">{{ batch.quantity|floatformat:2 }} {{ run.target_product.unit_of_measure }}</td>
+                                    <td style="padding:0.75rem; font-size:0.85rem; text-align:right;">{{ batch.quantity|floatformat:2 }} units <span style="font-size:0.75rem; color:var(--text-muted);">(≈ {{ batch.quantity|weight_display:run.target_product }})</span></td>
                                     <td style="padding:0.75rem; font-size:0.85rem;">{{ batch.warehouse.name|default:"Unassigned" }}</td>
                                     <td style="padding:0.75rem;">
                                         {% if batch.status == 'Active' %}<span class="badge badge-emerald">Active</span>
