@@ -1611,12 +1611,12 @@ class RentReductionOpportunitiesTests(TestCase):
             total_capacity_mt=Decimal('1000'),
         )
 
-    def _batch(self, wh, qty, rate, allocated=0):
+    def _batch(self, wh, qty, rate, allocated=0, expiry_days=300):
         return Batch.objects.create(
-            batch_number=f'B-{wh.id}-{qty}-{rate}-{allocated}', material=self.material,
+            batch_number=f'B-{wh.id}-{qty}-{rate}-{allocated}-{expiry_days}', material=self.material,
             quantity=Decimal(str(qty)), allocated_quantity=Decimal(str(allocated)),
             status='Active', warehouse=wh,
-            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=300),
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=expiry_days),
             rental_rate_per_mt=Decimal(str(rate)),
         )
 
@@ -1691,6 +1691,46 @@ class RentReductionOpportunitiesTests(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['candidate_batches'][0]['mt'], 40.0)
         self.assertEqual(rows[0]['total_daily_saving'], 200.0)  # 40 MT * 5.00, not 100 * 5.00
+
+    def test_near_expiry_batch_is_excluded_with_nothing_else(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00', expiry_days=10)  # expiring soon
+        Warehouse.objects.create(
+            name='Internal Depot Expiry', location_type='Storage', ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
+            total_capacity_mt=Decimal('500'),
+        )
+        rows = rent_reduction_opportunities()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['candidate_batches'], [])
+        self.assertEqual(rows[0]['total_daily_saving'], 0)
+        self.assertEqual(rows[0]['excluded_near_expiry'], 1)
+
+    def test_batch_beyond_expiry_threshold_still_included(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00', expiry_days=31)  # just past the 30-day cutoff
+        Warehouse.objects.create(
+            name='Internal Depot Beyond', location_type='Storage', ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
+            total_capacity_mt=Decimal('500'),
+        )
+        rows = rent_reduction_opportunities()
+        self.assertEqual(len(rows[0]['candidate_batches']), 1)
+        self.assertEqual(rows[0]['excluded_near_expiry'], 0)
+
+    def test_near_expiry_excluded_alongside_a_healthy_candidate(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '9.00', expiry_days=5)   # excluded despite the higher rate
+        self._batch(self.rented, 100, '3.00', expiry_days=200)  # the only real candidate
+        Warehouse.objects.create(
+            name='Internal Depot Mixed', location_type='Storage', ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
+            total_capacity_mt=Decimal('500'),
+        )
+        rows = rent_reduction_opportunities()
+        self.assertEqual(len(rows[0]['candidate_batches']), 1)
+        self.assertEqual(rows[0]['candidate_batches'][0]['rate_per_mt'], 3.0)
+        self.assertEqual(rows[0]['excluded_near_expiry'], 1)
 
     def test_view_renders_with_caveat(self):
         self._flag_critical(self.rented)
