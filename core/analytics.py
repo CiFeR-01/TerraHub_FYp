@@ -867,6 +867,9 @@ def capacity_forecast():
     return rows
 
 
+_DSS_NEAR_EXPIRY_DAYS = 30  # same threshold qa_dashboard_view uses for "near expiry"
+
+
 def rent_reduction_opportunities():
     """DSS: for warehouses capacity_forecast() flags critical/watch, finds
     batches that could relocate to an Internal (rent-free) warehouse with
@@ -877,7 +880,13 @@ def rent_reduction_opportunities():
 
     Only counts each batch's available_weight_mt (unallocated portion) as
     moveable - the allocated portion is already committed to an outgoing
-    SO/production run and isn't actually free to relocate."""
+    SO/production run and isn't actually free to relocate.
+
+    Expiry-aware: a batch within _DSS_NEAR_EXPIRY_DAYS of expiring is excluded
+    entirely, not just deprioritized - it's about to leave the warehouse on
+    its own (consumed or spoiled) regardless of what's recommended, so paying
+    the logistics cost to relocate it first is wasted effort. Excluded counts
+    are surfaced per warehouse so this isn't a silent gap in the numbers."""
     from .models import Warehouse, Batch
 
     forecast_rows = {r['warehouse_id']: r for r in capacity_forecast()}
@@ -903,6 +912,7 @@ def rent_reduction_opportunities():
 
         remaining_spare = total_spare
         candidates = []
+        excluded_near_expiry = 0
         # Effective rate = the batch's own locked-in rate if it has one, else this
         # warehouse's current standing rate (same fallback as open_batch_rent_expr()).
         qs = (Batch.objects.filter(warehouse=w, status__in=['Active', 'Quarantined'])
@@ -915,6 +925,10 @@ def rent_reduction_opportunities():
         for b in scored:
             if remaining_spare <= 0:
                 break
+            days_left = b.days_until_expiry
+            if days_left is not None and days_left <= _DSS_NEAR_EXPIRY_DAYS:
+                excluded_near_expiry += 1
+                continue  # will deplete/expire on its own soon - not worth relocating
             # available_weight_mt, not total_weight_mt: the allocated portion of a
             # batch is already committed to an outgoing SO/production run, so only
             # what's still unallocated is actually free to relocate.
@@ -933,7 +947,7 @@ def rent_reduction_opportunities():
                 'daily_saving': saving,
             })
             remaining_spare -= take_mt
-        if candidates:
+        if candidates or excluded_near_expiry:
             opportunities.append({
                 'warehouse_id': w.id,
                 'name': w.name,
@@ -941,6 +955,7 @@ def rent_reduction_opportunities():
                 'candidate_batches': candidates,
                 'total_daily_saving': round(sum(c['daily_saving'] for c in candidates), 2),
                 'destination_options': internal_spare,
+                'excluded_near_expiry': excluded_near_expiry,
             })
     opportunities.sort(key=lambda o: -o['total_daily_saving'])
     return opportunities
