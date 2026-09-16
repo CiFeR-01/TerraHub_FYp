@@ -1,0 +1,7 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "python manage.py snapshot_utilization"
+cronSchedule = "0 23 * * *"
+restartPolicyType = "NEVER"
