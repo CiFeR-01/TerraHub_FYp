@@ -86,7 +86,10 @@ class Product(models.Model):
     description = models.TextField(blank=True, null=True)
     UNIT_CHOICES = (('MT', 'Metric Ton'), ('kg', 'Kilograms'), ('L', 'Litres'), ('g', 'Grams'), ('pcs', 'Pieces'))
     unit_of_measure = models.CharField(max_length=20, choices=UNIT_CHOICES, default='pcs')
-    weight_mt_per_unit = models.DecimalField(max_digits=10, decimal_places=4, default=1.0000)
+    weight_mt_per_unit = models.DecimalField(
+        max_digits=10, decimal_places=4, default=1.0000,
+        help_text="Weight in MT per unit, regardless of unit_of_measure's label"
+    )
     price_per_unit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     is_active = models.BooleanField(default=True)
 

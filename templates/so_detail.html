@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load quantity_extras %}
 
 {% block title %}{{ so.so_number }} — Sales Order Detail - TerraHub{% endblock %}
 
@@ -224,7 +225,7 @@
                     <td style="padding:0.85rem 1rem; color:var(--text-muted); font-size:0.78rem;">{{ forloop.counter }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:700;">{{ row.item.product.name }}</td>
                     <td style="padding:0.85rem 1rem; font-family:monospace; font-size:0.8rem; color:var(--text-muted);">{{ row.item.product.sku }}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:600;">{{ row.item.quantity_ordered|floatformat:1 }} {{ row.item.product.unit_of_measure }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600;">{{ row.item.quantity_ordered|floatformat:1 }} units<br><span style="font-size:0.72rem; font-weight:400; color:var(--text-muted);">≈ {{ row.item.quantity_ordered|weight_display:row.item.product }}</span></td>
                     <td style="padding:0.85rem 1rem; font-weight:600; color:{% if row.allocated > 0 %}#059669{% else %}var(--text-muted){% endif %};">{{ row.allocated|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600; color:{% if row.deficit > 0 %}#dc2626{% else %}var(--text-muted){% endif %};">{{ row.deficit|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem;">{{ row.item.quantity_shipped|floatformat:1 }}</td>
@@ -269,7 +270,7 @@
                                 <td style="padding:0.4rem 0.75rem; font-weight:600;">
                                     <a href="{% url 'batch_detail' arow.batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ arow.batch.batch_number }}</a>
                                 </td>
-                                <td style="padding:0.4rem 0.75rem;">{{ arow.quantity|floatformat:2 }} {{ row.item.product.unit_of_measure }}</td>
+                                <td style="padding:0.4rem 0.75rem;">{{ arow.quantity|floatformat:2 }} units <span style="color:var(--text-muted);">(≈ {{ arow.quantity|weight_display:row.item.product }})</span></td>
                                 <td style="padding:0.4rem 0.75rem;">
                                     {% if 'Newly Manufactured' in arow.source %}<span style="color:#059669; font-weight:600;">{{ arow.source }}</span>
                                     {% else %}<span style="color:var(--text-muted);">{{ arow.source }}</span>{% endif %}
@@ -396,7 +397,7 @@
         <div style="display:flex; flex-direction:column; gap:0.4rem;">
             {% for run in so.production_runs.all %}
             <a href="{% url 'production_run_detail' run.pk %}" style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; padding:0.6rem 0.85rem; background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; text-decoration:none; color:var(--text-main); font-size:0.85rem;">
-                <span><strong style="color:var(--primary);">{{ run.run_number }}</strong> — {{ run.target_product.name }} ({{ run.expected_yield|floatformat:0 }} {{ run.target_product.unit_of_measure }})</span>
+                <span><strong style="color:var(--primary);">{{ run.run_number }}</strong> — {{ run.target_product.name }} ({{ run.expected_yield|floatformat:0 }} units ≈ {{ run.expected_yield|weight_display:run.target_product }})</span>
                 <span class="badge {% if run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.7rem;">{{ run.status }}</span>
             </a>
             {% endfor %}
