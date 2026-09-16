@@ -57,6 +57,7 @@
             <div style="font-weight:700; color:#059669;">Up to RM {{ o.total_daily_saving|floatformat:2 }}/day if relocated</div>
         </div>
 
+        {% if o.candidate_batches %}
         <div class="table-responsive">
             <table class="modern-table" style="width:100%; border-collapse:collapse;">
                 <thead>
@@ -86,6 +87,22 @@
             <strong>Candidate destinations (spare Internal capacity):</strong>
             {% for d in o.destination_options %}{{ d.name }} ({{ d.spare_mt|mt_display }} free){% if not forloop.last %}, {% endif %}{% endfor %}
         </div>
+        {% else %}
+        <div style="font-size:0.85rem; color:var(--text-muted); padding:0.75rem 0;">
+            No batches worth relocating here right now — all {{ o.excluded_near_expiry }}
+            batch{{ o.excluded_near_expiry|pluralize }} in this warehouse
+            {{ o.excluded_near_expiry|pluralize:"is,are" }} within 30 days of expiring and
+            will clear out on its own.
+        </div>
+        {% endif %}
+
+        {% if o.excluded_near_expiry and o.candidate_batches %}
+        <div style="margin-top:0.5rem; font-size:0.75rem; color:var(--text-muted); font-style:italic;">
+            {{ o.excluded_near_expiry }} other batch{{ o.excluded_near_expiry|pluralize }} in this warehouse
+            {{ o.excluded_near_expiry|pluralize:"is,are" }} within 30 days of expiry and excluded — relocating
+            something about to clear out on its own isn't worth the effort.
+        </div>
+        {% endif %}
     </div>
     {% endfor %}
 {% else %}
