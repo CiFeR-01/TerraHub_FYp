@@ -278,6 +278,16 @@ def forecast_view(request):
 
 @login_required
 def capacity_forecast_view(request):
+    can_run_snapshot = _is_admin_or_manager(request.user)
+
+    if request.method == "POST":
+        if not can_run_snapshot:
+            messages.error(request, "Only Admin or Manager can run a snapshot.")
+        else:
+            count, snap_date = analytics.snapshot_warehouse_utilization()
+            messages.success(request, f"Snapshotted {count} warehouse(s) for {snap_date}.")
+        return redirect("capacity_forecast")
+
     rows = analytics.capacity_forecast()
     rent_by_id = {r["warehouse_id"]: r for r in analytics.warehouse_rent_burn()}
     for r in rows:
@@ -285,6 +295,10 @@ def capacity_forecast_view(request):
         r["daily_rent"] = rent_row["daily_cost"] if rent_row else None
 
     history_days = max((r["snapshot_count"] for r in rows), default=0)
+    latest_dates = [r["latest_date"] for r in rows if r["latest_date"]]
+    latest_snapshot_date = max(latest_dates) if latest_dates else None
+    stale_days = (timezone.now().date() - latest_snapshot_date).days if latest_snapshot_date else None
+
     summary = {
         "warehouse_count": len(rows),
         "critical": sum(1 for r in rows if r["status"] == "critical"),
@@ -295,11 +309,15 @@ def capacity_forecast_view(request):
         "building": 0 < history_days < 7,
         "total_daily_rent": sum(r["daily_rent"] or 0 for r in rows),
         "has_rent_opportunities": any(r["status"] in ("critical", "watch") for r in rows),
+        "latest_snapshot_date": latest_snapshot_date,
+        "stale_days": stale_days,
+        "is_stale": stale_days is not None and stale_days >= 2,
     }
     analytics_category, analytics_tabs = _analytics_tabs(request, "capacity_forecast")
     return render(request, "analytics/capacity_forecast.html", {
         "rows": rows,
         "summary": summary,
+        "can_run_snapshot": can_run_snapshot,
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,
         "analytics_active": "capacity_forecast",
@@ -357,7 +375,7 @@ _CATEGORY_SIGNAL_LINKS = {
 }
 
 
-def _can_generate_briefing(user):
+def _is_admin_or_manager(user):
     return user.is_superuser or getattr(user, "role", None) in ("Admin", "Manager")
 
 
@@ -404,7 +422,7 @@ def category_briefing_view(request, category):
     if category not in _CATEGORY_LABELS:
         raise Http404(f"Unknown briefing category: {category!r}")
 
-    can_generate = _can_generate_briefing(request.user)
+    can_generate = _is_admin_or_manager(request.user)
 
     if request.method == "POST":
         if not can_generate:

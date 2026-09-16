@@ -732,6 +732,30 @@ def warehouse_utilization():
     return rows
 
 
+def snapshot_warehouse_utilization(snap_date=None):
+    """Records current utilization per warehouse into WarehouseUtilizationSnapshot
+    for snap_date (defaults to today). Idempotent per (warehouse, date) - safe to
+    call more than once a day. Shared by the `snapshot_utilization` management
+    command and the manual "Run snapshot now" button on Capacity Runway.
+    Returns (warehouse_count, snap_date)."""
+    from django.utils import timezone
+    from .models import WarehouseUtilizationSnapshot
+
+    snap_date = snap_date or timezone.now().date()
+    rows = warehouse_utilization()
+    for r in rows:
+        WarehouseUtilizationSnapshot.objects.update_or_create(
+            warehouse_id=r["warehouse_id"],
+            snapshot_date=snap_date,
+            defaults={
+                "used_mt": r["used_mt"],
+                "capacity_mt": r["capacity_mt"],
+                "utilization_percent": r["utilization_percent"],
+            },
+        )
+    return len(rows), snap_date
+
+
 def open_batch_rent_expr():
     """ORM expression: Sum (batch tonnage x effective rate) across a
     warehouse's currently-open batches - Active OR Quarantined (deliberately

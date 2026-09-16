@@ -8,10 +8,8 @@ its projections are meaningful.
     python manage.py snapshot_utilization
 """
 from django.core.management.base import BaseCommand
-from django.utils import timezone
 
-from core.analytics import warehouse_utilization
-from core.models import WarehouseUtilizationSnapshot
+from core.analytics import snapshot_warehouse_utilization
 
 
 class Command(BaseCommand):
@@ -23,23 +21,12 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        snap_date = None
         if options.get("date"):
             from datetime import date
             snap_date = date.fromisoformat(options["date"])
-        else:
-            snap_date = timezone.now().date()
 
-        rows = warehouse_utilization()
-        for r in rows:
-            WarehouseUtilizationSnapshot.objects.update_or_create(
-                warehouse_id=r["warehouse_id"],
-                snapshot_date=snap_date,
-                defaults={
-                    "used_mt": r["used_mt"],
-                    "capacity_mt": r["capacity_mt"],
-                    "utilization_percent": r["utilization_percent"],
-                },
-            )
+        count, snap_date = snapshot_warehouse_utilization(snap_date)
         self.stdout.write(self.style.SUCCESS(
-            f"Snapshotted {len(rows)} warehouse(s) for {snap_date}."
+            f"Snapshotted {count} warehouse(s) for {snap_date}."
         ))
