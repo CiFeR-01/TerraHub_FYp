@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load quantity_extras %}
 
 {% block title %}Action Center - TerraHub{% endblock %}
 
@@ -72,7 +73,7 @@
                     <div>
                         <div style="font-size:0.75rem; font-weight:700; color:#a16207; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Variance Approval</div>
                         <a href="{% url 'production_run_detail' run.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ run.run_number }}</a>
-                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Product: {{ run.target_product.name }} &middot; Expected: {{ run.expected_yield }} {{ run.target_product.unit_of_measure }} &middot; Actual Yield: {{ run.actual_yield }}</div>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Product: {{ run.target_product.name }} &middot; Expected: {{ run.expected_yield }} units (≈ {{ run.expected_yield|weight_display:run.target_product }}) &middot; Actual Yield: {{ run.actual_yield }} units (≈ {{ run.actual_yield|weight_display:run.target_product }})</div>
                     </div>
                     <span class="badge badge-amber" style="background:#fde047; color:#854d0e;">Pending Approval</span>
                 </div>

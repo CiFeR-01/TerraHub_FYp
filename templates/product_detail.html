@@ -130,8 +130,15 @@
                 [{{ product.sku }}] {{ product.name }}
             </h1>
         </div>
-        <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary);">
-            Total Stock: {{ total_stock|floatformat:2 }} {{ product.get_unit_of_measure_display }}
+        <div style="text-align: right;">
+            <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary);">
+                Total Stock: {{ stock_weight_display }}
+            </div>
+            {% if product.unit_of_measure != 'pcs' %}
+            <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.15rem;">
+                {{ total_stock|floatformat:2 }} unit{{ total_stock|pluralize }} &times; {{ product.weight_mt_per_unit }} MT/unit
+            </div>
+            {% endif %}
         </div>
     </div>
 </header>

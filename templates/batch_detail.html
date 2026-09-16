@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load quantity_extras %}
 
 {% block title %}Batch {{ batch.batch_number }} - TerraHub{% endblock %}
 
@@ -67,9 +68,11 @@
                 <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
                     <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Current Quantity</span>
                     <div style="font-size: 1.5rem; font-weight: 700; color: var(--text-main); margin-top: 0.25rem;">
-                        {{ batch.quantity }} <span style="font-size: 0.85rem; color: var(--text-muted);">
-                        {% if batch.material %}{{ batch.material.unit_of_measure }}{% else %}{{ batch.product.unit_of_measure }}{% endif %}
-                        </span>
+                        {% if batch.material %}
+                        {{ batch.quantity }} <span style="font-size: 0.85rem; color: var(--text-muted);">{{ batch.material.unit_of_measure }}</span>
+                        {% else %}
+                        {{ batch.quantity }} <span style="font-size: 0.85rem; color: var(--text-muted);">units (≈ {{ batch.quantity|weight_display:batch.product }})</span>
+                        {% endif %}
                     </div>
                 </div>
                 <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">

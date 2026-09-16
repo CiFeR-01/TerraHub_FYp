@@ -16,6 +16,27 @@ def _close_batch_if_depleted(batch):
     return False
 
 
+def format_mt(total_mt):
+    """Human-friendly display for an already-computed MT amount: auto-switches
+    kg -> MT so a small figure (e.g. one batch's weight) doesn't read as a
+    fiddly '0.03 MT' when '30 kg' is what a person actually means."""
+    total_mt = float(total_mt)
+    if total_mt >= 1:
+        return f"{total_mt:.2f} MT"
+    return f"{total_mt * 1000:.0f} kg"
+
+
+def format_stock_display(quantity, product):
+    """Human-friendly stock figure for a Product: a 'pcs' product stays a
+    plain count (weight_mt_per_unit is only there for capacity/logistics
+    math, not what a person means by "how many"); everything else converts
+    to real weight, auto-switching kg -> MT via format_mt() so it never
+    reads as a stagnant, always-the-same per-unit config value."""
+    if product.unit_of_measure == 'pcs':
+        return f"{float(quantity):,.0f} pcs"
+    return format_mt(float(quantity) * float(product.weight_mt_per_unit))
+
+
 def generate_next_code(model_class, field_name, prefix, default_num=1001, pad=4):
     """
     Generates an automated unique ID like SO-1004, PO-5003, RUN-809, PRD-1001, MAT-1001.
@@ -365,7 +386,7 @@ def finalize_production_run(run, user):
                     StockAllocation.objects.create(batch=fg_batch, sales_order=so, quantity=take)
                     OrderTimeline.objects.create(
                         sales_order=so,
-                        action=f"Auto-allocated {take} {item.product.unit_of_measure} of {item.product.sku} from newly produced batch {fg_batch.batch_number} (Run {run.run_number}).",
+                        action=f"Auto-allocated {take} units of {item.product.sku} from newly produced batch {fg_batch.batch_number} (Run {run.run_number}).",
                         user=user
                     )
 
@@ -465,18 +486,18 @@ def unallocate_so_batch(allocation, quantity, user, target_so=None):
             StockAllocation.objects.create(batch=batch, sales_order=target_so, quantity=quantity)
             OrderTimeline.objects.create(
                 sales_order=source_so,
-                action=f"Unallocated {quantity} {product.unit_of_measure} of {product.sku} (Batch {batch.batch_number}) — transferred to {target_so.so_number}.",
+                action=f"Unallocated {quantity} units of {product.sku} (Batch {batch.batch_number}) — transferred to {target_so.so_number}.",
                 user=user
             )
             OrderTimeline.objects.create(
                 sales_order=target_so,
-                action=f"Received {quantity} {product.unit_of_measure} of {product.sku} (Batch {batch.batch_number}) transferred from {source_so.so_number}.",
+                action=f"Received {quantity} units of {product.sku} (Batch {batch.batch_number}) transferred from {source_so.so_number}.",
                 user=user
             )
         else:
             OrderTimeline.objects.create(
                 sales_order=source_so,
-                action=f"Unallocated {quantity} {product.unit_of_measure} of {product.sku} (Batch {batch.batch_number}) — released back to available stock.",
+                action=f"Unallocated {quantity} units of {product.sku} (Batch {batch.batch_number}) — released back to available stock.",
                 user=user
             )
 
