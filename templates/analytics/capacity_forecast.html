@@ -20,9 +20,40 @@
             it reaches 100&thinsp;%. Fastest-filling first.
         </p>
     </div>
+    {% if can_run_snapshot %}
+    <div class="header-action-tray">
+        <div class="timestamp-badge">
+            {% if summary.latest_snapshot_date %}Last snapshot: {{ summary.latest_snapshot_date|date:"d M Y" }}{% else %}No snapshot recorded yet{% endif %}
+        </div>
+        <form method="post" style="display:contents;">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-primary" style="padding:0.5rem 1rem; font-size:0.85rem;">
+                Run snapshot now
+            </button>
+        </form>
+    </div>
+    {% endif %}
 </header>
 
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: #d97706;{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: #059669;{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
 {% include "analytics/partials/_analytics_tabs.html" %}
+
+{% if summary.is_stale %}
+<div class="animate-fade-in-up" style="background:#fee2e2; border:1px solid rgba(220,38,38,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:#b91c1c;">
+    <strong>Snapshot data is stale.</strong> Last recorded {{ summary.stale_days }} days ago
+    ({{ summary.latest_snapshot_date|date:"d M Y" }}) &mdash; the daily job may have failed.
+    {% if can_run_snapshot %}Use "Run snapshot now" above to catch up, and check the scheduled job.{% else %}Ask an Admin or Manager to run a snapshot and check the scheduled job.{% endif %}
+</div>
+{% endif %}
 
 {% if summary.empty %}
 <div class="animate-fade-in-up" style="background:var(--accent-wash,#eef2ff); border:1px solid rgba(79,70,229,0.2); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:var(--text-main);">
