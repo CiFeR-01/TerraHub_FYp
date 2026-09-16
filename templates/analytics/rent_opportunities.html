@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load quantity_extras %}
 
 {% block title %}Rent Reduction - TerraHub{% endblock %}
 
@@ -26,8 +27,8 @@
 
 <div class="animate-fade-in-up" style="background:#fef3c7; border:1px solid rgba(180,83,9,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.85rem; color:#854d0e;">
     <strong>Estimated potential savings only.</strong> Does not account for transfer/freight
-    cost, lead time, or contractual minimum-billing floors. This is a signal for manual
-    review, not an auto-executable transfer order.
+    cost or lead time. This is a signal for manual review, not an auto-executable
+    transfer order.
 </div>
 
 <section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay:0.05s; margin-bottom:1.5rem;">
@@ -62,7 +63,7 @@
                     <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">
                         <th style="padding:0.5rem 0.75rem;">Batch</th>
                         <th style="padding:0.5rem 0.75rem;">Item</th>
-                        <th style="padding:0.5rem 0.75rem; text-align:right;">MT</th>
+                        <th style="padding:0.5rem 0.75rem; text-align:right;">Weight</th>
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Rate / MT</th>
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Daily Saving</th>
                     </tr>
@@ -72,7 +73,7 @@
                     <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
                         <td style="padding:0.55rem 0.75rem; font-family:monospace; font-size:0.8rem;">{{ c.batch_number }}</td>
                         <td style="padding:0.55rem 0.75rem;">{{ c.item }}</td>
-                        <td style="padding:0.55rem 0.75rem; text-align:right;">{{ c.mt|floatformat:2 }}</td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right;">{{ c.mt|mt_display }}</td>
                         <td style="padding:0.55rem 0.75rem; text-align:right;">RM {{ c.rate_per_mt|floatformat:2 }}</td>
                         <td style="padding:0.55rem 0.75rem; text-align:right; font-weight:600; color:#059669;">RM {{ c.daily_saving|floatformat:2 }}</td>
                     </tr>
@@ -83,7 +84,7 @@
 
         <div style="margin-top:0.9rem; font-size:0.78rem; color:var(--text-muted);">
             <strong>Candidate destinations (spare Internal capacity):</strong>
-            {% for d in o.destination_options %}{{ d.name }} ({{ d.spare_mt|floatformat:1 }} MT free){% if not forloop.last %}, {% endif %}{% endfor %}
+            {% for d in o.destination_options %}{{ d.name }} ({{ d.spare_mt|mt_display }} free){% if not forloop.last %}, {% endif %}{% endfor %}
         </div>
     </div>
     {% endfor %}

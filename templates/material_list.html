@@ -54,7 +54,6 @@
                     <th style="padding:0.75rem 1rem;">Safe Storage Threshold</th>
                     <th style="padding:0.75rem 1rem;">Unit Cost (RM)</th>
                     <th style="padding:0.75rem 1rem;">Active Inventory</th>
-                    <th style="padding:0.75rem 1rem;">Total Weight (MT)</th>
                     <th style="padding:0.75rem 1rem;">Valuation (RM)</th>
                     <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
                 </tr>
@@ -77,8 +76,7 @@
                         </span>
                     </td>
                     <td style="padding:0.85rem 1rem;">RM{{ item.material.cost_per_unit|floatformat:2 }}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:700;">{{ item.current_stock|floatformat:0 }} {{ item.material.unit_of_measure }}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:600; color:var(--primary);">{{ item.total_mt|floatformat:2 }} MT</td>
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ item.stock_display }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:700; color:#059669;">RM{{ item.total_value|floatformat:2 }}</td>
                     <td style="padding:0.85rem 1rem; text-align:right;">
                         <div style="display:flex; justify-content:flex-end; gap:0.5rem; align-items:center;">
@@ -104,7 +102,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="10" style="padding:2rem; text-align:center; color:var(--text-muted);">No materials registered yet.</td>
+                    <td colspan="9" style="padding:2rem; text-align:center; color:var(--text-muted);">No materials registered yet.</td>
                 </tr>
                 {% endfor %}
             </tbody>

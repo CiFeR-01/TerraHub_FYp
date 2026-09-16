@@ -22,7 +22,7 @@ from .models import (
     Shipment, ShipmentItem, ShipmentItemReceipt, StockAudit, RegistryLog, OrderTimeline, Notification, Role,
     StockAllocation, Supplier, SupplierMaterial, Client
 )
-from .utils import generate_next_code
+from .utils import generate_next_code, format_stock_display
 
 
 @login_required
@@ -170,7 +170,7 @@ def dashboard_view(request):
             'supervisor': r.supervisor.username if r.supervisor else 'Unassigned',
             'made': made,
             'expected': expected,
-            'unit': r.target_product.unit_of_measure if r.target_product else '',
+            'unit': 'units' if r.target_product else '',
             'pct': min(pct, 100),
             'pct_raw': pct,
             'days_running': (today - r.start_time.date()).days if r.start_time else None,
@@ -1501,8 +1501,14 @@ def product_list_view(request):
     products = Product.objects.prefetch_related('recipe_items__material').order_by('name')
     materials = Material.objects.all().order_by('name')
 
+    product_data = []
+    for p in products:
+        stock = Batch.objects.filter(product=p, status='Active').aggregate(s=Sum('quantity'))['s'] or 0
+        product_data.append({'product': p, 'stock_display': format_stock_display(stock, p)})
+
     context = {
         'products': products,
+        'product_data': product_data,
         'materials': materials,
         'next_product_sku': generate_next_code(Product, 'sku', 'PROD', 1001, pad=4),
     }
@@ -1532,6 +1538,7 @@ def product_detail_view(request, pk):
     # Inventory Overview
     active_batches = Batch.objects.filter(product=product, status='Active').select_related('warehouse', 'produced_in').order_by('expiry_date')
     total_stock = sum(b.quantity for b in active_batches)
+    stock_weight_display = format_stock_display(total_stock, product)
 
     from .utils import get_batch_reservations, get_batch_produced_for
     batch_rows = []
@@ -1572,6 +1579,7 @@ def product_detail_view(request, pk):
         'active_batches': active_batches,
         'batch_rows': batch_rows,
         'total_stock': total_stock,
+        'stock_weight_display': stock_weight_display,
         'production_runs': production_runs,
         'chart_labels': chart_labels,
         'chart_sales_data': chart_sales_data,
@@ -1619,7 +1627,7 @@ def material_list_view(request):
         return redirect('material_list')
 
     materials = Material.objects.all().order_by('name')
-    
+
     # Calculate stock totals per material
     material_data = []
     for m in materials:
@@ -1627,7 +1635,7 @@ def material_list_view(request):
         material_data.append({
             'material': m,
             'current_stock': float(total_qty),
-            'total_mt': float(total_qty * m.weight_mt_per_unit),
+            'stock_display': format_stock_display(total_qty, m),
             'total_value': float(total_qty * m.cost_per_unit),
         })
 
@@ -4426,8 +4434,8 @@ def production_run_detail_view(request, pk):
                         production_run=run, quantity=qty, log_date=log_date,
                         logged_by=request.user, notes=notes or None
                     )
-                    OrderTimeline.objects.create(production_run=run, action=f"Logged {qty} {run.target_product.unit_of_measure} of yield on {log_date}.", user=request.user)
-                    messages.success(request, f"Logged {qty} {run.target_product.unit_of_measure}.")
+                    OrderTimeline.objects.create(production_run=run, action=f"Logged {qty} units of yield on {log_date}.", user=request.user)
+                    messages.success(request, f"Logged {qty} units.")
             except Exception as e:
                 messages.error(request, f"Error logging yield: {e}")
             return redirect('production_run_detail', pk=pk)

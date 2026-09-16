@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load quantity_extras %}
 
 {% block title %}Warehouse Inventory Ledger - TerraHub{% endblock %}
 
@@ -152,10 +153,13 @@
                             </div>
                         </td>
                         <td style="text-align: right; font-weight: 700;">
-                            {{ b.quantity }} 
-                            <span style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">
-                                {% if b.material %}{{ b.material.get_unit_of_measure_display|default:b.material.unit_of_measure }}{% else %}{{ b.product.get_unit_of_measure_display|default:b.product.unit_of_measure }}{% endif %}
-                            </span>
+                            {% if b.material %}
+                            {{ b.quantity }}
+                            <span style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">{{ b.material.get_unit_of_measure_display|default:b.material.unit_of_measure }}</span>
+                            {% else %}
+                            {{ b.quantity }}
+                            <span style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">units (≈ {{ b.quantity|weight_display:b.product }})</span>
+                            {% endif %}
                         </td>
                         <td style="font-weight: 500;">
                             {{ b.expiry_date|date:"Y-m-d"|default:"Indefinite" }}
