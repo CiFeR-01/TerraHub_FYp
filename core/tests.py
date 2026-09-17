@@ -2803,3 +2803,159 @@ class ShipmentCreateArrivedDoesNotDeliverSOTests(TestCase):
         self.assertTrue(Shipment.objects.filter(sales_order=so).exists())
         so.refresh_from_db()
         self.assertEqual(so.status, 'Ready to Ship')
+
+
+class FinishedGoodsFefoAllocationTests(TestCase):
+    """SO finished-goods allocation: FEFO pre-fill, override reason when amounts
+    leave FEFO order, capped at what the order still needs, nothing saved on error."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='fefo', password='pw')
+        self.client.login(username='fefo', password='pw')
+        self.wh = Warehouse.objects.create(name='FG Hub FEFO', location_type='Storage')
+        self.product = Product.objects.create(name='B-Balance T', sku='PRD-FEFO', unit_of_measure='kg', price_per_unit=1)
+        self.older = Batch.objects.create(
+            batch_number='FG-OLD', status='Active', product=self.product, quantity=Decimal('284'),
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=300), warehouse=self.wh,
+        )
+        self.newer = Batch.objects.create(
+            batch_number='FG-NEW', status='Active', product=self.product, quantity=Decimal('521'),
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=330), warehouse=self.wh,
+        )
+        self.so = SalesOrder.objects.create(so_number='SO-FEFO', client_name='AgriCore', origin_warehouse=self.wh, status='Pending')
+        self.item = SalesOrderDetail.objects.create(sales_order=self.so, product=self.product, quantity_ordered=Decimal('400'))
+
+    def _post(self, old, new, reason=''):
+        return self.client.post(reverse('so_allocate', args=[self.so.pk]), {
+            'action': 'allocate_manual',
+            f'batch_qty_{self.item.id}_{self.older.id}': old,
+            f'batch_qty_{self.item.id}_{self.newer.id}': new,
+            'override_reason': reason,
+        })
+
+    def _allocated(self):
+        return {a.batch.batch_number: a.quantity for a in StockAllocation.objects.filter(sales_order=self.so)}
+
+    def test_page_prefills_fefo_amounts(self):
+        resp = self.client.get(reverse('so_allocate', args=[self.so.pk]))
+        self.assertContains(resp, 'Finished Goods Allocation (FEFO)')
+        self.assertContains(resp, f'name="batch_qty_{self.item.id}_{self.older.id}" max="284.00" min="0" step="0.01" value="284.00"')
+        self.assertContains(resp, f'name="batch_qty_{self.item.id}_{self.newer.id}" max="521.00" min="0" step="0.01" value="116.00"')
+
+    def test_fefo_amounts_need_no_reason(self):
+        self._post('284', '116')
+        self.assertEqual(self._allocated(), {'FG-OLD': Decimal('284'), 'FG-NEW': Decimal('116')})
+        self.so.refresh_from_db()
+        self.assertEqual(self.so.status, 'Ready to Ship')
+
+    def test_partial_fefo_amount_needs_no_reason(self):
+        self._post('200', '')
+        self.assertEqual(self._allocated(), {'FG-OLD': Decimal('200')})
+
+    def test_skipping_older_batch_without_reason_is_rejected(self):
+        self._post('', '400')
+        self.assertEqual(self._allocated(), {})
+        self.older.refresh_from_db(); self.newer.refresh_from_db()
+        self.assertEqual(self.newer.allocated_quantity, Decimal('0'))
+
+    def test_skipping_older_batch_with_reason_is_allowed_and_logged(self):
+        from core.models import OrderTimeline
+        self._post('', '400', reason='Client wants the later expiry')
+        self.assertEqual(self._allocated(), {'FG-NEW': Decimal('400')})
+        self.assertTrue(OrderTimeline.objects.filter(sales_order=self.so, action__contains='Client wants the later expiry').exists())
+
+    def test_cannot_allocate_more_than_order_needs(self):
+        self._post('284', '200', reason='x')
+        self.assertEqual(self._allocated(), {})
+
+    def test_later_allocation_is_capped_by_existing_reservations(self):
+        self._post('284', '116')
+        self.newer.refresh_from_db()
+        self._post('', '10', reason='x')  # order already fully covered
+        self.assertEqual(sum(self._allocated().values()), Decimal('400'))
+
+
+class OutboundShipmentOriginAndBatchTests(TestCase):
+    """A shipment leaves from one place: SO shipments are split per warehouse, items
+    need a batch at the origin, and dispatch is blocked otherwise."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='origin', password='pw')
+        self.client.login(username='origin', password='pw')
+        self.hub = Warehouse.objects.create(name='Hub O', location_type='Storage')
+        self.plant = Warehouse.objects.create(name='Plant O', location_type='Manufacturing')
+        self.product = Product.objects.create(name='AC O', sku='PRD-O', unit_of_measure='kg', price_per_unit=1)
+        self.hub_batch = Batch.objects.create(
+            batch_number='FG-HUB', status='Active', product=self.product, quantity=Decimal('400'),
+            allocated_quantity=Decimal('400'), manufacturing_date=date.today(),
+            expiry_date=date.today() + timedelta(days=300), warehouse=self.hub,
+        )
+        self.plant_batch = Batch.objects.create(
+            batch_number='FG-PLANT', status='Active', product=self.product, quantity=Decimal('400'),
+            allocated_quantity=Decimal('400'), manufacturing_date=date.today(),
+            expiry_date=date.today() + timedelta(days=300), warehouse=self.plant,
+        )
+        self.so = SalesOrder.objects.create(so_number='SO-O', client_name='AgriCore', origin_warehouse=self.hub, status='Ready to Ship')
+        SalesOrderDetail.objects.create(sales_order=self.so, product=self.product, quantity_ordered=Decimal('800'))
+        StockAllocation.objects.create(batch=self.hub_batch, sales_order=self.so, quantity=Decimal('400'))
+        StockAllocation.objects.create(batch=self.plant_batch, sales_order=self.so, quantity=Decimal('400'))
+
+    def test_so_shipment_is_split_per_warehouse(self):
+        self.client.post(reverse('so_create_shipment', args=[self.so.pk]))
+        shipments = {s.origin_warehouse.name: s for s in Shipment.objects.filter(sales_order=self.so)}
+        self.assertEqual(set(shipments), {'Hub O', 'Plant O'})
+        for name, batch in (('Hub O', self.hub_batch), ('Plant O', self.plant_batch)):
+            items = list(shipments[name].items.all())
+            self.assertEqual([i.batch for i in items], [batch])
+            self.assertEqual(StockAllocation.objects.get(shipment=shipments[name]).batch, batch)
+        self.assertFalse(StockAllocation.objects.filter(sales_order=self.so).exists())
+
+    def _draft(self):
+        return Shipment.objects.create(
+            tracking_number='SHP-O-1', sales_order=self.so, direction='Outbound', status='Draft', origin_warehouse=self.hub,
+        )
+
+    def test_add_item_requires_batch(self):
+        s = self._draft()
+        self.client.post(reverse('shipment_detail', args=[s.pk]), {'action': 'add_item', 'product_id': self.product.id, 'quantity': '5'})
+        self.assertFalse(s.items.exists())
+
+    def test_add_item_rejects_batch_from_another_warehouse(self):
+        s = self._draft()
+        self.client.post(reverse('shipment_detail', args=[s.pk]), {
+            'action': 'add_item', 'product_id': self.product.id, 'batch_id': self.plant_batch.id, 'quantity': '5',
+        })
+        self.assertFalse(s.items.exists())
+
+    def test_dispatch_blocked_when_item_has_no_batch(self):
+        s = self._draft()
+        s.status = 'Preparing'
+        s.external_tracking_id = 'TRK'
+        s.departure_datetime = timezone.now()
+        s.save()
+        ShipmentItem.objects.create(shipment=s, product=self.product, quantity=Decimal('5'))
+        self.client.post(reverse('shipment_detail', args=[s.pk]), {'action': 'update_operational_status', 'status': 'Dispatched'})
+        s.refresh_from_db()
+        self.assertEqual(s.status, 'Preparing')
+
+    def test_dispatch_allowed_with_batch_at_origin(self):
+        s = self._draft()
+        s.status = 'Preparing'
+        s.external_tracking_id = 'TRK'
+        s.departure_datetime = timezone.now()
+        s.save()
+        ShipmentItem.objects.create(shipment=s, product=self.product, batch=self.hub_batch, quantity=Decimal('5'))
+        self.client.post(reverse('shipment_detail', args=[s.pk]), {'action': 'update_operational_status', 'status': 'Dispatched'})
+        s.refresh_from_db()
+        self.assertEqual(s.status, 'Dispatched')
+
+    def test_registering_outbound_shipment_always_starts_as_draft(self):
+        self.client.post(reverse('shipments'), {
+            'action': 'create_shipment', 'direction': 'Outbound', 'status': 'Dispatched',
+            'origin_warehouse_id': self.hub.id, 'sales_order_id': self.so.id,
+        })
+        s = Shipment.objects.get(sales_order=self.so)
+        self.assertEqual(s.status, 'Draft')
+        self.assertFalse(s.credited_to_so)
