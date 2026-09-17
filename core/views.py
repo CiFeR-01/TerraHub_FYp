@@ -2873,6 +2873,12 @@ def shipments_view(request):
                     client_contact_phone_val = so.client.phone or None
                     client_address_val = so.client.delivery_address or None
 
+                # Outbound/Transfer shipments move our own stock, so they always start as
+                # Draft and go through approval, batch selection and dispatch checks.
+                # Only Inbound (a supplier's truck) may be registered already underway.
+                if direction in ('Outbound', 'Transfer'):
+                    status = 'Draft'
+
                 shipment = Shipment.objects.create(
                     tracking_number=tracking_number,
                     direction=direction,
@@ -2890,14 +2896,6 @@ def shipments_view(request):
                     client_address=client_address_val,
                 )
                 
-                # Auto update Sales Order status based on Shipment.
-                # 'Dispatched' is handled after cargo items are pre-filled below, since it
-                # needs the actual item quantities to update quantity_shipped accurately.
-                if so:
-                    if status == 'Preparing':
-                        so.status = 'Ready to Ship'
-                        so.save()
-
                 # Pre-fill cargo items from the linked order's outstanding quantities.
                 # No batch is assigned here (same as manually adding an item without one) —
                 # the coordinator still picks/confirms batches on the shipment detail page.
@@ -2914,18 +2912,6 @@ def shipments_view(request):
                         if remaining > 0:
                             ShipmentItem.objects.create(shipment=shipment, product=detail.product, quantity=remaining)
                             items_added += 1
-
-                # This shipment was created already-Dispatched — count its cargo as shipped
-                # against the SO now (accumulates correctly across multiple shipments/SO).
-                if so and status == 'Dispatched':
-                    from .utils import apply_so_product_shipment
-                    for si in shipment.items.all():
-                        if si.product:
-                            so_detail = SalesOrderDetail.objects.filter(sales_order=so, product=si.product).first()
-                            if so_detail:
-                                apply_so_product_shipment(so_detail, si.quantity)
-                    shipment.credited_to_so = True
-                    shipment.save(update_fields=['credited_to_so'])
 
                 if items_added:
                     OrderTimeline.objects.create(shipment=shipment, action=f"Pre-filled {items_added} cargo item(s) from the linked order.", user=request.user)
@@ -3248,6 +3234,24 @@ def approvals_inbox_view(request):
     return render(request, 'approvals_inbox.html', context)
 
 
+def shipment_dispatch_problem(shipment):
+    """Why an Outbound/Transfer shipment can't be dispatched yet, or None. Every item
+    must name a batch at the shipment's origin - otherwise completing it can't take
+    the stock off anything (the SO-1001 / SHP-1001 case)."""
+    items = list(shipment.items.select_related('batch', 'batch__warehouse', 'material', 'product'))
+    if not items:
+        return "Add at least one item before dispatching."
+    for item in items:
+        name = item.material.name if item.material else (item.product.name if item.product else 'item')
+        if not item.batch:
+            return f"{name} has no batch. Remove it and add it again with a batch before dispatching."
+        if shipment.origin_warehouse_id and item.batch.warehouse_id != shipment.origin_warehouse_id:
+            return (f"Batch {item.batch.batch_number} is at "
+                    f"{item.batch.warehouse.name if item.batch.warehouse else 'no warehouse'}, "
+                    f"not this shipment's origin ({shipment.origin_warehouse.name}).")
+    return None
+
+
 @login_required
 def shipment_detail_view(request, pk):
     shipment = get_object_or_404(Shipment.objects.prefetch_related('items__material', 'items__product', 'items__batch'), pk=pk)
@@ -3269,9 +3273,13 @@ def shipment_detail_view(request, pk):
                 batch = Batch.objects.filter(id=batch_id).first() if batch_id else None
                 qty_val = float(qty) if qty else 0.0
                 
-                # Validation for Internal Transfers
-                if shipment.direction == 'Transfer' and not batch:
-                    messages.error(request, "A Batch MUST be selected for Internal Transfers.")
+                # Outbound/Transfer items move real stock, so they need a batch, and it
+                # has to be at the shipment's origin (a shipment leaves from one place).
+                if shipment.direction in ['Outbound', 'Transfer'] and not batch:
+                    messages.error(request, "A Batch MUST be selected for outbound shipments and internal transfers.")
+                elif (shipment.direction in ['Outbound', 'Transfer'] and shipment.origin_warehouse_id
+                      and batch.warehouse_id != shipment.origin_warehouse_id):
+                    messages.error(request, f"Batch {batch.batch_number} is at {batch.warehouse.name if batch.warehouse else 'no warehouse'}, not this shipment's origin ({shipment.origin_warehouse.name}). Move it with an internal transfer first.")
                 elif shipment.direction in ['Outbound', 'Transfer'] and batch:
                     qty_val = float(qty) if qty else 0.0
                     if qty_val > float(batch.available_quantity):
@@ -3529,6 +3537,11 @@ def shipment_detail_view(request, pk):
             if shipment.status not in in_progress or new_st not in in_progress:
                 messages.error(request, "Status can only be changed between Preparing, Dispatched, Delayed and Arrived. Use the receiving step to complete a shipment.")
                 return redirect('shipment_detail', pk=shipment.pk)
+            if new_st == 'Dispatched' and shipment.direction in ['Outbound', 'Transfer']:
+                problem = shipment_dispatch_problem(shipment)
+                if problem:
+                    messages.error(request, problem)
+                    return redirect('shipment_detail', pk=shipment.pk)
             if new_st == 'Dispatched' and shipment.direction == 'Outbound':
                 if not shipment.external_tracking_id or not shipment.departure_datetime:
                     messages.error(request, "Tracking ID and Departure Date/Time MUST be provided before marking this shipment as Dispatched.")
@@ -4020,57 +4033,106 @@ def user_management_view(request):
 
 
 
+def _fg_fefo_batches(product):
+    """Active finished-goods batches with free stock, earliest expiry first (FEFO)."""
+    from django.db.models import F
+    return [
+        b for b in Batch.objects.filter(product=product, status='Active')
+        .select_related('warehouse')
+        .order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
+        if b.quantity - b.allocated_quantity > 0
+    ]
+
+
+def _fefo_plan(batches, total):
+    """{batch_id: qty} taking `total` from `batches` strictly in FEFO order."""
+    plan, remaining = {}, total
+    for b in batches:
+        if remaining <= 0:
+            break
+        take = min(b.quantity - b.allocated_quantity, remaining)
+        plan[b.id] = take
+        remaining -= take
+    return plan
+
+
 @login_required
 def so_allocate_view(request, pk):
     so = get_object_or_404(SalesOrder, pk=pk)
-    
+
+    def still_needed(item):
+        allocated = StockAllocation.objects.filter(
+            sales_order=so, batch__product=item.product
+        ).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+        return max(Decimal(str(item.quantity_ordered)) - allocated - Decimal(str(item.quantity_shipped)), Decimal('0'))
+
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'allocate_manual':
-            from decimal import Decimal
-            
+            override_reason = request.POST.get('override_reason', '').strip()
+
+            # Validate everything before writing anything
+            plans = []  # (item, needed, [(batch, qty), ...])
+            off_fefo = []
+            for item in so.items.select_related('product'):
+                needed = still_needed(item)
+                batches = _fg_fefo_batches(item.product)
+                chosen = []
+                for b in batches:
+                    raw = request.POST.get(f'batch_qty_{item.id}_{b.id}', '').strip()
+                    try:
+                        amt = Decimal(raw) if raw else Decimal('0')
+                    except InvalidOperation:
+                        messages.error(request, f"Invalid quantity for batch {b.batch_number}.")
+                        return redirect('so_allocate', pk=so.pk)
+                    if amt < 0:
+                        messages.error(request, f"Quantity for batch {b.batch_number} can't be negative.")
+                        return redirect('so_allocate', pk=so.pk)
+                    if amt > b.quantity - b.allocated_quantity:
+                        messages.error(request, f"Cannot allocate {amt} from batch {b.batch_number}. Only {b.quantity - b.allocated_quantity} available.")
+                        return redirect('so_allocate', pk=so.pk)
+                    if amt > 0:
+                        chosen.append((b, amt))
+                total = sum((amt for _, amt in chosen), Decimal('0'))
+                if total > needed:
+                    messages.error(request, f"{item.product.name}: allocating {total} is more than the {needed} this order still needs.")
+                    return redirect('so_allocate', pk=so.pk)
+                if {b.id: amt for b, amt in chosen} != _fefo_plan(batches, total):
+                    off_fefo.append(item.product.name)
+                plans.append((item, needed, chosen))
+
+            if off_fefo and not override_reason:
+                messages.error(request, f"Batches for {', '.join(off_fefo)} don't follow FEFO (earliest expiry first). Give an override reason to continue.")
+                return redirect('so_allocate', pk=so.pk)
+
             with transaction.atomic():
                 total_unfulfilled_across_so = Decimal('0')
-                for item in so.items.all():
-                    qty_needed = Decimal(str(item.quantity_ordered))
-                    
-                    prev_allocs = StockAllocation.objects.filter(sales_order=so, batch__product=item.product)
-                    prev_allocated = sum(a.quantity for a in prev_allocs) if prev_allocs else Decimal('0')
-                    
-                    allocated_now = Decimal('0')
-                    
-                    # Read inputs like batch_qty_123 where 123 is batch ID
-                    for key, val in request.POST.items():
-                        if key.startswith(f'batch_qty_{item.id}_'):
-                            batch_id = key.split('_')[-1]
-                            allocate_amt = Decimal(val) if val else Decimal('0')
-                            
-                            if allocate_amt > 0:
-                                batch = Batch.objects.get(id=batch_id)
-                                available = batch.quantity - batch.allocated_quantity
-                                if allocate_amt > available:
-                                    messages.error(request, f"Cannot allocate {allocate_amt} from batch {batch.batch_number}. Only {available} available.")
-                                    return redirect('so_allocate', pk=so.pk)
-                                    
-                                StockAllocation.objects.create(
-                                    batch=batch,
-                                    sales_order=so,
-                                    quantity=allocate_amt
-                                )
-                                batch.allocated_quantity += allocate_amt
-                                batch.save()
-                                allocated_now += allocate_amt
-                                
-                    total_allocated = prev_allocated + allocated_now
-                    unfulfilled = qty_needed - total_allocated
+                from .utils import sync_production_run_yield
+                for item, needed, chosen in plans:
+                    for batch, amt in chosen:
+                        StockAllocation.objects.create(batch=batch, sales_order=so, quantity=amt)
+                        batch.allocated_quantity += amt
+                        batch.save(update_fields=['allocated_quantity'])
+                    if chosen:
+                        OrderTimeline.objects.create(
+                            sales_order=so,
+                            action=f"Allocated {item.product.sku}: " + ", ".join(f"{amt} from {b.batch_number}" for b, amt in chosen) + ".",
+                            user=request.user,
+                        )
+                    unfulfilled = needed - sum((amt for _, amt in chosen), Decimal('0'))
                     total_unfulfilled_across_so += unfulfilled
-
-                    from .utils import sync_production_run_yield
                     sync_production_run_yield(so, item.product, unfulfilled, request.user)
-                
+
+                if off_fefo:
+                    OrderTimeline.objects.create(
+                        sales_order=so,
+                        action=f"Non-FEFO allocation for {', '.join(off_fefo)}. Reason: {override_reason}",
+                        user=request.user,
+                    )
+
                 send_to_mfg = request.POST.get('send_to_manufacturing') == 'true'
                 plant_id = request.POST.get('manufacturing_plant_id')
-                
+
                 if send_to_mfg and total_unfulfilled_across_so > 0:
                     plant = None
                     if plant_id:
@@ -4089,50 +4151,34 @@ def so_allocate_view(request, pk):
                         so.status = 'Pending'
                     OrderTimeline.objects.create(sales_order=so, action="Partial allocation completed. Shortages remain.", user=request.user)
                 so.save()
-                
+
                 messages.success(request, f"Allocation saved for {so.so_number}.")
                 return redirect('so_detail', pk=so.pk)
 
     # Gather data for UI
-    from django.db.models import F
     manufacturing_plants = Warehouse.objects.filter(location_type='Manufacturing').order_by('name')
-    
-    allocation_data = []
-    
-    # Existing allocations
-    existing = StockAllocation.objects.filter(sales_order=so)
-    allocated_by_item = {}
-    for alloc in existing:
-        prod_id = alloc.batch.product.id
-        allocated_by_item[prod_id] = allocated_by_item.get(prod_id, 0) + float(alloc.quantity)
 
-    for item in so.items.all():
-        needed = float(item.quantity_ordered) - allocated_by_item.get(item.product.id, 0)
-        
-        batches = Batch.objects.filter(product=item.product, status='Active')\
-                               .order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
-        
-        batch_list = []
-        for b in batches:
-            avail = float(b.quantity - b.allocated_quantity)
-            if avail > 0:
-                batch_list.append({
-                    'id': b.id,
-                    'number': b.batch_number,
-                    'warehouse': b.warehouse.name if b.warehouse else 'Unknown',
-                    'available': avail,
-                    'expiry': b.expiry_date
-                })
-                
+    allocation_data = []
+    for item in so.items.select_related('product'):
+        needed = still_needed(item)
+        batches = _fg_fefo_batches(item.product)
+        plan = _fefo_plan(batches, needed)
         allocation_data.append({
             'item_id': item.id,
             'product': item.product,
             'needed': needed,
-            'batches': batch_list
+            'batches': [{
+                'id': b.id,
+                'number': b.batch_number,
+                'warehouse': b.warehouse.name if b.warehouse else 'Unknown',
+                'available': b.quantity - b.allocated_quantity,
+                'expiry': b.expiry_date,
+                'recommended': plan.get(b.id, Decimal('0')),
+            } for b in batches],
         })
-        
+
     return render(request, 'so_allocate.html', {
-        'so': so, 
+        'so': so,
         'allocation_data': allocation_data,
         'manufacturing_plants': manufacturing_plants
     })
@@ -4155,47 +4201,60 @@ def so_create_shipment_view(request, pk):
                 messages.error(request, "There is no allocated stock to draft a logistics order from.")
             return redirect('so_detail', pk=so.pk)
 
+        # A shipment leaves from one place, so allocated stock sitting in different
+        # warehouses gets one outbound shipment per warehouse (same idea as the
+        # production-run auto-logistics, which splits transfers by origin).
+        by_warehouse = {}
+        for alloc in allocations:
+            by_warehouse.setdefault(alloc.batch.warehouse_id, []).append(alloc)
+
         with transaction.atomic():
-            tracking_number = generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4)
-
-            origin_wh = None
-            if so.origin_warehouse:
-                origin_wh = so.origin_warehouse
-
-            shipment = Shipment.objects.create(
-                tracking_number=tracking_number,
-                sales_order=so,
-                direction='Outbound',
-                status='Draft',
-                origin_warehouse=origin_wh
-            )
-
-            # Create shipment items based on allocated stock, and move the stock lock
-            # itself onto this shipment (mirrors shipment_detail's add_item action) so
-            # the allocation belongs to THIS shipment rather than staying shared on the
-            # SO, where a second "Create Logistics Order" click or a scrap of a sibling
-            # shipment could silently release stock this shipment still needs.
-            for alloc in allocations:
-                ShipmentItem.objects.create(
-                    shipment=shipment,
-                    product=alloc.batch.product,
-                    batch=alloc.batch,
-                    quantity=alloc.quantity
+            shipments = []
+            for wh_id, wh_allocs in by_warehouse.items():
+                tracking_number = generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4)
+                shipment = Shipment.objects.create(
+                    tracking_number=tracking_number,
+                    sales_order=so,
+                    direction='Outbound',
+                    status='Draft',
+                    origin_warehouse_id=wh_id or (so.origin_warehouse_id if so.origin_warehouse else None),
                 )
-                StockAllocation.objects.create(batch=alloc.batch, shipment=shipment, quantity=alloc.quantity)
-                alloc.delete()
 
-            # Note: We do NOT change so.status to 'Shipped' here.
-            # It remains 'Ready to Ship' until logistics dispatches it.
+                # Create shipment items based on allocated stock, and move the stock lock
+                # itself onto this shipment (mirrors shipment_detail's add_item action) so
+                # the allocation belongs to THIS shipment rather than staying shared on the
+                # SO, where a second "Create Logistics Order" click or a scrap of a sibling
+                # shipment could silently release stock this shipment still needs.
+                for alloc in wh_allocs:
+                    ShipmentItem.objects.create(
+                        shipment=shipment,
+                        product=alloc.batch.product,
+                        batch=alloc.batch,
+                        quantity=alloc.quantity
+                    )
+                    StockAllocation.objects.create(batch=alloc.batch, shipment=shipment, quantity=alloc.quantity)
+                    alloc.delete()
 
-            OrderTimeline.objects.create(
-                sales_order=so,
-                action=f"Auto-drafted logistics shipment {tracking_number}.",
-                user=request.user
+                # Note: We do NOT change so.status to 'Shipped' here.
+                # It remains 'Ready to Ship' until logistics dispatches it.
+
+                OrderTimeline.objects.create(
+                    sales_order=so,
+                    action=f"Auto-drafted logistics shipment {tracking_number}"
+                           + (f" from {shipment.origin_warehouse.name}." if shipment.origin_warehouse else "."),
+                    user=request.user
+                )
+                shipments.append(shipment)
+
+            if len(shipments) == 1:
+                messages.success(request, f"Logistics Order {shipments[0].tracking_number} drafted successfully.")
+                return redirect('shipment_detail', pk=shipments[0].pk)
+            messages.success(
+                request,
+                f"Stock is in {len(shipments)} warehouses, so {len(shipments)} logistics orders were drafted: "
+                + ", ".join(sh.tracking_number for sh in shipments) + "."
             )
-
-            messages.success(request, f"Logistics Order {tracking_number} drafted successfully.")
-            return redirect('shipment_detail', pk=shipment.pk)
+            return redirect('so_detail', pk=so.pk)
 
     return redirect('so_detail', pk=so.pk)
 
