@@ -110,7 +110,7 @@
                 <td style="padding:0.6rem 0;">{{ row.batch.warehouse.name|default:row.batch.location|default:"—" }}</td>
                 <td style="padding:0.6rem 0; text-align:right;">{{ row.batch.quantity|floatformat:2 }} {{ material.unit_of_measure }}</td>
                 <td style="padding:0.6rem 0; text-align:right;">{{ row.batch.allocated_quantity|floatformat:2 }}</td>
-                <td style="padding:0.6rem 0; text-align:right; font-weight:600; color:{% if row.available > 0 %}#059669{% else %}var(--text-muted){% endif %};">{{ row.available|floatformat:2 }}</td>
+                <td style="padding:0.6rem 0; text-align:right; font-weight:600; color:{% if row.available > 0 %}var(--success-strong){% else %}var(--text-muted){% endif %};">{{ row.available|floatformat:2 }}</td>
                 <td style="padding:0.6rem 0;">
                     {% if row.reservations %}
                     <div style="display:flex; flex-direction:column; gap:0.25rem;">
@@ -119,7 +119,7 @@
                         {% endfor %}
                     </div>
                     {% else %}
-                    <span style="color:#059669; font-size:0.8rem;">Fully available</span>
+                    <span style="color:var(--success-strong); font-size:0.8rem;">Fully available</span>
                     {% endif %}
                 </td>
             </tr>

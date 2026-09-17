@@ -38,3 +38,4 @@ logs/
 
 # Dev-only scripts (not needed in production or public repo)
 seed_data.py
+.impeccable/critique/2026-09-16T12-00-39Z__templates-analytics-capacity-forecast-html.md

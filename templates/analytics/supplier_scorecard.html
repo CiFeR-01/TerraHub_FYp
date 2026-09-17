@@ -120,7 +120,7 @@
                             {% if r.avg_delay_days > 0 %}
                             <span style="color:#dc2626; font-weight:700;">+{{ r.avg_delay_days|floatformat:1 }}d</span>
                             {% else %}
-                            <span style="color:#059669; font-weight:700;">{{ r.avg_delay_days|floatformat:1 }}d</span>
+                            <span style="color:var(--success-strong); font-weight:700;">{{ r.avg_delay_days|floatformat:1 }}d</span>
                             {% endif %}
                         {% else %}
                         <span style="color:var(--text-muted);">&mdash;</span>

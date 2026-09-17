@@ -38,7 +38,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:#d97706;{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#059669;{% endif %}">
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -77,7 +77,7 @@
                     {% else %}<span class="badge badge-sky">{{ entry.so.status }}</span>{% endif %}
                 </div>
                 <div style="display:flex; align-items:center; gap:0.75rem;">
-                    {% if entry.all_ready %}<span style="font-size:0.8rem; font-weight:700; color:#059669;">All Materials Ready</span>
+                    {% if entry.all_ready %}<span style="font-size:0.8rem; font-weight:700; color:var(--success-strong);">All Materials Ready</span>
                     {% else %}<span style="font-size:0.8rem; font-weight:700; color:#dc2626;">Material Shortages</span>{% endif %}
                     <a href="{% url 'so_detail' entry.so.pk %}" class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem; text-decoration:none;" onclick="event.stopPropagation()">Detail</a>
                     <span style="color:var(--text-muted);">&#9660;</span>
@@ -93,7 +93,7 @@
                             <span style="font-size:0.82rem; font-weight:600; color:var(--text-muted);">{{ si.deficit|floatformat:0 }} units still needed <span style="font-weight:400;">(of {{ si.item.quantity_ordered|floatformat:0 }} ordered{% if si.allocated > 0 %}, {{ si.allocated|floatformat:0 }} already allocated{% endif %})</span></span>
                             {% if si.bom_ready %}<span class="badge badge-emerald" style="font-size:0.72rem;">BOM OK</span>
                             {% else %}<span class="badge badge-rose" style="font-size:0.72rem;">Shortage</span>{% endif %}
-                            <span style="font-size:0.78rem; color:{% if si.bom_ready %}#059669{% else %}#dc2626{% endif %}; font-weight:700;">Can make: {{ si.can_make }} units</span>
+                            <span style="font-size:0.78rem; color:{% if si.bom_ready %}var(--success-strong){% else %}#dc2626{% endif %}; font-weight:700;">Can make: {{ si.can_make }} units</span>
                         </div>
                         {% if si.bom_rows %}
                         <table style="font-size:0.78rem; border-collapse:collapse; width:100%; max-width:600px;">
@@ -109,7 +109,7 @@
                                 <td style="padding:0.25rem 0.5rem;">{{ br.required_total|floatformat:2 }} {{ br.material.unit_of_measure }}</td>
                                 <td style="padding:0.25rem 0.5rem;">{{ br.available|floatformat:2 }} {{ br.material.unit_of_measure }}</td>
                                 <td style="padding:0.25rem 0.5rem;">
-                                    {% if br.sufficient %}<span style="color:#059669; font-weight:700;">OK</span>
+                                    {% if br.sufficient %}<span style="color:var(--success-strong); font-weight:700;">OK</span>
                                     {% else %}<span style="color:#dc2626; font-weight:700;">Short</span>{% endif %}
                                 </td>
                             </tr>
@@ -142,7 +142,7 @@
                                             <input type="hidden" name="run_id" value="{{ si.existing_run.id }}">
                                             {% if si.bom_ready %}
                                                 <input type="hidden" name="action" value="draft_transfer_from_shortage">
-                                                <button type="submit" class="btn btn-secondary" style="width:100%; font-size:0.75rem; padding:0.4rem; border-color:#d97706; color:#d97706;">Request Internal Transfer</button>
+                                                <button type="submit" class="btn btn-secondary" style="width:100%; font-size:0.75rem; padding:0.4rem; border-color:#d97706; color:var(--warning-strong);">Request Internal Transfer</button>
                                             {% else %}
                                                 <input type="hidden" name="action" value="draft_po_from_shortage">
                                                 <button type="submit" class="btn btn-secondary" style="width:100%; font-size:0.75rem; padding:0.4rem; border-color:#dc2626; color:#dc2626;">Draft PO for Shortage</button>
@@ -314,7 +314,7 @@
             <div style="background:{% if r.is_ready %}rgba(16,185,129,0.07){% else %}rgba(239,68,68,0.06){% endif %}; border-radius:8px; padding:0.6rem 0.85rem; margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem;">
                 <div>
                     <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em;">Max Producible</div>
-                    <div style="font-size:1.1rem; font-weight:800; color:{% if r.is_ready %}#059669{% else %}#dc2626{% endif %};">{{ r.max_producible }} units</div>
+                    <div style="font-size:1.1rem; font-weight:800; color:{% if r.is_ready %}var(--success-strong){% else %}#dc2626{% endif %};">{{ r.max_producible }} units</div>
                 </div>
             </div>
             <div style="background:#f8fafc; border-radius:8px; padding:0.75rem;">
@@ -324,7 +324,7 @@
                     <span>{{ item.material.name }}</span>
                     <span style="display:flex; align-items:center; gap:0.35rem;">
                         <span style="color:var(--text-muted);">{{ item.available|floatformat:1 }} / {{ item.required|floatformat:1 }} {{ item.material.unit_of_measure }}</span>
-                        {% if item.sufficient %}<span style="color:#059669; font-weight:700;">OK</span>
+                        {% if item.sufficient %}<span style="color:var(--success-strong); font-weight:700;">OK</span>
                         {% else %}<span style="color:#ef4444; font-weight:700;">Low</span>{% endif %}
                     </span>
                 </div>
