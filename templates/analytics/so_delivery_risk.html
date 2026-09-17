@@ -104,7 +104,7 @@
                             {% if r.days_slack < 0 %}
                             <span style="color:#dc2626; font-weight:700;">{{ r.days_slack }}d</span>
                             {% else %}
-                            <span style="color:#059669; font-weight:700;">+{{ r.days_slack }}d</span>
+                            <span style="color:var(--success-strong); font-weight:700;">+{{ r.days_slack }}d</span>
                             {% endif %}
                         {% else %}
                         <span style="color:var(--text-muted);">&mdash;</span>

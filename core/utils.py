@@ -575,7 +575,7 @@ def deduct_stock_from_allocation(order_type, order, user=None):
                 action_type='Outbound',
                 item_name=f"{item_name} (Batch {batch.batch_number})",
                 material=batch.material,
-                quantity_changed=-alloc.quantity,
+                quantity_changed=alloc.quantity,
                 warehouse=batch.warehouse,
                 user=user
             )
@@ -638,6 +638,65 @@ def apply_po_material_receipt(po_detail, delta_qty, user):
         if total_received > 0:
             po.status = 'Partially Received'
         po.save(update_fields=['status'])
+
+
+def receive_transfer_into_destination(shipment, user):
+    """Creates the destination-side batch for each received item of an internal
+    Transfer. Shared by complete_shipment and force_close_shipment. Completed
+    transfers can't be reopened, so an existing batch means it was already
+    received and is left untouched.
+
+    The new batch is stamped with warehouse=destination so the stock counts
+    toward that warehouse's utilization, rent and allocation - previously only
+    `location` was set, leaving warehouse NULL. It is created whether or not
+    the destination has any WarehouseLocation rows (zone left blank), since the
+    origin side has already been deducted by this point. rental_rate_per_mt is
+    left NULL so it tracks the destination's rate, not the origin's."""
+    from .models import Batch, RegistryLog, StockAllocation
+
+    dest = shipment.destination_warehouse
+    if shipment.direction != 'Transfer' or not dest:
+        return
+
+    for item in shipment.items.select_related('batch', 'batch__material', 'batch__product', 'batch__produced_in'):
+        if not item.batch or (item.received_quantity or 0) <= 0:
+            continue
+        b = item.batch
+        rcv_qty = Decimal(str(item.received_quantity))
+
+        new_batch, created = Batch.objects.get_or_create(
+            batch_number=f"{b.batch_number}-TRF-{shipment.id}",
+            defaults={
+                'status': 'Active',
+                'material': b.material,
+                'product': b.product,
+                'quantity': rcv_qty,
+                'manufacturing_date': b.manufacturing_date,
+                'expiry_date': b.expiry_date,
+                'warehouse': dest,
+                'purchase_order': b.purchase_order,
+                'produced_in': b.produced_in,
+            }
+        )
+        if not created:
+            continue
+        RegistryLog.objects.create(
+            action_type='Inbound',
+            item_name=f"Internal Transfer Received: {new_batch.batch_number}",
+            material=new_batch.material,
+            quantity_changed=rcv_qty,
+            warehouse=dest,
+            user=user
+        )
+
+        # Receiving deletes the origin allocation, which was also the production run's
+        # reservation - carry it onto the arrived batch so the stock stays held for
+        # the run instead of sitting unreserved at the plant.
+        run = shipment.linked_production_run
+        if run and run.status not in ('Completed', 'Cancelled'):
+            new_batch.allocated_quantity = rcv_qty
+            new_batch.save(update_fields=['allocated_quantity'])
+            StockAllocation.objects.create(batch=new_batch, production_run=run, quantity=rcv_qty)
 
 
 def apply_so_product_shipment(so_detail, delta_qty):

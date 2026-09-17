@@ -84,8 +84,8 @@
             {% endif %}
         </div>
         <div class="kpi-sparkline-box">
-            {% for h in raw_spark %}
-            <div class="sparkbar active-primary" style="height: {{ h }}%;"></div>
+            {% for w in raw_spark %}
+            <div class="sparkbar active-primary" style="height: {{ w.height }}%;" title="{{ w.label }}"></div>
             {% empty %}
             <div class="sparkbar" style="height: 6%;"></div>
             {% endfor %}
@@ -113,8 +113,8 @@
             {% endif %}
         </div>
         <div class="kpi-sparkline-box">
-            {% for h in fg_spark %}
-            <div class="sparkbar active-secondary" style="height: {{ h }}%;"></div>
+            {% for w in fg_spark %}
+            <div class="sparkbar active-secondary" style="height: {{ w.height }}%;" title="{{ w.label }}"></div>
             {% empty %}
             <div class="sparkbar" style="height: 6%;"></div>
             {% endfor %}
@@ -271,9 +271,9 @@
     </div>
 
     <div class="charts-container-grid" style="margin-bottom: 1.5rem;">
-        <div class="chart-box">
+        <div class="chart-box chart-box--donut">
             <h3>Sales Order Funnel</h3>
-            <div class="chart-wrapper">
+            <div class="chart-wrapper chart-wrapper--donut">
                 <canvas id="salesOrderFunnelChart"></canvas>
             </div>
             <div class="color-ledger" id="sales-funnel-ledger"></div>
@@ -331,7 +331,14 @@
 
     <div class="split-grid" style="margin-bottom: 0;">
         <div class="pane-card">
-            <h3><svg><use href="#i-truck"/></svg> Active Logistics Pipeline</h3>
+            <h3>
+                <svg><use href="#i-truck"/></svg> Active Logistics Pipeline
+                {% if active_shipments_total %}
+                <a href="{% url 'shipments' %}" class="sec-link">
+                    {% if active_shipments_total > active_shipments|length %}View all {{ active_shipments_total }}{% else %}View all{% endif %} <svg><use href="#i-arrow-right"/></svg>
+                </a>
+                {% endif %}
+            </h3>
             <div class="data-table-container">
                 <table class="custom-table">
                     <thead>
@@ -428,7 +435,14 @@
     </div>
 
     <div class="risk-alert-box">
-        <h3><svg><use href="#i-shield-alert"/></svg> Predictive Material Degradation Alerts (FIFO risk)</h3>
+        <h3>
+            <svg><use href="#i-shield-alert"/></svg> Predictive Material Degradation Alerts (FIFO risk)
+            {% if degrading_batches_total %}
+            <a href="{% url 'qa_dashboard' %}" class="sec-link" style="color: #dc2626;">
+                {% if degrading_batches_total > degrading_batches|length %}View all {{ degrading_batches_total }}{% else %}View all{% endif %} <svg><use href="#i-arrow-right"/></svg>
+            </a>
+            {% endif %}
+        </h3>
         {% if degrading_batches %}
         <div class="risk-grid">
             {% for batch in degrading_batches %}
@@ -453,7 +467,7 @@
 
                 <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #fee2e2; padding-top: 0.5rem; font-size: 0.8rem;">
                     <span style="color: var(--text-muted);">Shelf life remaining</span>
-                    <span style="font-weight: 700; color: {% if batch.days_remaining <= 10 %}var(--danger){% else %}var(--warning){% endif %};">
+                    <span style="font-weight: 700; color: {% if batch.days_remaining <= 10 %}var(--danger){% else %}var(--warning-strong){% endif %};">
                         {{ batch.days_remaining }} day{{ batch.days_remaining|pluralize }}
                     </span>
                 </div>
@@ -622,7 +636,7 @@
                 item.className = 'ledger-item';
                 item.innerHTML = `
                     <span class="ledger-color" style="background-color: ${funnelColors[index]}"></span>
-                    <span style="color: var(--text-muted); font-weight: 500;">${label} (${funnelCounts[index]})</span>
+                    <span style="color: var(--text-muted); font-weight: 500;" title="${label} (${funnelCounts[index]})">${label} (${funnelCounts[index]})</span>
                 `;
                 ledgerContainer.appendChild(item);
             });

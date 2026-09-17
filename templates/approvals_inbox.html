@@ -20,7 +20,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:#d97706;{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#059669;{% endif %}">
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -143,7 +143,7 @@
             <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
                 <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
                     <div>
-                        <div style="font-size:0.75rem; font-weight:700; color:#059669; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Purchase Order Approval / Action</div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--success-strong); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Purchase Order Approval / Action</div>
                         <a href="{% url 'po_detail' po.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ po.po_number }}</a>
                         <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Supplier: {{ po.supplier }} &middot; Cost: ${{ po.total_cost|floatformat:2 }}</div>
                         {% if po.linked_production_run %}

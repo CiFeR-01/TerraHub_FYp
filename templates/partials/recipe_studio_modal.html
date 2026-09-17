@@ -147,7 +147,7 @@ function switchStudioProduct(productId) {
                 <td style="padding:0.55rem 0.85rem; font-weight:600;">${item.material_name}</td>
                 <td style="padding:0.55rem 0.85rem; font-weight:700;">${item.quantity_required} ${item.unit_of_measure}</td>
                 <td style="padding:0.55rem 0.85rem;">{{ system_settings.base_currency_symbol }}${item.cost_per_unit.toFixed(2)}</td>
-                <td style="padding:0.55rem 0.85rem; font-weight:700; color:#059669;">{{ system_settings.base_currency_symbol }}${item.total_cost.toFixed(2)}</td>
+                <td style="padding:0.55rem 0.85rem; font-weight:700; color:var(--success-strong);">{{ system_settings.base_currency_symbol }}${item.total_cost.toFixed(2)}</td>
                 <td style="padding:0.55rem 0.85rem; text-align:right;">
                     <button type="button" onclick="deleteRecipeItem(${item.id})" style="background:#fee2e2; color:#dc2626; border:none; border-radius:4px; padding:0.25rem 0.5rem; cursor:pointer; font-weight:700; font-size:0.75rem;" title="Delete item">
                         🗑 Delete
