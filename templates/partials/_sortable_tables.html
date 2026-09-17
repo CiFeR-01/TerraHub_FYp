@@ -93,20 +93,25 @@ Self-initialising, idempotent, no dependencies. Included once from base.html.
             var type = forced || detectType(dataRows(), idx);
             th.style.cursor = 'pointer';
             th.style.userSelect = 'none';
+            th.setAttribute('tabindex', '0');
+            th.setAttribute('role', 'button');
+            th.setAttribute('aria-sort', 'none');
             var arrow = document.createElement('span');
             arrow.className = 'sort-arrow';
             arrow.textContent = '↕';
             arrow.style.cssText = 'margin-left:4px; font-size:0.7em; opacity:0.35;';
             th.appendChild(arrow);
 
-            th.addEventListener('click', function () {
+            function doSort() {
                 var asc = th.getAttribute('data-dir') !== 'asc';
                 Array.prototype.slice.call(headRow.cells).forEach(function (h) {
                     h.removeAttribute('data-dir');
+                    h.setAttribute('aria-sort', 'none');
                     var a = h.querySelector('.sort-arrow');
                     if (a) { a.textContent = '↕'; a.style.opacity = '0.35'; }
                 });
                 th.setAttribute('data-dir', asc ? 'asc' : 'desc');
+                th.setAttribute('aria-sort', asc ? 'ascending' : 'descending');
                 arrow.textContent = asc ? '▲' : '▼';
                 arrow.style.opacity = '1';
 
@@ -121,6 +126,14 @@ Self-initialising, idempotent, no dependencies. Included once from base.html.
                     return asc ? cmp : -cmp;
                 });
                 rows.forEach(function (r) { tbody.appendChild(r); });
+            }
+
+            th.addEventListener('click', doSort);
+            th.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+                    e.preventDefault();
+                    doSort();
+                }
             });
         });
     }

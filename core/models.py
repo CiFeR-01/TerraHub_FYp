@@ -439,6 +439,11 @@ class Shipment(models.Model):
     
     is_auto_generated = models.BooleanField(default=False)
 
+    # Set once this shipment's cargo has been applied to its Sales Order's
+    # SalesOrderDetail.quantity_shipped, so completion paths that run after an
+    # earlier Dispatched-crossing credit (or vice versa) don't double-count it.
+    credited_to_so = models.BooleanField(default=False)
+
     def __str__(self):
         return f"{self.tracking_number} ({self.status})"
 
@@ -450,6 +455,11 @@ class ShipmentItem(models.Model):
     quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     received_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     date_confirmed = models.DateTimeField(null=True, blank=True)
+
+    @property
+    def shortage_quantity(self):
+        """Units sent but not received (never negative - an overage is not a shortage)."""
+        return max(self.quantity - (self.received_quantity or 0), 0)
 
     def __str__(self):
         item_name = self.material.sku if self.material else (self.product.sku if self.product else 'Unknown')
@@ -504,6 +514,8 @@ class RegistryLog(models.Model):
     material = models.ForeignKey(
         Material, on_delete=models.SET_NULL, null=True, blank=True, related_name='registry_logs'
     )
+    # Always a positive magnitude, regardless of action_type; direction (+/-) is
+    # derived from action_type by callers/templates, not stored in the sign.
     quantity_changed = models.DecimalField(max_digits=12, decimal_places=2)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True)
     timestamp = models.DateTimeField(auto_now_add=True)

@@ -86,23 +86,33 @@ def dashboard_view(request):
     # 3. Recent logs (pre-fetching related warehouse models, ordered descending by timestamp)
     recent_logs = RegistryLog.objects.select_related('warehouse').order_by('-timestamp')[:5]
 
-    # 4. Active shipments (status is not 'Arrived', ordered by expected_eta_date)
-    active_shipments = Shipment.objects.exclude(status='Arrived').select_related(
+    # 4. Active shipments (status is not 'Arrived', ordered by expected_eta_date).
+    # The dashboard only previews the most time-sensitive handful - the full
+    # queryset (everything, unbounded) lives on the Shipments list page.
+    DASH_PREVIEW_LIMIT = 8
+    active_shipments_qs = Shipment.objects.exclude(status='Arrived').select_related(
         'origin_warehouse', 'destination_warehouse'
     ).prefetch_related('items').order_by('expected_eta_date')
+    active_shipments_total = active_shipments_qs.count()
+    active_shipments = active_shipments_qs[:DASH_PREVIEW_LIMIT]
 
-    # 5. Degrading batches (active batches, <= 30 days remaining shelf life OR less than material.safe_storage_days)
+    # 5. Degrading batches (active batches, <= 30 days remaining shelf life).
+    # Same 30-day threshold as qa_dashboard_view's near-expiry bucket, so the
+    # "View all" link below lands on a QA dashboard showing the same batches.
+    # Same preview treatment: soonest-to-expire first, capped, with a link to
+    # the full QA dashboard for the rest.
     active_batches = Batch.objects.filter(status='Active').select_related('material', 'product', 'warehouse')
     today = date.today()
     degrading_batches = []
     for b in active_batches:
         if b.expiry_date:
             days_remaining = (b.expiry_date - today).days
-            # Filter condition
-            if days_remaining <= 30 or (b.material and days_remaining < b.material.safe_storage_days):
+            if days_remaining <= 30:
                 b.days_remaining = days_remaining
-                b.threshold_days = b.material.safe_storage_days if b.material else 30
                 degrading_batches.append(b)
+    degrading_batches.sort(key=lambda b: b.days_remaining)
+    degrading_batches_total = len(degrading_batches)
+    degrading_batches = degrading_batches[:DASH_PREVIEW_LIMIT]
 
     # ------------------------------------------------------------------
     # Analytics upgrade: attention panel, live production progress,
@@ -185,18 +195,30 @@ def dashboard_view(request):
         'finished_goods': _pct_delta(fg_cur, fg_prev),
     }
 
-    # D. Real sparklines — weekly totals for the last 6 weeks (normalised heights)
-    def _weekly_heights(action):
-        raw = []
+    # D. Real sparklines — weekly totals for the last 6 weeks, kept as (height%,
+    # label, value) triples so the bars stay hoverable instead of being bare
+    # shapes with no way to read an actual number off them.
+    def _weekly_heights(action, unit):
+        weeks = []
         for i in range(6, 0, -1):
             wk_start = today - timedelta(days=i * 7)
             wk_end = today - timedelta(days=(i - 1) * 7)
-            raw.append(_reg_sum(action, wk_start, wk_end))
-        peak = max(raw) or 1
-        return [max(round(v / peak * 100), 4) for v in raw]
+            weeks.append((wk_start, wk_end, _reg_sum(action, wk_start, wk_end)))
+        peak = max(v for _, _, v in weeks) or 1
 
-    raw_spark = _weekly_heights('Inbound')
-    fg_spark = _weekly_heights('Produced')
+        def _fmt(d):
+            return f"{d.strftime('%b')} {d.day}"
+
+        return [
+            {
+                'height': max(round(v / peak * 100), 4),
+                'label': f"{_fmt(wk_start)}–{_fmt(wk_end)}: {v:,.0f} {unit}",
+            }
+            for wk_start, wk_end, v in weeks
+        ]
+
+    raw_spark = _weekly_heights('Inbound', 'MT')
+    fg_spark = _weekly_heights('Produced', 'units')
 
     # E. Weekly finished-goods output trend (12 weeks) for a real line chart
     twelve_weeks_ago = today - timedelta(weeks=12)
@@ -267,7 +289,9 @@ def dashboard_view(request):
         'total_daily_cost': total_daily_cost,
         'recent_logs': recent_logs,
         'active_shipments': active_shipments,
+        'active_shipments_total': active_shipments_total,
         'degrading_batches': degrading_batches,
+        'degrading_batches_total': degrading_batches_total,
         'sales_order_stats': sales_order_stats,
         'current_timestamp': date.today().strftime('%Y-%m-%d'),
         # analytics upgrade
@@ -2254,11 +2278,13 @@ def so_detail_view(request, pk):
 
     has_deficit = any(row['deficit'] > 0 for row in line_items_with_bom)
     manufacturing_plants = Warehouse.objects.filter(location_type='Manufacturing').order_by('name')
+    has_unshipped_allocation = so.allocations.exists()
 
     context = {
         'so': so,
         'line_items': line_items_with_bom,
         'has_deficit': has_deficit,
+        'has_unshipped_allocation': has_unshipped_allocation,
         'products': products,
         'warehouses': warehouses,
         'manufacturing_plants': manufacturing_plants,
@@ -2871,9 +2897,6 @@ def shipments_view(request):
                     if status == 'Preparing':
                         so.status = 'Ready to Ship'
                         so.save()
-                    elif status == 'Arrived':
-                        so.status = 'Delivered'
-                        so.save()
 
                 # Pre-fill cargo items from the linked order's outstanding quantities.
                 # No batch is assigned here (same as manually adding an item without one) —
@@ -2901,6 +2924,8 @@ def shipments_view(request):
                             so_detail = SalesOrderDetail.objects.filter(sales_order=so, product=si.product).first()
                             if so_detail:
                                 apply_so_product_shipment(so_detail, si.quantity)
+                    shipment.credited_to_so = True
+                    shipment.save(update_fields=['credited_to_so'])
 
                 if items_added:
                     OrderTimeline.objects.create(shipment=shipment, action=f"Pre-filled {items_added} cargo item(s) from the linked order.", user=request.user)
@@ -2910,28 +2935,6 @@ def shipments_view(request):
                 return redirect('shipment_detail', pk=shipment.pk)
             except Exception as e:
                 messages.error(request, f"Error registering shipment: {e}")
-
-        elif action == 'update_status':
-            shipment_id = request.POST.get('shipment_id')
-            new_status = request.POST.get('status')
-            shipment = get_object_or_404(Shipment, id=shipment_id)
-            shipment.status = new_status
-            if new_status == 'Arrived':
-                shipment.actual_arrival_date = date.today()
-            shipment.save()
-            
-            # Auto update Sales Order status based on Shipment
-            if shipment.sales_order:
-                so = shipment.sales_order
-                if new_status == 'Preparing':
-                    so.status = 'Ready to Ship'
-                elif new_status == 'Dispatched':
-                    so.status = 'Shipped'
-                elif new_status == 'Arrived':
-                    so.status = 'Delivered'
-                so.save()
-            
-            messages.success(request, f"Shipment {shipment.tracking_number} updated to {new_status}.")
 
         return redirect('shipments')
 
@@ -3519,18 +3522,27 @@ def shipment_detail_view(request, pk):
                 
         elif action == 'update_operational_status':
             new_st = request.POST.get('status')
+            # Mirrors the form on shipment_detail.html: only in-progress shipments, only
+            # in-progress targets. Completed/Discrepant come solely from the receiving
+            # flows (they move stock); approval stages go through approve/reject.
+            in_progress = ['Preparing', 'Dispatched', 'Delayed', 'Arrived']
+            if shipment.status not in in_progress or new_st not in in_progress:
+                messages.error(request, "Status can only be changed between Preparing, Dispatched, Delayed and Arrived. Use the receiving step to complete a shipment.")
+                return redirect('shipment_detail', pk=shipment.pk)
             if new_st == 'Dispatched' and shipment.direction == 'Outbound':
                 if not shipment.external_tracking_id or not shipment.departure_datetime:
                     messages.error(request, "Tracking ID and Departure Date/Time MUST be provided before marking this shipment as Dispatched.")
                     return redirect('shipment_detail', pk=shipment.pk)
-            if new_st in ['Preparing', 'Dispatched', 'Delayed', 'Arrived', 'Completed', 'Discrepant']:
+            if new_st in in_progress:
                 shipment.status = new_st
                 shipment.save()
 
                 # First time crossing into Dispatched — count this shipment's cargo as
-                # shipped against the SO (guarded so re-saving/Delayed-then-Dispatched
-                # again doesn't double-count).
-                if (new_st == 'Dispatched' and old_status not in ['Dispatched', 'Delayed', 'Arrived', 'Completed', 'Discrepant']
+                # shipped against the SO. Guarded on credited_to_so (not just old_status)
+                # so a shipment that later completes via complete_shipment/
+                # finalize_shipment_receiving/force_close_shipment — which also credit,
+                # for shipments that skip Dispatched entirely — never gets double-counted.
+                if (new_st == 'Dispatched' and not shipment.credited_to_so
                         and shipment.direction == 'Outbound' and shipment.sales_order):
                     from .utils import apply_so_product_shipment
                     for si in shipment.items.all():
@@ -3538,6 +3550,8 @@ def shipment_detail_view(request, pk):
                             so_detail = SalesOrderDetail.objects.filter(sales_order=shipment.sales_order, product=si.product).first()
                             if so_detail:
                                 apply_so_product_shipment(so_detail, si.quantity)
+                    shipment.credited_to_so = True
+                    shipment.save(update_fields=['credited_to_so'])
 
                 messages.success(request, f"Operational status updated to {new_st}.")
 
@@ -3591,45 +3605,23 @@ def shipment_detail_view(request, pk):
 
                 # Release lock and deduct stock
                 if shipment.direction in ['Outbound', 'Transfer']:
-                    from .utils import deduct_stock_from_allocation, mark_so_delivered_if_fully_shipped
+                    from .utils import deduct_stock_from_allocation, mark_so_delivered_if_fully_shipped, apply_so_product_shipment
                     deduct_stock_from_allocation('shipment', shipment, user=request.user)
 
                     if shipment.direction == 'Outbound' and shipment.sales_order:
+                        if not shipment.credited_to_so:
+                            for item in shipment.items.all():
+                                if item.product:
+                                    so_detail = SalesOrderDetail.objects.filter(sales_order=shipment.sales_order, product=item.product).first()
+                                    if so_detail:
+                                        apply_so_product_shipment(so_detail, item.received_quantity)
+                            shipment.credited_to_so = True
+                            shipment.save(update_fields=['credited_to_so'])
                         mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
 
-                if shipment.direction == 'Transfer' and shipment.destination_warehouse:
-                    loc = WarehouseLocation.objects.filter(warehouse=shipment.destination_warehouse).first()
-                    if loc:
-                        for item in shipment.items.all():
-                            if not item.batch or float(item.received_quantity) <= 0: continue
-                            b = item.batch
-                            rcv_qty = float(item.received_quantity)
-                            
-                            new_batch, created = Batch.objects.get_or_create(
-                                batch_number=f"{b.batch_number}-TRF-{shipment.id}",
-                                defaults={
-                                    'status': 'Active',
-                                    'material': b.material,
-                                    'product': b.product,
-                                    'quantity': rcv_qty,
-                                    'manufacturing_date': b.manufacturing_date,
-                                    'expiry_date': b.expiry_date,
-                                    'location': loc,
-                                    'produced_in': b.produced_in
-                                }
-                            )
-                            if not created:
-                                # Update quantity in case it was reopened and changed
-                                new_batch.quantity = rcv_qty
-                                new_batch.save(update_fields=['quantity'])
-                            RegistryLog.objects.create(
-                                action_type='Inbound',
-                                item_name=f"Internal Transfer Received: {new_batch.batch_number}",
-                                material=new_batch.material,
-                                quantity_changed=rcv_qty,
-                                warehouse=shipment.destination_warehouse,
-                                user=request.user
-                            )
+                if shipment.direction == 'Transfer':
+                    from .utils import receive_transfer_into_destination
+                    receive_transfer_into_destination(shipment, request.user)
                 messages.success(request, "Shipment receipt confirmed and marked as Completed.")
 
         elif action == 'log_item_receipt':
@@ -3711,9 +3703,17 @@ def shipment_detail_view(request, pk):
                     shipment.save()
 
                     if shipment.direction == 'Outbound':
-                        from .utils import deduct_stock_from_allocation, mark_so_delivered_if_fully_shipped
+                        from .utils import deduct_stock_from_allocation, mark_so_delivered_if_fully_shipped, apply_so_product_shipment
                         deduct_stock_from_allocation('shipment', shipment, user=request.user)
                         if shipment.sales_order:
+                            if not shipment.credited_to_so:
+                                for item in shipment.items.all():
+                                    if item.product:
+                                        so_detail = SalesOrderDetail.objects.filter(sales_order=shipment.sales_order, product=item.product).first()
+                                        if so_detail:
+                                            apply_so_product_shipment(so_detail, item.received_quantity)
+                                shipment.credited_to_so = True
+                                shipment.save(update_fields=['credited_to_so'])
                             mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
 
                     messages.success(request, "Receiving finalized. Shipment marked Completed.")
@@ -3746,7 +3746,20 @@ def shipment_detail_view(request, pk):
             if shipment.assigned_manager and request.user != shipment.assigned_manager:
                 messages.error(request, "Only the assigned manager can approve the Force Close.")
                 return redirect('shipment_detail', pk=shipment.pk)
-                
+
+            # Transfers: the manager must say where each item's missing units went -
+            # 'origin' (never left / miscount: stays on the origin batch) or 'lost'
+            # (lost/damaged in transit: written off from the origin batch).
+            shortage_reasons = {}
+            if shipment.direction == 'Transfer':
+                for item in shipment.items.filter(batch__isnull=False):
+                    if item.shortage_quantity > 0:
+                        reason = request.POST.get(f'shortage_reason_{item.id}')
+                        if reason not in ('origin', 'lost'):
+                            messages.error(request, "Choose where the missing units went for every short item before force closing.")
+                            return redirect('shipment_detail', pk=shipment.pk)
+                        shortage_reasons[item.id] = reason
+
             mgr_comment = request.POST.get('manager_comment', '').strip()
             if mgr_comment:
                 if shipment.discrepancy_remarks:
@@ -3766,52 +3779,57 @@ def shipment_detail_view(request, pk):
                     batch = alloc.batch
                     item = shipment.items.filter(batch=batch).first()
                     rcv_qty = item.received_quantity if item else 0
+                    lost_qty = item.shortage_quantity if item and shortage_reasons.get(item.id) == 'lost' else Decimal('0')
 
-                    batch.quantity -= Decimal(str(rcv_qty))
+                    batch.quantity -= Decimal(str(rcv_qty)) + lost_qty
                     batch.allocated_quantity -= alloc.quantity
-                    batch.save(update_fields=['quantity', 'allocated_quantity'])
+                    from .utils import _close_batch_if_depleted
+                    _close_batch_if_depleted(batch)
+                    batch.save(update_fields=['quantity', 'allocated_quantity', 'status', 'closed_date'])
 
                     item_name = batch.material.name if batch.material else (batch.product.name if batch.product else batch.batch_number)
                     RegistryLog.objects.create(
                         action_type='Outbound',
                         item_name=f"{item_name} (Batch {batch.batch_number}) — force closed",
                         material=batch.material,
-                        quantity_changed=-Decimal(str(rcv_qty)),
+                        quantity_changed=Decimal(str(rcv_qty)),
                         warehouse=batch.warehouse,
                         user=request.user
                     )
+                    if item and item.id in shortage_reasons:
+                        short = item.shortage_quantity
+                        if shortage_reasons[item.id] == 'lost':
+                            RegistryLog.objects.create(
+                                action_type='Spoiled_Disposal',
+                                item_name=f"{item_name} (Batch {batch.batch_number}) — lost in transit ({shipment.tracking_number})",
+                                material=batch.material,
+                                quantity_changed=short,
+                                warehouse=batch.warehouse,
+                                user=request.user
+                            )
+                            note = f"{short} of {item_name} written off as lost in transit."
+                        else:
+                            note = f"{short} of {item_name} kept at origin (Batch {batch.batch_number})."
+                        OrderTimeline.objects.create(shipment=shipment, action=f"Force close shortage: {note}", user=request.user)
 
                     alloc.delete()
 
                 if shipment.direction == 'Outbound' and shipment.sales_order:
-                    from .utils import mark_so_delivered_if_fully_shipped
+                    from .utils import mark_so_delivered_if_fully_shipped, apply_so_product_shipment
+                    if not shipment.credited_to_so:
+                        for item in shipment.items.all():
+                            if item.product:
+                                so_detail = SalesOrderDetail.objects.filter(sales_order=shipment.sales_order, product=item.product).first()
+                                if so_detail:
+                                    apply_so_product_shipment(so_detail, item.received_quantity)
+                        shipment.credited_to_so = True
+                        shipment.save(update_fields=['credited_to_so'])
                     mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
 
-            if shipment.direction == 'Transfer' and shipment.destination_warehouse:
-                loc = WarehouseLocation.objects.filter(warehouse=shipment.destination_warehouse).first()
-                if loc:
-                    for item in shipment.items.all():
-                        if not item.batch or float(item.received_quantity) <= 0: continue
-                        b = item.batch
-                        rcv_qty = float(item.received_quantity)
-                        
-                        new_batch, created = Batch.objects.get_or_create(
-                            batch_number=f"{b.batch_number}-TRF-{shipment.id}",
-                            defaults={
-                                'status': 'Active',
-                                'material': b.material,
-                                'product': b.product,
-                                'quantity': rcv_qty,
-                                'manufacturing_date': b.manufacturing_date,
-                                'expiry_date': b.expiry_date,
-                                'location': loc,
-                                'produced_in': b.produced_in
-                            }
-                        )
-                        if not created:
-                            new_batch.quantity = rcv_qty
-                            new_batch.save(update_fields=['quantity'])
-            
+            if shipment.direction == 'Transfer':
+                from .utils import receive_transfer_into_destination
+                receive_transfer_into_destination(shipment, request.user)
+
             if shipment.purchase_order:
                 po = shipment.purchase_order
                 po.status = 'Partially Received'
@@ -3820,6 +3838,11 @@ def shipment_detail_view(request, pk):
             messages.success(request, "Shipment Force Closed. Unreceived stock locks released.")
             
         elif action == 'reopen_shipment':
+            if shipment.direction == 'Transfer':
+                # Reopening a transfer can't safely undo stock already moved into the
+                # destination batch; corrections go through a stock audit adjustment.
+                messages.error(request, "Completed transfers can't be reopened. Correct quantities with a stock audit adjustment instead.")
+                return redirect('shipment_detail', pk=shipment.pk)
             shipment.status = 'Arrived'
             shipment.acknowledged_by = None
             shipment.last_edited_by = request.user
@@ -3832,27 +3855,6 @@ def shipment_detail_view(request, pk):
                 user=request.user
             )
             messages.success(request, "Shipment reopened for editing.")
-
-        elif action == 'update_status':
-            new_status = request.POST.get('status')
-            shipment.status = new_status
-            if new_status == 'Arrived':
-                shipment.actual_arrival_date = date.today()
-            shipment.last_edited_by = request.user
-            shipment.save()
-            
-            # Auto update Sales Order status based on Shipment
-            if shipment.sales_order:
-                so = shipment.sales_order
-                if new_status == 'Preparing':
-                    so.status = 'Ready to Ship'
-                elif new_status == 'Dispatched':
-                    so.status = 'Shipped'
-                elif new_status == 'Arrived':
-                    so.status = 'Delivered'
-                so.save()
-            
-            messages.success(request, f"Shipment {shipment.tracking_number} updated to {new_status}.")
 
         elif action == 'toggle_follow':
             if request.user in shipment.followers.all():
@@ -4142,12 +4144,21 @@ def so_create_shipment_view(request, pk):
         if so.status != 'Ready to Ship':
             messages.error(request, "Order is not ready to ship.")
             return redirect('so_detail', pk=so.pk)
-            
+
+        allocations = list(so.allocations.select_related('batch__product').all())
+        if not allocations:
+            existing = so.shipments.filter(direction='Outbound').exclude(status='Cancelled')
+            if existing.exists():
+                names = ", ".join(s.tracking_number for s in existing)
+                messages.error(request, f"All allocated stock for this order is already held by logistics order(s) {names}.")
+            else:
+                messages.error(request, "There is no allocated stock to draft a logistics order from.")
+            return redirect('so_detail', pk=so.pk)
+
         with transaction.atomic():
             tracking_number = generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4)
-            
+
             origin_wh = None
-            allocations = so.allocations.select_related('batch__product').all()
             if so.origin_warehouse:
                 origin_wh = so.origin_warehouse
 
@@ -4158,8 +4169,12 @@ def so_create_shipment_view(request, pk):
                 status='Draft',
                 origin_warehouse=origin_wh
             )
-            
-            # Create shipment items based on allocated stock
+
+            # Create shipment items based on allocated stock, and move the stock lock
+            # itself onto this shipment (mirrors shipment_detail's add_item action) so
+            # the allocation belongs to THIS shipment rather than staying shared on the
+            # SO, where a second "Create Logistics Order" click or a scrap of a sibling
+            # shipment could silently release stock this shipment still needs.
             for alloc in allocations:
                 ShipmentItem.objects.create(
                     shipment=shipment,
@@ -4167,19 +4182,21 @@ def so_create_shipment_view(request, pk):
                     batch=alloc.batch,
                     quantity=alloc.quantity
                 )
-            
+                StockAllocation.objects.create(batch=alloc.batch, shipment=shipment, quantity=alloc.quantity)
+                alloc.delete()
+
             # Note: We do NOT change so.status to 'Shipped' here.
             # It remains 'Ready to Ship' until logistics dispatches it.
-            
+
             OrderTimeline.objects.create(
-                sales_order=so, 
-                action=f"Auto-drafted logistics shipment {tracking_number}.", 
+                sales_order=so,
+                action=f"Auto-drafted logistics shipment {tracking_number}.",
                 user=request.user
             )
-            
+
             messages.success(request, f"Logistics Order {tracking_number} drafted successfully.")
             return redirect('shipment_detail', pk=shipment.pk)
-            
+
     return redirect('so_detail', pk=so.pk)
 
 @login_required
