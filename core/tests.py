@@ -2583,3 +2583,223 @@ class AICopilotNavTests(TestCase):
         resp = client.get(reverse('ops_briefing'))
         for label in ('Materials', 'Products', 'Sales', 'Purchase', 'Logistics', 'Warehouse'):
             self.assertContains(resp, label)
+
+
+class TransferReceiptTests(TestCase):
+    """Regression coverage: receiving an internal Transfer must create the
+    destination batch with warehouse=destination (it used to be left NULL), must
+    do so even when the destination has no WarehouseLocation zones (stock used to
+    silently vanish), and a reopen + re-complete must only log the change."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='trfuser', password='pw')
+        self.client.login(username='trfuser', password='pw')
+
+        self.origin = Warehouse.objects.create(name='Rented Store', location_type='Storage', ownership_type='ExternalProvider')
+        self.dest = Warehouse.objects.create(name='Own Store', location_type='Storage', ownership_type='Internal')
+        self.material = Material.objects.create(name='Urea', sku='MAT-TRF', category='Raw', safe_storage_days=180)
+        self.batch = Batch.objects.create(
+            batch_number='B-TRF-1', status='Active', material=self.material,
+            quantity=Decimal('500'), allocated_quantity=Decimal('200'),
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=365),
+            warehouse=self.origin,
+        )
+        self.shipment = Shipment.objects.create(
+            tracking_number='SHP-TRF-1', direction='Transfer', status='Arrived',
+            origin_warehouse=self.origin, destination_warehouse=self.dest,
+        )
+        self.item = ShipmentItem.objects.create(
+            shipment=self.shipment, material=self.material, batch=self.batch, quantity=Decimal('200'),
+        )
+        StockAllocation.objects.create(batch=self.batch, shipment=self.shipment, quantity=Decimal('200'))
+
+    def _complete(self, received='200'):
+        return self.client.post(reverse('shipment_detail', args=[self.shipment.pk]), {
+            'action': 'complete_shipment',
+            f'received_qty_{self.item.id}': received,
+        })
+
+    def _dest_batch(self):
+        return Batch.objects.get(batch_number=f'B-TRF-1-TRF-{self.shipment.id}')
+
+    def _inbound_logs(self):
+        return RegistryLog.objects.filter(action_type='Inbound', warehouse=self.dest)
+
+    def test_received_batch_lands_in_destination_warehouse_without_zones(self):
+        self.assertFalse(WarehouseLocation.objects.filter(warehouse=self.dest).exists())
+        self._complete()
+
+        new_batch = self._dest_batch()
+        self.assertEqual(new_batch.warehouse, self.dest)
+        self.assertEqual(new_batch.quantity, Decimal('200'))
+        self.assertEqual(new_batch.status, 'Active')
+        self.assertIsNone(new_batch.location)
+        self.assertIsNone(new_batch.rental_rate_per_mt)
+
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.quantity, Decimal('300'))
+        self.assertEqual(self.batch.allocated_quantity, Decimal('0'))
+        self.assertEqual(self._inbound_logs().count(), 1)
+        self.assertEqual(self._inbound_logs().get().quantity_changed, Decimal('200'))
+
+    def test_received_batch_lands_in_destination_warehouse_with_zones(self):
+        WarehouseLocation.objects.create(warehouse=self.dest, zone_name='A', aisle='1')
+        self._complete()
+        self.assertEqual(self._dest_batch().warehouse, self.dest)
+
+    def _post(self, **data):
+        return self.client.post(reverse('shipment_detail', args=[self.shipment.pk]), data)
+
+    def _force_close_short(self, received='150', **reasons):
+        """Complete with a shortage (-> Discrepant), then force close."""
+        self._complete(received=received)
+        self.shipment.refresh_from_db()
+        self.assertEqual(self.shipment.status, 'Discrepant')
+        return self._post(action='force_close_shipment', **reasons)
+
+    def test_completed_transfer_cannot_be_reopened(self):
+        self._complete()
+        self._post(action='reopen_shipment')
+        self.shipment.refresh_from_db()
+        self.assertEqual(self.shipment.status, 'Completed')
+
+    def test_completed_transfer_status_cannot_be_changed_back(self):
+        self._complete()
+        self._post(action='update_operational_status', status='Arrived')
+        self.shipment.refresh_from_db()
+        self.assertEqual(self.shipment.status, 'Completed')
+
+    def test_completed_outbound_can_still_be_reopened(self):
+        self.shipment.direction = 'Outbound'
+        self.shipment.status = 'Completed'
+        self.shipment.save(update_fields=['direction', 'status'])
+        self._post(action='reopen_shipment')
+        self.shipment.refresh_from_db()
+        self.assertEqual(self.shipment.status, 'Arrived')
+
+    def test_force_close_shortage_requires_a_reason(self):
+        self._force_close_short()
+        self.shipment.refresh_from_db()
+        self.assertEqual(self.shipment.status, 'Discrepant')
+        self.assertFalse(Batch.objects.filter(warehouse=self.dest).exists())
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.quantity, Decimal('500'))
+
+    def test_force_close_shortage_kept_at_origin(self):
+        self._force_close_short(**{f'shortage_reason_{self.item.id}': 'origin'})
+
+        self.assertEqual(self._dest_batch().warehouse, self.dest)
+        self.assertEqual(self._dest_batch().quantity, Decimal('150'))
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.quantity, Decimal('350'))  # 500 - 150 received; 50 stay
+        self.assertEqual(self.batch.allocated_quantity, Decimal('0'))
+        self.assertFalse(RegistryLog.objects.filter(action_type='Spoiled_Disposal').exists())
+        self.assertEqual(self._inbound_logs().get().quantity_changed, Decimal('150'))
+
+    def test_force_close_shortage_lost_in_transit_is_written_off(self):
+        self._force_close_short(**{f'shortage_reason_{self.item.id}': 'lost'})
+
+        self.assertEqual(self._dest_batch().quantity, Decimal('150'))
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.quantity, Decimal('300'))  # 500 - 150 received - 50 lost
+        loss = RegistryLog.objects.get(action_type='Spoiled_Disposal')
+        self.assertEqual(loss.quantity_changed, Decimal('50'))
+        self.assertEqual(loss.warehouse, self.origin)
+
+    def test_force_close_marks_emptied_origin_batch_depleted(self):
+        self.batch.quantity = Decimal('200')
+        self.batch.save(update_fields=['quantity'])
+        self._force_close_short(**{f'shortage_reason_{self.item.id}': 'lost'})
+
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.quantity, Decimal('0'))
+        self.assertEqual(self.batch.status, 'Depleted')
+        self.assertEqual(self.batch.closed_date, date.today())
+
+    def test_detail_page_shows_shortage_choice_and_hides_reopen(self):
+        self._complete(received='150')
+        self.shipment.refresh_from_db()
+        self.shipment.assigned_manager = self.user
+        self.shipment.save(update_fields=['assigned_manager'])
+        resp = self.client.get(reverse('shipment_detail', args=[self.shipment.pk]))
+        self.assertContains(resp, f'name="shortage_reason_{self.item.id}"')
+        self.assertContains(resp, 'Missing 50.00 of Urea')
+
+        self._post(action='force_close_shipment', **{f'shortage_reason_{self.item.id}': 'origin'})
+        resp = self.client.get(reverse('shipment_detail', args=[self.shipment.pk]))
+        self.assertNotContains(resp, 'value="reopen_shipment"')
+        self.assertContains(resp, "Completed transfers can't be reopened")
+
+    def test_status_change_cannot_complete_or_mark_discrepant(self):
+        for target in ('Completed', 'Discrepant'):
+            self._post(action='update_operational_status', status=target)
+            self.shipment.refresh_from_db()
+            self.assertEqual(self.shipment.status, 'Arrived')
+        self.assertFalse(Batch.objects.filter(warehouse=self.dest).exists())
+
+    def test_status_change_cannot_skip_approval(self):
+        self.shipment.status = 'Pending Approval'
+        self.shipment.save(update_fields=['status'])
+        self._post(action='update_operational_status', status='Dispatched')
+        self.shipment.refresh_from_db()
+        self.assertEqual(self.shipment.status, 'Pending Approval')
+
+    def test_status_change_between_in_progress_statuses_still_works(self):
+        self.shipment.status = 'Preparing'
+        self.shipment.save(update_fields=['status'])
+        for target in ('Dispatched', 'Delayed', 'Arrived'):
+            self._post(action='update_operational_status', status=target)
+            self.shipment.refresh_from_db()
+            self.assertEqual(self.shipment.status, target)
+
+    def test_unused_update_status_action_no_longer_changes_status(self):
+        self._post(action='update_status', status='Completed')
+        self.shipment.refresh_from_db()
+        self.assertEqual(self.shipment.status, 'Arrived')
+
+    def test_transfer_for_production_run_keeps_run_reservation_at_plant(self):
+        from core.models import ProductionRun
+        from core.utils import consume_materials_for_run
+        product = Product.objects.create(name='Blend T', sku='PRD-T', unit_of_measure='kg', price_per_unit=1)
+        run = ProductionRun.objects.create(
+            run_number='RUN-TRF', target_product=product, expected_yield=Decimal('1'),
+            status='Awaiting Materials', manufacturing_plant=self.dest,
+        )
+        StockAllocation.objects.filter(shipment=self.shipment).update(production_run=run)
+        self.shipment.linked_production_run = run
+        self.shipment.save(update_fields=['linked_production_run'])
+
+        self._complete()
+
+        new_batch = self._dest_batch()
+        self.assertEqual(new_batch.allocated_quantity, Decimal('200'))
+        self.assertEqual(StockAllocation.objects.get(production_run=run).batch, new_batch)
+
+        # Completing the run consumes from the arrived batch and releases the hold
+        consume_materials_for_run(run, self.user)
+        new_batch.refresh_from_db()
+        self.assertEqual(new_batch.quantity, Decimal('0'))
+        self.assertEqual(new_batch.allocated_quantity, Decimal('0'))
+        self.assertFalse(StockAllocation.objects.filter(production_run=run).exists())
+
+
+class ShipmentCreateArrivedDoesNotDeliverSOTests(TestCase):
+    """Registering a shipment that is already 'Arrived' must not mark its sales order
+    Delivered - no stock has moved yet; delivery comes from completing the shipment."""
+
+    def test_so_not_marked_delivered_on_create(self):
+        user = User.objects.create_user(username='shpcreate', password='pw')
+        client = Client()
+        client.login(username='shpcreate', password='pw')
+        wh = Warehouse.objects.create(name='WH Create', location_type='Storage')
+        so = SalesOrder.objects.create(so_number='SO-CRT-1', client_name='Acme', origin_warehouse=wh, status='Ready to Ship')
+
+        client.post(reverse('shipments'), {
+            'action': 'create_shipment', 'direction': 'Outbound', 'status': 'Arrived',
+            'origin_warehouse_id': wh.id, 'sales_order_id': so.id,
+        })
+
+        self.assertTrue(Shipment.objects.filter(sales_order=so).exists())
+        so.refresh_from_db()
+        self.assertEqual(so.status, 'Ready to Ship')
