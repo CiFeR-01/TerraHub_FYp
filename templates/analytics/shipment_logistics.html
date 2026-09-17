@@ -98,7 +98,7 @@
                         {{ r.origin|default:"&mdash;" }} <span aria-hidden="true">&rarr;</span> {{ r.destination|default:"&mdash;" }}
                     </td>
                     <td style="padding:0.6rem 1rem; color:var(--text-muted);">
-                        {% if r.so_number %}SO {{ r.so_number }}{% elif r.po_number %}PO {{ r.po_number }}{% else %}Transfer{% endif %}
+                        {% if r.so_number %}{{ r.so_number }}{% elif r.po_number %}{{ r.po_number }}{% else %}Transfer{% endif %}
                     </td>
                     <td style="padding:0.6rem 1rem; text-align:right;" data-sort-value="{{ r.expected_eta_date|date:'Y-m-d' }}">
                         {{ r.expected_eta_date|date:"d M Y"|default:"&mdash;" }}
