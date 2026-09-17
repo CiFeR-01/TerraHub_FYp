@@ -54,6 +54,24 @@
     padding: 0;
 }
 
+/* Baseline keyboard-focus visibility. Previously only .nav-btn and
+   .form-input had any :focus styling defined anywhere in this file, so
+   every other link, button, and interactive table header (see
+   partials/_sortable_tables.html) fell back to whatever the browser's
+   bare default happened to render - or nothing, if a reset elsewhere
+   suppressed it. th[tabindex] covers sortable column headers. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+th[tabindex]:focus-visible,
+[tabindex]:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
 body {
     font-family: 'Plus Jakarta Sans', sans-serif;
     background-color: var(--bg-base);
@@ -521,7 +539,7 @@ button.nav-btn:focus-visible {
 .status-indicator {
     font-size: 0.8rem;
     font-weight: 600;
-    color: #059669;
+    color: var(--success-strong);
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
@@ -750,7 +768,7 @@ button.nav-btn:focus-visible {
 
 /* Emerald highlighted submenu link */
 .submenu-link.emerald-link {
-    color: #059669;
+    color: var(--success-strong);
     font-weight: 600;
 }
 
@@ -1478,12 +1496,30 @@ button.nav-btn:focus-visible {
     height: 100%;
 }
 
+/* The doughnut's chart-box also carries a wrapping color-ledger beneath it,
+   which a plain flex:1 wrapper doesn't leave room for inside the shared
+   380px .chart-box height - the ring grows to fill the space the ledger
+   needed and pushes it out past the card's bottom edge. Cap the ring at a
+   fixed, proportionate size instead of letting it claim all available
+   space, and let the card's height be a floor rather than a hard ceiling -
+   the ledger wraps onto more rows at narrower widths, and it should push
+   the card taller, not get clipped past its bottom edge.  */
+.chart-wrapper--donut {
+    flex: 0 0 auto;
+    height: 200px;
+}
+
+.chart-box--donut {
+    height: auto;
+    min-height: 380px;
+}
+
 .color-ledger {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem 1rem;
     margin-top: 1rem;
-    font-size: 0.8rem;
+    font-size: 0.76rem;
     color: var(--text-muted);
 }
 
@@ -1491,6 +1527,13 @@ button.nav-btn:focus-visible {
     display: flex;
     align-items: center;
     gap: 0.4rem;
+    min-width: 0;
+}
+
+.ledger-item > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .ledger-color {
@@ -1585,6 +1628,15 @@ button.nav-btn:focus-visible {
     }
 }
 
+/* Without this, a grid track won't shrink below its content's min-content
+   width - so the long, no-longer-wrapping tracking IDs in the logistics
+   table (white-space: nowrap, see .custom-table td) were forcing this
+   column wider than its 1.2fr share and crushing its sibling column to a
+   sliver instead of letting the table's own horizontal scroll handle it. */
+.split-grid > .pane-card {
+    min-width: 0;
+}
+
 .pane-card {
     background: var(--bg-surface);
     border: 1px solid var(--border-light);
@@ -1612,6 +1664,26 @@ button.nav-btn:focus-visible {
     overflow-x: auto;
 }
 
+/* Horizontally-scrollable table wrapper (used across 25+ templates). Was
+   previously a no-op class with no rule here, so a table wider than its
+   card silently clipped columns - worst on mobile - with no visual cue
+   that more content existed off-screen. The two "local" gradients scroll
+   with the table content and mask the shadow layers beneath once there's
+   nothing left to scroll toward, giving a self-adjusting "more this way"
+   affordance without JS. */
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    background:
+        linear-gradient(to right, #fff 30%, rgba(255, 255, 255, 0)) 0 0,
+        linear-gradient(to left, #fff 30%, rgba(255, 255, 255, 0)) 100% 0,
+        linear-gradient(to right, rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0)) 0 0,
+        linear-gradient(to left, rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0)) 100% 0;
+    background-repeat: no-repeat;
+    background-size: 32px 100%, 32px 100%, 12px 100%, 12px 100%;
+    background-attachment: local, local, scroll, scroll;
+}
+
 .custom-table {
     width: 100%;
     border-collapse: collapse;
@@ -1632,6 +1704,7 @@ button.nav-btn:focus-visible {
     border-bottom: 1px solid var(--border-light);
     color: var(--text-main);
     vertical-align: middle;
+    white-space: nowrap;
 }
 
 .custom-table tbody tr {
@@ -1823,7 +1896,7 @@ button.nav-btn:focus-visible {
 }
 
 .ledger-add-value {
-    color: #059669;
+    color: var(--success-strong);
     font-weight: 600;
 }
 
@@ -1996,15 +2069,6 @@ button.nav-btn:focus-visible {
     padding: 1.35rem 1.4rem 1.25rem;
     gap: 0;
     justify-content: space-between;
-}
-
-.kpi-v2 .kpi-item-card::before {
-    content: '';
-    position: absolute;
-    inset: 0 0 auto 0;
-    height: 3px;
-    background: var(--accent-grad);
-    opacity: 0.9;
 }
 
 .kpi-v2 .kpi-top {
@@ -2200,7 +2264,7 @@ button.nav-btn:focus-visible {
 }
 
 .wh-card-foot .burn { font-weight: 700; color: var(--danger); }
-.wh-card-foot .burn.free { color: var(--success); }
+.wh-card-foot .burn.free { color: var(--success-strong); }
 
 /* --- Material variance list ----------------------------------- */
 .var-list { display: flex; flex-direction: column; }
@@ -2226,7 +2290,7 @@ button.nav-btn:focus-visible {
 
 .var-val { font-family: 'Outfit', sans-serif; font-weight: 700; font-size: 0.9rem; }
 .var-val.over { color: var(--danger); }
-.var-val.under { color: var(--success); }
+.var-val.under { color: var(--success-strong); }
 .var-val.neutral { color: var(--text-muted); }
 
 /* --- Direction indicator in logistics table ------------------ */
@@ -2238,7 +2302,7 @@ button.nav-btn:focus-visible {
 }
 
 .dir-cell svg { width: 15px; height: 15px; stroke-width: 2.2; }
-.dir-cell.inbound { color: var(--success); }
+.dir-cell.inbound { color: var(--success-strong); }
 .dir-cell.outbound { color: var(--info); }
 .dir-cell.transfer { color: #64748b; }
 .dir-cell span { color: var(--text-main); }

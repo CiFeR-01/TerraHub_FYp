@@ -83,7 +83,7 @@
                     <td style="padding:0.6rem 1rem; text-align:right;">
                         {% if r.mean_yield_pct is not None %}{{ r.mean_yield_pct|floatformat:1 }}%{% else %}&mdash;{% endif %}
                     </td>
-                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; color:{% if r.mean_yield_variance_pct and r.mean_yield_variance_pct < 0 %}#dc2626{% elif r.mean_yield_variance_pct and r.mean_yield_variance_pct > 0 %}#059669{% endif %};">
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; color:{% if r.mean_yield_variance_pct and r.mean_yield_variance_pct < 0 %}#dc2626{% elif r.mean_yield_variance_pct and r.mean_yield_variance_pct > 0 %}var(--success-strong){% endif %};">
                         {% if r.mean_yield_variance_pct is not None %}{{ r.mean_yield_variance_pct|floatformat:1 }}%{% else %}&mdash;{% endif %}
                     </td>
                     <td style="padding:0.6rem 1rem; text-align:right; color:{% if r.mean_material_overuse_pct and r.mean_material_overuse_pct > 5 %}#dc2626{% endif %};">

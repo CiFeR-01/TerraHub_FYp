@@ -49,7 +49,7 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Net Variance</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.net_variance < 0 %}#dc2626{% elif summary.net_variance > 0 %}#059669{% else %}var(--text-main){% endif %};">{{ summary.net_variance|floatformat:1 }}</span>
+            <span class="kpi-value" style="color:{% if summary.net_variance < 0 %}#dc2626{% elif summary.net_variance > 0 %}var(--success-strong){% else %}var(--text-main){% endif %};">{{ summary.net_variance|floatformat:1 }}</span>
         </div>
     </div>
     <div class="kpi-item-card">
@@ -79,7 +79,7 @@
                     <td style="padding:0.6rem 1rem; font-weight:600;">{{ t.bucket }}</td>
                     <td style="padding:0.6rem 1rem; text-align:right;">{{ t.audit_count }}</td>
                     <td style="padding:0.6rem 1rem; text-align:right;">{{ t.mean_abs_variance|floatformat:2 }}</td>
-                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if t.net_variance < 0 %}#dc2626{% elif t.net_variance > 0 %}#059669{% endif %};">{{ t.net_variance|floatformat:1 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if t.net_variance < 0 %}#dc2626{% elif t.net_variance > 0 %}var(--success-strong){% endif %};">{{ t.net_variance|floatformat:1 }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -118,7 +118,7 @@
                     </td>
                     <td style="padding:0.6rem 1rem; text-align:right;">{{ r.mean_abs_variance|floatformat:2 }}</td>
                     <td style="padding:0.6rem 1rem; text-align:right; color:{% if r.shrinkage < 0 %}#dc2626;{% endif %}">{{ r.shrinkage|floatformat:1 }}</td>
-                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if r.net_variance < 0 %}#dc2626{% elif r.net_variance > 0 %}#059669{% endif %};">{{ r.net_variance|floatformat:1 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if r.net_variance < 0 %}#dc2626{% elif r.net_variance > 0 %}var(--success-strong){% endif %};">{{ r.net_variance|floatformat:1 }}</td>
                 </tr>
                 {% empty %}
                 <tr><td colspan="6" style="padding:1.5rem 1rem; text-align:center; color:var(--text-muted);">No audits in this window.</td></tr>

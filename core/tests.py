@@ -6,6 +6,7 @@ from django.db import connection
 from core.models import (
     Warehouse, WarehouseLocation, Material, Product, ProductRecipe,
     Batch, SalesOrder, SalesOrderDetail, StockAllocation,
+    Shipment, ShipmentItem,
 )
 from core.utils import allocate_stock, deduct_stock_from_allocation
 
@@ -918,12 +919,19 @@ class SalesOrderDeliveryRiskTests(TestCase):
         self.product = Product.objects.create(
             name='Blend A', sku='PRD-A', unit_of_measure='pcs', price_per_unit=10,
         )
+        # Freeze "today" once so fixtures built here and analytics.sales_order_delivery_risk()'s
+        # own timezone.now() call agree, even if the test runs across a real midnight rollover.
+        frozen_now = timezone.now()
+        self.today = frozen_now.date()
+        patcher = _mock.patch('core.analytics.timezone.now', return_value=frozen_now)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _so(self, number, *, status, deadline_in=None, ordered='10', shipped='0'):
         so = SalesOrder.objects.create(
             so_number=number, client_name=f'Client {number}',
             origin_warehouse=self.wh, status=status,
-            fulfillment_deadline=(date.today() + timedelta(days=deadline_in)) if deadline_in is not None else None,
+            fulfillment_deadline=(self.today + timedelta(days=deadline_in)) if deadline_in is not None else None,
         )
         SalesOrderDetail.objects.create(
             sales_order=so, product=self.product,
@@ -934,8 +942,8 @@ class SalesOrderDeliveryRiskTests(TestCase):
     def _ship(self, so, trk, *, eta_in=None, arrived_in=None, status='Dispatched'):
         return Shipment.objects.create(
             tracking_number=trk, direction='Outbound', status=status, sales_order=so,
-            expected_eta_date=(date.today() + timedelta(days=eta_in)) if eta_in is not None else None,
-            actual_arrival_date=(date.today() + timedelta(days=arrived_in)) if arrived_in is not None else None,
+            expected_eta_date=(self.today + timedelta(days=eta_in)) if eta_in is not None else None,
+            actual_arrival_date=(self.today + timedelta(days=arrived_in)) if arrived_in is not None else None,
         )
 
     def _risk(self, so_number):
@@ -1991,6 +1999,140 @@ class ShipmentLogisticsAnalyticsTests(TestCase):
         self.assertContains(resp, 'S-VIEW')
 
 
+class SOCreateShipmentAllocationTests(TestCase):
+    """Regression coverage for the SO-TS001 bug: so_create_shipment_view must move the
+    SO-level StockAllocation onto the new shipment (not leave it shared/behind), must
+    refuse to draft a second logistics order once the allocation is already spoken for,
+    and every path that completes an outbound SO shipment must credit
+    SalesOrderDetail.quantity_shipped exactly once."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='opuser', password='pw')
+        self.client.login(username='opuser', password='pw')
+
+        self.wh = Warehouse.objects.create(name='FG Hub', location_type='Storage')
+        self.product = Product.objects.create(
+            name='Blend X', sku='PRD-X', unit_of_measure='pcs', price_per_unit=10,
+        )
+        self.batch = Batch.objects.create(
+            batch_number='B-TEST-1', status='Active', product=self.product,
+            quantity=Decimal('600'), allocated_quantity=Decimal('600'),
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=365),
+            warehouse=self.wh,
+        )
+        self.so = SalesOrder.objects.create(
+            so_number='SO-TEST-1', client_name='Acme', origin_warehouse=self.wh,
+            status='Ready to Ship',
+        )
+        self.so_detail = SalesOrderDetail.objects.create(
+            sales_order=self.so, product=self.product, quantity_ordered=Decimal('600'),
+        )
+        self.alloc = StockAllocation.objects.create(
+            batch=self.batch, sales_order=self.so, quantity=Decimal('600'),
+        )
+
+    def _create_shipment(self):
+        return self.client.post(reverse('so_create_shipment', args=[self.so.pk]))
+
+    def test_creating_shipment_moves_allocation_off_the_so(self):
+        self._create_shipment()
+        self.assertFalse(StockAllocation.objects.filter(sales_order=self.so).exists())
+        shipment_allocs = StockAllocation.objects.filter(shipment__sales_order=self.so)
+        self.assertEqual(shipment_allocs.count(), 1)
+        self.assertEqual(shipment_allocs.first().quantity, Decimal('600'))
+
+    def test_second_create_shipment_click_is_blocked(self):
+        self._create_shipment()
+        self.assertEqual(Shipment.objects.filter(sales_order=self.so).count(), 1)
+
+        resp = self._create_shipment()
+        self.assertEqual(Shipment.objects.filter(sales_order=self.so).count(), 1)
+        from django.contrib.messages import get_messages
+        msgs = [str(m) for m in get_messages(resp.wsgi_request)]
+        self.assertTrue(any('already held by logistics order' in m for m in msgs))
+
+    def test_button_hidden_once_allocation_fully_drafted(self):
+        resp = self.client.get(reverse('so_detail', args=[self.so.pk]))
+        self.assertContains(resp, 'Create Logistics Order')
+
+        self._create_shipment()
+        resp = self.client.get(reverse('so_detail', args=[self.so.pk]))
+        self.assertNotContains(resp, 'Create Logistics Order')
+        self.assertContains(resp, 'already held by a logistics order')
+
+    def test_scrapping_one_shipment_does_not_touch_a_sibling(self):
+        # Simulate the SO-TS001 scenario directly: two shipments, each holding its own
+        # shipment-level allocation (as they now should after the fix).
+        self._create_shipment()
+        shipment_a = Shipment.objects.get(sales_order=self.so)
+
+        # Manually allocate more stock and draft a second, independent shipment so we
+        # can prove scrapping one doesn't touch the other's allocation.
+        batch2 = Batch.objects.create(
+            batch_number='B-TEST-2', status='Active', product=self.product,
+            quantity=Decimal('100'), allocated_quantity=Decimal('100'),
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=365),
+            warehouse=self.wh,
+        )
+        shipment_b = Shipment.objects.create(
+            tracking_number='SHP-TEST-B', sales_order=self.so, direction='Outbound', status='Draft',
+        )
+        ShipmentItem.objects.create(shipment=shipment_b, product=self.product, batch=batch2, quantity=Decimal('100'))
+        StockAllocation.objects.create(batch=batch2, shipment=shipment_b, quantity=Decimal('100'))
+
+        self.client.post(reverse('shipment_detail', args=[shipment_a.pk]), {'action': 'scrap_shipment'})
+
+        self.assertFalse(StockAllocation.objects.filter(shipment=shipment_a).exists())
+        self.assertTrue(StockAllocation.objects.filter(shipment=shipment_b).exists())
+        batch2.refresh_from_db()
+        self.assertEqual(batch2.allocated_quantity, Decimal('100'))
+
+    def _complete(self, shipment, received=Decimal('600')):
+        item = shipment.items.first()
+        return self.client.post(reverse('shipment_detail', args=[shipment.pk]), {
+            'action': 'complete_shipment',
+            f'received_qty_{item.id}': str(received),
+        })
+
+    def test_completing_shipment_credits_quantity_shipped_and_deducts_stock(self):
+        self._create_shipment()
+        shipment = Shipment.objects.get(sales_order=self.so)
+        shipment.status = 'Arrived'
+        shipment.save(update_fields=['status'])
+
+        self._complete(shipment)
+
+        self.so_detail.refresh_from_db()
+        self.batch.refresh_from_db()
+        self.so.refresh_from_db()
+        self.assertEqual(self.so_detail.quantity_shipped, Decimal('600'))
+        self.assertEqual(self.batch.quantity, Decimal('0'))
+        self.assertEqual(self.so.status, 'Delivered')
+
+    def test_dispatch_then_complete_does_not_double_credit(self):
+        self._create_shipment()
+        shipment = Shipment.objects.get(sales_order=self.so)
+        shipment.status = 'Preparing'
+        shipment.external_tracking_id = 'TRK-1'
+        shipment.departure_datetime = timezone.now()
+        shipment.save()
+
+        self.client.post(reverse('shipment_detail', args=[shipment.pk]), {
+            'action': 'update_operational_status', 'status': 'Dispatched',
+        })
+        self.so_detail.refresh_from_db()
+        self.assertEqual(self.so_detail.quantity_shipped, Decimal('600'))
+
+        shipment.refresh_from_db()
+        shipment.status = 'Arrived'
+        shipment.save(update_fields=['status'])
+        self._complete(shipment)
+
+        self.so_detail.refresh_from_db()
+        self.assertEqual(self.so_detail.quantity_shipped, Decimal('600'))
+
+
 class OpsBriefingCategoryTests(TestCase):
     """Phase 4: collect_signals(category), generate_briefing(category=...), the command."""
 
@@ -2033,16 +2175,17 @@ class OpsBriefingCategoryTests(TestCase):
         self.assertIn('product_sales_trend', signals)
 
     def test_collect_signals_sales_keeps_only_notable_rows(self):
+        today = date.today()
         self._late_so('SO-LATE')
         SalesOrder.objects.create(  # on-track, far-off deadline -> must be excluded
             so_number='SO-OK', client_name='Fine', origin_warehouse=self.wh,
-            status='Pending', fulfillment_deadline=date.today() + timedelta(days=90),
+            status='Pending', fulfillment_deadline=today + timedelta(days=90),
         )
-        signals = briefing_mod.collect_signals('sales')
+        signals = briefing_mod.collect_signals('sales', end=today)
         risk = signals['sales_order_delivery_risk']
         self.assertEqual([r['sales_order'] for r in risk], ['SO-LATE'])
         self.assertGreaterEqual(signals['signal_count'], 1)
-        self.assertEqual(signals['generated_for'], date.today().isoformat())
+        self.assertEqual(signals['generated_for'], today.isoformat())
 
     def test_collect_signals_empty_when_nothing_notable(self):
         signals = briefing_mod.collect_signals('sales')

@@ -47,7 +47,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:#d97706;{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#059669;{% endif %}">
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -110,7 +110,7 @@
         </div>
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Yield Efficiency</div>
-            <div style="font-size:0.95rem; font-weight:600; {% if yield_efficiency < 95 %}color:#d97706;{% elif yield_efficiency > 105 %}color:#2563eb;{% else %}color:#059669;{% endif %}">
+            <div style="font-size:0.95rem; font-weight:600; {% if yield_efficiency < 95 %}color:var(--warning-strong);{% elif yield_efficiency > 105 %}color:#2563eb;{% else %}color:var(--success-strong);{% endif %}">
                 {% if yield_efficiency %}{{ yield_efficiency|floatformat:1 }}%{% else %}—{% endif %}
             </div>
         </div>
@@ -386,7 +386,7 @@
                                     <td style="padding:0.75rem; font-size:0.85rem; font-weight:600;">{{ row.usage.material.name }}</td>
                                     <td style="padding:0.75rem; font-size:0.85rem; text-align:right; color:var(--text-muted);">{{ row.usage.expected_qty|floatformat:2 }} {{ row.usage.material.unit_of_measure }}</td>
                                     <td style="padding:0.75rem; font-size:0.85rem; text-align:right;">{{ row.usage.actual_qty|floatformat:2 }} {{ row.usage.material.unit_of_measure }}</td>
-                                    <td style="padding:0.75rem; font-size:0.85rem; text-align:right; font-weight:600; {% if row.usage.variance_pct > 3 or row.usage.variance_pct < -3 %}color:#dc2626;{% elif row.usage.variance_pct != 0 %}color:#d97706;{% else %}color:#059669;{% endif %}">
+                                    <td style="padding:0.75rem; font-size:0.85rem; text-align:right; font-weight:600; {% if row.usage.variance_pct > 3 or row.usage.variance_pct < -3 %}color:#dc2626;{% elif row.usage.variance_pct != 0 %}color:var(--warning-strong);{% else %}color:var(--success-strong);{% endif %}">
                                         {% if row.usage.variance_pct > 0 %}+{% endif %}{{ row.usage.variance_pct|floatformat:2 }}%
                                     </td>
                                     <td style="padding:0.75rem; font-size:0.85rem; text-align:right; color:var(--text-muted);">RM {{ row.cost|floatformat:2 }}</td>
@@ -561,7 +561,7 @@
                             <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.25rem;">From: {{ shp.origin_warehouse.name|default:"Unknown" }}</div>
                             <div style="font-size:0.75rem; color:var(--text-muted); display:flex; justify-content:space-between;">
                                 <span>{{ shp.items.count }} item(s)</span>
-                                {% if shp.is_auto_generated %}<span style="color:#d97706;">Auto-generated</span>{% endif %}
+                                {% if shp.is_auto_generated %}<span style="color:var(--warning-strong);">Auto-generated</span>{% endif %}
                             </div>
                         </div>
                     </a>

@@ -575,7 +575,7 @@ def deduct_stock_from_allocation(order_type, order, user=None):
                 action_type='Outbound',
                 item_name=f"{item_name} (Batch {batch.batch_number})",
                 material=batch.material,
-                quantity_changed=-alloc.quantity,
+                quantity_changed=alloc.quantity,
                 warehouse=batch.warehouse,
                 user=user
             )
