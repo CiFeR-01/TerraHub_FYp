@@ -2897,9 +2897,6 @@ def shipments_view(request):
                     if status == 'Preparing':
                         so.status = 'Ready to Ship'
                         so.save()
-                    elif status == 'Arrived':
-                        so.status = 'Delivered'
-                        so.save()
 
                 # Pre-fill cargo items from the linked order's outstanding quantities.
                 # No batch is assigned here (same as manually adding an item without one) —
@@ -2938,28 +2935,6 @@ def shipments_view(request):
                 return redirect('shipment_detail', pk=shipment.pk)
             except Exception as e:
                 messages.error(request, f"Error registering shipment: {e}")
-
-        elif action == 'update_status':
-            shipment_id = request.POST.get('shipment_id')
-            new_status = request.POST.get('status')
-            shipment = get_object_or_404(Shipment, id=shipment_id)
-            shipment.status = new_status
-            if new_status == 'Arrived':
-                shipment.actual_arrival_date = date.today()
-            shipment.save()
-            
-            # Auto update Sales Order status based on Shipment
-            if shipment.sales_order:
-                so = shipment.sales_order
-                if new_status == 'Preparing':
-                    so.status = 'Ready to Ship'
-                elif new_status == 'Dispatched':
-                    so.status = 'Shipped'
-                elif new_status == 'Arrived':
-                    so.status = 'Delivered'
-                so.save()
-            
-            messages.success(request, f"Shipment {shipment.tracking_number} updated to {new_status}.")
 
         return redirect('shipments')
 
@@ -3547,11 +3522,18 @@ def shipment_detail_view(request, pk):
                 
         elif action == 'update_operational_status':
             new_st = request.POST.get('status')
+            # Mirrors the form on shipment_detail.html: only in-progress shipments, only
+            # in-progress targets. Completed/Discrepant come solely from the receiving
+            # flows (they move stock); approval stages go through approve/reject.
+            in_progress = ['Preparing', 'Dispatched', 'Delayed', 'Arrived']
+            if shipment.status not in in_progress or new_st not in in_progress:
+                messages.error(request, "Status can only be changed between Preparing, Dispatched, Delayed and Arrived. Use the receiving step to complete a shipment.")
+                return redirect('shipment_detail', pk=shipment.pk)
             if new_st == 'Dispatched' and shipment.direction == 'Outbound':
                 if not shipment.external_tracking_id or not shipment.departure_datetime:
                     messages.error(request, "Tracking ID and Departure Date/Time MUST be provided before marking this shipment as Dispatched.")
                     return redirect('shipment_detail', pk=shipment.pk)
-            if new_st in ['Preparing', 'Dispatched', 'Delayed', 'Arrived', 'Completed', 'Discrepant']:
+            if new_st in in_progress:
                 shipment.status = new_st
                 shipment.save()
 
@@ -3637,39 +3619,9 @@ def shipment_detail_view(request, pk):
                             shipment.save(update_fields=['credited_to_so'])
                         mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
 
-                if shipment.direction == 'Transfer' and shipment.destination_warehouse:
-                    loc = WarehouseLocation.objects.filter(warehouse=shipment.destination_warehouse).first()
-                    if loc:
-                        for item in shipment.items.all():
-                            if not item.batch or float(item.received_quantity) <= 0: continue
-                            b = item.batch
-                            rcv_qty = float(item.received_quantity)
-                            
-                            new_batch, created = Batch.objects.get_or_create(
-                                batch_number=f"{b.batch_number}-TRF-{shipment.id}",
-                                defaults={
-                                    'status': 'Active',
-                                    'material': b.material,
-                                    'product': b.product,
-                                    'quantity': rcv_qty,
-                                    'manufacturing_date': b.manufacturing_date,
-                                    'expiry_date': b.expiry_date,
-                                    'location': loc,
-                                    'produced_in': b.produced_in
-                                }
-                            )
-                            if not created:
-                                # Update quantity in case it was reopened and changed
-                                new_batch.quantity = rcv_qty
-                                new_batch.save(update_fields=['quantity'])
-                            RegistryLog.objects.create(
-                                action_type='Inbound',
-                                item_name=f"Internal Transfer Received: {new_batch.batch_number}",
-                                material=new_batch.material,
-                                quantity_changed=rcv_qty,
-                                warehouse=shipment.destination_warehouse,
-                                user=request.user
-                            )
+                if shipment.direction == 'Transfer':
+                    from .utils import receive_transfer_into_destination
+                    receive_transfer_into_destination(shipment, request.user)
                 messages.success(request, "Shipment receipt confirmed and marked as Completed.")
 
         elif action == 'log_item_receipt':
@@ -3794,7 +3746,20 @@ def shipment_detail_view(request, pk):
             if shipment.assigned_manager and request.user != shipment.assigned_manager:
                 messages.error(request, "Only the assigned manager can approve the Force Close.")
                 return redirect('shipment_detail', pk=shipment.pk)
-                
+
+            # Transfers: the manager must say where each item's missing units went -
+            # 'origin' (never left / miscount: stays on the origin batch) or 'lost'
+            # (lost/damaged in transit: written off from the origin batch).
+            shortage_reasons = {}
+            if shipment.direction == 'Transfer':
+                for item in shipment.items.filter(batch__isnull=False):
+                    if item.shortage_quantity > 0:
+                        reason = request.POST.get(f'shortage_reason_{item.id}')
+                        if reason not in ('origin', 'lost'):
+                            messages.error(request, "Choose where the missing units went for every short item before force closing.")
+                            return redirect('shipment_detail', pk=shipment.pk)
+                        shortage_reasons[item.id] = reason
+
             mgr_comment = request.POST.get('manager_comment', '').strip()
             if mgr_comment:
                 if shipment.discrepancy_remarks:
@@ -3814,10 +3779,13 @@ def shipment_detail_view(request, pk):
                     batch = alloc.batch
                     item = shipment.items.filter(batch=batch).first()
                     rcv_qty = item.received_quantity if item else 0
+                    lost_qty = item.shortage_quantity if item and shortage_reasons.get(item.id) == 'lost' else Decimal('0')
 
-                    batch.quantity -= Decimal(str(rcv_qty))
+                    batch.quantity -= Decimal(str(rcv_qty)) + lost_qty
                     batch.allocated_quantity -= alloc.quantity
-                    batch.save(update_fields=['quantity', 'allocated_quantity'])
+                    from .utils import _close_batch_if_depleted
+                    _close_batch_if_depleted(batch)
+                    batch.save(update_fields=['quantity', 'allocated_quantity', 'status', 'closed_date'])
 
                     item_name = batch.material.name if batch.material else (batch.product.name if batch.product else batch.batch_number)
                     RegistryLog.objects.create(
@@ -3828,6 +3796,21 @@ def shipment_detail_view(request, pk):
                         warehouse=batch.warehouse,
                         user=request.user
                     )
+                    if item and item.id in shortage_reasons:
+                        short = item.shortage_quantity
+                        if shortage_reasons[item.id] == 'lost':
+                            RegistryLog.objects.create(
+                                action_type='Spoiled_Disposal',
+                                item_name=f"{item_name} (Batch {batch.batch_number}) — lost in transit ({shipment.tracking_number})",
+                                material=batch.material,
+                                quantity_changed=short,
+                                warehouse=batch.warehouse,
+                                user=request.user
+                            )
+                            note = f"{short} of {item_name} written off as lost in transit."
+                        else:
+                            note = f"{short} of {item_name} kept at origin (Batch {batch.batch_number})."
+                        OrderTimeline.objects.create(shipment=shipment, action=f"Force close shortage: {note}", user=request.user)
 
                     alloc.delete()
 
@@ -3843,31 +3826,10 @@ def shipment_detail_view(request, pk):
                         shipment.save(update_fields=['credited_to_so'])
                     mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
 
-            if shipment.direction == 'Transfer' and shipment.destination_warehouse:
-                loc = WarehouseLocation.objects.filter(warehouse=shipment.destination_warehouse).first()
-                if loc:
-                    for item in shipment.items.all():
-                        if not item.batch or float(item.received_quantity) <= 0: continue
-                        b = item.batch
-                        rcv_qty = float(item.received_quantity)
-                        
-                        new_batch, created = Batch.objects.get_or_create(
-                            batch_number=f"{b.batch_number}-TRF-{shipment.id}",
-                            defaults={
-                                'status': 'Active',
-                                'material': b.material,
-                                'product': b.product,
-                                'quantity': rcv_qty,
-                                'manufacturing_date': b.manufacturing_date,
-                                'expiry_date': b.expiry_date,
-                                'location': loc,
-                                'produced_in': b.produced_in
-                            }
-                        )
-                        if not created:
-                            new_batch.quantity = rcv_qty
-                            new_batch.save(update_fields=['quantity'])
-            
+            if shipment.direction == 'Transfer':
+                from .utils import receive_transfer_into_destination
+                receive_transfer_into_destination(shipment, request.user)
+
             if shipment.purchase_order:
                 po = shipment.purchase_order
                 po.status = 'Partially Received'
@@ -3876,6 +3838,11 @@ def shipment_detail_view(request, pk):
             messages.success(request, "Shipment Force Closed. Unreceived stock locks released.")
             
         elif action == 'reopen_shipment':
+            if shipment.direction == 'Transfer':
+                # Reopening a transfer can't safely undo stock already moved into the
+                # destination batch; corrections go through a stock audit adjustment.
+                messages.error(request, "Completed transfers can't be reopened. Correct quantities with a stock audit adjustment instead.")
+                return redirect('shipment_detail', pk=shipment.pk)
             shipment.status = 'Arrived'
             shipment.acknowledged_by = None
             shipment.last_edited_by = request.user
@@ -3888,27 +3855,6 @@ def shipment_detail_view(request, pk):
                 user=request.user
             )
             messages.success(request, "Shipment reopened for editing.")
-
-        elif action == 'update_status':
-            new_status = request.POST.get('status')
-            shipment.status = new_status
-            if new_status == 'Arrived':
-                shipment.actual_arrival_date = date.today()
-            shipment.last_edited_by = request.user
-            shipment.save()
-            
-            # Auto update Sales Order status based on Shipment
-            if shipment.sales_order:
-                so = shipment.sales_order
-                if new_status == 'Preparing':
-                    so.status = 'Ready to Ship'
-                elif new_status == 'Dispatched':
-                    so.status = 'Shipped'
-                elif new_status == 'Arrived':
-                    so.status = 'Delivered'
-                so.save()
-            
-            messages.success(request, f"Shipment {shipment.tracking_number} updated to {new_status}.")
 
         elif action == 'toggle_follow':
             if request.user in shipment.followers.all():
