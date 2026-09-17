@@ -456,6 +456,11 @@ class ShipmentItem(models.Model):
     received_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     date_confirmed = models.DateTimeField(null=True, blank=True)
 
+    @property
+    def shortage_quantity(self):
+        """Units sent but not received (never negative - an overage is not a shortage)."""
+        return max(self.quantity - (self.received_quantity or 0), 0)
+
     def __str__(self):
         item_name = self.material.sku if self.material else (self.product.sku if self.product else 'Unknown')
         return f"{self.shipment.tracking_number} - {item_name} (Qty: {self.quantity})"

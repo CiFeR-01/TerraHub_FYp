@@ -672,7 +672,20 @@
                     
                     <label style="display:block; font-size:0.85rem; font-weight:600; color:#991b1b; margin-bottom:0.5rem;">Manager Acknowledgment Comment</label>
                     <textarea name="manager_comment" class="form-input" placeholder="Type acknowledgment comment..." style="width:100%; height:60px; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:1.5rem;"></textarea>
-                    
+
+                    {% if shipment.direction == 'Transfer' %}
+                    {% for item in shipment.items.all %}{% if item.batch and item.shortage_quantity > 0 %}
+                    <label style="display:block; font-size:0.85rem; font-weight:600; color:#991b1b; margin-bottom:0.5rem;">
+                        Missing {{ item.shortage_quantity }} of {% if item.material %}{{ item.material.name }}{% else %}{{ item.product.name }}{% endif %} (Batch {{ item.batch.batch_number }}): where did they go?
+                    </label>
+                    <select name="shortage_reason_{{ item.id }}" required class="form-select" style="width:100%; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:1rem;">
+                        <option value="">-- Select --</option>
+                        <option value="origin">Still at origin (not loaded / miscount), keep on batch</option>
+                        <option value="lost">Lost or damaged in transit, write off</option>
+                    </select>
+                    {% endif %}{% endfor %}
+                    {% endif %}
+
                     <button type="submit" class="btn" style="width:100%; padding: 0.65rem; background: #b91c1c; color:white; font-weight:bold; border:none; border-radius:6px;">Sign-Off & Force Close</button>
                 </form>
                 {% endif %}
@@ -697,7 +710,10 @@
             </div>
             {% endif %}
 
-            {% if shipment.status == 'Completed' %}
+            {% if shipment.status == 'Completed' and shipment.direction == 'Transfer' %}
+            <hr style="border:0; border-top:1px solid var(--border-light); margin: 1.5rem 0;">
+            <p style="font-size:0.85rem; color: var(--text-muted); margin:0; text-align:center;">Completed transfers can't be reopened. Correct quantities with a stock audit adjustment.</p>
+            {% elif shipment.status == 'Completed' %}
             <hr style="border:0; border-top:1px solid var(--border-light); margin: 1.5rem 0;">
             <form method="POST">
                 {% csrf_token %}
