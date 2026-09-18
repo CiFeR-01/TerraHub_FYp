@@ -335,20 +335,24 @@ def approve_production_run(run, user):
 def finalize_production_run(run, user):
     """Completes a run: creates the finished-goods batch, marks it Completed,
     and (if linked to a SalesOrder) allocates the batch to that order's line
-    item and advances its status. Returns the batch, or None if no yield."""
+    item and advances its status. With the qa_hold_new_finished_goods setting on,
+    the batch starts Quarantined and the order allocation waits for QA release
+    (see allocate_finished_batch_to_order). Returns the batch, or None if no yield."""
     import uuid
     from django.utils import timezone
     from datetime import timedelta
-    from django.db.models import Sum
-    from .models import Batch, StockAllocation, OrderTimeline, RegistryLog
+    from django.urls import reverse
+    from .models import Batch, OrderTimeline, RegistryLog, CustomUser, Notification
+    from .settings_store import get_setting
 
     consume_materials_for_run(run, user)
+    qa_hold = get_setting("qa_hold_new_finished_goods")
 
     fg_batch = None
     if run.actual_yield:
         fg_batch = Batch.objects.create(
             batch_number=f"FG-{run.run_number}-{str(uuid.uuid4())[:4]}",
-            status='Active',
+            status='Quarantined' if qa_hold else 'Active',
             product=run.target_product,
             quantity=run.actual_yield,
             produced_in=run,
@@ -368,49 +372,77 @@ def finalize_production_run(run, user):
     run.exact_end_time = timezone.now()
     run.save()
 
-    if run.sales_order and fg_batch:
-        so = run.sales_order
-        item = so.items.filter(product=run.target_product).first()
-
-        if item:
-            already_allocated = StockAllocation.objects.filter(
-                sales_order=so, batch__product=item.product
-            ).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
-            outstanding = Decimal(str(item.quantity_ordered)) - Decimal(str(already_allocated)) - Decimal(str(item.quantity_shipped))
-
-            if outstanding > 0:
-                take = min(fg_batch.quantity - fg_batch.allocated_quantity, outstanding)
-                if take > 0:
-                    fg_batch.allocated_quantity += take
-                    fg_batch.save(update_fields=['allocated_quantity'])
-                    StockAllocation.objects.create(batch=fg_batch, sales_order=so, quantity=take)
-                    OrderTimeline.objects.create(
-                        sales_order=so,
-                        action=f"Auto-allocated {take} units of {item.product.sku} from newly produced batch {fg_batch.batch_number} (Run {run.run_number}).",
-                        user=user
-                    )
-
-        fully_covered = True
-        for it in so.items.all():
-            alloc_sum = StockAllocation.objects.filter(
-                sales_order=so, batch__product=it.product
-            ).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
-            if Decimal(str(alloc_sum)) + Decimal(str(it.quantity_shipped)) < Decimal(str(it.quantity_ordered)):
-                fully_covered = False
-                break
-
-        if so.status not in ['Shipped', 'Delivered', 'Cancelled', 'Rejected', 'Draft']:
-            so.status = 'Ready to Ship' if fully_covered else 'Pending'
-            so.save()
-
+    if fg_batch and qa_hold:
         OrderTimeline.objects.create(
-            sales_order=so,
-            action=f"Production Run {run.run_number} completed. FG batch {fg_batch.batch_number} created."
-                   + (" Order fully covered — moved to Ready to Ship." if fully_covered else " Order still has outstanding items."),
+            production_run=run,
+            action=f"FG batch {fg_batch.batch_number} created and held for QA release.",
             user=user
         )
+        if run.sales_order:
+            OrderTimeline.objects.create(
+                sales_order=run.sales_order,
+                action=f"Production Run {run.run_number} completed. FG batch {fg_batch.batch_number} is awaiting QA release before it can be allocated.",
+                user=user
+            )
+        for reviewer in CustomUser.objects.filter(role__in=['Admin', 'Manager']):
+            Notification.objects.create(
+                user=reviewer,
+                message=f"QA release needed: batch {fg_batch.batch_number} ({run.target_product.name}) from Run {run.run_number}.",
+                link=reverse("qa_dashboard")
+            )
+    elif fg_batch and run.sales_order:
+        allocate_finished_batch_to_order(run, fg_batch, user, event=f"Production Run {run.run_number} completed. FG batch {fg_batch.batch_number} created.")
 
     return fg_batch
+
+
+def allocate_finished_batch_to_order(run, fg_batch, user, event):
+    """Reserve a run's finished batch for the sales order it was made for (up to what
+    the order still needs) and move the order to Ready to Ship / Pending. Called at
+    run completion, or on QA release when the batch was held."""
+    from django.db.models import Sum
+    from .models import StockAllocation, OrderTimeline
+
+    so = run.sales_order
+    if not so or so.status in ['Shipped', 'Delivered', 'Cancelled', 'Rejected', 'Draft']:
+        return
+    item = so.items.filter(product=run.target_product).first()
+
+    if item:
+        already_allocated = StockAllocation.objects.filter(
+            sales_order=so, batch__product=item.product
+        ).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+        outstanding = Decimal(str(item.quantity_ordered)) - Decimal(str(already_allocated)) - Decimal(str(item.quantity_shipped))
+
+        if outstanding > 0:
+            take = min(fg_batch.quantity - fg_batch.allocated_quantity, outstanding)
+            if take > 0:
+                fg_batch.allocated_quantity += take
+                fg_batch.save(update_fields=['allocated_quantity'])
+                StockAllocation.objects.create(batch=fg_batch, sales_order=so, quantity=take)
+                OrderTimeline.objects.create(
+                    sales_order=so,
+                    action=f"Auto-allocated {take} units of {item.product.sku} from newly produced batch {fg_batch.batch_number} (Run {run.run_number}).",
+                    user=user
+                )
+
+    fully_covered = True
+    for it in so.items.all():
+        alloc_sum = StockAllocation.objects.filter(
+            sales_order=so, batch__product=it.product
+        ).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+        if Decimal(str(alloc_sum)) + Decimal(str(it.quantity_shipped)) < Decimal(str(it.quantity_ordered)):
+            fully_covered = False
+            break
+
+    so.status = 'Ready to Ship' if fully_covered else 'Pending'
+    so.save()
+
+    OrderTimeline.objects.create(
+        sales_order=so,
+        action=event + (" Order fully covered — moved to Ready to Ship." if fully_covered else " Order still has outstanding items."),
+        user=user
+    )
 
 
 def get_batch_reservations(batch):
