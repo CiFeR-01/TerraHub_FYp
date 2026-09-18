@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load quantity_extras %}
 
 {% block title %}Product Details - TerraHub{% endblock %}
 
@@ -290,9 +291,9 @@
                     {% for item in product.recipe_items.all %}
                     <tr style="border-bottom: 1px solid #334155;">
                         <td style="padding:0.5rem;"><strong>{{ item.material.sku }}</strong> — {{ item.material.name }}</td>
-                        <td style="padding:0.5rem;">{{ item.quantity_required }} {{ item.material.unit_of_measure }}</td>
+                        <td style="padding:0.5rem;">{{ item.quantity_required|qty_display }} {{ item.material.unit_of_measure }}</td>
                         <td style="padding:0.5rem; text-align:right; color:#4ade80;">
-                            {{ item.material.cost_per_unit|floatformat:2 }} / unit
+                            {{ item.material.cost_per_unit|floatformat:2 }} / {{ item.material.unit_of_measure }}
                         </td>
                     </tr>
                     {% empty %}

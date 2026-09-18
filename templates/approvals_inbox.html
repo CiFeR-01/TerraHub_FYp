@@ -44,7 +44,7 @@
                     <div>
                         <div style="font-size:0.75rem; font-weight:700; color:var(--primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Sales Order Approval</div>
                         <a href="{% url 'so_detail' so.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ so.so_number }}</a>
-                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Client: {{ so.client_name }} &middot; Revenue: ${{ so.total_revenue|floatformat:2 }}</div>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Client: {{ so.client_name }} &middot; Order value: RM {{ so.total_value|floatformat:2 }}</div>
                     </div>
                     <span class="badge badge-amber">Pending Approval</span>
                 </div>

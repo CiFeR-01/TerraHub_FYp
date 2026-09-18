@@ -409,6 +409,7 @@
                     <div class="micro-progress-bar {% if w.utilization_percent > 85 %}progress-rose{% elif w.utilization_percent > 70 %}progress-amber{% else %}progress-emerald{% endif %}"
                         style="width: {% if w.utilization_percent > 100 %}100{% else %}{{ w.utilization_percent }}{% endif %}%;"></div>
                 </div>
+                {% if w.quarantined_mt %}<div style="font-size:0.72rem; color:var(--warning-strong); margin-top:0.2rem;">incl. {{ w.quarantined_mt|floatformat:1 }} MT quarantined</div>{% endif %}
 
                 <div class="wh-card-foot">
                     <span>Daily burn rate</span>

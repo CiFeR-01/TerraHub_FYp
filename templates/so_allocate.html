@@ -38,8 +38,8 @@
     <input type="hidden" name="manufacturing_plant_id" id="id_manufacturing_plant_id" value="">
     
     <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-bottom:1.5rem;">
-        <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem;">Finished Goods Allocation (FIFO)</h3>
-        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Select available finished goods batches across facilities to fulfill this order. Any unfulfilled quantities will be sent to the Manufacturing queue.</p>
+        <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem;">Finished Goods Allocation (FEFO)</h3>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Amounts are pre-filled earliest expiry first (FEFO). Changing them needs an override reason. Any unfulfilled quantities can be sent to the Manufacturing queue.</p>
         
         {% for row in allocation_data %}
         <div style="margin-bottom:2rem; padding:1.25rem; background:#f8fafc; border:1px solid var(--border-light); border-radius:8px;">
@@ -56,7 +56,7 @@
                             <th style="padding:0.6rem 1rem;">Batch</th>
                             <th style="padding:0.6rem 1rem;">Location</th>
                             <th style="padding:0.6rem 1rem;">Available Qty</th>
-                            <th style="padding:0.6rem 1rem;">Expiry Date (FIFO)</th>
+                            <th style="padding:0.6rem 1rem;">Expiry Date</th>
                             <th style="padding:0.6rem 1rem; text-align:right;">Allocate</th>
                         </tr>
                     </thead>
@@ -66,9 +66,9 @@
                             <td style="padding:0.6rem 1rem; font-weight:600;">{{ b.number }}</td>
                             <td style="padding:0.6rem 1rem;">{{ b.warehouse }}</td>
                             <td style="padding:0.6rem 1rem;">{{ b.available }}</td>
-                            <td style="padding:0.6rem 1rem;">{{ b.expiry|date:"M d, Y" }}</td>
+                            <td style="padding:0.6rem 1rem;">{{ b.expiry|date:"M d, Y" }}{% if b.recommended %} <span class="badge" style="background:#dcfce7; color:#166534; font-size:0.65rem; margin-left:0.5rem;">FEFO Recommended</span>{% endif %}</td>
                             <td style="padding:0.6rem 1rem; text-align:right;">
-                                <input type="number" name="batch_qty_{{ row.item_id }}_{{ b.id }}" max="{{ b.available }}" min="0" step="0.01" class="form-input allocate-input" data-item="{{ row.item_id }}" style="width:100px; padding:0.4rem; border-radius:4px; text-align:right;">
+                                <input type="number" name="batch_qty_{{ row.item_id }}_{{ b.id }}" max="{{ b.available }}" min="0" step="0.01" value="{% if b.recommended %}{{ b.recommended }}{% endif %}" data-recommended="{{ b.recommended }}" class="form-input allocate-input" data-item="{{ row.item_id }}" style="width:100px; padding:0.4rem; border-radius:4px; text-align:right;">
                             </td>
                         </tr>
                         {% endfor %}
@@ -80,7 +80,12 @@
             {% endif %}
         </div>
         {% endfor %}
-        
+
+        <div id="overrideSection" style="display:none; margin-top:1rem; padding:1rem; background:#fff7ed; border:1px solid #fdba74; border-radius:8px;">
+            <label style="display:block; font-size:0.85rem; font-weight:700; color:#9a3412; margin-bottom:0.5rem; text-transform:uppercase;">Non-FEFO Override Reason (Required if changing amounts)</label>
+            <input type="text" name="override_reason" id="id_override_reason" class="form-input" placeholder="e.g. Customer asked for a later expiry..." style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid #fdba74; font-size:0.95rem;">
+        </div>
+
         <div style="display:flex; justify-content:flex-end; gap:1rem; margin-top:1.5rem;">
             <a href="{% url 'so_detail' so.pk %}" class="btn btn-secondary">Cancel</a>
             <button type="button" class="btn btn-primary" style="padding-left:1.5rem; padding-right:1.5rem;" onclick="checkShortagesAndConfirm()">Confirm Allocation</button>
@@ -113,7 +118,34 @@
 </div>
 
 <script>
+    function isOffFefo() {
+        // Same rule as the server: for the total entered per item, the amounts must
+        // match taking batches in the listed (earliest-expiry-first) order.
+        const byItem = {};
+        document.querySelectorAll('.allocate-input').forEach(inp => {
+            (byItem[inp.dataset.item] = byItem[inp.dataset.item] || []).push(inp);
+        });
+        return Object.values(byItem).some(inputs => {
+            let remaining = inputs.reduce((t, i) => t + (parseFloat(i.value) || 0), 0);
+            return inputs.some(i => {
+                const avail = parseFloat(i.max) || 0;
+                const expected = Math.max(0, Math.min(avail, remaining));
+                remaining -= expected;
+                return Math.abs((parseFloat(i.value) || 0) - expected) > 0.001;
+            });
+        });
+    }
+
+    function updateOverride() {
+        document.getElementById('overrideSection').style.display = isOffFefo() ? 'block' : 'none';
+    }
+
     function checkShortagesAndConfirm() {
+        if (isOffFefo() && !document.getElementById('id_override_reason').value.trim()) {
+            updateOverride();
+            alert("These amounts don't follow FEFO. Please give an override reason.");
+            return;
+        }
         // Check if there are any shortages
         let hasShortage = false;
         document.querySelectorAll('span[id^="needed_"]').forEach(span => {
@@ -172,6 +204,7 @@
             if (remaining < 0) remaining = 0;
             
             neededSpan.innerText = remaining.toFixed(2);
+            updateOverride();
             if (remaining === 0) {
                 neededSpan.style.color = 'var(--success-strong)'; // Green when fulfilled
             } else {
@@ -179,5 +212,8 @@
             }
         });
     });
+
+    // Pre-filled FEFO amounts: bring "Needed to Allocate" in line on load
+    document.querySelectorAll('.allocate-input').forEach(i => i.dispatchEvent(new Event('input')));
 </script>
 {% endblock %}
