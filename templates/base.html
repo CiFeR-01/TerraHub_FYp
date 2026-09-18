@@ -89,7 +89,7 @@
                         {{ user.username|slice:":1"|upper }}
                     </div>
                     <div class="user-meta">
-                        <span class="user-name-label">{{ user.username }}</span>
+                        <span class="user-name-label">{{ user.get_full_name|default:user.username }}</span>
                         <span class="user-role-label">{{ user.roles.all.0.name|default:user.role|default:"Staff" }}</span>
                     </div>
                 </a>
@@ -166,7 +166,7 @@
                             </ul>
                         </div>
                     </div>
-                    <span class="topbar-user">{{ user.username }}<span class="topbar-role">{{ user.role|default:"Staff" }}</span></span>
+                    <span class="topbar-user">{{ user.get_full_name|default:user.username }}<span class="topbar-role">{{ user.role|default:"Staff" }}</span></span>
                     <form action="{% url 'logout' %}" method="post" style="margin:0;">
                         {% csrf_token %}
                         <button type="submit" class="btn-logout-topbar" title="Sign out">
