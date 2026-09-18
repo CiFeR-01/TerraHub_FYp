@@ -99,7 +99,8 @@ class Product(models.Model):
 class ProductRecipe(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='recipe_items')
     material = models.ForeignKey(Material, on_delete=models.CASCADE)
-    quantity_required = models.DecimalField(max_digits=10, decimal_places=2)
+    # 4 dp so trace ingredients (e.g. 0.0005 kg per unit) don't save as 0
+    quantity_required = models.DecimalField(max_digits=12, decimal_places=4)
 
     def __str__(self):
         return f"{self.product.sku} requires {self.quantity_required} of {self.material.sku}"
@@ -367,6 +368,15 @@ class SalesOrder(models.Model):
     updated_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_sos')
     updated_at = models.DateTimeField(auto_now=True)
 
+    @property
+    def total_value(self):
+        """Sum of quantity x unit price over lines that have a price (RM)."""
+        from decimal import Decimal
+        return sum(
+            (i.quantity_ordered * i.unit_price for i in self.items.all() if i.unit_price is not None),
+            Decimal('0'),
+        )
+
     def __str__(self):
         return f"SO {self.so_number} - {self.client_name}"
 
@@ -392,7 +402,7 @@ class Shipment(models.Model):
         ('Transfer', 'Internal Transfer'),
     )
     STATUS_CHOICES = (
-        ('Draft', 'Draft (Manufacturing)'),
+        ('Draft', 'Draft'),
         ('Logistics Review', 'Logistics Review'),
         ('Pending Approval', 'Pending Approval'),
         ('Preparing', 'Approved / Preparing'),

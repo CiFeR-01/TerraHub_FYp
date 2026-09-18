@@ -19,13 +19,9 @@
         <form method="get" action="{% url 'so_list' %}" style="display:flex; gap:0.5rem; margin:0;">
             <select name="status" class="form-select" style="padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.85rem;" onchange="this.form.submit()">
                 <option value="">All Statuses</option>
-                <option value="Draft" {% if status_filter == 'Draft' %}selected{% endif %}>Draft</option>
-                <option value="Pending" {% if status_filter == 'Pending' %}selected{% endif %}>Pending</option>
-                <option value="In Production" {% if status_filter == 'In Production' %}selected{% endif %}>In Production</option>
-                <option value="Ready to Ship" {% if status_filter == 'Ready to Ship' %}selected{% endif %}>Ready to Ship</option>
-                <option value="Shipped" {% if status_filter == 'Shipped' %}selected{% endif %}>Shipped</option>
-                <option value="Delivered" {% if status_filter == 'Delivered' %}selected{% endif %}>Delivered</option>
-                <option value="Cancelled" {% if status_filter == 'Cancelled' %}selected{% endif %}>Cancelled</option>
+                {% for code, label in so_status_choices %}
+                <option value="{{ code }}" {% if status_filter == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
             </select>
             <input type="text" name="q" value="{{ search_query }}" placeholder="Search orders, clients, suppliers..."
                 style="padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.85rem; min-width:250px;">
@@ -63,24 +59,23 @@
     <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Sales Orders
         (Client Demand)</h3>
     <div class="table-responsive">
-        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr
                     style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
-                    <th style="padding:0.75rem 1rem;">SO Number</th>
-                    <th style="padding:0.75rem 1rem;">Client Name</th>
-                    <th style="padding:0.75rem 1rem;">Origin Facility</th>
-                    <th style="padding:0.75rem 1rem;">Order Date</th>
+                    {% include "partials/_sort_th.html" with key="so_number" label="SO Number" %}
+                    {% include "partials/_sort_th.html" with key="client_name" label="Client Name" %}
+                    {% include "partials/_sort_th.html" with key="origin_warehouse" label="Origin Facility" %}
+                    {% include "partials/_sort_th.html" with key="order_date" label="Order Date" %}
                     <th style="padding:0.75rem 1rem;">Items</th>
-                    <th style="padding:0.75rem 1rem;">Status</th>
+                    {% include "partials/_sort_th.html" with key="status" label="Status" %}
                     <th style="padding:0.75rem 1rem;">Timeline &amp; Logs</th>
-                    <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for so in sales_orders %}
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
-                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ so.so_number }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:700;"><a href="{% url 'so_detail' so.pk %}" style="color:var(--primary); text-decoration:none;">{{ so.so_number }}</a></td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{{ so.client_name }}</td>
                     <td style="padding:0.85rem 1rem;">{{ so.origin_warehouse.name }}</td>
                     <td style="padding:0.85rem 1rem;">{{ so.order_date }}</td>
@@ -100,16 +95,10 @@
                     </td>
                     <td style="padding:0.85rem 1rem;">
                         {% for event in so.timeline.all|slice:":2" %}
-                        <div style="font-size:0.75rem; color:var(--text-muted);">• {{ event.action }} ({{
-                            event.timestamp|date:"m/d H:i" }})</div>
+                        <div style="font-size:0.75rem; color:var(--text-muted);">• {{ event.action }} ({{ event.timestamp|date:"m/d H:i" }})</div>
                         {% empty %}
                         <span style="font-size:0.78rem; color:var(--text-muted);">No timeline logs</span>
                         {% endfor %}
-                    </td>
-                    <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
-                        <a href="{% url 'so_detail' so.pk %}" class="btn btn-primary"
-                            style="padding:0.3rem 0.7rem; font-size:0.78rem; text-decoration:none; display:inline-block;">View
-                            →</a>
                     </td>
                 </tr>
                 {% empty %}
@@ -121,6 +110,24 @@
             </tbody>
         </table>
     </div>
+    {% if sales_orders.paginator.num_pages > 1 %}
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem; padding:0 0.5rem; font-size:0.85rem; color:var(--text-muted);">
+        <div>Showing {{ sales_orders.start_index }} to {{ sales_orders.end_index }} of {{ sales_orders.paginator.count }} orders</div>
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+            {% if sales_orders.has_previous %}
+            <a href="?{% if page_qs %}{{ page_qs }}&{% endif %}page={{ sales_orders.previous_page_number }}" class="btn btn-secondary" style="padding:0.2rem 0.5rem;">Prev</a>
+            {% else %}
+            <span class="btn btn-secondary" style="padding:0.2rem 0.5rem; opacity:0.5; cursor:not-allowed;">Prev</span>
+            {% endif %}
+            <span>Page {{ sales_orders.number }} of {{ sales_orders.paginator.num_pages }}</span>
+            {% if sales_orders.has_next %}
+            <a href="?{% if page_qs %}{{ page_qs }}&{% endif %}page={{ sales_orders.next_page_number }}" class="btn btn-secondary" style="padding:0.2rem 0.5rem;">Next</a>
+            {% else %}
+            <span class="btn btn-secondary" style="padding:0.2rem 0.5rem; opacity:0.5; cursor:not-allowed;">Next</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 <!-- Modal: New SO -->

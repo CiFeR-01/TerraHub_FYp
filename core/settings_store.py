@@ -48,6 +48,13 @@ REGISTRY: dict[str, tuple[object, str, str]] = {
         "(or nearer) and not yet arrived is flagged 'at risk' on the Logistics "
         "Risk board / Logistics briefing.",
     ),
+    "qa_hold_new_finished_goods": (
+        False,
+        "bool",
+        "When on, finished-goods batches from completed production runs start "
+        "Quarantined and must be released on the QA dashboard before they can be "
+        "allocated or shipped (a sales order's batch is reserved on release).",
+    ),
     "logistics_stall_days": (
         5,
         "int",

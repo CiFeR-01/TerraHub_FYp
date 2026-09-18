@@ -137,7 +137,7 @@
                         <option value="Transfer">Internal Transfer</option>
                     </select>
                 </div>
-                <div>
+                <div id="div_initial_status">
                     <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Initial Status</label>
                     <select name="status" id="id_status" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); font-weight:500;">
                         {% for code, label in initial_status_choices %}
@@ -311,6 +311,8 @@
 
         function handleDirectionChange() {
             const dir = directionSelect.value;
+            // Outbound/Transfer always start as Draft (server enforces it too)
+            document.getElementById("div_initial_status").style.display = dir === "Inbound" ? "block" : "none";
             if (dir === "Inbound") {
                 divPO.style.display = "block";
                 divSO.style.display = "none";
