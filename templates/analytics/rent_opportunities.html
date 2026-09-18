@@ -66,6 +66,7 @@
                         <th style="padding:0.5rem 0.75rem;">Item</th>
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Weight</th>
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Rate / MT</th>
+                        <th style="padding:0.5rem 0.75rem;">Move To</th>
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Daily Saving</th>
                     </tr>
                 </thead>
@@ -74,8 +75,9 @@
                     <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
                         <td style="padding:0.55rem 0.75rem; font-family:monospace; font-size:0.8rem;">{{ c.batch_number }}</td>
                         <td style="padding:0.55rem 0.75rem;">{{ c.item }}</td>
-                        <td style="padding:0.55rem 0.75rem; text-align:right;">{{ c.mt|mt_display }}</td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right;">{{ c.move_mt|mt_display }}{% if c.move_mt < c.mt %}<div style="font-size:0.72rem; color:var(--text-muted);">of {{ c.mt|mt_display }} (destination full)</div>{% endif %}</td>
                         <td style="padding:0.55rem 0.75rem; text-align:right;">RM {{ c.rate_per_mt|floatformat:2 }}</td>
+                        <td style="padding:0.55rem 0.75rem;">{{ c.destination }}</td>
                         <td style="padding:0.55rem 0.75rem; text-align:right; font-weight:600; color:var(--success-strong);">RM {{ c.daily_saving|floatformat:2 }}</td>
                     </tr>
                     {% endfor %}
@@ -84,7 +86,7 @@
         </div>
 
         <div style="margin-top:0.9rem; font-size:0.78rem; color:var(--text-muted);">
-            <strong>Candidate destinations (spare Internal capacity):</strong>
+            <strong>Own storage with spare capacity (before these moves):</strong>
             {% for d in o.destination_options %}{{ d.name }} ({{ d.spare_mt|mt_display }} free){% if not forloop.last %}, {% endif %}{% endfor %}
         </div>
         {% else %}
@@ -107,8 +109,8 @@
     {% endfor %}
 {% else %}
 <div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:2.5rem; text-align:center; color:var(--text-muted);">
-    No rent-reduction opportunities right now &mdash; either no warehouse is Critical/Watch,
-    or there's no spare Internal capacity to move stock into.
+    No rent-reduction opportunities right now &mdash; either no rented warehouse is Critical/Watch,
+    or none of your own storage facilities has spare capacity to move stock into.
 </div>
 {% endif %}
 {% endblock %}

@@ -98,13 +98,13 @@
                     <select name="warehouse_id" required class="form-select" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
                         <option value="">-- Select a facility --</option>
                         {% for w in warehouses %}
-                        {% if w.location_type == 'Manufacturing' %}
+                        {% if w.can_manufacture %}
                         <option value="{{ w.id }}" selected>{{ w.name }} ({{ w.get_ownership_type_display|default:w.ownership_type }})</option>
                         {% endif %}
                         {% endfor %}
                         <optgroup label="Other Locations">
                         {% for w in warehouses %}
-                        {% if w.location_type != 'Manufacturing' %}
+                        {% if not w.can_manufacture %}
                         <option value="{{ w.id }}">{{ w.name }} ({{ w.get_ownership_type_display|default:w.ownership_type }})</option>
                         {% endif %}
                         {% endfor %}

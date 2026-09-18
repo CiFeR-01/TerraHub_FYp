@@ -64,7 +64,7 @@
                         <option value="{{ m.id }}">{{ m.sku }} — {{ m.name }} ({{ m.unit_of_measure }})</option>
                         {% endfor %}
                     </select>
-                    <input type="number" step="0.01" min="0.01" placeholder="Quantity" class="form-input batch-mat-qty" style="width:100%; padding:0.45rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.825rem; background:#fff;">
+                    <input type="number" step="0.0001" min="0.0001" placeholder="Quantity" class="form-input batch-mat-qty" style="width:100%; padding:0.45rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.825rem; background:#fff;">
                     <button type="button" onclick="removeBatchRow(this)" style="background:none; border:none; color:#dc2626; cursor:pointer; font-weight:700;">&times;</button>
                 </div>
             </div>

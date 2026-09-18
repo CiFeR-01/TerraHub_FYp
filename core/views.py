@@ -25,6 +25,108 @@ from .models import (
 from .utils import generate_next_code, format_stock_display
 
 
+def apply_list_sort(request, qs, fields, default):
+    """Server-side column sort for paginated list pages, so a heading sorts every
+    row rather than just the page on screen. `fields` maps a ?sort= key to an ORM
+    expression; unknown keys fall back to `default` (e.g. '-order_date').
+    Returns (qs, context) - context carries sort_key/sort_desc for the headings plus
+    query strings that keep filters when sorting (sort_qs) or paging (page_qs)."""
+    from django.db.models import F
+    sort = request.GET.get('sort', default)
+    key = sort.lstrip('-')
+    if key not in fields:
+        sort, key = default, default.lstrip('-')
+    desc = sort.startswith('-')
+    expr = fields[key]
+    if isinstance(expr, str):
+        expr = F(expr)
+    qs = qs.order_by(expr.desc() if desc else expr.asc(), '-id')
+
+    keep = request.GET.copy()
+    keep.pop('page', None)
+    page_qs = keep.urlencode()
+    keep.pop('sort', None)
+    return qs, {'sort_key': key, 'sort_desc': desc, 'sort_qs': keep.urlencode(), 'page_qs': page_qs}
+
+
+def is_admin_user(user):
+    return user.is_superuser or getattr(user, 'role', '') == 'Admin'
+
+
+def can_approve(user):
+    """Who may approve anything at all. Single place to swap for configurable permissions later."""
+    return user.is_superuser or getattr(user, 'role', '') in ('Admin', 'Manager')
+
+
+def approver_problem(requester, approver):
+    """Why `approver` can't take an approval request from `requester`, or None.
+    Only Admins may send a request to themselves."""
+    if not approver or not can_approve(approver):
+        return "Please select a valid manager for approval."
+    if approver == requester and not is_admin_user(requester):
+        return "You can't send an approval request to yourself. Choose another manager."
+    return None
+
+
+def clear_approval_notifications(reference):
+    """Mark the "requires your approval" style notifications for `reference`
+    (an SO/PO number, shipment tracking number or run number) as read, so they
+    stop nagging once the item has been decided or sent back."""
+    Notification.objects.filter(is_read=False, message__contains=reference).filter(
+        Q(message__icontains='requires your approval') | Q(message__icontains='approval required')
+        | Q(message__icontains='pending variance approval') | Q(message__icontains='QA release needed')
+    ).update(is_read=True)
+
+
+def self_approval_note(requester, approver):
+    return " (self-approval by Admin)" if approver == requester else ""
+
+
+def may_decide_approval(user, obj):
+    """Only something actually pending approval, and only by its assigned approver or an Admin."""
+    return obj.status == 'Pending Approval' and (obj.assigned_to_id == user.id or is_admin_user(user))
+
+
+def may_decide_run_approval(user, run):
+    """Production runs often have no assigned approver: any Manager/Admin may decide
+    while it's pending approval. If an approver was named (variance sign-off), only
+    they or an Admin."""
+    if run.status != 'Pending Approval' or not can_approve(user):
+        return False
+    return not run.assigned_to_id or run.assigned_to_id == user.id or is_admin_user(user)
+
+
+# Sales order edit rules: once stock is heading out, items/details are locked; before
+# that, editing an approved order sends it back to Draft for re-approval.
+SO_ITEMS_LOCKED = ('Ready to Ship', 'Partially Shipped', 'Shipped', 'Delivered')
+SO_REAPPROVE_ON_EDIT = ('Pending Approval', 'Pending', 'Awaiting Acknowledgement', 'In Production')
+# Manual status changes allowed from the status dropdown. Everything else comes from
+# the order's own flow (approval, allocation, manufacturing, shipments).
+SO_MANUAL_TRANSITIONS = {
+    'Ready to Ship': ['Shipped', 'Delivered'],
+    'Partially Shipped': ['Shipped', 'Delivered'],
+    'Shipped': ['Delivered'],
+}
+
+
+def so_return_for_reapproval(so, user, what):
+    if so.status not in SO_REAPPROVE_ON_EDIT:
+        return False
+    so.status = 'Draft'
+    so.assigned_to = None
+    so.approved_by = None
+    so.revision_count += 1
+    so.save()
+    clear_approval_notifications(so.so_number)
+    OrderTimeline.objects.create(sales_order=so, action=f"{what} after approval - returned to Draft for re-approval.", user=user)
+    return True
+
+
+# Outbound/Transfer cargo can't change once the truck has left; changing it while
+# pending approval or approved sends the shipment back to Logistics Review.
+SHIPMENT_CARGO_LOCKED = ('Dispatched', 'Delayed', 'Arrived', 'Completed', 'Discrepant', 'Cancelled')
+
+
 @login_required
 def dashboard_view(request):
     from .analytics import warehouse_rent_burn
@@ -56,6 +158,7 @@ def dashboard_view(request):
             'raw_type': w.ownership_type,
             'capacity_mt': capacity_mt,
             'used_mt': used_mt,
+            'quarantined_mt': row['quarantined_mt'],
             'daily_cost': daily_cost,
             'billing_mode': row['billing_mode'],
             'utilization_percent': utilization_percent,
@@ -757,6 +860,7 @@ def facility_management_view(request):
             'raw_ownership': w.ownership_type,
             'capacity_mt': cap,
             'used_mt': used,
+            'quarantined_mt': rent_row.get('quarantined_mt', 0.0),
             'utilization': util,
             'daily_cost': daily_cost,
             'billing_method': w.get_rental_billing_method_display(),
@@ -1340,7 +1444,7 @@ def export_product_recipes_csv(request):
             r.product.name,
             r.material.sku,
             r.material.name,
-            f"{r.quantity_required:.2f}",
+            f"{r.quantity_required.normalize():f}",
             r.material.unit_of_measure
         ])
     return response
@@ -1910,14 +2014,12 @@ def sales_order_list_view(request):
                 messages.error(request, f"Error creating Sales Order: {e}")
 
         elif action == 'update_so_status':
-            new_status = request.POST.get('status')
-            if new_status in ['Pending', 'Awaiting Acknowledgement']:
-                if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
-                    messages.error(request, "Permission Denied: Only Managers can approve Sales Orders.")
-                    return redirect('so_list')
             so_id = request.POST.get('so_id')
             new_status = request.POST.get('status')
             so = get_object_or_404(SalesOrder, id=so_id)
+            if new_status not in SO_MANUAL_TRANSITIONS.get(so.status, []):
+                messages.error(request, f"{so.so_number} can't be changed from {so.status} to {new_status} by hand.")
+                return redirect('so_list')
             old_status = so.status
             so.status = new_status
             if new_status in ['Pending', 'Awaiting Acknowledgement']:
@@ -1936,7 +2038,7 @@ def sales_order_list_view(request):
     search_query = request.GET.get('q', '').strip()
     status_filter = request.GET.get('status', '').strip()
     
-    sales_orders = SalesOrder.objects.select_related('origin_warehouse', 'created_by', 'approved_by').prefetch_related('items__product', 'timeline').order_by('-order_date')
+    sales_orders = SalesOrder.objects.select_related('origin_warehouse', 'created_by', 'approved_by').prefetch_related('items__product', 'timeline')
     
     if search_query:
         sales_orders = sales_orders.filter(
@@ -1945,6 +2047,20 @@ def sales_order_list_view(request):
         
     if status_filter:
         sales_orders = sales_orders.filter(status=status_filter)
+
+    # Status sorts in workflow order, not alphabetically
+    status_rank = Case(
+        *[When(status=code, then=Value(i)) for i, (code, _) in enumerate(SalesOrder.STATUS_CHOICES)],
+        default=Value(len(SalesOrder.STATUS_CHOICES)),
+    )
+    sales_orders, sort_ctx = apply_list_sort(request, sales_orders, {
+        'so_number': 'so_number',
+        'client_name': 'client_name',
+        'origin_warehouse': 'origin_warehouse__name',
+        'order_date': 'order_date',
+        'status': status_rank,
+    }, default='-order_date')
+    sales_orders = Paginator(sales_orders, 25).get_page(request.GET.get('page'))
 
     warehouses = Warehouse.objects.all().order_by('name')
     clients = Client.objects.filter(is_active=True).order_by('name')
@@ -1957,6 +2073,7 @@ def sales_order_list_view(request):
         'clients': clients,
         'so_status_choices': SalesOrder.STATUS_CHOICES,
         'next_so_number': generate_next_code(SalesOrder, 'so_number', 'SO', 1001),
+        **sort_ctx,
     }
     return render(request, 'so_list.html', context)
 
@@ -2041,6 +2158,10 @@ def so_detail_view(request, pk):
     if request.method == 'POST':
         action = request.POST.get('action')
 
+        if action in ('add_so_item', 'remove_so_item', 'update_so_header') and so.status in SO_ITEMS_LOCKED:
+            messages.error(request, f"{so.so_number} is {so.status}, so its items and details are locked.")
+            return redirect('so_detail', pk=so.pk)
+
         if action == 'add_so_item':
             prod_id = request.POST.get('product_id')
             qty = request.POST.get('quantity_ordered', 0)
@@ -2055,6 +2176,8 @@ def so_detail_view(request, pk):
                 )
                 OrderTimeline.objects.create(sales_order=so, action=f"Line item added: {prod.name} x{qty}", user=request.user)
                 messages.success(request, f"Added {prod.name} to {so.so_number}.")
+                if so_return_for_reapproval(so, request.user, "Line item added"):
+                    messages.warning(request, f"{so.so_number} was already approved, so it's back in Draft. Request approval again.")
             except Exception as e:
                 messages.error(request, f"Error adding item: {e}")
 
@@ -2071,15 +2194,16 @@ def so_detail_view(request, pk):
 
                 OrderTimeline.objects.create(sales_order=so, action=f"Line item removed: {name}", user=request.user)
                 messages.success(request, f"Removed {name} from {so.so_number}.")
+                if so_return_for_reapproval(so, request.user, "Line item removed"):
+                    messages.warning(request, f"{so.so_number} was already approved, so it's back in Draft. Request approval again.")
             except Exception as e:
                 messages.error(request, f"Error removing item: {e}")
 
         elif action == 'update_so_status':
             new_status = request.POST.get('status')
-            if new_status in ['Pending', 'Awaiting Acknowledgement']:
-                if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
-                    messages.error(request, "Permission Denied: Only Managers can approve Sales Orders.")
-                    return redirect('so_detail', pk=so.pk)
+            if new_status not in SO_MANUAL_TRANSITIONS.get(so.status, []):
+                messages.error(request, f"{so.so_number} can't be changed from {so.status} to {new_status} by hand.")
+                return redirect('so_detail', pk=so.pk)
             old_status = so.status
             so.status = new_status
             if new_status in ['Pending', 'Awaiting Acknowledgement']:
@@ -2103,6 +2227,7 @@ def so_detail_view(request, pk):
             messages.success(request, f"{so.so_number} status updated to {new_status}.")
             
         elif action == 'update_so_header':
+            before = (so.client_name, so.origin_warehouse_id, str(so.fulfillment_deadline or ''))
             so.client_name = request.POST.get('client_name', so.client_name)
             wh_id = request.POST.get('origin_warehouse_id')
             if wh_id:
@@ -2112,21 +2237,25 @@ def so_detail_view(request, pk):
             so.updated_by = request.user
             so.save()
             messages.success(request, f"{so.so_number} details updated.")
+            if (so.client_name, so.origin_warehouse_id, str(so.fulfillment_deadline or '')) != before:
+                if so_return_for_reapproval(so, request.user, "Order details changed"):
+                    messages.warning(request, f"{so.so_number} was already approved, so it's back in Draft. Request approval again.")
 
         elif action == 'request_approval':
             manager_id = request.POST.get('manager_id')
             remarks = request.POST.get('remarks', '').strip()
             
             mgr = CustomUser.objects.filter(id=manager_id).first()
-            if not mgr:
-                messages.error(request, "Please select a valid manager for approval.")
+            problem = approver_problem(request.user, mgr)
+            if problem:
+                messages.error(request, problem)
             else:
                 so.status = 'Pending Approval'
                 so.assigned_to = mgr
                 so.approval_remarks = remarks
                 so.save()
                 
-                OrderTimeline.objects.create(sales_order=so, action=f"Approval Requested from {mgr.username}. Remarks: {remarks}", user=request.user)
+                OrderTimeline.objects.create(sales_order=so, action=f"Approval Requested from {mgr.get_full_name() or mgr.username}{self_approval_note(request.user, mgr)}. Remarks: {remarks}", user=request.user)
                 Notification.objects.create(
                     user=mgr,
                     message=f"Sales Order {so.so_number} requires your approval.",
@@ -2233,7 +2362,7 @@ def so_detail_view(request, pk):
         incoming_production = float(ProductionRun.objects.filter(
             sales_order=so,
             target_product=item.product,
-            status__in=['Pending Approval', 'Planned', 'InProgress']
+            status__in=['Pending Approval', 'Pending Allocation', 'Awaiting Materials', 'Planned', 'InProgress', 'Paused']
         ).aggregate(s=Sum('expected_yield'))['s'] or 0)
 
         if so.status in ['Ready to Ship', 'Shipped', 'Delivered', 'Cancelled']:
@@ -2272,23 +2401,27 @@ def so_detail_view(request, pk):
             'allocated': allocated,
             'deficit': deficit,
             'fulfilled': fulfilled,
+            'incoming_production': incoming_production,
+            'subtotal': (item.quantity_ordered * item.unit_price) if item.unit_price is not None else None,
             'allocation_rows': allocation_rows,
             'transfer_targets': transfer_targets,
         })
 
     has_deficit = any(row['deficit'] > 0 for row in line_items_with_bom)
-    manufacturing_plants = Warehouse.objects.filter(location_type='Manufacturing').order_by('name')
+    manufacturing_plants = Warehouse.objects.filter(location_type__in=Warehouse.MANUFACTURING_TYPES).order_by('name')
     has_unshipped_allocation = so.allocations.exists()
 
     context = {
         'so': so,
         'line_items': line_items_with_bom,
+        'order_total': so.total_value,
+        'unpriced_lines': sum(1 for row in line_items_with_bom if row['subtotal'] is None),
         'has_deficit': has_deficit,
         'has_unshipped_allocation': has_unshipped_allocation,
         'products': products,
         'warehouses': warehouses,
         'manufacturing_plants': manufacturing_plants,
-        'so_status_choices': SalesOrder.STATUS_CHOICES,
+        'so_status_choices': [c for c in SalesOrder.STATUS_CHOICES if c[0] == so.status or c[0] in SO_MANUAL_TRANSITIONS.get(so.status, [])],
         'managers': CustomUser.objects.filter(role__in=['Admin', 'Manager']).order_by('username'),
         'all_users': CustomUser.objects.all().order_by('username'),
     }
@@ -2396,15 +2529,16 @@ def po_detail_view(request, pk):
             remarks = request.POST.get('remarks', '').strip()
             
             mgr = CustomUser.objects.filter(id=manager_id).first()
-            if not mgr:
-                messages.error(request, "Please select a valid manager for approval.")
+            problem = approver_problem(request.user, mgr)
+            if problem:
+                messages.error(request, problem)
             else:
                 po.status = 'Pending Approval'
                 po.assigned_to = mgr
                 po.approval_remarks = remarks
                 po.save()
                 
-                OrderTimeline.objects.create(purchase_order=po, action=f"Approval Requested from {mgr.username}. Remarks: {remarks}", user=request.user)
+                OrderTimeline.objects.create(purchase_order=po, action=f"Approval Requested from {mgr.get_full_name() or mgr.username}{self_approval_note(request.user, mgr)}. Remarks: {remarks}", user=request.user)
                 Notification.objects.create(
                     user=mgr,
                     message=f"Purchase Order {po.po_number} requires your approval.",
@@ -2616,11 +2750,12 @@ def manufacturing_view(request):
             return redirect('readiness')
 
         elif action == 'approve_run':
-            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
-                messages.error(request, "Permission Denied: Only Managers can approve Production Runs.")
-                return redirect('readiness')
             run_id = request.POST.get('run_id')
             run = get_object_or_404(ProductionRun, id=run_id)
+            if not may_decide_run_approval(request.user, run):
+                messages.error(request, "Only a Manager or Admin can approve a production run that is pending approval.")
+                return redirect('readiness')
+            clear_approval_notifications(run.run_number)
 
             from .utils import approve_production_run
             approve_production_run(run, request.user)
@@ -2701,7 +2836,7 @@ def manufacturing_view(request):
         runs_page = runs
 
     products = Product.objects.all()
-    plants = Warehouse.objects.filter(location_type='Manufacturing')
+    plants = Warehouse.objects.filter(location_type__in=Warehouse.MANUFACTURING_TYPES)
     if not plants.exists():
         plants = Warehouse.objects.all()
 
@@ -3013,6 +3148,15 @@ def qa_dashboard_view(request):
         elif action == 'release_quarantine':
             batch.status = 'Active'
             batch.save()
+            clear_approval_notifications(batch.batch_number)
+            run = batch.produced_in
+            if run:
+                OrderTimeline.objects.create(production_run=run, action=f"FG batch {batch.batch_number} released by QA.", user=request.user)
+                # A batch held at completion (qa_hold_new_finished_goods) gets its
+                # order reservation now; nothing happens if it already has one.
+                if run.sales_order and not batch.allocations.exists():
+                    from .utils import allocate_finished_batch_to_order
+                    allocate_finished_batch_to_order(run, batch, request.user, event=f"FG batch {batch.batch_number} (Run {run.run_number}) released by QA.")
             messages.success(request, f"Batch {batch.batch_number} released to Active inventory.")
 
         elif action == 'spoil_dispose':
@@ -3078,6 +3222,11 @@ def approvals_inbox_view(request):
 
         if item_type == 'sales_order':
             so = get_object_or_404(SalesOrder, id=item_id)
+            if action in ('approve', 'reject') and not may_decide_approval(request.user, so):
+                messages.error(request, "Only the assigned approver (or an Admin) can decide this, and only while it's pending approval.")
+                return redirect('approvals_inbox')
+            if action in ('approve', 'reject'):
+                clear_approval_notifications(so.so_number)
             if action == 'approve':
                 old_status = so.status
                 so.status = 'Pending'
@@ -3096,6 +3245,11 @@ def approvals_inbox_view(request):
 
         elif item_type == 'production_run':
             run = get_object_or_404(ProductionRun, id=item_id)
+            if action in ('approve', 'reject') and not may_decide_run_approval(request.user, run):
+                messages.error(request, "Only a Manager or Admin can decide a production run that is pending approval.")
+                return redirect('approvals_inbox')
+            if action in ('approve', 'reject'):
+                clear_approval_notifications(run.run_number)
             if action == 'approve':
                 if run.actual_yield is not None:
                     # Variance Approval
@@ -3139,6 +3293,11 @@ def approvals_inbox_view(request):
                 
         elif item_type == 'purchase_order':
             po = get_object_or_404(PurchaseOrder, id=item_id)
+            if action in ('approve', 'reject') and not may_decide_approval(request.user, po):
+                messages.error(request, "Only the assigned approver (or an Admin) can decide this, and only while it's pending approval.")
+                return redirect('approvals_inbox')
+            if action in ('approve', 'reject'):
+                clear_approval_notifications(po.po_number)
             if action == 'approve':
                 po.status = 'Pending'
                 po.approved_by = request.user
@@ -3155,6 +3314,11 @@ def approvals_inbox_view(request):
 
         elif item_type == 'shipment':
             ship = get_object_or_404(Shipment, id=item_id)
+            if action in ('approve', 'reject') and not may_decide_approval(request.user, ship):
+                messages.error(request, "Only the assigned approver (or an Admin) can decide this, and only while it's pending approval.")
+                return redirect('approvals_inbox')
+            if action in ('approve', 'reject'):
+                clear_approval_notifications(ship.tracking_number)
             if action == 'approve':
                 ship.status = 'Preparing'
                 ship.save()
@@ -3234,6 +3398,96 @@ def approvals_inbox_view(request):
     return render(request, 'approvals_inbox.html', context)
 
 
+RECEIVABLE_STATUSES = ('Arrived', 'Discrepant')
+
+
+def record_item_receipt(shipment, item, qty, received_date, user, notes=None):
+    """One dated receiving round for a shipment line (same for every direction).
+    Inbound PO lines also credit the PO and create the stock batch right away."""
+    from .utils import apply_po_material_receipt
+    qty = Decimal(str(qty))
+    ShipmentItemReceipt.objects.create(
+        shipment_item=item, quantity=qty, received_date=received_date,
+        received_by=user, notes=notes or None
+    )
+    item.received_quantity = (item.received_quantity or Decimal('0')) + qty
+    item.date_confirmed = timezone.now()
+    item.save(update_fields=['received_quantity', 'date_confirmed'])
+
+    if shipment.direction == 'Inbound' and shipment.purchase_order and item.material:
+        detail = PurchaseOrderDetail.objects.filter(purchase_order=shipment.purchase_order, material=item.material).first()
+        if detail:
+            apply_po_material_receipt(detail, qty, user)
+
+    item_name = item.material.name if item.material else (item.product.name if item.product else 'item')
+    OrderTimeline.objects.create(shipment=shipment, action=f"Logged receipt of {qty} for {item_name} on {received_date}.", user=user)
+    return item_name
+
+
+def finish_shipment_receiving(request, shipment):
+    """Close out receiving for any shipment direction: Discrepant if any line doesn't
+    match, otherwise Completed with its stock side effects (outbound/transfer stock
+    deducted, SO credited/delivered, transfer stock created at the destination,
+    production run told its materials arrived). Returns the new status."""
+    # Fresh query: the view prefetches shipment.items, which would still hold the
+    # quantities from before receipts were logged in this same request.
+    items = list(ShipmentItem.objects.filter(shipment=shipment).select_related('product'))
+    if any(item.received_quantity != item.quantity for item in items):
+        shipment.status = 'Discrepant'
+        shipment.save()
+        OrderTimeline.objects.create(shipment=shipment, action="Receiving finalized with a mismatch. Marked Discrepant.", user=request.user)
+        messages.warning(request, "Receiving finalized, but quantities don't fully match what was expected. You may log more receipts, or request a Manager Force Close.")
+        return shipment.status
+
+    shipment.status = 'Completed'
+    shipment.acknowledged_by = request.user
+    shipment.last_edited_by = request.user
+
+    if shipment.direction == 'Inbound' and shipment.purchase_order and shipment.purchase_order.linked_production_run:
+        run = shipment.purchase_order.linked_production_run
+        missing_materials = []
+        for req in run.target_product.recipe_items.all():
+            needed = float(req.quantity_required) * float(run.expected_yield)
+            available = Batch.objects.filter(
+                material=req.material,
+                warehouse=run.manufacturing_plant,
+                status='Active'
+            ).aggregate(total=Sum(F('quantity') - F('allocated_quantity')))['total'] or 0
+            if float(available) < needed:
+                missing_materials.append(req.material.name)
+
+        if not missing_materials:
+            msg = f"Materials have arrived for Production Run {run.run_number}. You have sufficient materials to allocate and start the run."
+        else:
+            msg = f"Partial materials have arrived for Production Run {run.run_number}, but you are still short on: {', '.join(missing_materials)}."
+        Notification.objects.create(user=run.supervisor, message=msg, link=f"/operations/manufacture/run/{run.id}/allocate/")
+
+    shipment.save()
+    OrderTimeline.objects.create(shipment=shipment, action="Receiving finalized. Shipment completed.", user=request.user)
+
+    if shipment.direction in ['Outbound', 'Transfer']:
+        from .utils import deduct_stock_from_allocation, mark_so_delivered_if_fully_shipped, apply_so_product_shipment
+        deduct_stock_from_allocation('shipment', shipment, user=request.user)
+
+        if shipment.direction == 'Outbound' and shipment.sales_order:
+            if not shipment.credited_to_so:
+                for item in items:
+                    if item.product:
+                        so_detail = SalesOrderDetail.objects.filter(sales_order=shipment.sales_order, product=item.product).first()
+                        if so_detail:
+                            apply_so_product_shipment(so_detail, item.received_quantity)
+                shipment.credited_to_so = True
+                shipment.save(update_fields=['credited_to_so'])
+            mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
+
+    if shipment.direction == 'Transfer':
+        from .utils import receive_transfer_into_destination
+        receive_transfer_into_destination(shipment, request.user)
+
+    messages.success(request, "Receiving finalized. Shipment marked Completed.")
+    return shipment.status
+
+
 def shipment_dispatch_problem(shipment):
     """Why an Outbound/Transfer shipment can't be dispatched yet, or None. Every item
     must name a batch at the shipment's origin - otherwise completing it can't take
@@ -3260,6 +3514,13 @@ def shipment_detail_view(request, pk):
     if request.method == 'POST':
         old_status = shipment.status
         action = request.POST.get('action')
+
+        cargo_before = None
+        if action in ('add_item', 'remove_item') and shipment.direction != 'Inbound':
+            if shipment.status in SHIPMENT_CARGO_LOCKED:
+                messages.error(request, f"Cargo can't be changed once a shipment is {shipment.status}.")
+                return redirect('shipment_detail', pk=shipment.pk)
+            cargo_before = sorted(shipment.items.values_list('id', 'batch_id', 'quantity'))
         
         if action == 'add_item':
             mat_id = request.POST.get('material_id')
@@ -3405,7 +3666,6 @@ def shipment_detail_view(request, pk):
             messages.success(request, "Shipment submitted to Logistics for review.")
             
         elif action == 'scrap_shipment':
-            from decimal import Decimal
             
             with transaction.atomic():
                 for item in shipment.items.all():
@@ -3478,7 +3738,8 @@ def shipment_detail_view(request, pk):
                 messages.success(request, "Shipment confirmed and marked as Preparing.")
 
         elif action == 'submit_for_approval':
-            approver_id = request.POST.get('approver_id')
+            approve_now = request.POST.get('approve_now') == '1' and is_admin_user(request.user)
+            approver_id = str(request.user.id) if approve_now else request.POST.get('approver_id')
             if shipment.direction == 'Transfer' and (not shipment.origin_warehouse or not shipment.destination_warehouse):
                 messages.error(request, "Origin and Destination facilities MUST be selected before submitting for approval.")
                 route_error = True
@@ -3489,11 +3750,20 @@ def shipment_detail_view(request, pk):
                 messages.error(request, "You must select a Manager for approval.")
             else:
                 approver = CustomUser.objects.filter(id=approver_id).first()
-                if approver:
+                problem = approver_problem(request.user, approver)
+                if problem:
+                    messages.error(request, problem)
+                elif approver and approve_now:
+                    shipment.status = 'Preparing'
+                    shipment.assigned_to = approver
+                    shipment.save()
+                    OrderTimeline.objects.create(shipment=shipment, action=f"Submitted and approved by {approver.get_full_name() or approver.username}{self_approval_note(request.user, approver)}. Now Preparing.", user=request.user)
+                    messages.success(request, "Shipment submitted and approved. It is now Preparing.")
+                elif approver:
                     shipment.status = 'Pending Approval'
                     shipment.assigned_to = approver
                     shipment.save()
-                    OrderTimeline.objects.create(shipment=shipment, action=f"Submitted to {approver.get_full_name() or approver.username} for approval.", user=request.user)
+                    OrderTimeline.objects.create(shipment=shipment, action=f"Submitted to {approver.get_full_name() or approver.username} for approval{self_approval_note(request.user, approver)}.", user=request.user)
                     
                     from django.urls import reverse
                     link = reverse('approvals_inbox')
@@ -3513,19 +3783,23 @@ def shipment_detail_view(request, pk):
             messages.warning(request, "Shipment returned to Manufacturing.")
             
         elif action == 'approve':
-            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
-                messages.error(request, "Only Managers can approve.")
+            if not may_decide_approval(request.user, shipment):
+                messages.error(request, "Only the assigned approver (or an Admin) can approve a shipment that is pending approval.")
             else:
                 shipment.status = 'Preparing'
                 shipment.save()
+                clear_approval_notifications(shipment.tracking_number)
+                OrderTimeline.objects.create(shipment=shipment, action="Approved by Manager. Now Preparing.", user=request.user)
                 messages.success(request, "Shipment Approved and is now Preparing.")
                 
         elif action == 'reject':
-            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
-                messages.error(request, "Only Managers can reject.")
+            if not may_decide_approval(request.user, shipment):
+                messages.error(request, "Only the assigned approver (or an Admin) can reject a shipment that is pending approval.")
             else:
                 shipment.status = 'Logistics Review'
                 shipment.save()
+                clear_approval_notifications(shipment.tracking_number)
+                OrderTimeline.objects.create(shipment=shipment, action="Approval rejected by Manager. Returned to Logistics Review.", user=request.user)
                 messages.warning(request, "Shipment Rejected and returned to Logistics.")
                 
         elif action == 'update_operational_status':
@@ -3536,6 +3810,10 @@ def shipment_detail_view(request, pk):
             in_progress = ['Preparing', 'Dispatched', 'Delayed', 'Arrived']
             if shipment.status not in in_progress or new_st not in in_progress:
                 messages.error(request, "Status can only be changed between Preparing, Dispatched, Delayed and Arrived. Use the receiving step to complete a shipment.")
+                return redirect('shipment_detail', pk=shipment.pk)
+            stage = {'Preparing': 0, 'Dispatched': 1, 'Delayed': 1, 'Arrived': 2}
+            if stage[new_st] < stage[shipment.status]:
+                messages.error(request, f"A shipment can't go back from {shipment.status} to {new_st}.")
                 return redirect('shipment_detail', pk=shipment.pk)
             if new_st == 'Dispatched' and shipment.direction in ['Outbound', 'Transfer']:
                 problem = shipment_dispatch_problem(shipment)
@@ -3549,6 +3827,8 @@ def shipment_detail_view(request, pk):
             if new_st in in_progress:
                 shipment.status = new_st
                 shipment.save()
+                if new_st != old_status:
+                    OrderTimeline.objects.create(shipment=shipment, action=f"Status changed from {old_status} to {new_st}.", user=request.user)
 
                 # First time crossing into Dispatched — count this shipment's cargo as
                 # shipped against the SO. Guarded on credited_to_so (not just old_status)
@@ -3569,167 +3849,52 @@ def shipment_detail_view(request, pk):
                 messages.success(request, f"Operational status updated to {new_st}.")
 
         elif action == 'complete_shipment':
-            has_discrepancy = False
+            # Older one-form receipt: sets every line's received quantity at once.
+            if shipment.status not in RECEIVABLE_STATUSES:
+                messages.error(request, "A shipment can only be received once it has arrived.")
+                return redirect('shipment_detail', pk=shipment.pk)
             for item in shipment.items.all():
                 req_qty_str = request.POST.get(f'received_qty_{item.id}')
                 if req_qty_str:
-                    rcv = float(req_qty_str)
-                    item.received_quantity = rcv
+                    item.received_quantity = Decimal(req_qty_str)
                     item.date_confirmed = timezone.now()
                     item.save()
-                    if rcv != float(item.quantity):
-                        has_discrepancy = True
-            
-            if has_discrepancy:
-                shipment.status = 'Discrepant'
-                shipment.save()
-                messages.warning(request, "Shipment receipt saved. Shortage detected. You may correct it later or request a Manager Force Close.")
-            else:
-                shipment.status = 'Completed'
-                shipment.acknowledged_by = request.user
-                shipment.last_edited_by = request.user
-                                # Check if it was an inbound shipment for a PO linked to a Production Run
-                if shipment.direction == 'Inbound' and shipment.purchase_order and shipment.purchase_order.linked_production_run:
-                    run = shipment.purchase_order.linked_production_run
-                    # Check if all materials are sufficient now
-                    missing_materials = []
-                    for req in run.target_product.recipe_items.all():
-                        needed = float(req.quantity_required) * float(run.expected_yield)
-                        available = Batch.objects.filter(
-                            material=req.material, 
-                            warehouse=run.manufacturing_plant,
-                            status='Active'
-                        ).aggregate(total=Sum(F('quantity') - F('allocated_quantity')))['total'] or 0
-                        if float(available) < needed:
-                            missing_materials.append(req.material.name)
-                            
-                    if not missing_materials:
-                        msg = f"Materials have arrived for Production Run {run.run_number}. You have sufficient materials to allocate and start the run."
-                    else:
-                        msg = f"Partial materials have arrived for Production Run {run.run_number}, but you are still short on: {', '.join(missing_materials)}."
-                        
-                    Notification.objects.create(
-                        user=run.supervisor,
-                        message=msg,
-                        link=f"/operations/manufacture/run/{run.id}/allocate/"
-                    )
-
-                shipment.save()
-
-                # Release lock and deduct stock
-                if shipment.direction in ['Outbound', 'Transfer']:
-                    from .utils import deduct_stock_from_allocation, mark_so_delivered_if_fully_shipped, apply_so_product_shipment
-                    deduct_stock_from_allocation('shipment', shipment, user=request.user)
-
-                    if shipment.direction == 'Outbound' and shipment.sales_order:
-                        if not shipment.credited_to_so:
-                            for item in shipment.items.all():
-                                if item.product:
-                                    so_detail = SalesOrderDetail.objects.filter(sales_order=shipment.sales_order, product=item.product).first()
-                                    if so_detail:
-                                        apply_so_product_shipment(so_detail, item.received_quantity)
-                            shipment.credited_to_so = True
-                            shipment.save(update_fields=['credited_to_so'])
-                        mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
-
-                if shipment.direction == 'Transfer':
-                    from .utils import receive_transfer_into_destination
-                    receive_transfer_into_destination(shipment, request.user)
-                messages.success(request, "Shipment receipt confirmed and marked as Completed.")
+            finish_shipment_receiving(request, shipment)
 
         elif action == 'log_item_receipt':
-            from decimal import Decimal
-            from .utils import apply_po_material_receipt
-
-            item_id = request.POST.get('item_id')
-            qty_str = request.POST.get('quantity')
-            received_date_str = request.POST.get('received_date')
-            notes = request.POST.get('notes', '').strip()
+            if shipment.status not in RECEIVABLE_STATUSES:
+                messages.error(request, "Receipts can only be logged once the shipment has arrived.")
+                return redirect('shipment_detail', pk=shipment.pk)
             try:
-                item = get_object_or_404(ShipmentItem, id=item_id, shipment=shipment)
-                qty = float(qty_str)
+                item = get_object_or_404(ShipmentItem, id=request.POST.get('item_id'), shipment=shipment)
+                qty = Decimal(request.POST.get('quantity'))
                 if qty <= 0:
                     messages.error(request, "Enter a quantity greater than zero.")
                 else:
-                    received_date = received_date_str if received_date_str else date.today()
-                    ShipmentItemReceipt.objects.create(
-                        shipment_item=item, quantity=qty, received_date=received_date,
-                        received_by=request.user, notes=notes or None
-                    )
-                    item.received_quantity = (item.received_quantity or Decimal('0')) + Decimal(str(qty))
-                    item.date_confirmed = timezone.now()
-                    item.save(update_fields=['received_quantity', 'date_confirmed'])
-
-                    if shipment.direction == 'Inbound' and shipment.purchase_order and item.material:
-                        detail = PurchaseOrderDetail.objects.filter(purchase_order=shipment.purchase_order, material=item.material).first()
-                        if detail:
-                            apply_po_material_receipt(detail, qty, request.user)
-
-                    item_name = item.material.name if item.material else (item.product.name if item.product else 'item')
-                    OrderTimeline.objects.create(shipment=shipment, action=f"Logged receipt of {qty} for {item_name} on {received_date}.", user=request.user)
+                    received_date = request.POST.get('received_date') or date.today()
+                    item_name = record_item_receipt(shipment, item, qty, received_date, request.user, request.POST.get('notes', '').strip())
+                    item.refresh_from_db()
                     messages.success(request, f"Logged {qty} received for {item_name}. Running total: {item.received_quantity}.")
             except Exception as e:
                 messages.error(request, f"Error logging receipt: {e}")
 
         elif action == 'finalize_shipment_receiving':
-            if shipment.direction not in ['Inbound', 'Outbound']:
-                messages.error(request, "This action is only for inbound or outbound shipments.")
+            if shipment.status not in RECEIVABLE_STATUSES:
+                messages.error(request, "A shipment can only be finalized once it has arrived.")
             else:
-                has_discrepancy = any(
-                    float(item.received_quantity) != float(item.quantity)
-                    for item in shipment.items.all()
-                )
+                finish_shipment_receiving(request, shipment)
 
-                if has_discrepancy:
-                    shipment.status = 'Discrepant'
-                    shipment.save()
-                    messages.warning(request, "Receiving finalized, but quantities don't fully match what was expected. You may log more receipts, or request a Manager Force Close.")
-                else:
-                    shipment.status = 'Completed'
-                    shipment.acknowledged_by = request.user
-                    shipment.last_edited_by = request.user
-
-                    if shipment.direction == 'Inbound' and shipment.purchase_order and shipment.purchase_order.linked_production_run:
-                        run = shipment.purchase_order.linked_production_run
-                        missing_materials = []
-                        for req in run.target_product.recipe_items.all():
-                            needed = float(req.quantity_required) * float(run.expected_yield)
-                            available = Batch.objects.filter(
-                                material=req.material,
-                                warehouse=run.manufacturing_plant,
-                                status='Active'
-                            ).aggregate(total=Sum(F('quantity') - F('allocated_quantity')))['total'] or 0
-                            if float(available) < needed:
-                                missing_materials.append(req.material.name)
-
-                        if not missing_materials:
-                            msg = f"Materials have arrived for Production Run {run.run_number}. You have sufficient materials to allocate and start the run."
-                        else:
-                            msg = f"Partial materials have arrived for Production Run {run.run_number}, but you are still short on: {', '.join(missing_materials)}."
-
-                        Notification.objects.create(
-                            user=run.supervisor,
-                            message=msg,
-                            link=f"/operations/manufacture/run/{run.id}/allocate/"
-                        )
-
-                    shipment.save()
-
-                    if shipment.direction == 'Outbound':
-                        from .utils import deduct_stock_from_allocation, mark_so_delivered_if_fully_shipped, apply_so_product_shipment
-                        deduct_stock_from_allocation('shipment', shipment, user=request.user)
-                        if shipment.sales_order:
-                            if not shipment.credited_to_so:
-                                for item in shipment.items.all():
-                                    if item.product:
-                                        so_detail = SalesOrderDetail.objects.filter(sales_order=shipment.sales_order, product=item.product).first()
-                                        if so_detail:
-                                            apply_so_product_shipment(so_detail, item.received_quantity)
-                                shipment.credited_to_so = True
-                                shipment.save(update_fields=['credited_to_so'])
-                            mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
-
-                    messages.success(request, "Receiving finalized. Shipment marked Completed.")
+        elif action == 'receive_all':
+            # One click for the normal case: log whatever hasn't been received yet on
+            # every line, dated today, then finalize.
+            if shipment.status not in RECEIVABLE_STATUSES:
+                messages.error(request, "A shipment can only be received once it has arrived.")
+            else:
+                with transaction.atomic():
+                    for item in shipment.items.select_related('material', 'product'):
+                        if item.shortage_quantity > 0:
+                            record_item_receipt(shipment, item, item.shortage_quantity, date.today(), request.user, "Received all as expected")
+                    finish_shipment_receiving(request, shipment)
 
         elif action == 'request_force_close':
             mgr_id = request.POST.get('assigned_manager_id')
@@ -3780,7 +3945,6 @@ def shipment_detail_view(request, pk):
                 else:
                     shipment.discrepancy_remarks = f"Manager Acknowledgment: {mgr_comment}"
             
-            from decimal import Decimal
             shipment.status = 'Completed'
             shipment.approved_by = request.user
             shipment.save()
@@ -3899,6 +4063,15 @@ def shipment_detail_view(request, pk):
                     shipment.followers.remove(user_obj)
                     messages.success(request, f"Removed {user_obj.get_full_name() or user_obj.username} from followers.")
 
+        if (cargo_before is not None and shipment.status in ('Pending Approval', 'Preparing')
+                and sorted(shipment.items.values_list('id', 'batch_id', 'quantity')) != cargo_before):
+            shipment.status = 'Logistics Review'
+            shipment.assigned_to = None
+            shipment.save(update_fields=['status', 'assigned_to'])
+            clear_approval_notifications(shipment.tracking_number)
+            OrderTimeline.objects.create(shipment=shipment, action="Cargo changed after submission - returned to Logistics Review for re-approval.", user=request.user)
+            messages.warning(request, "Cargo changed, so the shipment is back in Logistics Review and needs approval again.")
+
         if old_status not in ['Arrived', 'Completed'] and shipment.status in ['Arrived', 'Completed']:
             run = shipment.linked_production_run
             if run:
@@ -3914,7 +4087,10 @@ def shipment_detail_view(request, pk):
         
     materials = Material.objects.all().order_by('name')
     products = Product.objects.all().order_by('name')
-    batches = Batch.objects.filter(status='Active').order_by('batch_number')
+    batches = Batch.objects.filter(status='Active').select_related('material', 'product').order_by('batch_number')
+    if shipment.direction in ('Outbound', 'Transfer') and shipment.origin_warehouse_id:
+        # a shipment leaves from one place - only offer stock that's actually there
+        batches = batches.filter(warehouse_id=shipment.origin_warehouse_id)
     managers = CustomUser.objects.filter(role__in=['Admin', 'Manager'])
     all_users = CustomUser.objects.all().order_by('username')
     
@@ -3935,6 +4111,7 @@ def shipment_detail_view(request, pk):
         'batches': batches,
         'managers': managers,
         'all_users': all_users,
+        'can_self_approve': is_admin_user(request.user),
         'status_choices': Shipment.STATUS_CHOICES,
         'warehouses': warehouses,
         'route_error': route_error,
@@ -3995,7 +4172,7 @@ def user_management_view(request):
         if action == 'add_location':
             name = request.POST.get('name')
             loc_type = request.POST.get('location_type')
-            if name and loc_type:
+            if name and loc_type in dict(Warehouse.LOCATION_CHOICES):
                 Warehouse.objects.create(
                     name=name,
                     location_type=loc_type,
@@ -4156,7 +4333,7 @@ def so_allocate_view(request, pk):
                 return redirect('so_detail', pk=so.pk)
 
     # Gather data for UI
-    manufacturing_plants = Warehouse.objects.filter(location_type='Manufacturing').order_by('name')
+    manufacturing_plants = Warehouse.objects.filter(location_type__in=Warehouse.MANUFACTURING_TYPES).order_by('name')
 
     allocation_data = []
     for item in so.items.select_related('product'):
@@ -4218,7 +4395,12 @@ def so_create_shipment_view(request, pk):
                     direction='Outbound',
                     status='Draft',
                     origin_warehouse_id=wh_id or (so.origin_warehouse_id if so.origin_warehouse else None),
+                    last_edited_by=request.user,
+                    client_contact_name=(so.client.contact_person or None) if so.client else None,
+                    client_contact_phone=(so.client.phone or None) if so.client else None,
+                    client_address=(so.client.delivery_address or None) if so.client else None,
                 )
+                OrderTimeline.objects.create(shipment=shipment, action=f"Drafted from {so.so_number}.", user=request.user)
 
                 # Create shipment items based on allocated stock, and move the stock lock
                 # itself onto this shipment (mirrors shipment_detail's add_item action) so
@@ -4676,6 +4858,9 @@ def production_run_detail_view(request, pk):
 
     yield_logs = run.yield_logs.all()
     yield_logs_sum = sum((y.quantity for y in yield_logs), Decimal('0'))
+    if run.status == 'Completed' and run.actual_yield and yield_logs_sum < run.actual_yield:
+        # completed in one go (no interim yield logs) - the recorded actual yield is the output
+        yield_logs_sum = run.actual_yield
     yield_progress_pct = None
     if run.expected_yield:
         yield_progress_pct = min(100, float((yield_logs_sum / Decimal(str(run.expected_yield))) * 100))

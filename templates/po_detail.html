@@ -283,7 +283,7 @@
         <div style="position:relative; margin-bottom:1rem;">
             <div style="position:absolute; left:-1.5rem; top:0.25rem; width:10px; height:10px; border-radius:50%; background:var(--secondary); border:2px solid #fff; box-shadow:0 0 0 2px var(--secondary);"></div>
             <div style="font-size:0.875rem; font-weight:600; color:var(--text-main);">{{ event.action }}</div>
-            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.1rem;">{{ event.timestamp|date:"d M Y, H:i" }}{% if event.user %} · {{ event.user.username }}{% endif %}</div>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.1rem;">{{ event.timestamp|date:"d M Y, H:i" }}{% if event.user %} · {{ event.user.get_full_name|default:event.user.username }}{% endif %}</div>
         </div>
         {% endfor %}
     </div>
