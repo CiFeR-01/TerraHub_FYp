@@ -288,6 +288,7 @@ def capacity_forecast_view(request):
             messages.success(request, f"Snapshotted {count} warehouse(s) for {snap_date}.")
         return redirect("capacity_forecast")
 
+    analytics.ensure_today_snapshots()
     rows = analytics.capacity_forecast()
     rent_by_id = {r["warehouse_id"]: r for r in analytics.warehouse_rent_burn()}
     for r in rows:
@@ -297,7 +298,7 @@ def capacity_forecast_view(request):
     history_days = max((r["snapshot_count"] for r in rows), default=0)
     latest_dates = [r["latest_date"] for r in rows if r["latest_date"]]
     latest_snapshot_date = max(latest_dates) if latest_dates else None
-    stale_days = (timezone.now().date() - latest_snapshot_date).days if latest_snapshot_date else None
+    stale_days = (timezone.localdate() - latest_snapshot_date).days if latest_snapshot_date else None
 
     summary = {
         "warehouse_count": len(rows),
@@ -326,7 +327,9 @@ def capacity_forecast_view(request):
 
 @login_required
 def rent_opportunities_view(request):
+    analytics.ensure_today_snapshots()
     rows = analytics.rent_reduction_opportunities()
+    history = analytics.rent_history(days=180)
     summary = {
         "opportunity_count": len(rows),
         "total_potential_daily_saving": sum(o["total_daily_saving"] for o in rows),
@@ -335,6 +338,7 @@ def rent_opportunities_view(request):
     return render(request, "analytics/rent_opportunities.html", {
         "rows": rows,
         "summary": summary,
+        "history": history,
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,
         "analytics_active": "rent_opportunities",

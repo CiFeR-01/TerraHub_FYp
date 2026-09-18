@@ -1311,6 +1311,63 @@ class StockoutForecastTests(TestCase):
         )
         self.assertEqual(self._row('MK-9')['on_order'], 250.0)
 
+    def _po(self, material, qty, expected_in_days, number):
+        po = PurchaseOrder.objects.create(
+            po_number=number, supplier_name='S', target_warehouse=self.wh, status='Pending',
+            expected_delivery_date=date.today() + timedelta(days=expected_in_days),
+        )
+        PurchaseOrderDetail.objects.create(purchase_order=po, material=material, quantity_ordered=Decimal(str(qty)))
+
+    def _burning(self, sku):
+        """100 in stock, 10/day burn (10 days cover), 14-day lead -> critical on its own."""
+        m = self._material(sku)
+        self._stock(m, 100)
+        self._consume(m, 300)
+        self._lead(m, 14)
+        return m
+
+    def test_po_arriving_before_run_out_extends_cover(self):
+        m = self._burning('MK-PO1')
+        self.assertEqual(self._row('MK-PO1')['status'], 'critical')
+        self._po(m, 500, 5, 'PO-PO1')
+        row = self._row('MK-PO1')
+        self.assertAlmostEqual(row['days_cover'], 60.0)        # (100 + 500) / 10
+        self.assertAlmostEqual(row['days_cover_on_hand'], 10.0)
+        self.assertEqual((row['on_order_counted'], row['on_order_late']), (500.0, 0.0))
+        self.assertEqual(row['status'], 'ok')                  # 60 - 14 = 46 days to reorder
+        self.assertEqual(row['next_po_number'], 'PO-PO1')
+
+    def test_po_arriving_after_run_out_does_not_help(self):
+        m = self._burning('MK-PO2')
+        self._po(m, 500, 20, 'PO-PO2')                         # stock gone on day 10
+        row = self._row('MK-PO2')
+        self.assertAlmostEqual(row['days_cover'], 10.0)
+        self.assertEqual((row['on_order_counted'], row['on_order_late']), (0.0, 500.0))
+        self.assertEqual(row['status'], 'critical')
+
+    def test_overdue_po_counts_as_arriving_today_and_is_flagged(self):
+        m = self._burning('MK-PO3')
+        self._po(m, 500, -3, 'PO-PO3')
+        row = self._row('MK-PO3')
+        self.assertTrue(row['po_overdue'])
+        self.assertAlmostEqual(row['days_cover'], 60.0)
+
+    def test_out_of_stock_with_delivery_today_is_not_critical(self):
+        m = self._material('MK-PO4')
+        self._consume(m, 300)
+        self._lead(m, 14)
+        self._po(m, 1000, 0, 'PO-PO4')
+        row = self._row('MK-PO4')
+        self.assertAlmostEqual(row['days_cover'], 100.0)
+        self.assertEqual(row['status'], 'ok')
+
+    def test_forecast_page_explains_po_cover(self):
+        m = self._burning('MK-PO5')
+        self._po(m, 500, 20, 'PO-PO5')
+        self.client.force_login(self.user)
+        resp = self.client.get(reverse('forecast'))
+        self.assertContains(resp, '500 arrives after run-out')
+
     def test_sorted_worst_first(self):
         crit = self._material('MK-C'); self._stock(crit, 20); self._consume(crit, 300); self._lead(crit, 14)
         idle = self._material('MK-I'); self._stock(idle, 500)
@@ -1505,10 +1562,12 @@ class CapacityForecastTests(TestCase):
         self.assertContains(resp, 'Depot 1')
         self.assertContains(resp, 'Collecting data')  # 3 days < 7
 
-    def test_view_empty_state(self):
+    def test_view_records_today_and_shows_collecting_state(self):
+        # no cron: opening the page fills in today's snapshot if nothing has changed yet
         self.client.login(username='capacity', password='pw')
         resp = self.client.get(reverse('capacity_forecast'))
-        self.assertContains(resp, 'No snapshots yet')
+        self.assertTrue(WarehouseUtilizationSnapshot.objects.filter(warehouse=self.wh, snapshot_date=timezone.localdate()).exists())
+        self.assertContains(resp, 'Collecting data')
 
     def test_view_requires_login(self):
         self.assertEqual(self.client.get(reverse('capacity_forecast')).status_code, 302)
@@ -1741,6 +1800,42 @@ class RentReductionOpportunitiesTests(TestCase):
         self.assertEqual(len(rows[0]['candidate_batches']), 1)
         self.assertEqual(rows[0]['candidate_batches'][0]['rate_per_mt'], 3.0)
         self.assertEqual(rows[0]['excluded_near_expiry'], 1)
+
+    def _internal(self, name, loc, cap):
+        return Warehouse.objects.create(
+            name=name, location_type=loc, ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'), total_capacity_mt=Decimal(cap),
+        )
+
+    def test_manufacturing_only_plant_is_never_suggested(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00')
+        self._internal('Plant Only', 'Manufacturing', '5000')
+        self.assertEqual(rent_reduction_opportunities(), [])
+
+    def test_storage_and_manufacturing_facility_is_suggested(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00')
+        self._internal('Plant Only', 'Manufacturing', '5000')
+        both = self._internal('Plant + Store', 'Both', '500')
+        rows = rent_reduction_opportunities()
+        self.assertEqual([c['destination_id'] for c in rows[0]['candidate_batches']], [both.id])
+        self.assertEqual([d['name'] for d in rows[0]['destination_options']], ['Plant + Store'])
+
+    def test_two_rented_warehouses_share_free_space_once(self):
+        other = Warehouse.objects.create(
+            name='Rented Depot 2', location_type='Storage', ownership_type='ExternalProvider',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('5.00'), total_capacity_mt=Decimal('1000'),
+        )
+        for wh in (self.rented, other):
+            self._flag_critical(wh)
+        self._batch(self.rented, 100, '9.00')
+        self._batch(other, 100, '4.00')
+        self._internal('Small Store', 'Storage', '100')  # room for only one of them
+        rows = {r['warehouse_id']: r for r in rent_reduction_opportunities()}
+        moved = sum(c['move_mt'] for r in rows.values() for c in r['candidate_batches'])
+        self.assertEqual(moved, 100.0)
+        self.assertEqual(rows[self.rented.id]['total_daily_saving'], 900.0)  # higher rate wins the space
 
     def test_view_renders_with_caveat(self):
         self._flag_critical(self.rented)
@@ -3461,3 +3556,81 @@ class QuarantinedCapacityDisplayTests(TestCase):
             resp = c.get(url)
             self.assertContains(resp, 'incl. 10.0 MT quarantined', msg_prefix=url)
         self.assertContains(c.get(reverse('warehouse_list')), '20.0 MT used')
+
+
+class RentHistoryTests(TestCase):
+    """DSS #5: daily occupancy + rent snapshots written on change (no cron),
+    estimated for rows without recorded rent, charted on Rent Opportunities."""
+
+    def setUp(self):
+        from core.models import WarehouseUtilizationSnapshot
+        self.Snap = WarehouseUtilizationSnapshot
+        self.rented = Warehouse.objects.create(
+            name='Rented RH', location_type='Storage', ownership_type='ExternalProvider',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('2.00'), total_capacity_mt=Decimal('1000'),
+        )
+        self.own = Warehouse.objects.create(name='Own RH', location_type='Storage', ownership_type='Internal',
+                                            total_capacity_mt=Decimal('1000'))
+        self.mat = Material.objects.create(name='RH Mat', sku='MAT-RH', category='Raw', safe_storage_days=100,
+                                           weight_mt_per_unit=Decimal('1'))
+
+    def _batch(self, wh, qty):
+        return Batch.objects.create(batch_number=f'B-RH-{wh.id}-{qty}', status='Active', material=self.mat,
+                                    quantity=Decimal(str(qty)), warehouse=wh, manufacturing_date=date.today(),
+                                    expiry_date=date.today() + timedelta(days=100))
+
+    def _today(self, wh):
+        return self.Snap.objects.get(warehouse=wh, snapshot_date=timezone.localdate())
+
+    def test_saving_a_batch_records_todays_rent(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            self._batch(self.rented, 100)
+        snap = self._today(self.rented)
+        self.assertEqual((snap.used_mt, snap.daily_rent_cost, snap.rent_estimated), (Decimal('100.000'), Decimal('200.00'), False))
+
+    def test_last_change_of_the_day_wins(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            b = self._batch(self.rented, 100)
+        with self.captureOnCommitCallbacks(execute=True):
+            b.quantity = Decimal('40'); b.save()
+        self.assertEqual(self._today(self.rented).daily_rent_cost, Decimal('80.00'))
+        self.assertEqual(self.Snap.objects.filter(warehouse=self.rented).count(), 1)
+
+    def test_moving_a_batch_updates_both_warehouses(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            b = self._batch(self.rented, 100)
+        b = Batch.objects.get(pk=b.pk)
+        with self.captureOnCommitCallbacks(execute=True):
+            b.warehouse = self.own; b.save()
+        self.assertEqual(self._today(self.rented).daily_rent_cost, Decimal('0.00'))
+        self.assertEqual(self._today(self.own).used_mt, Decimal('100.000'))
+
+    def test_rate_change_updates_todays_rent(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            self._batch(self.rented, 100)
+        with self.captureOnCommitCallbacks(execute=True):
+            self.rented.rental_cost_per_mt = Decimal('3.00'); self.rented.save()
+        self.assertEqual(self._today(self.rented).daily_rent_cost, Decimal('300.00'))
+
+    def test_history_estimates_missing_rent_and_carries_forward(self):
+        from core.analytics import rent_history
+        today = timezone.localdate()
+        # a seeded-style row 3 days ago with no rent recorded, nothing since
+        self.Snap.objects.create(warehouse=self.rented, snapshot_date=today - timedelta(days=3),
+                                 used_mt=Decimal('50'), capacity_mt=Decimal('1000'), utilization_percent=Decimal('5'))
+        self.Snap.objects.create(warehouse=self.own, snapshot_date=today - timedelta(days=3),
+                                 used_mt=Decimal('500'), capacity_mt=Decimal('1000'), utilization_percent=Decimal('50'))
+        h = rent_history(days=5, end=today)
+        self.assertEqual([s['name'] for s in h['series']], ['Rented RH'])       # own warehouse costs nothing
+        self.assertEqual(h['series'][0]['values'], [None, 100.0, 100.0, 100.0, 100.0])  # 50 MT x 2.00, carried forward
+        self.assertEqual(h['series'][0]['estimated'], [False, True, True, True, True])
+        self.assertTrue(h['has_estimates'])
+
+    def test_rent_page_fills_today_and_renders_chart(self):
+        admin = User.objects.create_user(username='rh_admin', password='pw', role='Admin')
+        self._batch(self.rented, 100)          # created without running on-commit callbacks
+        c = Client(); c.force_login(admin)
+        resp = c.get(reverse('rent_opportunities'))
+        self.assertContains(resp, 'Rent History')
+        self.assertContains(resp, 'id="rent-history-data"')
+        self.assertEqual(self._today(self.rented).daily_rent_cost, Decimal('200.00'))  # safety net wrote it
