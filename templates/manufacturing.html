@@ -323,7 +323,7 @@
                 <div style="display:flex; justify-content:space-between; font-size:0.82rem; margin-bottom:0.3rem; align-items:center;">
                     <span>{{ item.material.name }}</span>
                     <span style="display:flex; align-items:center; gap:0.35rem;">
-                        <span style="color:var(--text-muted);">{{ item.available|floatformat:1 }} / {{ item.required|floatformat:1 }} {{ item.material.unit_of_measure }}</span>
+                        <span style="color:var(--text-muted);">{{ item.available|qty_display }} / {{ item.required|qty_display }} {{ item.material.unit_of_measure }}</span>
                         {% if item.sufficient %}<span style="color:var(--success-strong); font-weight:700;">OK</span>
                         {% else %}<span style="color:#ef4444; font-weight:700;">Low</span>{% endif %}
                     </span>

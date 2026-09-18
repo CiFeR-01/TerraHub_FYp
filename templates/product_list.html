@@ -84,7 +84,7 @@
                     <td style="padding:0.85rem 1rem;">
                         {% for item in prod.recipe_items.all %}
                         <div style="font-size:0.8rem; background:#f1f5f9; padding:0.2rem 0.5rem; border-radius:4px; margin-bottom:0.2rem; display:inline-block;">
-                            {{ item.material.sku }}: <strong>{{ item.quantity_required }}</strong> {{ item.material.unit_of_measure }}
+                            {{ item.material.sku }}: <strong>{{ item.quantity_required|qty_display }}</strong> {{ item.material.unit_of_measure }}
                         </div>
                         {% empty %}
                         <span style="font-size:0.8rem; color:var(--text-muted); italic;">No recipe defined</span>

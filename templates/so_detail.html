@@ -231,13 +231,14 @@
                     <td style="padding:0.85rem 1rem;">{{ row.item.quantity_shipped|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem;">{% if row.item.unit_price %}RM {{ row.item.unit_price|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">
-                        {% if row.item.unit_price %}
-                        RM {{ row.item.quantity_ordered|floatformat:0 }} × {{ row.item.unit_price|floatformat:2 }}
+                        {% if row.subtotal is not None %}
+                        RM {{ row.subtotal|floatformat:2 }}
                         {% else %}<span style="color:var(--text-muted);">—</span>{% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem;">
                         {% if row.fulfilled %}<span class="badge badge-emerald">Fulfilled</span>
                         {% elif row.deficit > 0 %}<span class="badge badge-rose">Insufficient</span>
+                        {% elif row.incoming_production > 0 %}<span class="badge badge-amber">In Production</span>
                         {% else %}<span class="badge badge-sky">In Stock</span>{% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
@@ -343,6 +344,11 @@
             </tbody>
         </table>
     </div>
+    <div style="display:flex; justify-content:flex-end; align-items:baseline; gap:1rem; padding:0.85rem 1rem 0; border-top:2px solid var(--border-light);">
+        {% if unpriced_lines %}<span style="font-size:0.78rem; color:var(--text-muted);">{{ unpriced_lines }} line{{ unpriced_lines|pluralize }} without a unit price not included</span>{% endif %}
+        <span style="font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Order Total</span>
+        <span style="font-size:1.1rem; font-weight:700; color:var(--text-main);">RM {{ order_total|floatformat:2 }}</span>
+    </div>
     {% else %}
     <div style="text-align:center; padding:3rem; color:var(--text-muted);">
         <div style="font-size:2.5rem; margin-bottom:0.75rem;">📦</div>
@@ -447,7 +453,7 @@
         <div style="position:relative; margin-bottom:1rem;">
             <div style="position:absolute; left:-1.5rem; top:0.25rem; width:10px; height:10px; border-radius:50%; background:var(--primary); border:2px solid #fff; box-shadow:0 0 0 2px var(--primary);"></div>
             <div style="font-size:0.875rem; font-weight:600; color:var(--text-main);">{{ event.action }}</div>
-            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.1rem;">{{ event.timestamp|date:"d M Y, H:i" }}{% if event.user %} · {{ event.user.username }}{% endif %}</div>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.1rem;">{{ event.timestamp|date:"d M Y, H:i" }}{% if event.user %} · {{ event.user.get_full_name|default:event.user.username }}{% endif %}</div>
         </div>
         {% endfor %}
     </div>

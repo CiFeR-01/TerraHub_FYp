@@ -108,6 +108,7 @@
                 <span>{{ f.used_mt|floatformat:1 }} MT used</span>
                 <span>{{ f.capacity_mt|floatformat:0 }} MT total</span>
             </div>
+            {% if f.quarantined_mt %}<div style="font-size:0.72rem; color:var(--warning-strong); margin-top:0.2rem;">incl. {{ f.quarantined_mt|floatformat:1 }} MT quarantined</div>{% endif %}
         </div>
 
         <!-- Stats Grid -->
