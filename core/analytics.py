@@ -695,22 +695,36 @@ _FLAT_SLOPE_PP = 0.02
 _CAPACITY_HORIZON_DAYS = 3650
 
 
-def used_mt_expr():
-    """ORM expression for a Warehouse's active-stock tonnage (Σ quantity ×
-    unit weight). Shared by dashboard_view and warehouse_utilization()."""
-    from django.db.models import Case, When, F, Value, DecimalField
+def _tonnage_expr(statuses):
+    """ORM expression for a Warehouse's tonnage (quantity x unit weight) over its
+    batches in `statuses`."""
+    from django.db.models import Case, When, F, Value, DecimalField, Q
     from django.db.models.functions import Coalesce
 
+    in_status = Q(batches__status__in=statuses)
     return Coalesce(
         Sum(Case(
-            When(batches__status='Active', batches__material__isnull=False,
+            When(in_status & Q(batches__material__isnull=False),
                  then=F('batches__quantity') * F('batches__material__weight_mt_per_unit')),
-            When(batches__status='Active', batches__product__isnull=False,
+            When(in_status & Q(batches__product__isnull=False),
                  then=F('batches__quantity') * F('batches__product__weight_mt_per_unit')),
             default=Value(0), output_field=DecimalField(),
         )),
         Value(0, output_field=DecimalField()),
     )
+
+
+def used_mt_expr():
+    """ORM expression for a Warehouse's occupied tonnage: Active AND Quarantined
+    stock - a quarantined batch still takes up space. Shared by dashboard_view,
+    facility management and warehouse_utilization()."""
+    return _tonnage_expr(['Active', 'Quarantined'])
+
+
+def quarantined_mt_expr():
+    """The Quarantined share of used_mt_expr(), so pages can show how much of the
+    occupied space is on hold."""
+    return _tonnage_expr(['Quarantined'])
 
 
 def warehouse_utilization():
@@ -719,13 +733,14 @@ def warehouse_utilization():
     from .models import Warehouse
 
     rows = []
-    for w in Warehouse.objects.annotate(used_mt=used_mt_expr()).order_by('name'):
+    for w in Warehouse.objects.annotate(used_mt=used_mt_expr(), quarantined_mt=quarantined_mt_expr()).order_by('name'):
         used = float(w.used_mt or 0)
         cap = float(w.total_capacity_mt or 0)
         rows.append({
             "warehouse_id": w.id,
             "name": w.name,
             "used_mt": round(used, 3),
+            "quarantined_mt": round(float(w.quarantined_mt or 0), 3),
             "capacity_mt": round(cap, 3),
             "utilization_percent": round(used / cap * 100, 2) if cap > 0 else 0.0,
         })
@@ -758,10 +773,9 @@ def snapshot_warehouse_utilization(snap_date=None):
 
 def open_batch_rent_expr():
     """ORM expression: Sum (batch tonnage x effective rate) across a
-    warehouse's currently-open batches - Active OR Quarantined (deliberately
-    wider than used_mt_expr()'s Active-only capacity filter: a Quarantined
-    batch still occupies space and still costs rent even though it isn't
-    "usable" stock - do not "fix" this to match used_mt_expr()).
+    warehouse's currently-open batches - Active OR Quarantined (same statuses as
+    used_mt_expr(): a Quarantined batch still occupies space and still costs
+    rent even though it isn't "usable" stock).
 
     "Effective rate" = the batch's own rental_rate_per_mt if it has one
     (a genuine per-PO negotiated rate, locked in permanently at receipt),
@@ -796,7 +810,7 @@ def warehouse_rent_burn():
     from .models import Warehouse
 
     rows = []
-    for w in Warehouse.objects.annotate(used_mt=used_mt_expr(), batch_rent=open_batch_rent_expr()).order_by('name'):
+    for w in Warehouse.objects.annotate(used_mt=used_mt_expr(), quarantined_mt=quarantined_mt_expr(), batch_rent=open_batch_rent_expr()).order_by('name'):
         used_mt = float(w.used_mt or 0)
         if w.ownership_type == 'Internal':
             daily_cost, billing_mode = 0.0, 'Internal'
@@ -810,6 +824,7 @@ def warehouse_rent_burn():
             'ownership_type': w.ownership_type,
             'billing_mode': billing_mode,
             'used_mt': round(used_mt, 3),
+            'quarantined_mt': round(float(w.quarantined_mt or 0), 3),
             'capacity_mt': float(w.total_capacity_mt),
             'daily_cost': round(daily_cost, 2),
         })
@@ -895,22 +910,26 @@ _DSS_NEAR_EXPIRY_DAYS = 30  # same threshold qa_dashboard_view uses for "near ex
 
 
 def rent_reduction_opportunities():
-    """DSS: for warehouses capacity_forecast() flags critical/watch, finds
-    batches that could relocate to an Internal (rent-free) warehouse with
-    spare capacity, and estimates the daily rent that would stop accruing.
-    Magnitude-of-opportunity signal only, worst-first, greedy pack by
-    highest per-batch rate first into total Internal spare capacity across
-    the whole network (a rough network-level ceiling, not a proposed route).
+    """DSS: for rented (Usage-billed) warehouses capacity_forecast() flags
+    critical/watch, suggests batches to relocate into our own warehouses and
+    estimates the daily rent that would stop accruing.
+
+    Destinations are Internal warehouses that can store stock (location_type
+    Storage or Both - a manufacturing-only plant is never suggested), each with
+    its OWN spare capacity. Candidate batches from every flagged warehouse are
+    placed highest rent rate first, each into the destination with the most spare
+    room left, and that room is used up as it's taken - so two flagged warehouses
+    can never both claim the same free space, and every suggestion names a real
+    destination that can hold it.
 
     Only counts each batch's available_weight_mt (unallocated portion) as
     moveable - the allocated portion is already committed to an outgoing
     SO/production run and isn't actually free to relocate.
 
     Expiry-aware: a batch within _DSS_NEAR_EXPIRY_DAYS of expiring is excluded
-    entirely, not just deprioritized - it's about to leave the warehouse on
-    its own (consumed or spoiled) regardless of what's recommended, so paying
-    the logistics cost to relocate it first is wasted effort. Excluded counts
-    are surfaced per warehouse so this isn't a silent gap in the numbers."""
+    entirely - it's about to leave the warehouse on its own (consumed or spoiled)
+    regardless of what's recommended. Excluded counts are surfaced per warehouse
+    so this isn't a silent gap in the numbers."""
     from .models import Warehouse, Batch
 
     forecast_rows = {r['warehouse_id']: r for r in capacity_forecast()}
@@ -919,67 +938,70 @@ def rent_reduction_opportunities():
         return []
 
     util_by_wh = {r['warehouse_id']: r for r in warehouse_utilization()}
-    internal_spare = []
-    for w in Warehouse.objects.filter(ownership_type='Internal'):
+    spare_by_dest = {}
+    for w in Warehouse.objects.filter(ownership_type='Internal', location_type__in=Warehouse.STORAGE_TYPES):
         u = util_by_wh.get(w.id)
         spare = float(w.total_capacity_mt) - (u['used_mt'] if u else 0.0)
         if spare > 0:
-            internal_spare.append({'warehouse_id': w.id, 'name': w.name, 'spare_mt': round(spare, 3)})
-    internal_spare.sort(key=lambda x: -x['spare_mt'])
-    total_spare = sum(x['spare_mt'] for x in internal_spare)
+            spare_by_dest[w.id] = {'warehouse_id': w.id, 'name': w.name, 'spare_mt': round(spare, 3)}
+    destination_options = sorted(spare_by_dest.values(), key=lambda x: -x['spare_mt'])
+    if not spare_by_dest:
+        return []
+    remaining = {wid: d['spare_mt'] for wid, d in spare_by_dest.items()}
 
-    opportunities = []
-    for wid in flagged:
-        w = Warehouse.objects.get(id=wid)
-        if w.ownership_type == 'Internal' or w.rental_billing_method != 'Usage' or total_spare <= 0:
+    # Gather every movable batch across all flagged rented warehouses first ...
+    origins = {}
+    pool = []
+    for w in Warehouse.objects.filter(id__in=flagged):
+        if w.ownership_type == 'Internal' or w.rental_billing_method != 'Usage':
             continue  # nothing to save moving off a free or flat-Overall-billed warehouse
-
-        remaining_spare = total_spare
-        candidates = []
-        excluded_near_expiry = 0
-        # Effective rate = the batch's own locked-in rate if it has one, else this
-        # warehouse's current standing rate (same fallback as open_batch_rent_expr()).
-        qs = (Batch.objects.filter(warehouse=w, status__in=['Active', 'Quarantined'])
-              .select_related('material', 'product'))
-        scored = sorted(
-            qs,
-            key=lambda b: float(b.rental_rate_per_mt if b.rental_rate_per_mt is not None else w.rental_cost_per_mt),
-            reverse=True,
-        )
-        for b in scored:
-            if remaining_spare <= 0:
-                break
+        origins[w.id] = {'warehouse': w, 'candidates': [], 'excluded_near_expiry': 0}
+        for b in (Batch.objects.filter(warehouse=w, status__in=['Active', 'Quarantined'])
+                  .select_related('material', 'product')):
             days_left = b.days_until_expiry
             if days_left is not None and days_left <= _DSS_NEAR_EXPIRY_DAYS:
-                excluded_near_expiry += 1
+                origins[w.id]['excluded_near_expiry'] += 1
                 continue  # will deplete/expire on its own soon - not worth relocating
-            # available_weight_mt, not total_weight_mt: the allocated portion of a
-            # batch is already committed to an outgoing SO/production run, so only
-            # what's still unallocated is actually free to relocate.
             mt = float(b.available_weight_mt)
             if mt <= 0:
                 continue
+            # Effective rate = the batch's own locked-in rate if it has one, else this
+            # warehouse's current standing rate (same fallback as open_batch_rent_expr()).
             rate = float(b.rental_rate_per_mt if b.rental_rate_per_mt is not None else w.rental_cost_per_mt)
-            take_mt = min(mt, remaining_spare)
-            saving = round(take_mt * rate, 2)
-            candidates.append({
-                'batch_id': b.id,
-                'batch_number': b.batch_number,
-                'item': (b.material.name if b.material else b.product.name),
-                'mt': round(mt, 3),
-                'rate_per_mt': rate,
-                'daily_saving': saving,
-            })
-            remaining_spare -= take_mt
-        if candidates or excluded_near_expiry:
+            pool.append((rate, mt, b, w.id))
+
+    # ... then place them highest rate first, so shared free space goes where it
+    # saves the most, drawing each destination's space down as it's used.
+    pool.sort(key=lambda p: (-p[0], -p[1], p[2].batch_number))
+    for rate, mt, b, origin_id in pool:
+        dest_id = max(remaining, key=lambda d: remaining[d])
+        if remaining[dest_id] <= 0:
+            break  # every destination is full
+        take_mt = min(mt, remaining[dest_id])
+        remaining[dest_id] -= take_mt
+        origins[origin_id]['candidates'].append({
+            'batch_id': b.id,
+            'batch_number': b.batch_number,
+            'item': (b.material.name if b.material else b.product.name),
+            'mt': round(mt, 3),
+            'move_mt': round(take_mt, 3),
+            'rate_per_mt': rate,
+            'daily_saving': round(take_mt * rate, 2),
+            'destination_id': dest_id,
+            'destination': spare_by_dest[dest_id]['name'],
+        })
+
+    opportunities = []
+    for wid, o in origins.items():
+        if o['candidates'] or o['excluded_near_expiry']:
             opportunities.append({
-                'warehouse_id': w.id,
-                'name': w.name,
+                'warehouse_id': wid,
+                'name': o['warehouse'].name,
                 'status': forecast_rows[wid]['status'],
-                'candidate_batches': candidates,
-                'total_daily_saving': round(sum(c['daily_saving'] for c in candidates), 2),
-                'destination_options': internal_spare,
-                'excluded_near_expiry': excluded_near_expiry,
+                'candidate_batches': o['candidates'],
+                'total_daily_saving': round(sum(c['daily_saving'] for c in o['candidates']), 2),
+                'destination_options': destination_options,
+                'excluded_near_expiry': o['excluded_near_expiry'],
             })
     opportunities.sort(key=lambda o: -o['total_daily_saving'])
     return opportunities
