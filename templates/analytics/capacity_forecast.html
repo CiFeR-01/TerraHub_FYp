@@ -57,9 +57,9 @@
 
 {% if summary.empty %}
 <div class="animate-fade-in-up" style="background:var(--accent-wash,#eef2ff); border:1px solid rgba(79,70,229,0.2); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:var(--text-main);">
-    <strong>No snapshots yet.</strong> Utilization has to be recorded daily before a trend
-    can be fit. Run <code>python manage.py snapshot_utilization</code> once a day
-    (schedule it &mdash; see the analytics docs). Projections firm up after about a week.
+    <strong>No snapshots yet.</strong> Utilization is recorded automatically each day
+    stock moves (no schedule needed), and a trend needs a few days of it.
+    Projections firm up after about a week.
 </div>
 {% elif summary.building %}
 <div class="animate-fade-in-up" style="background:#fef9c3; border:1px solid rgba(202,138,4,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:#854d0e;">

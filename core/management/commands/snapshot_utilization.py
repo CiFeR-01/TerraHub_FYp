@@ -1,9 +1,10 @@
 """
-Record today's utilization for every warehouse into WarehouseUtilizationSnapshot.
+Record today's occupancy and rent for every warehouse into WarehouseUtilizationSnapshot.
 
-Idempotent per day (unique on warehouse + snapshot_date) - safe to run more than
-once. Schedule it once a day; capacity_forecast() needs ~7 days of history before
-its projections are meaningful.
+No longer needs scheduling: core/signals.py rewrites a warehouse's row for today
+whenever its stock or settings change, and the Rent Opportunities / Capacity pages
+fill in any missing row for today. Kept for manual use (e.g. after a bulk import
+that bypassed the signals, or --date to write a specific day).
 
     python manage.py snapshot_utilization
 """

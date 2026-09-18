@@ -36,7 +36,12 @@ class Warehouse(models.Model):
     LOCATION_CHOICES = (
         ('Storage', 'Storage'),
         ('Manufacturing', 'Manufacturing'),
+        ('Both', 'Storage & Manufacturing'),
     )
+    # Filter with location_type__in=... rather than comparing to one value, so a
+    # 'Both' facility counts as a storage place AND a manufacturing plant.
+    STORAGE_TYPES = ('Storage', 'Both')
+    MANUFACTURING_TYPES = ('Manufacturing', 'Both')
     OWNERSHIP_CHOICES = (
         ('Internal', 'Internal'),
         ('ExternalProvider', 'Service Provider (External)'),
@@ -593,8 +598,10 @@ class SystemSetting(models.Model):
 
 
 class WarehouseUtilizationSnapshot(models.Model):
-    """One row per warehouse per day, written by `manage.py snapshot_utilization`,
-    so analytics.capacity_forecast() has a trend to fit."""
+    """One row per warehouse per day: its end-of-day occupancy and rent. Kept up
+    to date by core/signals.py whenever stock or the warehouse changes (the last
+    write of the day is that day's figure), so capacity_forecast() has a trend to
+    fit and rent_history() has daily rent to chart."""
     warehouse = models.ForeignKey(
         Warehouse, on_delete=models.CASCADE, related_name='utilization_snapshots'
     )
@@ -602,6 +609,13 @@ class WarehouseUtilizationSnapshot(models.Model):
     used_mt = models.DecimalField(max_digits=14, decimal_places=3)
     capacity_mt = models.DecimalField(max_digits=14, decimal_places=3)
     utilization_percent = models.DecimalField(max_digits=6, decimal_places=2)
+    quarantined_mt = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    # NULL = not recorded (e.g. a seeded row) - rent_history() estimates it on read
+    daily_rent_cost = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    billing_mode = models.CharField(max_length=30, blank=True)
+    # True when daily_rent_cost was estimated from tonnage x current rate rather
+    # than recorded on the day (the pre-history backfill)
+    rent_estimated = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ('warehouse', 'snapshot_date')

@@ -415,20 +415,28 @@ Sorted `(rating rank, yield_variance_pct, -material_overuse_pct, name)`.
 ```
 burn/day    = Σ Consumed_For_Manufacturing qty over window / window_days   (consumption_rates())
 available   = Σ active Batch.quantity - Σ Batch.allocated_quantity  (per material)
-days_cover  = available / burn/day        (None if burn/day == 0, or cover > 3650)
+arrivals    = open PO lines (Pending / Partially Received): outstanding qty on the
+              PO's expected_delivery_date ?? order_date + lead time (same rule as the
+              supplier scorecard, _expected_delivery); overdue dates count as today
+days_cover  = available / burn/day, then walk arrivals in date order: an arrival
+              on or before the current run-out adds qty / burn/day; a later one
+              doesn't (it can't prevent the stockout -> on_order_late)
+              (None if burn/day == 0, or cover > 3650)
 stockout    = today + days_cover
 lead_time   = max SupplierMaterial.lead_time_days for the material
               ?? po_default_lead_time_days setting          (-> lead_time_estimated)
 reorder_by  = stockout - lead_time
 days_until_reorder = days_cover - lead_time
-status      = critical     if available <= 0, or days_until_reorder < 0
+status      = critical     if days_cover <= 0 (out, nothing arriving today), or days_until_reorder < 0
               reorder_now  if days_until_reorder <= 2
               watch        if days_until_reorder <= 14
               ok           otherwise
               no_usage     if burn/day == 0
 ```
 
-`on_order` (open-PO outstanding qty) is shown for context, not subtracted. Rows
+`on_order` is the open-PO outstanding total, split into `on_order_counted`
+(lands before run-out, included in days_cover) and `on_order_late`; also
+`days_cover_on_hand` (stock alone), `next_po_number/date`, `po_overdue`. Rows
 sorted `(status rank, reorder_by, -burn/day, name)`. `consumption_rates()` is the
 batched sibling of Phase 0's `consumption_rate()` — one grouped query for many
 materials.
@@ -439,25 +447,26 @@ materials.
 `/warehouse/capacity/` (nav: *Analytics → Inventory*, tab: Inventory Capacity; Facility Management
 links to it via a header call-out).
 
-`manage.py snapshot_utilization` writes one `WarehouseUtilizationSnapshot` per
-warehouse per day (idempotent on `(warehouse, snapshot_date)`), using the same
-active-stock-tonnage expression as `dashboard_view` (`analytics.used_mt_expr()`).
-**This command has no scheduler wired — run it daily** via Heroku Scheduler, cron,
-or a scheduled GitHub Action.
+One `WarehouseUtilizationSnapshot` per warehouse per day (idempotent on
+`(warehouse, snapshot_date)`) holding the day's occupancy (`used_mt`, Active +
+Quarantined via `analytics.used_mt_expr()`, and `quarantined_mt`) and rent
+(`daily_rent_cost`, `billing_mode`, from `warehouse_rent_burn()`).
 
-`capacity_mt`/`utilization_percent` are frozen at snapshot time, not recomputed
-live — editing a warehouse's `total_capacity_mt` will not change past snapshot
-rows or the "current" percentage shown on the Capacity Runway page until the
-next snapshot runs. Run the command by hand after a capacity edit if you need
-the page to reflect it immediately.
+**No cron.** `core/signals.py` rewrites the affected warehouses' row for *today*
+(Malaysia time, `timezone.localdate()`) after any commit that saves a `Batch`
+(incl. moves between warehouses), a `Warehouse`, or a Material/Product unit
+weight — the last write of the day is that day's figure; a day with no row means
+nothing changed. Bulk `QuerySet.update()` skips signals, so the Capacity and Rent
+Opportunities pages call `ensure_today_snapshots()` to fill any missing row for
+today. `manage.py snapshot_utilization` remains for manual use. (The old Railway
+cron service for this command can be removed.)
 
-**On Railway**: add a second service in the same project pointing at this repo,
-override its start command (Settings → Deploy → Custom Start Command) to
-`python manage.py snapshot_utilization`, copy over the same environment
-variables as the web service (or use Railway's project-level Shared Variables),
-and set a Cron Schedule on that service (e.g. `0 0 * * *`). Railway cron runs
-in UTC. The job spins the container up, runs the one command, and exits — no
-persistent process needed.
+Rows written before daily rent was recorded (and rows the seed/simulation
+scripts write directly) have their rent estimated as that day's tonnage × the
+warehouse's current rate — stored by migration 0058 with `rent_estimated=True`,
+or computed on read by `estimate_snapshot_rent()`. `rent_history(days)` turns the
+rows into per-warehouse daily series (carrying values forward over days with no
+row) for the Rent History chart on Rent Opportunities.
 
 ```
 slope, _  = least-squares fit of utilization_percent over the snapshot dates

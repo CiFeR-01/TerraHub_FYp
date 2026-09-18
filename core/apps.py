@@ -7,4 +7,6 @@ class CoreConfig(AppConfig):
     def ready(self):
         # Register the db query execution wrapper
         import core.db_tracker
+        # Keep today's warehouse occupancy/rent snapshots current (replaces the cron)
+        import core.signals
 
