@@ -96,7 +96,7 @@
             <div style="font-size:0.95rem; font-weight:600;">{{ run.end_time|date:"M d, Y"|default:"—" }}</div>
         </div>
         <div>
-            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Acknowledged</div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Planned Start</div>
             <div style="font-size:0.95rem; font-weight:600;">{{ run.start_time|date:"M d, H:i"|default:"—" }}</div>
         </div>
         <div>
@@ -320,14 +320,14 @@
                               <select name="approver_id" class="form-input" style="width:100%; padding:0.5rem; margin-bottom:0.75rem;">
                                   <option value="">-- Auto-detect or Select --</option>
                                   {% for m in managers %}
-                                  <option value="{{ m.id }}">{{ m.username }} ({{ m.role }})</option>
+                                  <option value="{{ m.id }}">{{ m.get_full_name|default:m.username }} ({{ m.role }})</option>
                                   {% endfor %}
                               </select>
                               
                               <label style="display:block; font-size:0.75rem; color:var(--text-main); margin-bottom:0.25rem;">Notify Followers</label>
                               <select name="follower_ids" multiple class="form-input" style="width:100%; padding:0.5rem;">
                                   {% for u in all_users %}
-                                  <option value="{{ u.id }}">{{ u.username }}</option>
+                                  <option value="{{ u.id }}">{{ u.get_full_name|default:u.username }}</option>
                                   {% endfor %}
                               </select>
                               <span style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:0.25rem;">Hold Ctrl/Cmd to select multiple</span>
@@ -350,7 +350,7 @@
                       <h4 style="font-size:1.1rem; font-weight:700; color:#a16207; margin-bottom:0.5rem;">Pending Variance Approval</h4>
                       <p style="font-size:0.85rem; color:#854d0e;">This run exceeded 3% material variance and is awaiting manager approval.</p>
                       {% if run.assigned_to %}
-                      <p style="font-size:0.85rem; color:#854d0e; margin-top:0.5rem;">Assigned to: {{ run.assigned_to.username }}</p>
+                      <p style="font-size:0.85rem; color:#854d0e; margin-top:0.5rem;">Assigned to: {{ run.assigned_to.get_full_name|default:run.assigned_to.username }}</p>
                       {% endif %}
                   </div>
             {% elif run.status == 'Completed' %}
@@ -629,7 +629,7 @@
                 <div style="position:relative; margin-bottom:1rem;">
                     <div style="position:absolute; left:-1.5rem; top:0.25rem; width:10px; height:10px; border-radius:50%; background:var(--primary); border:2px solid #fff; box-shadow:0 0 0 2px var(--primary);"></div>
                     <div style="font-size:0.875rem; font-weight:600; color:var(--text-main);">{{ event.action }}</div>
-                    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.1rem;">{{ event.timestamp|date:"d M Y, H:i" }}{% if event.user %} · {{ event.user.username }}{% endif %}</div>
+                    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.1rem;">{{ event.timestamp|date:"d M Y, H:i" }}{% if event.user %} · {{ event.user.get_full_name|default:event.user.username }}{% endif %}</div>
                 </div>
                 {% endfor %}
             </div>

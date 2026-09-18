@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from django import template
 
 from core.utils import format_mt, format_stock_display
@@ -17,6 +19,24 @@ def weight_display(qty, product):
         return format_stock_display(qty, product)
     except (TypeError, ValueError):
         return ""
+
+
+@register.filter
+def qty_display(value, places=4):
+    """A quantity with up to `places` decimals, trailing zeros dropped and thousands
+    separated: 591000.0 -> 591,000 | 20.0 -> 20 | 0.02 -> 0.02 | 0.0005 -> 0.0005.
+    Unlike floatformat:1 it never rounds a trace amount down to 0."""
+    if value is None or value == '':
+        return ""
+    try:
+        places = int(places)
+        d = Decimal(str(value)).quantize(Decimal(1).scaleb(-places))
+    except (InvalidOperation, TypeError, ValueError):
+        return value
+    text = f"{d:,.{places}f}"
+    if places:
+        text = text.rstrip('0').rstrip('.')
+    return '0' if text in ('', '-0') else text
 
 
 @register.filter
