@@ -320,7 +320,7 @@
                               <select name="approver_id" class="form-input" style="width:100%; padding:0.5rem; margin-bottom:0.75rem;">
                                   <option value="">-- Auto-detect or Select --</option>
                                   {% for m in managers %}
-                                  <option value="{{ m.id }}">{{ m.get_full_name|default:m.username }} ({{ m.role }})</option>
+                                  <option value="{{ m.id }}">{{ m.get_full_name|default:m.username }} ({{ m.role_label }})</option>
                                   {% endfor %}
                               </select>
                               
@@ -611,7 +611,7 @@
                     <option value="">-- Add Colleague --</option>
                     {% for u in all_users %}
                         {% if u not in run.followers.all %}
-                        <option value="{{ u.id }}">{{ u.get_full_name|default:u.username }} ({{ u.role }})</option>
+                        <option value="{{ u.id }}">{{ u.get_full_name|default:u.username }} ({{ u.role_label }})</option>
                         {% endif %}
                     {% endfor %}
                 </select>

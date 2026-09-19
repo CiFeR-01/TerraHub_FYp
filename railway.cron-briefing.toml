@@ -1,7 +1,0 @@
-[build]
-builder = "NIXPACKS"
-
-[deploy]
-startCommand = "python manage.py generate_ops_briefing"
-cronSchedule = "0 23 * * *"
-restartPolicyType = "NEVER"

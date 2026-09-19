@@ -235,7 +235,7 @@
                     </td>
                     <td style="padding:0.85rem 1rem; text-align:right;">
                         {% if run.status == 'Pending Approval' %}
-                        {% if user.is_superuser or user.role in 'Admin,Manager' %}
+                        {% if perms.core.approve_requests %}
                         <form method="post" style="display:inline;">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_run">
