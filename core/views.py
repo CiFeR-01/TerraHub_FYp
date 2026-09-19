@@ -7,7 +7,7 @@ from django.contrib import messages
 from django import forms
 from django.db import transaction
 from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q, Avg
-from django.db.models.functions import Coalesce, TruncWeek
+from django.db.models.functions import Abs, Coalesce, TruncWeek
 from django.core.paginator import Paginator
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
@@ -163,19 +163,16 @@ def dashboard_view(request):
             'utilization_percent': utilization_percent,
         })
 
-    # chart_data dict formatted for safe JSON injection
-    chart_data = {
-        'labels': [item['name'] for item in warehouse_stats],
-        'capacities': [item['capacity_mt'] for item in warehouse_stats],
-        'used': [item['used_mt'] for item in warehouse_stats],
-    }
-
-    # 2. Inventory Metrics
-    raw_materials_sum = Batch.objects.filter(status='Active', material__isnull=False).aggregate(total=Sum('quantity'))['total'] or 0
+    # 2. Inventory Metrics. Material quantities are in the material's own unit
+    # (kg since migration 0050), so raw stock is converted to MT for the KPI.
+    raw_materials_mt = Batch.objects.filter(status='Active', material__isnull=False).aggregate(
+        t=Coalesce(Sum(F('quantity') * F('material__weight_mt_per_unit'), output_field=DecimalField()),
+                   Value(0, output_field=DecimalField()))
+    )['t']
     finished_goods_sum = Batch.objects.filter(status='Active', product__isnull=False).aggregate(total=Sum('quantity'))['total'] or 0
 
     inventory_metrics = {
-        'raw_materials': float(raw_materials_sum),
+        'raw_materials_mt': float(raw_materials_mt),
         'finished_goods': float(finished_goods_sum),
     }
 
@@ -185,16 +182,31 @@ def dashboard_view(request):
     else:
         global_utilization = 0.0
 
-    # 3. Recent logs (pre-fetching related warehouse models, ordered descending by timestamp)
-    recent_logs = RegistryLog.objects.select_related('warehouse').order_by('-timestamp')[:5]
+    # A healthy network-wide average can hide one site that is already full, so
+    # the headline status follows whichever is worse: the average or the worst site.
+    over_capacity_sites = [w for w in warehouse_stats if w['utilization_percent'] > 100]
+    worst_site = max(warehouse_stats, key=lambda w: w['utilization_percent'], default=None)
+    worst_pct = worst_site['utilization_percent'] if worst_site else 0.0
+    if global_utilization > 85 or worst_pct > 100:
+        capacity_status = 'crit'
+    elif global_utilization > 70 or worst_pct > 85:
+        capacity_status = 'warn'
+    else:
+        capacity_status = 'ok'
 
-    # 4. Active shipments (status is not 'Arrived', ordered by expected_eta_date).
+    # 3. Recent logs (pre-fetching related warehouse models, ordered descending by timestamp)
+    recent_logs = RegistryLog.objects.select_related('warehouse', 'material').order_by('-timestamp')[:5]
+
+    # 4. Active shipments: approved or moving, not drafts and not finished
+    # (Arrived / Completed / Cancelled), soonest ETA first.
     # The dashboard only previews the most time-sensitive handful - the full
     # queryset (everything, unbounded) lives on the Shipments list page.
     DASH_PREVIEW_LIMIT = 8
-    active_shipments_qs = Shipment.objects.exclude(status='Arrived').select_related(
+    active_shipments_qs = Shipment.objects.exclude(
+        status__in=['Draft', 'Arrived', 'Completed', 'Cancelled']
+    ).select_related(
         'origin_warehouse', 'destination_warehouse'
-    ).prefetch_related('items').order_by('expected_eta_date')
+    ).annotate(item_count=Count('items')).order_by(F('expected_eta_date').asc(nulls_last=True), 'id')
     active_shipments_total = active_shipments_qs.count()
     active_shipments = active_shipments_qs[:DASH_PREVIEW_LIMIT]
 
@@ -224,15 +236,31 @@ def dashboard_view(request):
     prev30 = today - timedelta(days=30)
     prev60 = today - timedelta(days=60)
 
-    def _reg_sum(action, start, end):
-        return float(RegistryLog.objects.filter(
+    def _reg_sum(action, start, end, mt=False):
+        """Registry quantity for `action` in [start, end). mt=True sums only
+        material movements, converted to MT."""
+        logs = RegistryLog.objects.filter(
             action_type=action, timestamp__date__gte=start, timestamp__date__lt=end
-        ).aggregate(s=Sum('quantity_changed'))['s'] or 0)
+        )
+        if mt:
+            logs = logs.filter(material__isnull=False)
+            expr = Sum(F('quantity_changed') * F('material__weight_mt_per_unit'), output_field=DecimalField())
+        else:
+            expr = Sum('quantity_changed')
+        return float(logs.aggregate(s=expr)['s'] or 0)
 
-    def _pct_delta(cur, prev):
+    def _trend(cur, prev):
+        """Period-over-period change for a KPI trend pill. A swing of 200%+
+        almost always means the prior period was tiny, so it is shown neutral
+        rather than as a big green/red headline."""
         if not prev:
-            return None
-        return (cur - prev) / prev * 100
+            return {'dir': 'none', 'pct': None, 'prev': prev}
+        pct = (cur - prev) / prev * 100
+        if abs(pct) >= 200:
+            direction = 'flat'
+        else:
+            direction = 'up' if pct >= 0 else 'down'
+        return {'dir': direction, 'pct': pct, 'prev': prev}
 
     # A. "Needs attention" counters (each links to a filtered work list)
     attention = {
@@ -254,6 +282,7 @@ def dashboard_view(request):
         'awaiting_materials': ProductionRun.objects.filter(status='Awaiting Materials').count(),
         'quarantined': Batch.objects.filter(status='Quarantined').count(),
         'pending_audits': StockAudit.objects.filter(status='Pending').count(),
+        'over_capacity': len(over_capacity_sites),
     }
     attention_total = sum(attention.values())
 
@@ -273,6 +302,14 @@ def dashboard_view(request):
         expected = float(r.expected_yield or 0)
         made = float(r.made or 0)
         pct = (made / expected * 100) if expected > 0 else 0
+        days_running = (today - r.start_time.date()).days if r.start_time else None
+        # A run stuck waiting (or paused) for a week+ is the one to chase.
+        age_level = ''
+        if r.status in ('Awaiting Materials', 'Paused') and days_running is not None:
+            if days_running >= 14:
+                age_level = 'crit'
+            elif days_running >= 7:
+                age_level = 'warn'
         run_progress.append({
             'run_number': r.run_number,
             'pk': r.pk,
@@ -285,27 +322,28 @@ def dashboard_view(request):
             'unit': 'units' if r.target_product else '',
             'pct': min(pct, 100),
             'pct_raw': pct,
-            'days_running': (today - r.start_time.date()).days if r.start_time else None,
+            'days_running': days_running,
+            'age_level': age_level,
         })
 
     # C. KPI deltas — last 30 days vs the 30 days before that
-    rm_in_cur, rm_in_prev = _reg_sum('Inbound', prev30, tomorrow), _reg_sum('Inbound', prev60, prev30)
+    rm_in_cur, rm_in_prev = _reg_sum('Inbound', prev30, tomorrow, mt=True), _reg_sum('Inbound', prev60, prev30, mt=True)
     fg_cur, fg_prev = _reg_sum('Produced', prev30, tomorrow), _reg_sum('Produced', prev60, prev30)
 
     kpi_deltas = {
-        'raw_materials': _pct_delta(rm_in_cur, rm_in_prev),
-        'finished_goods': _pct_delta(fg_cur, fg_prev),
+        'raw_materials': _trend(rm_in_cur, rm_in_prev),
+        'finished_goods': _trend(fg_cur, fg_prev),
     }
 
     # D. Real sparklines — weekly totals for the last 6 weeks, kept as (height%,
     # label, value) triples so the bars stay hoverable instead of being bare
     # shapes with no way to read an actual number off them.
-    def _weekly_heights(action, unit):
+    def _weekly_heights(action, unit, mt=False):
         weeks = []
         for i in range(6, 0, -1):
             wk_start = today - timedelta(days=i * 7)
             wk_end = today - timedelta(days=(i - 1) * 7)
-            weeks.append((wk_start, wk_end, _reg_sum(action, wk_start, wk_end)))
+            weeks.append((wk_start, wk_end, _reg_sum(action, wk_start, wk_end, mt=mt)))
         peak = max(v for _, _, v in weeks) or 1
 
         def _fmt(d):
@@ -319,7 +357,7 @@ def dashboard_view(request):
             for wk_start, wk_end, v in weeks
         ]
 
-    raw_spark = _weekly_heights('Inbound', 'MT')
+    raw_spark = _weekly_heights('Inbound', 'MT', mt=True)
     fg_spark = _weekly_heights('Produced', 'units')
 
     # E. Weekly finished-goods output trend (12 weeks) for a real line chart
@@ -337,14 +375,20 @@ def dashboard_view(request):
         'values': [float(row['qty'] or 0) for row in weekly_output_qs],
     }
 
-    # F. Material usage variance leaderboard (completed runs)
+    # F. Material usage variance leaderboard (completed runs), biggest deviation
+    # either way first. Outside ±3% is the same line that triggers a variance
+    # sign-off on run completion; outside ±10% is flagged as severe.
     material_variance = list(
         RunMaterialUsage.objects
         .filter(production_run__status='Completed')
         .values('material__name', 'material__sku')
         .annotate(avg_var=Avg('variance_pct'), runs=Count('id'))
-        .order_by('-avg_var')[:6]
+        .order_by(Abs(F('avg_var')).desc())[:6]
     )
+    for m in material_variance:
+        v = float(m['avg_var'] or 0)
+        m['level'] = 'crit' if abs(v) > 10 else 'warn' if abs(v) > 3 else 'ok'
+        m['direction'] = 'over' if v > 0 else 'under'
 
     # G. Inventory value in RM (not just tonnage)
     rm_value = Batch.objects.filter(status='Active', material__isnull=False).aggregate(
@@ -368,34 +412,45 @@ def dashboard_view(request):
     inventory_value_compact = _compact_rm(inventory_value)
 
     last_activity = RegistryLog.objects.order_by('-timestamp').values_list('timestamp', flat=True).first()
+    # Only claim "live" when the data really is fresh.
+    is_live = bool(last_activity) and timezone.now() - last_activity < timedelta(hours=1)
 
-    # 6. Sales order stats
+    # 6. Sales order pipeline: open stages only, as a bar per stage. Closed
+    # orders would dwarf the in-flight ones, so they're a single count instead.
     so_counts = SalesOrder.objects.values('status').annotate(count=Count('id'))
     counts_dict = {item['status']: item['count'] for item in so_counts}
-    
-    sales_order_stats = {
-        'Draft': counts_dict.get('Draft', 0),
-        'Pending_Approval': counts_dict.get('Pending Approval', 0),
-        'Pending_Approved': counts_dict.get('Pending', 0),
-        'In_Production': counts_dict.get('Awaiting Acknowledgement', 0) + counts_dict.get('In Production', 0),
-        'Ready_to_Ship': counts_dict.get('Ready to Ship', 0),
-        'Shipped_Delivered': counts_dict.get('Shipped', 0) + counts_dict.get('Delivered', 0),
-    }
+    so_pipeline = [
+        {'label': 'Draft', 'count': counts_dict.get('Draft', 0), 'tone': 'slate'},
+        {'label': 'Pending approval', 'count': counts_dict.get('Pending Approval', 0), 'tone': 'amber'},
+        {'label': 'Approved', 'count': counts_dict.get('Pending', 0), 'tone': 'sky'},
+        {'label': 'In production', 'count': counts_dict.get('Awaiting Acknowledgement', 0) + counts_dict.get('In Production', 0), 'tone': 'primary'},
+        {'label': 'Ready to ship', 'count': counts_dict.get('Ready to Ship', 0) + counts_dict.get('Partially Shipped', 0), 'tone': 'emerald'},
+    ]
+    so_peak = max((s['count'] for s in so_pipeline), default=0) or 1
+    for s in so_pipeline:
+        s['width'] = round(s['count'] / so_peak * 100)
+    so_open_total = sum(s['count'] for s in so_pipeline)
+    so_closed_total = counts_dict.get('Shipped', 0) + counts_dict.get('Delivered', 0)
 
     context = {
         'warehouse_stats': warehouse_stats,
-        'chart_data': chart_data,
         'inventory_metrics': inventory_metrics,
         'global_utilization': global_utilization,
         'global_utilization_bar': min(global_utilization, 100),
+        'capacity_status': capacity_status,
+        'over_capacity_sites': over_capacity_sites,
+        'worst_site': worst_site,
         'total_daily_cost': total_daily_cost,
         'recent_logs': recent_logs,
         'active_shipments': active_shipments,
         'active_shipments_total': active_shipments_total,
         'degrading_batches': degrading_batches,
         'degrading_batches_total': degrading_batches_total,
-        'sales_order_stats': sales_order_stats,
+        'so_pipeline': so_pipeline,
+        'so_open_total': so_open_total,
+        'so_closed_total': so_closed_total,
         'current_timestamp': date.today().strftime('%Y-%m-%d'),
+        'today': today,
         # analytics upgrade
         'attention': attention,
         'attention_total': attention_total,
@@ -408,6 +463,7 @@ def dashboard_view(request):
         'inventory_value': inventory_value,
         'inventory_value_compact': inventory_value_compact,
         'last_activity': last_activity,
+        'is_live': is_live,
     }
 
     return render(request, 'dashboard.html', context)

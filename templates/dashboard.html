@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load humanize %}
 
-{% block title %}Executive Dashboard - TerraHub{% endblock %}
+{% block title %}Operations Overview - TerraHub{% endblock %}
 
 {% block content %}
 <div class="dash-shell">
@@ -38,52 +38,97 @@
     </defs>
 </svg>
 
+
 <!-- ===================== Header ===================== -->
 <header class="dashboard-header-row animate-fade-in-up">
-    <div>
-        <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
-            <span class="separator">/</span>
-            <span class="current-page">Overview</span>
-        </nav>
-        <span class="page-eyebrow">Executive Dashboard</span>
-        <h1 class="page-title-lg">Operations Overview</h1>
-    </div>
+    <h1 class="page-title-lg">Operations Overview</h1>
 
     <div class="header-action-tray">
-        <div class="timestamp-badge">
-            <span class="live-dot"></span>
-            {% if last_activity %}Updated {{ last_activity|timesince }} ago{% else %}As of {{ current_timestamp }}{% endif %}
+        <div class="timestamp-badge{% if is_live %} is-live{% endif %}">
+            {% if is_live %}
+            <span class="live-dot" aria-hidden="true"></span>
+            Live &middot; updated {{ last_activity|timesince }} ago
+            {% elif last_activity %}
+            <svg class="stale-icon" aria-hidden="true"><use href="#i-clock"/></svg>
+            Last activity {{ last_activity|timesince }} ago
+            {% else %}
+            As of {{ current_timestamp }}
+            {% endif %}
         </div>
-        <a href="{% url 'registry' %}" class="btn btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">Registry Ledger</a>
-        <a href="{% url 'approvals_inbox' %}" class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">Approvals Inbox</a>
+        <a href="{% url 'registry' %}" class="btn btn-secondary btn-compact">Registry Ledger</a>
+        <a href="{% url 'approvals_inbox' %}" class="btn btn-primary btn-compact">Approvals Inbox</a>
     </div>
 </header>
 
-<!-- ===================== KPI Row ===================== -->
-<section class="kpi-wrapper-grid kpi-v2 animate-fade-in-up" style="animation-delay: 0.05s;">
+<!-- ===================== Needs Attention ===================== -->
+<section class="attn-section animate-fade-in-up" aria-label="Needs attention" style="animation-delay: 0.03s;">
+    {% if attention_total %}
+    <div class="attn-row">
+        {% if attention.over_capacity %}
+        <a href="{% url 'warehouse_list' %}" class="attn-chip attn-rose">
+            <svg aria-hidden="true"><use href="#i-building"/></svg><strong>{{ attention.over_capacity }}</strong> warehouse{{ attention.over_capacity|pluralize:"s" }} over capacity
+        </a>
+        {% endif %}
+        {% if attention.overdue_pos %}
+        <a href="{% url 'po_list' %}" class="attn-chip attn-rose">
+            <svg aria-hidden="true"><use href="#i-alert-circle"/></svg><strong>{{ attention.overdue_pos }}</strong> overdue purchase order{{ attention.overdue_pos|pluralize }}
+        </a>
+        {% endif %}
+        {% if attention.late_sos %}
+        <a href="{% url 'so_list' %}" class="attn-chip attn-rose">
+            <svg aria-hidden="true"><use href="#i-clock"/></svg><strong>{{ attention.late_sos }}</strong> sales order{{ attention.late_sos|pluralize }} past deadline
+        </a>
+        {% endif %}
+        {% if attention.delayed_shipments %}
+        <a href="{% url 'shipments' %}" class="attn-chip attn-rose">
+            <svg aria-hidden="true"><use href="#i-truck"/></svg><strong>{{ attention.delayed_shipments }}</strong> delayed / discrepant shipment{{ attention.delayed_shipments|pluralize }}
+        </a>
+        {% endif %}
+        {% if attention.approvals %}
+        <a href="{% url 'approvals_inbox' %}" class="attn-chip attn-amber">
+            <svg aria-hidden="true"><use href="#i-check-circle"/></svg><strong>{{ attention.approvals }}</strong> awaiting approval
+        </a>
+        {% endif %}
+        {% if attention.awaiting_materials %}
+        <a href="{% url 'readiness' %}" class="attn-chip attn-amber">
+            <svg aria-hidden="true"><use href="#i-package"/></svg><strong>{{ attention.awaiting_materials }}</strong> run{{ attention.awaiting_materials|pluralize }} awaiting materials
+        </a>
+        {% endif %}
+        {% if attention.quarantined %}
+        <a href="{% url 'warehouse_inventory' %}" class="attn-chip attn-amber">
+            <svg aria-hidden="true"><use href="#i-shield"/></svg><strong>{{ attention.quarantined }}</strong> quarantined batch{{ attention.quarantined|pluralize:"es" }}
+        </a>
+        {% endif %}
+        {% if attention.pending_audits %}
+        <a href="{% url 'stock_audit' %}" class="attn-chip attn-slate">
+            <svg aria-hidden="true"><use href="#i-clipboard-check"/></svg><strong>{{ attention.pending_audits }}</strong> stock audit{{ attention.pending_audits|pluralize }} to resolve
+        </a>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="callout-ok">
+        <svg aria-hidden="true"><use href="#i-check-circle"/></svg>
+        Nothing needs attention &mdash; no overdue orders, delayed shipments, full warehouses or open approvals.
+    </div>
+    {% endif %}
+</section>
 
-    <!-- Active Raw Materials -->
+<!-- ===================== KPI Row ===================== -->
+<section class="kpi-wrapper-grid kpi-v2 animate-fade-in-up" aria-label="Key figures" style="animation-delay: 0.06s;">
+
     <div class="kpi-item-card">
         <div class="kpi-top">
-            <span class="kpi-icon"><svg><use href="#i-box"/></svg></span>
-            <span class="kpi-label">Active Raw Materials</span>
+            <span class="kpi-icon" aria-hidden="true"><svg><use href="#i-box"/></svg></span>
+            <span class="kpi-label">Raw materials on hand</span>
         </div>
         <div class="kpi-value-row">
-            <span class="kpi-value">{{ inventory_metrics.raw_materials|floatformat:0|intcomma }}</span>
-            <span class="badge badge-sky">MT Stocked</span>
+            <span class="kpi-value">{{ inventory_metrics.raw_materials_mt|floatformat:0|intcomma }}<span class="kpi-unit">MT</span></span>
         </div>
         <div class="kpi-foot">
-            Intake vs prior 30&nbsp;days &nbsp;
-            {% if kpi_deltas.raw_materials is None %}
-            <span class="trend-pill flat"><svg><use href="#i-minus"/></svg> no baseline</span>
-            {% elif kpi_deltas.raw_materials >= 0 %}
-            <span class="trend-pill up"><svg><use href="#i-trend-up"/></svg>{{ kpi_deltas.raw_materials|floatformat:0 }}%</span>
-            {% else %}
-            <span class="trend-pill down"><svg><use href="#i-trend-down"/></svg>{{ kpi_deltas.raw_materials|floatformat:0 }}%</span>
-            {% endif %}
+            Intake vs prior 30&nbsp;days
+            {% include "partials/_trend_pill.html" with t=kpi_deltas.raw_materials unit="MT" %}
         </div>
-        <div class="kpi-sparkline-box">
+        <div class="kpi-sparkline-box" role="img" aria-label="Weekly raw-material intake, last 6 weeks">
             {% for w in raw_spark %}
             <div class="sparkbar active-primary" style="height: {{ w.height }}%;" title="{{ w.label }}"></div>
             {% empty %}
@@ -92,27 +137,19 @@
         </div>
     </div>
 
-    <!-- Finished Goods -->
     <div class="kpi-item-card">
         <div class="kpi-top">
-            <span class="kpi-icon"><svg><use href="#i-package-check"/></svg></span>
-            <span class="kpi-label">Finished Goods</span>
+            <span class="kpi-icon" aria-hidden="true"><svg><use href="#i-package-check"/></svg></span>
+            <span class="kpi-label">Finished goods</span>
         </div>
         <div class="kpi-value-row">
-            <span class="kpi-value">{{ inventory_metrics.finished_goods|floatformat:0|intcomma }}</span>
-            <span class="badge badge-emerald">Units Ready</span>
+            <span class="kpi-value">{{ inventory_metrics.finished_goods|floatformat:0|intcomma }}<span class="kpi-unit">units</span></span>
         </div>
         <div class="kpi-foot">
-            Output vs prior 30&nbsp;days &nbsp;
-            {% if kpi_deltas.finished_goods is None %}
-            <span class="trend-pill flat"><svg><use href="#i-minus"/></svg> no baseline</span>
-            {% elif kpi_deltas.finished_goods >= 0 %}
-            <span class="trend-pill up"><svg><use href="#i-trend-up"/></svg>{{ kpi_deltas.finished_goods|floatformat:0 }}%</span>
-            {% else %}
-            <span class="trend-pill down"><svg><use href="#i-trend-down"/></svg>{{ kpi_deltas.finished_goods|floatformat:0 }}%</span>
-            {% endif %}
+            Output vs prior 30&nbsp;days
+            {% include "partials/_trend_pill.html" with t=kpi_deltas.finished_goods unit="units" %}
         </div>
-        <div class="kpi-sparkline-box">
+        <div class="kpi-sparkline-box" role="img" aria-label="Weekly finished-goods output, last 6 weeks">
             {% for w in fg_spark %}
             <div class="sparkbar active-secondary" style="height: {{ w.height }}%;" title="{{ w.label }}"></div>
             {% empty %}
@@ -121,109 +158,53 @@
         </div>
     </div>
 
-    <!-- Global Space Utilization -->
     <div class="kpi-item-card">
         <div class="kpi-top">
-            <span class="kpi-icon"><svg><use href="#i-layers"/></svg></span>
-            <span class="kpi-label">Global Space Utilization</span>
+            <span class="kpi-icon" aria-hidden="true"><svg><use href="#i-layers"/></svg></span>
+            <span class="kpi-label">Space used</span>
         </div>
         <div class="kpi-value-row">
             <span class="kpi-value">{{ global_utilization|floatformat:1 }}%</span>
-            <span class="badge {% if global_utilization > 85 %}badge-rose{% elif global_utilization > 70 %}badge-amber{% else %}badge-emerald{% endif %}">
-                {% if global_utilization > 85 %}Critical{% elif global_utilization > 70 %}Warning{% else %}Healthy{% endif %}
+            <span class="badge {% if capacity_status == 'crit' %}badge-rose{% elif capacity_status == 'warn' %}badge-amber{% else %}badge-emerald{% endif %}">
+                {% if capacity_status == 'crit' %}Critical{% elif capacity_status == 'warn' %}Warning{% else %}Healthy{% endif %}
             </span>
         </div>
-        <div class="kpi-meter">
-            <span class="{% if global_utilization > 85 %}crit{% elif global_utilization > 70 %}warn{% endif %}"
-                  style="width: {{ global_utilization_bar|floatformat:0 }}%;"></span>
+        <div class="kpi-meter" role="img" aria-label="{{ global_utilization|floatformat:0 }}% of total capacity used">
+            <span class="{{ capacity_status }}" style="width: {{ global_utilization_bar|floatformat:0 }}%;"></span>
         </div>
-        <div class="kpi-foot">Used capacity across all facilities{% if global_utilization > 100 %} &mdash; overbooked{% endif %}.</div>
+        <div class="kpi-foot">
+            {% if over_capacity_sites %}
+            <strong class="text-danger">{{ over_capacity_sites|length }} site{{ over_capacity_sites|length|pluralize }} over capacity</strong>
+            &mdash; {% for w in over_capacity_sites %}{{ w.name }} {{ w.utilization_percent|floatformat:0 }}%{% if not forloop.last %}, {% endif %}{% endfor %}
+            {% elif worst_site and worst_site.utilization_percent > 85 %}
+            <strong class="text-warning">Near full:</strong> {{ worst_site.name }} {{ worst_site.utilization_percent|floatformat:0 }}%
+            {% else %}
+            Average across all facilities.
+            {% endif %}
+        </div>
     </div>
 
-    <!-- Est. Daily Space Cost -->
     <div class="kpi-item-card">
         <div class="kpi-top">
-            <span class="kpi-icon"><svg><use href="#i-dollar"/></svg></span>
-            <span class="kpi-label">Est. Daily Space Cost</span>
-        </div>
-        <div class="kpi-value-row">
-            <span class="kpi-value">RM&thinsp;{{ total_daily_cost|floatformat:2|intcomma }}</span>
-            <span class="badge badge-amber">Daily Burn</span>
-        </div>
-        <div class="kpi-foot">Rental spend on external &amp; usage-billed storage, per day.</div>
-    </div>
-
-    <!-- Inventory Value on Hand -->
-    <div class="kpi-item-card">
-        <div class="kpi-top">
-            <span class="kpi-icon"><svg><use href="#i-wallet"/></svg></span>
-            <span class="kpi-label">Inventory Value on Hand</span>
+            <span class="kpi-icon" aria-hidden="true"><svg><use href="#i-wallet"/></svg></span>
+            <span class="kpi-label">Inventory value</span>
         </div>
         <div class="kpi-value-row">
             <span class="kpi-value" title="RM {{ inventory_value|floatformat:0|intcomma }}">{{ inventory_value_compact }}</span>
-            <span class="badge badge-slate">Valued</span>
         </div>
         <div class="kpi-foot">RM {{ inventory_value|floatformat:0|intcomma }} &mdash; raw-material cost + finished-goods price, active batches.</div>
     </div>
 </section>
 
-<!-- ===================== Needs Attention ===================== -->
-<section class="animate-fade-in-up" style="animation-delay: 0.06s; margin-bottom: 2.5rem;">
-    {% if attention_total %}
-    <div style="display: flex; flex-wrap: wrap; gap: 0.75rem;">
-        {% if attention.approvals %}
-        <a href="{% url 'approvals_inbox' %}" class="attn-chip attn-amber">
-            <svg><use href="#i-check-circle"/></svg><strong>{{ attention.approvals }}</strong> awaiting approval
-        </a>
-        {% endif %}
-        {% if attention.overdue_pos %}
-        <a href="{% url 'po_list' %}" class="attn-chip attn-rose">
-            <svg><use href="#i-alert-circle"/></svg><strong>{{ attention.overdue_pos }}</strong> overdue purchase order{{ attention.overdue_pos|pluralize }}
-        </a>
-        {% endif %}
-        {% if attention.late_sos %}
-        <a href="{% url 'so_list' %}" class="attn-chip attn-rose">
-            <svg><use href="#i-clock"/></svg><strong>{{ attention.late_sos }}</strong> sales order{{ attention.late_sos|pluralize }} past deadline
-        </a>
-        {% endif %}
-        {% if attention.delayed_shipments %}
-        <a href="{% url 'shipments' %}" class="attn-chip attn-rose">
-            <svg><use href="#i-truck"/></svg><strong>{{ attention.delayed_shipments }}</strong> delayed / discrepant shipment{{ attention.delayed_shipments|pluralize }}
-        </a>
-        {% endif %}
-        {% if attention.awaiting_materials %}
-        <a href="{% url 'readiness' %}" class="attn-chip attn-amber">
-            <svg><use href="#i-package"/></svg><strong>{{ attention.awaiting_materials }}</strong> run{{ attention.awaiting_materials|pluralize }} awaiting materials
-        </a>
-        {% endif %}
-        {% if attention.quarantined %}
-        <a href="{% url 'warehouse_inventory' %}" class="attn-chip attn-amber">
-            <svg><use href="#i-shield"/></svg><strong>{{ attention.quarantined }}</strong> quarantined batch{{ attention.quarantined|pluralize:"es" }}
-        </a>
-        {% endif %}
-        {% if attention.pending_audits %}
-        <a href="{% url 'stock_audit' %}" class="attn-chip attn-slate">
-            <svg><use href="#i-clipboard-check"/></svg><strong>{{ attention.pending_audits }}</strong> stock audit{{ attention.pending_audits|pluralize }} to resolve
-        </a>
-        {% endif %}
-    </div>
-    {% else %}
-    <div class="callout-ok">
-        <svg><use href="#i-check-circle"/></svg>
-        Nothing needs attention &mdash; no overdue orders, delayed shipments, or open approvals.
-    </div>
-    {% endif %}
-</section>
-
-<!-- ===================== Production In Progress ===================== -->
-<section class="dash-section animate-fade-in-up" style="animation-delay: 0.08s;">
+<!-- ===================== Production ===================== -->
+<section class="dash-section animate-fade-in-up" style="animation-delay: 0.09s;">
     <div class="dash-section-head">
-        <span class="sec-icon"><svg><use href="#i-hammer"/></svg></span>
+        <span class="sec-icon" aria-hidden="true"><svg><use href="#i-hammer"/></svg></span>
         <div>
-            <h2>Production In Progress</h2>
-            <div class="sec-sub">Live runs on the floor, tracked against target yield.</div>
+            <h2>Production</h2>
+            <div class="sec-sub">Runs on the floor, weekly output and material usage against recipe.</div>
         </div>
-        <a href="{% url 'readiness' %}" class="sec-link">All runs <svg><use href="#i-arrow-right"/></svg></a>
+        <a href="{% url 'readiness' %}" class="sec-link">All runs <svg aria-hidden="true"><use href="#i-arrow-right"/></svg></a>
     </div>
 
     {% if run_progress %}
@@ -235,7 +216,7 @@
                     <div class="run-card-num">{{ run.run_number }}</div>
                     <div class="run-card-prod">{{ run.product }}</div>
                 </div>
-                <span class="badge {% if run.status == 'InProgress' %}badge-sky{% elif run.status == 'Paused' %}badge-amber{% else %}badge-slate{% endif %}">{{ run.status_display }}</span>
+                <span class="badge {% if run.status == 'InProgress' %}badge-sky{% elif run.status == 'Paused' or run.status == 'Awaiting Materials' %}badge-amber{% else %}badge-slate{% endif %}">{{ run.status_display }}</span>
             </div>
             <div class="run-card-stats">
                 <span>{{ run.made|floatformat:0 }} / {{ run.expected|floatformat:0 }} {{ run.unit }}</span>
@@ -246,229 +227,229 @@
             </div>
             <div class="run-card-foot">
                 <span>Supervisor &middot; {{ run.supervisor }}</span>
-                {% if run.days_running is not None %}<span>Day {{ run.days_running }}</span>{% endif %}
+                {% if run.days_running is not None %}
+                <span class="run-age {{ run.age_level }}">{% if run.age_level %}<svg aria-hidden="true"><use href="#i-clock"/></svg>{% endif %}Day {{ run.days_running }}{% if run.age_level %}<span class="sr-only"> (waiting too long)</span>{% endif %}</span>
+                {% endif %}
             </div>
         </a>
         {% endfor %}
     </div>
     {% else %}
     <div class="zero-state-box">
-        <div class="zero-state-icon"><svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#i-coffee"/></svg></div>
-        <h4 style="font-weight: 600; color: var(--text-main);">No runs on the floor</h4>
-        <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">Nothing is currently in progress, paused, or awaiting materials.</p>
+        <div class="zero-state-icon"><svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-coffee"/></svg></div>
+        <h4 class="zero-state-title">No runs on the floor</h4>
+        <p class="zero-state-text">Nothing is currently in progress, paused, or awaiting materials.</p>
     </div>
     {% endif %}
-</section>
 
-<!-- ===================== Analytics ===================== -->
-<section class="dash-section animate-fade-in-up" style="animation-delay: 0.1s;">
-    <div class="dash-section-head">
-        <span class="sec-icon"><svg><use href="#i-bar-chart"/></svg></span>
-        <div>
-            <h2>Analytics</h2>
-            <div class="sec-sub">Demand funnel, capacity load, and production yield.</div>
+    <div class="charts-container-grid dash-subgrid">
+        <div class="chart-box col-span-2-lg">
+            <h3>Finished-goods output <span class="chart-sub">(units per week, last 12 weeks)</span></h3>
+            <div class="chart-wrapper">
+                <canvas id="outputTrendChart" role="img" aria-label="Weekly finished-goods output chart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-box chart-box--auto">
+            <h3>Material usage variance</h3>
+            <div class="var-list">
+                {% for m in material_variance %}
+                <div class="var-row">
+                    <div class="var-text">
+                        <div class="var-name">{{ m.material__name }}</div>
+                        <div class="var-meta">{{ m.material__sku }} &middot; {{ m.runs }} run{{ m.runs|pluralize }}</div>
+                    </div>
+                    <span class="var-val {{ m.level }}">
+                        {% if m.avg_var >= 0 %}+{% endif %}{{ m.avg_var|floatformat:1 }}%
+                        <span class="var-dir">{% if m.level == 'ok' %}in tolerance{% else %}{{ m.direction }}{% endif %}</span>
+                    </span>
+                </div>
+                {% empty %}
+                <p class="empty-note">No completed-run usage data yet.</p>
+                {% endfor %}
+            </div>
+            <div class="section-note">Average actual vs recipe on completed runs. Within ±3% is in tolerance; beyond ±10% is severe.</div>
         </div>
     </div>
+</section>
 
-    <div class="charts-container-grid" style="margin-bottom: 1.5rem;">
-        <div class="chart-box chart-box--donut">
-            <h3>Sales Order Funnel</h3>
-            <div class="chart-wrapper chart-wrapper--donut">
-                <canvas id="salesOrderFunnelChart"></canvas>
-            </div>
-            <div class="color-ledger" id="sales-funnel-ledger"></div>
-        </div>
-
-        <div class="chart-box col-span-2-lg">
-            <h3>Warehouse Capacity Optimization <span style="font-weight:400;color:var(--text-muted);font-size:0.85rem;">(total vs. used, MT)</span></h3>
-            <div class="chart-wrapper">
-                <canvas id="warehouseCapacityChart"></canvas>
-            </div>
+<!-- ===================== Orders & Logistics ===================== -->
+<section class="dash-section animate-fade-in-up" style="animation-delay: 0.12s;">
+    <div class="dash-section-head">
+        <span class="sec-icon" aria-hidden="true"><svg><use href="#i-truck"/></svg></span>
+        <div>
+            <h2>Orders &amp; Logistics</h2>
+            <div class="sec-sub">Open sales orders by stage and shipments that are approved or on the road.</div>
         </div>
     </div>
 
     <div class="charts-container-grid">
-        <div class="chart-box col-span-2-lg">
-            <h3>Finished-Goods Output <span style="font-weight:400;color:var(--text-muted);font-size:0.85rem;">(last 12 weeks)</span></h3>
-            <div class="chart-wrapper">
-                <canvas id="outputTrendChart"></canvas>
-            </div>
-        </div>
-
-        <div class="chart-box">
-            <h3>Material Usage Variance</h3>
-            <div style="flex: 1; overflow-y: auto;">
-                <div class="var-list">
-                    {% for m in material_variance %}
-                    <div class="var-row">
-                        <div>
-                            <div class="var-name">{{ m.material__name }}</div>
-                            <div class="var-meta">{{ m.material__sku }} &middot; {{ m.runs }} run{{ m.runs|pluralize }}</div>
-                        </div>
-                        <span class="var-val {% if m.avg_var > 5 %}over{% elif m.avg_var < -1 %}under{% else %}neutral{% endif %}">
-                            {% if m.avg_var >= 0 %}+{% endif %}{{ m.avg_var|floatformat:1 }}%
-                        </span>
-                    </div>
-                    {% empty %}
-                    <p style="font-size: 0.85rem; color: var(--text-muted); padding-top: 1rem;">No completed-run usage data yet.</p>
-                    {% endfor %}
-                </div>
-            </div>
-            <div class="section-note">Avg actual vs expected consumption. Positive = over-consuming.</div>
-        </div>
-    </div>
-</section>
-
-<!-- ===================== Logistics & Facilities ===================== -->
-<section class="dash-section animate-fade-in-up" style="animation-delay: 0.13s;">
-    <div class="dash-section-head">
-        <span class="sec-icon"><svg><use href="#i-truck"/></svg></span>
-        <div>
-            <h2>Logistics &amp; Facilities</h2>
-            <div class="sec-sub">Shipments in motion and per-warehouse space economics.</div>
-        </div>
-    </div>
-
-    <div class="split-grid" style="margin-bottom: 0;">
-        <div class="pane-card">
+        <div class="chart-box chart-box--auto">
             <h3>
-                <svg><use href="#i-truck"/></svg> Active Logistics Pipeline
+                Sales order pipeline
+                <a href="{% url 'so_list' %}" class="sec-link">All orders <svg aria-hidden="true"><use href="#i-arrow-right"/></svg></a>
+            </h3>
+            {% if so_open_total %}
+            <ul class="funnel-list">
+                {% for s in so_pipeline %}
+                <li class="funnel-row">
+                    <span class="funnel-label">{{ s.label }}</span>
+                    <span class="funnel-track"><span class="funnel-fill tone-{{ s.tone }}" style="width: {{ s.width }}%;"></span></span>
+                    <span class="funnel-count">{{ s.count }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="empty-note">No open sales orders.</p>
+            {% endif %}
+            <div class="section-note">{{ so_open_total }} open &middot; {{ so_closed_total }} shipped or delivered to date.</div>
+        </div>
+
+        <div class="pane-card col-span-2-lg">
+            <h3>
+                Active shipments
                 {% if active_shipments_total %}
                 <a href="{% url 'shipments' %}" class="sec-link">
-                    {% if active_shipments_total > active_shipments|length %}View all {{ active_shipments_total }}{% else %}View all{% endif %} <svg><use href="#i-arrow-right"/></svg>
+                    {% if active_shipments_total > active_shipments|length %}View all {{ active_shipments_total }}{% else %}View all{% endif %} <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
                 </a>
                 {% endif %}
             </h3>
             <div class="data-table-container">
-                <table class="custom-table">
+                <table class="custom-table ship-table">
                     <thead>
                         <tr>
-                            <th>Tracking / Fleet ID</th>
-                            <th>Direction</th>
-                            <th>Status</th>
-                            <th>ETA Date</th>
-                            <th style="text-align: right;">Items</th>
+                            <th scope="col">Shipment</th>
+                            <th scope="col">ETA</th>
+                            <th scope="col">Status</th>
+                            <th scope="col" class="num-cell">Items</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for shipment in active_shipments %}
                         <tr>
-                            <td style="font-family: 'Outfit', sans-serif; font-weight: 600;">
-                                <a href="{% url 'shipment_detail' shipment.pk %}" style="color: var(--primary); text-decoration: none;">{{ shipment.tracking_number }}</a>
+                            <td><div class="ship-id-cell">
+                                <span class="dir-cell {{ shipment.direction|lower }}" title="{{ shipment.get_direction_display }}">
+                                    <svg aria-hidden="true"><use href="#i-{% if shipment.direction == 'Inbound' %}inbound{% elif shipment.direction == 'Outbound' %}outbound{% else %}repeat{% endif %}"/></svg>
+                                    <span class="sr-only">{{ shipment.direction }}:</span>
+                                </span>
+                                <a href="{% url 'shipment_detail' shipment.pk %}" class="id-link" title="{{ shipment.tracking_number }}">{{ shipment.tracking_number }}</a>
+                            </div></td>
+                            <td>
+                                {% if not shipment.expected_eta_date %}<span class="muted-text">Not set</span>
+                                {% elif shipment.expected_eta_date < today and shipment.status != 'Delayed' %}<span class="text-danger">{{ shipment.expected_eta_date|date:"d M" }} &middot; overdue</span>
+                                {% else %}{{ shipment.expected_eta_date|date:"d M" }}{% endif %}
                             </td>
                             <td>
-                                {% if shipment.direction == 'Inbound' %}
-                                <span class="dir-cell inbound"><svg><use href="#i-inbound"/></svg><span>Inbound</span></span>
-                                {% elif shipment.direction == 'Outbound' %}
-                                <span class="dir-cell outbound"><svg><use href="#i-outbound"/></svg><span>Outbound</span></span>
-                                {% else %}
-                                <span class="dir-cell transfer"><svg><use href="#i-repeat"/></svg><span>Transfer</span></span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <span class="badge {% if shipment.status == 'Delayed' %}badge-rose{% elif shipment.status == 'Dispatched' %}badge-sky{% else %}badge-slate{% endif %}">
-                                    {{ shipment.status }}
+                                <span class="badge {% if shipment.status == 'Delayed' or shipment.status == 'Discrepant' %}badge-rose{% elif shipment.status == 'Dispatched' %}badge-sky{% elif shipment.status == 'Pending Approval' or shipment.status == 'Logistics Review' %}badge-amber{% else %}badge-slate{% endif %}">
+                                    {{ shipment.get_status_display }}
                                 </span>
                             </td>
-                            <td style="color: var(--text-muted);">{{ shipment.expected_eta_date|default:"N/A" }}</td>
-                            <td style="text-align: right; font-weight: 700;">{{ shipment.items.count }}</td>
+                            <td class="num-cell">{{ shipment.item_count }}</td>
                         </tr>
                         {% empty %}
                         <tr>
-                            <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">
-                                No active movements in pipeline.
-                            </td>
+                            <td colspan="4" class="empty-cell">No shipments approved or on the road.</td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
         </div>
-
-        <div class="pane-card">
-            <h3><svg><use href="#i-building"/></svg> Space &amp; Cost Optimization</h3>
-            {% for w in warehouse_stats %}
-            <div class="wh-card">
-                <div class="wh-card-head">
-                    <div>
-                        <h4>{{ w.name }}</h4>
-                        <div class="wh-sub">Billing &middot; {{ w.billing_mode }}</div>
-                    </div>
-                    {% if w.raw_type == 'Internal' %}
-                    <span class="badge badge-emerald">Internal</span>
-                    {% else %}
-                    <span class="badge badge-rose">External</span>
-                    {% endif %}
-                </div>
-
-                <div class="wh-line">
-                    <span>Utilized: {{ w.used_mt|floatformat:1 }} / {{ w.capacity_mt|floatformat:1 }} MT</span>
-                    <strong>{{ w.utilization_percent|floatformat:1 }}%</strong>
-                </div>
-                <div class="micro-progress-container">
-                    <div class="micro-progress-bar {% if w.utilization_percent > 85 %}progress-rose{% elif w.utilization_percent > 70 %}progress-amber{% else %}progress-emerald{% endif %}"
-                        style="width: {% if w.utilization_percent > 100 %}100{% else %}{{ w.utilization_percent }}{% endif %}%;"></div>
-                </div>
-                {% if w.quarantined_mt %}<div style="font-size:0.72rem; color:var(--warning-strong); margin-top:0.2rem;">incl. {{ w.quarantined_mt|floatformat:1 }} MT quarantined</div>{% endif %}
-
-                <div class="wh-card-foot">
-                    <span>Daily burn rate</span>
-                    <span class="burn {% if w.daily_cost <= 0 %}free{% endif %}">
-                        {% if w.daily_cost > 0 %}RM&thinsp;{{ w.daily_cost|floatformat:2|intcomma }}{% else %}Free (owned){% endif %}
-                    </span>
-                </div>
-            </div>
-            {% empty %}
-            <p style="font-size: 0.85rem; color: var(--text-muted);">No warehouses configured.</p>
-            {% endfor %}
-        </div>
     </div>
 </section>
 
-<!-- ===================== Risk & Compliance ===================== -->
-<section class="dash-section animate-fade-in" style="animation-delay: 0.16s;">
+<!-- ===================== Facilities ===================== -->
+<section class="dash-section animate-fade-in-up" style="animation-delay: 0.15s;">
     <div class="dash-section-head">
-        <span class="sec-icon" style="background: var(--danger-bg); color: var(--danger);"><svg><use href="#i-shield-alert"/></svg></span>
+        <span class="sec-icon" aria-hidden="true"><svg><use href="#i-building"/></svg></span>
+        <div>
+            <h2>Facilities</h2>
+            <div class="sec-sub">
+                Space and rent per warehouse &middot;
+                {% if total_daily_cost > 0 %}<strong class="sec-sub-strong">RM&thinsp;{{ total_daily_cost|floatformat:2|intcomma }}/day</strong> in rental{% else %}no rental spend{% endif %}
+            </div>
+        </div>
+        <a href="{% url 'warehouse_list' %}" class="sec-link">All facilities <svg aria-hidden="true"><use href="#i-arrow-right"/></svg></a>
+    </div>
+
+    {% if warehouse_stats %}
+    <div class="wh-grid">
+        {% for w in warehouse_stats %}
+        <div class="wh-card">
+            <div class="wh-card-head">
+                <div>
+                    <h4>{{ w.name }}</h4>
+                    <div class="wh-sub">Billing &middot; {{ w.billing_mode }}</div>
+                </div>
+                {% if w.raw_type == 'Internal' %}
+                <span class="badge badge-slate">Internal</span>
+                {% else %}
+                <span class="badge badge-sky">External</span>
+                {% endif %}
+            </div>
+
+            <div class="wh-line">
+                <span>{{ w.used_mt|floatformat:1 }} / {{ w.capacity_mt|floatformat:1 }} MT</span>
+                <strong class="{% if w.utilization_percent > 100 %}text-danger{% elif w.utilization_percent > 85 %}text-warning{% endif %}">
+                    {{ w.utilization_percent|floatformat:1 }}%{% if w.utilization_percent > 100 %} &middot; over{% elif w.utilization_percent > 85 %} &middot; near full{% endif %}
+                </strong>
+            </div>
+            <div class="micro-progress-container">
+                <div class="micro-progress-bar {% if w.utilization_percent > 100 %}progress-rose{% elif w.utilization_percent > 85 %}progress-amber{% else %}progress-emerald{% endif %}"
+                    style="width: {% if w.utilization_percent > 100 %}100{% else %}{{ w.utilization_percent }}{% endif %}%;"></div>
+            </div>
+            {% if w.quarantined_mt %}<div class="wh-note">incl. {{ w.quarantined_mt|floatformat:1 }} MT quarantined</div>{% endif %}
+
+            <div class="wh-card-foot">
+                <span>Daily rent</span>
+                <span class="burn {% if w.daily_cost <= 0 %}free{% endif %}">
+                    {% if w.daily_cost > 0 %}RM&thinsp;{{ w.daily_cost|floatformat:2|intcomma }}{% else %}None (owned){% endif %}
+                </span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-note">No warehouses configured.</p>
+    {% endif %}
+</section>
+
+<!-- ===================== Risk & Compliance ===================== -->
+<section class="dash-section animate-fade-in-up" style="animation-delay: 0.18s;">
+    <div class="dash-section-head">
+        <span class="sec-icon sec-icon--danger" aria-hidden="true"><svg><use href="#i-shield-alert"/></svg></span>
         <div>
             <h2>Risk &amp; Compliance</h2>
-            <div class="sec-sub">Shelf-life exposure and the most recent registry movements.</div>
+            <div class="sec-sub">Stock within 30 days of its shelf-life limit, soonest first.</div>
         </div>
+        {% if degrading_batches_total %}
+        <a href="{% url 'qa_dashboard' %}" class="sec-link">
+            {% if degrading_batches_total > degrading_batches|length %}View all {{ degrading_batches_total }}{% else %}View all{% endif %} <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
+        </a>
+        {% endif %}
     </div>
 
     <div class="risk-alert-box">
-        <h3>
-            <svg><use href="#i-shield-alert"/></svg> Predictive Material Degradation Alerts (FIFO risk)
-            {% if degrading_batches_total %}
-            <a href="{% url 'qa_dashboard' %}" class="sec-link" style="color: #dc2626;">
-                {% if degrading_batches_total > degrading_batches|length %}View all {{ degrading_batches_total }}{% else %}View all{% endif %} <svg><use href="#i-arrow-right"/></svg>
-            </a>
-            {% endif %}
-        </h3>
+        <h3><svg aria-hidden="true"><use href="#i-shield-alert"/></svg> Expiring stock (FIFO risk)</h3>
         {% if degrading_batches %}
         <div class="risk-grid">
             {% for batch in degrading_batches %}
             <div class="risk-item">
                 <div class="risk-tag-row">
-                    <span style="font-family: 'Outfit', sans-serif; font-weight: 700; font-size: 0.85rem; color: var(--primary);">
-                        {{ batch.batch_number }}
-                    </span>
+                    <span class="risk-batch-num">{{ batch.batch_number }}</span>
                     <span class="badge {% if batch.days_remaining <= 10 %}badge-rose{% else %}badge-amber{% endif %}">
-                        Expiring soon
+                        {% if batch.days_remaining < 0 %}Expired{% else %}Expiring soon{% endif %}
                     </span>
                 </div>
-
-                <div style="margin: 0.5rem 0;">
-                    <div style="font-weight: 600; color: var(--text-main);">
+                <div>
+                    <div class="risk-item-name">
                         {% if batch.material %}{{ batch.material.name }}{% elif batch.product %}{{ batch.product.name }}{% endif %}
                     </div>
-                    <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
-                        Stored at: {{ batch.location|default:"Unassigned" }}
-                    </div>
+                    <div class="risk-item-loc">Stored at: {{ batch.location|default:"Unassigned" }}</div>
                 </div>
-
-                <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #fee2e2; padding-top: 0.5rem; font-size: 0.8rem;">
-                    <span style="color: var(--text-muted);">Shelf life remaining</span>
-                    <span style="font-weight: 700; color: {% if batch.days_remaining <= 10 %}var(--danger){% else %}var(--warning-strong){% endif %};">
+                <div class="risk-item-foot">
+                    <span>Shelf life remaining</span>
+                    <span class="days-left {% if batch.days_remaining <= 10 %}crit{% else %}warn{% endif %}">
                         {{ batch.days_remaining }} day{{ batch.days_remaining|pluralize }}
                     </span>
                 </div>
@@ -477,54 +458,62 @@
         </div>
         {% else %}
         <div class="zero-state-box">
-            <div class="zero-state-icon"><svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#i-shield-check"/></svg></div>
-            <h4 style="font-weight: 600; color: var(--text-main);">No expiring stock</h4>
-            <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem; text-align: center;">
-                All active raw materials and finished goods sit within their defined storage thresholds.
-            </p>
+            <div class="zero-state-icon"><svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-shield-check"/></svg></div>
+            <h4 class="zero-state-title">No expiring stock</h4>
+            <p class="zero-state-text">All active raw materials and finished goods sit within their defined storage thresholds.</p>
         </div>
         {% endif %}
     </div>
+</section>
 
-    <div class="pane-card" style="margin-top: 1.5rem;">
-        <h3><svg><use href="#i-clipboard"/></svg> Recent Registry Movements</h3>
+<!-- ===================== Recent Activity ===================== -->
+<section class="dash-section animate-fade-in-up" style="animation-delay: 0.21s;">
+    <div class="dash-section-head">
+        <span class="sec-icon" aria-hidden="true"><svg><use href="#i-clipboard"/></svg></span>
+        <div>
+            <h2>Recent activity</h2>
+            <div class="sec-sub">The latest stock movements recorded in the registry.</div>
+        </div>
+        <a href="{% url 'registry' %}" class="sec-link">Full ledger <svg aria-hidden="true"><use href="#i-arrow-right"/></svg></a>
+    </div>
+
+    <div class="pane-card">
         <div class="data-table-container">
             <table class="custom-table">
                 <thead>
                     <tr>
-                        <th>Timestamp</th>
-                        <th>Action</th>
-                        <th>Item</th>
-                        <th>Quantity</th>
-                        <th>Facility</th>
+                        <th scope="col">When</th>
+                        <th scope="col">Action</th>
+                        <th scope="col">Item</th>
+                        <th scope="col" class="num-cell">Quantity</th>
+                        <th scope="col">Facility</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for log in recent_logs %}
                     <tr>
-                        <td style="color: var(--text-muted);">{{ log.timestamp|date:"Y-m-d H:i" }}</td>
+                        <td class="muted-text">{{ log.timestamp|date:"d M, H:i" }}</td>
                         <td>
                             <span class="badge {% if log.action_type == 'Inbound' or log.action_type == 'Produced' %}badge-emerald{% else %}badge-slate{% endif %}">
                                 {{ log.get_action_type_display|default:log.action_type }}
                             </span>
                         </td>
-                        <td style="font-weight: 500;">{{ log.item_name }}</td>
-                        <td>
+                        <td class="log-item-cell" title="{{ log.item_name }}">{{ log.item_name }}</td>
+                        <td class="num-cell">
                             {% if log.action_type == 'Inbound' or log.action_type == 'Produced' %}
-                            <span class="ledger-add-value">+{{ log.quantity_changed }}</span>
+                            <span class="ledger-add-value">+{{ log.quantity_changed|floatformat:"-2"|intcomma }}</span>
                             {% elif log.action_type == 'Outbound' or log.action_type == 'Consumed_For_Manufacturing' or log.action_type == 'Spoiled_Disposal' %}
-                            <span class="ledger-remove-value">-{{ log.quantity_changed }}</span>
+                            <span class="ledger-remove-value">&minus;{{ log.quantity_changed|floatformat:"-2"|intcomma }}</span>
                             {% else %}
-                            <span style="font-weight: 600; color: var(--text-main);">{{ log.quantity_changed }}</span>
+                            <span class="ledger-neutral-value">{{ log.quantity_changed|floatformat:"-2"|intcomma }}</span>
                             {% endif %}
+                            {% if log.material %}<span class="qty-unit">{{ log.material.unit_of_measure }}</span>{% endif %}
                         </td>
-                        <td>{{ log.warehouse.name|default:"N/A" }}</td>
+                        <td>{{ log.warehouse.name|default:"—" }}</td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">
-                            Registry logs empty.
-                        </td>
+                        <td colspan="5" class="empty-cell">No stock movements recorded yet.</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -534,8 +523,6 @@
 </section>
 
 <!-- Safe JSON data injection -->
-{{ chart_data|json_script:"chart-data" }}
-{{ sales_order_stats|json_script:"so-data" }}
 {{ output_trend|json_script:"output-trend-data" }}
 </div>
 {% endblock %}
@@ -546,17 +533,21 @@
     document.addEventListener('DOMContentLoaded', () => {
         if (typeof Chart === 'undefined') return;
 
-        const chartData = JSON.parse(document.getElementById('chart-data').textContent);
-        const soData = JSON.parse(document.getElementById('so-data').textContent);
         const outputTrend = JSON.parse(document.getElementById('output-trend-data').textContent);
 
+        // Colours come from the CSS tokens so the chart follows the stylesheet.
+        const css = getComputedStyle(document.documentElement);
+        const token = (name, fallback) => (css.getPropertyValue(name).trim() || fallback);
+        const PRIMARY = token('--primary', '#4f46e5');
+        const MUTED = token('--text-muted', '#52667a');
+        const GRID = token('--border-light', '#e2e8f0');
         const FONT = "'Plus Jakarta Sans', sans-serif";
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
         const tooltipStyle = {
             backgroundColor: 'rgba(15, 23, 42, 0.95)',
             titleColor: '#ffffff',
             bodyColor: '#e2e8f0',
-            borderColor: 'rgba(255, 255, 255, 0.1)',
-            borderWidth: 1,
             padding: 10,
             cornerRadius: 8,
             titleFont: { family: FONT, weight: '600' },
@@ -566,130 +557,40 @@
         // --- Weekly finished-goods output trend (line) ---
         const trendEl = document.getElementById('outputTrendChart');
         if (trendEl && outputTrend.labels.length) {
+            const vals = outputTrend.values;
+            const fmt = n => Math.round(n).toLocaleString();
+            trendEl.setAttribute('aria-label',
+                `Weekly finished-goods output over ${vals.length} weeks: ranged ${fmt(Math.min(...vals))} to ${fmt(Math.max(...vals))} units; latest week ${fmt(vals[vals.length - 1])} units.`);
+
             new Chart(trendEl.getContext('2d'), {
                 type: 'line',
                 data: {
                     labels: outputTrend.labels,
                     datasets: [{
                         label: 'Units produced',
-                        data: outputTrend.values,
-                        borderColor: 'rgba(79, 70, 229, 1)',
-                        backgroundColor: 'rgba(79, 70, 229, 0.08)',
+                        data: vals,
+                        borderColor: PRIMARY,
+                        backgroundColor: PRIMARY + '14',
                         borderWidth: 2,
                         fill: true,
-                        tension: 0.35,
+                        tension: 0,
                         pointRadius: 3,
-                        pointBackgroundColor: 'rgba(79, 70, 229, 1)'
+                        pointBackgroundColor: PRIMARY
                     }]
                 },
                 options: {
                     maintainAspectRatio: false,
                     responsive: true,
+                    animation: reduceMotion ? false : { duration: 800 },
                     plugins: { legend: { display: false }, tooltip: tooltipStyle },
                     scales: {
-                        x: { grid: { display: false }, ticks: { color: '#64748b', font: { family: FONT } } },
-                        y: { beginAtZero: true, grid: { color: 'rgba(15, 23, 42, 0.04)' }, ticks: { color: '#64748b', font: { family: FONT } } }
+                        x: { grid: { display: false }, ticks: { color: MUTED, font: { family: FONT } } },
+                        y: { beginAtZero: true, grid: { color: GRID }, ticks: { color: MUTED, font: { family: FONT } } }
                     }
                 }
             });
         } else if (trendEl) {
-            trendEl.parentElement.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem; text-align: center; padding-top: 3rem;">No yield logged in the last 12 weeks.</p>';
-        }
-
-        // --- Sales order funnel (doughnut) ---
-        const salesEl = document.getElementById('salesOrderFunnelChart');
-        const funnelLabels = ['Draft', 'Pending Approval', 'Pending (Approved)', 'In Production', 'Ready to Ship', 'Shipped & Delivered'];
-        const funnelCounts = [
-            soData.Draft, soData.Pending_Approval, soData.Pending_Approved,
-            soData.In_Production, soData.Ready_to_Ship, soData.Shipped_Delivered
-        ];
-        const funnelColors = [
-            'rgba(148, 163, 184, 0.85)', 'rgba(245, 158, 11, 0.85)', 'rgba(14, 165, 233, 0.85)',
-            'rgba(99, 102, 241, 0.85)', 'rgba(6, 182, 212, 0.85)', 'rgba(16, 185, 129, 0.85)'
-        ];
-        const funnelHoverColors = funnelColors.map(c => c.replace('0.85', '1'));
-
-        if (salesEl) {
-            new Chart(salesEl.getContext('2d'), {
-                type: 'doughnut',
-                data: {
-                    labels: funnelLabels,
-                    datasets: [{
-                        data: funnelCounts,
-                        backgroundColor: funnelColors,
-                        hoverBackgroundColor: funnelHoverColors,
-                        borderWidth: 2,
-                        borderColor: '#ffffff'
-                    }]
-                },
-                options: {
-                    maintainAspectRatio: false,
-                    responsive: true,
-                    animation: { duration: 1000, easing: 'easeOutQuart' },
-                    plugins: { legend: { display: false }, tooltip: tooltipStyle },
-                    cutout: '70%'
-                }
-            });
-
-            const ledgerContainer = document.getElementById('sales-funnel-ledger');
-            funnelLabels.forEach((label, index) => {
-                const item = document.createElement('div');
-                item.className = 'ledger-item';
-                item.innerHTML = `
-                    <span class="ledger-color" style="background-color: ${funnelColors[index]}"></span>
-                    <span style="color: var(--text-muted); font-weight: 500;" title="${label} (${funnelCounts[index]})">${label} (${funnelCounts[index]})</span>
-                `;
-                ledgerContainer.appendChild(item);
-            });
-        }
-
-        // --- Warehouse capacity (grouped bar) ---
-        const whEl = document.getElementById('warehouseCapacityChart');
-        if (whEl && chartData.labels.length) {
-            new Chart(whEl.getContext('2d'), {
-                type: 'bar',
-                data: {
-                    labels: chartData.labels,
-                    datasets: [
-                        {
-                            label: 'Total capacity (MT)',
-                            data: chartData.capacities,
-                            backgroundColor: 'rgba(15, 23, 42, 0.05)',
-                            borderColor: 'rgba(15, 23, 42, 0.12)',
-                            borderWidth: 1.5,
-                            borderRadius: 6,
-                            barPercentage: 0.6,
-                            categoryPercentage: 0.7
-                        },
-                        {
-                            label: 'Utilized space (MT)',
-                            data: chartData.used,
-                            backgroundColor: 'rgba(79, 70, 229, 0.85)',
-                            hoverBackgroundColor: 'rgba(79, 70, 229, 1)',
-                            borderColor: 'rgba(79, 70, 229, 1)',
-                            borderWidth: 1.5,
-                            borderRadius: 6,
-                            barPercentage: 0.6,
-                            categoryPercentage: 0.7
-                        }
-                    ]
-                },
-                options: {
-                    maintainAspectRatio: false,
-                    responsive: true,
-                    animation: { duration: 1200, easing: 'easeOutQuart' },
-                    scales: {
-                        x: { grid: { display: false }, ticks: { color: '#64748b', font: { family: FONT, weight: '500' } } },
-                        y: { grid: { color: 'rgba(15, 23, 42, 0.04)' }, ticks: { color: '#64748b', font: { family: FONT } } }
-                    },
-                    plugins: {
-                        legend: { labels: { color: '#0f172a', font: { family: FONT, weight: '600' }, usePointStyle: true, pointStyle: 'circle', padding: 16 } },
-                        tooltip: tooltipStyle
-                    }
-                }
-            });
-        } else if (whEl) {
-            whEl.parentElement.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem; text-align: center; padding-top: 3rem;">No warehouse capacity data.</p>';
+            trendEl.parentElement.innerHTML = '<p class="empty-note empty-note--chart">No output logged in the last 12 weeks.</p>';
         }
     });
 </script>

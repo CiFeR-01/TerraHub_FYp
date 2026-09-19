@@ -13,7 +13,7 @@
     --secondary-glow: rgba(14, 165, 233, 0.08);
     --accent-grad: linear-gradient(135deg, #4f46e5 0%, #3b82f6 50%, #0ea5e9 100%);
     --text-main: #0f172a; /* Slate 900 */
-    --text-muted: #627d98; /* Slate 500/600 blend */
+    --text-muted: #52667a; /* Slate 600 blend - 5.4:1+ on every surface (was #627d98, 3.9:1 on --bg-base) */
     --border-light: #e2e8f0; /* Slate 200 */
     --border-glow: rgba(79, 70, 229, 0.15);
     --transition-smooth: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1447,9 +1447,19 @@ button.nav-btn:focus-visible {
 .timestamp-badge .live-dot {
     width: 6px;
     height: 6px;
-    background-color: var(--primary);
+    background-color: var(--success);
     border-radius: 50%;
-    box-shadow: 0 0 8px rgba(79, 70, 229, 0.4);
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+}
+
+.timestamp-badge.is-live { color: var(--success-strong); }
+
+.timestamp-badge .stale-icon {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
 }
 
 /* Visualization Charts Grid */
@@ -1846,7 +1856,7 @@ button.nav-btn:focus-visible {
 
 .risk-alert-box h3 {
     font-family: 'Outfit', sans-serif;
-    color: #dc2626;
+    color: var(--danger-strong);
     font-size: 1.15rem;
     font-weight: 600;
     margin-bottom: 1rem;
@@ -1863,7 +1873,7 @@ button.nav-btn:focus-visible {
 
 .risk-item {
     background: #ffffff;
-    border: 1px solid #fee2e2;
+    border: 1px solid var(--danger-border);
     border-radius: 8px;
     padding: 1rem;
     display: flex;
@@ -1901,7 +1911,12 @@ button.nav-btn:focus-visible {
 }
 
 .ledger-remove-value {
-    color: #dc2626;
+    color: var(--danger-strong);
+    font-weight: 600;
+}
+
+.ledger-neutral-value {
+    color: var(--text-main);
     font-weight: 600;
 }
 
@@ -2033,7 +2048,7 @@ button.nav-btn:focus-visible {
     margin-top: 0.1rem;
 }
 
-.dash-section-head .sec-link {
+.sec-link {
     margin-left: auto;
     font-size: 0.82rem;
     font-weight: 600;
@@ -2045,20 +2060,21 @@ button.nav-btn:focus-visible {
     white-space: nowrap;
 }
 
-.dash-section-head .sec-link:hover { text-decoration: underline; }
-.dash-section-head .sec-link svg { width: 14px; height: 14px; stroke-width: 2.4; }
+.sec-link:hover { text-decoration: underline; }
+.sec-link svg { width: 14px; height: 14px; stroke-width: 2.4; fill: none; stroke: currentColor; }
 
-/* --- KPI row: balanced 5-up grid with accent + icon ---------------- */
+/* Bigger hit area on touch screens without changing the visual size. */
+@media (pointer: coarse) {
+    .sec-link { padding: 0.75rem 0.25rem; margin-block: -0.75rem; }
+}
+
+/* --- KPI row: balanced 4-up grid with accent + icon ---------------- */
 .kpi-wrapper-grid.kpi-v2 {
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-@media (max-width: 1400px) {
-    .kpi-wrapper-grid.kpi-v2 { grid-template-columns: repeat(3, 1fr); }
-}
-
-@media (max-width: 900px) {
-    .kpi-wrapper-grid.kpi-v2 { grid-template-columns: repeat(2, 1fr); }
+@media (max-width: 1200px) {
+    .kpi-wrapper-grid.kpi-v2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 560px) {
@@ -2068,7 +2084,18 @@ button.nav-btn:focus-visible {
 .kpi-v2 .kpi-item-card {
     padding: 1.35rem 1.4rem 1.25rem;
     gap: 0;
-    justify-content: space-between;
+    justify-content: flex-start;
+}
+
+/* Sparklines sit on the card's bottom edge so every value row lines up. */
+.kpi-v2 .kpi-sparkline-box { margin-top: auto; padding-top: 1rem; height: calc(10px + 1rem); }
+
+.kpi-unit {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-left: 0.3rem;
+    letter-spacing: 0;
 }
 
 .kpi-v2 .kpi-top {
@@ -2207,7 +2234,7 @@ button.nav-btn:focus-visible {
     justify-content: space-between;
     align-items: center;
     margin-top: 0.7rem;
-    font-size: 0.74rem;
+    font-size: 0.75rem;
     color: var(--text-muted);
 }
 
@@ -2237,7 +2264,7 @@ button.nav-btn:focus-visible {
 }
 
 .wh-card-head .wh-sub {
-    font-size: 0.74rem;
+    font-size: 0.75rem;
     color: var(--text-muted);
     margin-top: 0.1rem;
 }
@@ -2282,16 +2309,18 @@ button.nav-btn:focus-visible {
 .var-name { font-weight: 600; font-size: 0.85rem; color: var(--text-main); }
 
 .var-meta {
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     color: var(--text-muted);
     font-family: 'Outfit', sans-serif;
     margin-top: 0.1rem;
 }
 
-.var-val { font-family: 'Outfit', sans-serif; font-weight: 700; font-size: 0.9rem; }
-.var-val.over { color: var(--danger); }
-.var-val.under { color: var(--success-strong); }
-.var-val.neutral { color: var(--text-muted); }
+.var-val { font-family: 'Outfit', sans-serif; font-weight: 700; font-size: 0.9rem; text-align: right; flex-shrink: 0; }
+.var-val.crit { color: var(--danger-strong); }
+.var-val.warn { color: var(--warning-strong); }
+.var-val.ok { color: var(--text-muted); }
+.var-dir { display: block; font-family: inherit; font-size: 0.75rem; font-weight: 500; }
+.var-text { min-width: 0; }
 
 /* --- Direction indicator in logistics table ------------------ */
 .dir-cell {
@@ -2304,7 +2333,7 @@ button.nav-btn:focus-visible {
 .dir-cell svg { width: 15px; height: 15px; stroke-width: 2.2; }
 .dir-cell.inbound { color: var(--success-strong); }
 .dir-cell.outbound { color: var(--info); }
-.dir-cell.transfer { color: #64748b; }
+.dir-cell.transfer { color: var(--text-muted); }
 .dir-cell span { color: var(--text-main); }
 
 /* --- "All clear" callout ------------------------------------ */
@@ -2332,8 +2361,156 @@ button.nav-btn:focus-visible {
 }
 
 .section-note {
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     color: var(--text-muted);
     margin-top: 0.6rem;
 }
 
+
+/* ==========================================================================
+   Executive Dashboard — layout & accessibility pass (v3)
+   ========================================================================== */
+
+/* Screen-reader-only text (direction labels, trend direction, etc.) */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.text-danger { color: var(--danger-strong); }
+.text-warning { color: var(--warning-strong); }
+.muted-text { color: var(--text-muted); }
+
+.btn.btn-compact { padding: 0.5rem 1rem; font-size: 0.85rem; }
+
+/* Attention chips lead the page, right under the title. */
+.attn-section { margin-bottom: 1.75rem; }
+.attn-row { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+
+/* Sections nested inside a dashboard section (e.g. charts under the run cards) */
+.dash-subgrid { margin-top: 1.5rem; margin-bottom: 0; }
+.dash-section-head .sec-icon.sec-icon--danger { background: var(--danger-bg); color: var(--danger-strong); }
+.sec-sub-strong { color: var(--text-main); font-weight: 600; }
+
+/* Grid children must be allowed to shrink below their content, or wide
+   tables/canvases push the whole page into horizontal scroll. */
+.charts-container-grid > *,
+.kpi-wrapper-grid > *,
+.run-grid > *,
+.wh-grid > * { min-width: 0; }
+
+.chart-box h3,
+.pane-card h3 { display: flex; align-items: center; gap: 0.5rem; }
+.chart-sub { font-weight: 400; color: var(--text-muted); font-size: 0.85rem; }
+.chart-box--auto { height: auto; min-height: 380px; }
+.chart-box--auto .var-list { flex: 1; }
+
+.empty-note { font-size: 0.85rem; color: var(--text-muted); padding-top: 1rem; }
+.empty-note--chart { text-align: center; padding-top: 3rem; }
+.empty-cell { text-align: center; color: var(--text-muted); padding: 2rem !important; white-space: normal !important; }
+.num-cell { text-align: right !important; font-variant-numeric: tabular-nums; font-weight: 600; }
+.qty-unit { font-size: 0.75rem; color: var(--text-muted); font-weight: 500; margin-left: 0.15rem; }
+
+.zero-state-title { font-weight: 600; color: var(--text-main); }
+.zero-state-text { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem; text-align: center; }
+
+/* --- Run cards: flag runs waiting too long ---------------------- */
+.run-age { display: inline-flex; align-items: center; gap: 0.25rem; }
+.run-age svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.4; }
+.run-age.warn { color: var(--warning-strong); font-weight: 700; }
+.run-age.crit { color: var(--danger-strong); font-weight: 700; }
+
+/* --- Sales order pipeline (horizontal bars, open stages only) ---- */
+.funnel-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.9rem; flex: 1; }
+.funnel-row { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr) 2.5rem; align-items: center; gap: 0.75rem; }
+.funnel-label { font-size: 0.82rem; font-weight: 600; color: var(--text-main); }
+.funnel-track { height: 10px; background: var(--border-light); border-radius: 999px; overflow: hidden; }
+.funnel-fill { display: block; height: 100%; border-radius: 999px; min-width: 2px; }
+.funnel-count { font-family: 'Outfit', sans-serif; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-main); }
+.tone-slate { background: #94a3b8; }
+.tone-amber { background: var(--warning); }
+.tone-sky { background: var(--info); }
+.tone-primary { background: var(--primary); }
+.tone-emerald { background: var(--success); }
+
+/* --- Active shipments table ----------------------------------- */
+.ship-table { table-layout: fixed; }
+.ship-table th:nth-child(1) { width: 46%; }
+.ship-table th:nth-child(2) { width: 22%; }
+.ship-table th:nth-child(4) { width: 12%; }
+.ship-id-cell { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.ship-id-cell .dir-cell { flex-shrink: 0; }
+.id-link {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 600;
+    color: var(--primary);
+    text-decoration: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+.id-link:hover { text-decoration: underline; }
+.log-item-cell { max-width: 28rem; overflow: hidden; text-overflow: ellipsis; }
+
+/* --- Facilities: warehouse cards side by side ----------------- */
+.wh-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1.1rem; }
+.wh-grid .wh-card + .wh-card { margin-top: 0; }
+.wh-grid .wh-card { background: var(--bg-surface); }
+.wh-note { font-size: 0.75rem; color: var(--warning-strong); margin-top: 0.3rem; }
+
+/* --- Risk cards ------------------------------------------------- */
+.risk-batch-num { font-family: 'Outfit', sans-serif; font-weight: 700; font-size: 0.85rem; color: var(--primary); }
+.risk-item-name { font-weight: 600; color: var(--text-main); }
+.risk-item-loc { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
+.risk-item-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid var(--danger-border);
+    padding-top: 0.5rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+.days-left { font-weight: 700; }
+.days-left.crit { color: var(--danger-strong); }
+.days-left.warn { color: var(--warning-strong); }
+
+/* --- Small screens: 16px gutters, no sideways scroll ----------- */
+.main-container { min-width: 0; }
+
+@media (max-width: 640px) {
+    .dashboard-content-view { padding: 1.25rem 1rem; }
+    .topbar { padding: 0 1rem; }
+    .topbar-right { gap: 0.5rem; min-width: 0; }
+    .topbar-divider,
+    .topbar-role { display: none; }
+    .user-branch-badge {
+        max-width: 9rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .header-action-tray { flex-wrap: wrap; }
+    .funnel-row { grid-template-columns: 6.5rem minmax(0, 1fr) 2rem; }
+    .ship-table { table-layout: auto; }
+    .chart-box { padding: 1.25rem; }
+}
+
+/* --- Respect reduced-motion preferences ------------------------ */
+@media (prefers-reduced-motion: reduce) {
+    .animate-fade-in-up,
+    .animate-fade-in { animation: none !important; opacity: 1 !important; }
+    .kpi-item-card:hover,
+    .run-card:hover,
+    .attn-chip:hover { transform: none; }
+    .micro-progress-bar,
+    .kpi-meter > span { transition: none; }
+}
