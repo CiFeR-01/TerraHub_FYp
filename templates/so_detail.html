@@ -411,13 +411,60 @@
     </div>
     {% endif %}
     {% if so.status == 'Ready to Ship' %}
-        {% if has_unshipped_allocation %}
+        {% if open_stock_moves %}
+        {# One delivery chosen: stock is on its way to the order's warehouse #}
+        <div style="padding:1rem 1.1rem; background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px;">
+            <div style="font-weight:700; margin-bottom:0.35rem;">Moving stock to {{ so.origin_warehouse.name }} for one delivery</div>
+            <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.6rem;">Once these arrive, create the logistics order to ship everything together.</div>
+            {% for sh in open_stock_moves %}
+            <div style="font-size:0.85rem; margin-bottom:0.25rem;">
+                <a href="{% url 'shipment_detail' sh.pk %}" style="color:var(--primary); font-weight:600; text-decoration:none;">{{ sh.tracking_number }}</a>
+                &middot; from {{ sh.origin_warehouse.name }} &middot; <span class="badge badge-slate" style="font-size:0.7rem;">{{ sh.get_status_display }}</span>
+            </div>
+            {% endfor %}
+            {% if can_switch_plan %}
+            <form method="post" style="margin-top:0.75rem;" onsubmit="return confirm('Cancel these stock moves and ship from each warehouse separately instead?');">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="cancel_delivery_plan">
+                <button type="submit" class="btn btn-secondary" style="padding:0.4rem 0.9rem; font-size:0.82rem;">Switch to separate deliveries</button>
+            </form>
+            {% endif %}
+        </div>
+        {% elif has_unshipped_allocation and stock_split|length > 1 %}
+        {# Stock in several warehouses: let the user choose #}
+        <div style="padding:1rem 1.1rem; background:#fffbeb; border:1px solid #fcd34d; border-radius:10px;">
+            <div style="font-weight:700; margin-bottom:0.35rem;">Choose how to deliver</div>
+            <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+                This order's stock is in {{ stock_split|length }} warehouses:
+                {% for g in stock_split %}{{ g.warehouse.name }} ({{ g.qty|floatformat:0 }}){% if not forloop.last %}, {% endif %}{% endfor %}.
+            </div>
+            <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
+                <form method="post" action="{% url 'so_create_shipment' so.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary" style="padding:0.5rem 1.1rem; font-size:0.88rem; background:#10b981; border-color:#10b981;">Ship separately ({{ stock_split|length }} deliveries)</button>
+                </form>
+                <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="consolidate_stock">
+                    <button type="submit" class="btn btn-secondary" style="padding:0.5rem 1.1rem; font-size:0.88rem;">Move everything to {{ so.origin_warehouse.name }} first (1 delivery)</button>
+                </form>
+            </div>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.6rem;">You can switch between these until the shipments are approved.</div>
+        </div>
+        {% elif has_unshipped_allocation %}
         <form method="post" action="{% url 'so_create_shipment' so.pk %}">
             {% csrf_token %}
             <button type="submit" class="btn btn-primary" style="padding:0.5rem 1.25rem; font-size:0.9rem; background:#10b981; border-color:#10b981;">Create Logistics Order</button>
         </form>
         {% else %}
         <p style="font-size:0.85rem; color:var(--text-muted); margin:0;">All allocated stock for this order is already held by a logistics order — see the Logistics section above.</p>
+        {% if open_outbound|length > 1 and can_switch_plan %}
+        <form method="post" style="margin-top:0.6rem;" onsubmit="return confirm('Cancel these {{ open_outbound|length }} deliveries and move everything to {{ so.origin_warehouse.name }} first instead?');">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="cancel_delivery_plan">
+            <button type="submit" class="btn btn-secondary" style="padding:0.4rem 0.9rem; font-size:0.82rem;">Switch to one delivery</button>
+        </form>
+        {% endif %}
         {% endif %}
     {% elif so.status == 'Pending' %}
         <div style="display:flex; gap:1rem; align-items:center;">

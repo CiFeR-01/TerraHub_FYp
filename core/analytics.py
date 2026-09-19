@@ -579,10 +579,30 @@ def consumption_rates(material_ids, *, window_days=DEFAULT_WINDOW_DAYS, end=None
     return out
 
 
+def _project_cover(available, rate, arrivals, today):
+    """Days until stock runs out, drawing `available` down at `rate`/day and adding
+    each open-PO delivery on its expected date. A delivery only helps if it lands
+    before the stock is gone - one that arrives after that doesn't prevent the
+    stockout. `arrivals` = [(date, qty), ...]; overdue dates count as today.
+    Returns (days_cover, counted_qty, late_qty)."""
+    rate = float(rate)
+    cover = max(float(available), 0.0) / rate
+    counted = late = 0.0
+    for when, qty in sorted(arrivals, key=lambda x: x[0]):
+        day = max((when - today).days, 0)
+        if day <= cover:
+            cover += float(qty) / rate
+            counted += float(qty)
+        else:
+            late += float(qty)
+    return cover, counted, late
+
+
 def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
     """Per active material: days of cover, stockout date, and reorder-by date
-    from burn rate. Worst first - see §8.7 for the row shape and status bands."""
-    from django.db.models import F, Max
+    from burn rate, counting open-PO deliveries that arrive before the stock runs
+    out. Worst first - see §8.7 for the row shape and status bands."""
+    from django.db.models import Max
     from .models import Material, Batch, SupplierMaterial, PurchaseOrderDetail
     from .settings_store import get_setting
 
@@ -602,15 +622,25 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
             material_id__in=ids, lead_time_days__isnull=False
         ).values("material_id").annotate(lt=Max("lead_time_days"))
     }
-    on_order = {
-        r["material_id"]: (r["oo"] or Decimal("0"))
-        for r in PurchaseOrderDetail.objects.filter(
-            material_id__in=ids,
-            purchase_order__status__in=["Pending", "Partially Received"],
-        ).values("material_id").annotate(oo=Sum(F("quantity_ordered") - F("quantity_received")))
-    }
-    rates = consumption_rates(ids, window_days=window_days, end=today)
     default_lead = get_setting("po_default_lead_time_days")
+
+    # Open PO lines -> expected arrivals per material (same expected-date rule as
+    # the supplier scorecard: the PO's own date, else order date + lead time).
+    supplier_leads = _supplier_lead_map()
+    arrivals = {}
+    for d in (PurchaseOrderDetail.objects
+              .filter(material_id__in=ids, purchase_order__status__in=["Pending", "Partially Received"])
+              .select_related("purchase_order").prefetch_related("purchase_order__items")):
+        remaining = d.quantity_ordered - d.quantity_received
+        if remaining <= 0:
+            continue
+        expected, estimated = _expected_delivery(d.purchase_order, supplier_leads, default_lead)
+        arrivals.setdefault(d.material_id, []).append({
+            "date": expected or today, "qty": remaining, "estimated": estimated,
+            "po_number": d.purchase_order.po_number,
+        })
+
+    rates = consumption_rates(ids, window_days=window_days, end=today)
 
     rows = []
     for m in materials:
@@ -620,20 +650,20 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
         lt = lead_map.get(m.id)
         lead_estimated = lt is None
         lead_days = int(lt) if lt is not None else int(default_lead)
+        incoming = arrivals.get(m.id, [])
+        on_order = sum((a["qty"] for a in incoming), Decimal("0"))
+        next_po = min(incoming, key=lambda a: a["date"]) if incoming else None
+        counted = late = 0.0
 
         if not rate or rate <= 0:
             status = "no_usage"
             days_cover = None
             stockout_date = None
             reorder_by = None
-        elif available <= 0:
-            # already out - reorder is overdue regardless of rate
-            days_cover = 0.0
-            stockout_date = today
-            reorder_by = today - _dt.timedelta(days=lead_days)
-            status = "critical"
         else:
-            days_cover = float(available) / float(rate)
+            days_cover, counted, late = _project_cover(
+                available, rate, [(a["date"], a["qty"]) for a in incoming], today
+            )
             if days_cover > _FORECAST_HORIZON_DAYS:
                 # effectively never at this burn rate; don't project a fake date
                 days_cover = None
@@ -644,8 +674,8 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
                 stockout_date = today + _dt.timedelta(days=round(days_cover))
                 reorder_by = stockout_date - _dt.timedelta(days=lead_days)
                 days_until_reorder = days_cover - lead_days
-                if days_until_reorder < 0:
-                    status = "critical"
+                if days_cover <= 0 or days_until_reorder < 0:
+                    status = "critical"   # already out, or can't reorder in time
                 elif days_until_reorder <= _REORDER_NOW_DAYS:
                     status = "reorder_now"
                 elif days_until_reorder <= _REORDER_WATCH_DAYS:
@@ -661,9 +691,18 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
             "on_hand": float(oh),
             "allocated": float(al),
             "available": float(available),
-            "on_order": float(on_order.get(m.id, Decimal("0"))),
+            "on_order": float(on_order),
+            # how much of on_order lands before the stock runs out (counted in
+            # days_cover) vs after it (too late to prevent the stockout)
+            "on_order_counted": counted,
+            "on_order_late": late,
+            "next_po_number": next_po["po_number"] if next_po else None,
+            "next_po_date": next_po["date"] if next_po else None,
+            "next_po_date_estimated": next_po["estimated"] if next_po else False,
+            "po_overdue": any(a["date"] < today for a in incoming),
             "daily_rate": float(rate) if rate else 0.0,
             "days_cover": days_cover,
+            "days_cover_on_hand": (max(float(available), 0.0) / float(rate)) if rate and rate > 0 else None,
             "days_until_reorder": (days_cover - lead_days) if days_cover is not None else None,
             "stockout_date": stockout_date,
             "lead_time_days": lead_days,
@@ -747,28 +786,114 @@ def warehouse_utilization():
     return rows
 
 
-def snapshot_warehouse_utilization(snap_date=None):
-    """Records current utilization per warehouse into WarehouseUtilizationSnapshot
-    for snap_date (defaults to today). Idempotent per (warehouse, date) - safe to
-    call more than once a day. Shared by the `snapshot_utilization` management
-    command and the manual "Run snapshot now" button on Capacity Runway.
+def snapshot_warehouse_utilization(snap_date=None, warehouse_ids=None):
+    """Records each warehouse's current occupancy and daily rent into
+    WarehouseUtilizationSnapshot for snap_date (defaults to today, Malaysia time).
+    Idempotent per (warehouse, date): later calls the same day overwrite, so the
+    last write of the day is that day's figure. Called by core/signals.py whenever
+    stock or a warehouse changes (warehouse_ids = just the affected ones), by
+    ensure_today_snapshots(), and by the `snapshot_utilization` command.
     Returns (warehouse_count, snap_date)."""
-    from django.utils import timezone
     from .models import WarehouseUtilizationSnapshot
 
-    snap_date = snap_date or timezone.now().date()
-    rows = warehouse_utilization()
+    snap_date = snap_date or timezone.localdate()
+    rows = warehouse_rent_burn(warehouse_ids=warehouse_ids)
     for r in rows:
+        cap = r["capacity_mt"]
         WarehouseUtilizationSnapshot.objects.update_or_create(
             warehouse_id=r["warehouse_id"],
             snapshot_date=snap_date,
             defaults={
                 "used_mt": r["used_mt"],
-                "capacity_mt": r["capacity_mt"],
-                "utilization_percent": r["utilization_percent"],
+                "quarantined_mt": r["quarantined_mt"],
+                "capacity_mt": cap,
+                "utilization_percent": round(r["used_mt"] / cap * 100, 2) if cap > 0 else 0.0,
+                "daily_rent_cost": r["daily_cost"],
+                "billing_mode": r["billing_mode"],
+                "rent_estimated": False,
             },
         )
     return len(rows), snap_date
+
+
+def ensure_today_snapshots():
+    """Safety net for the save-on-change snapshots: if any warehouse has no row for
+    today yet (nothing has changed today, or a bulk update skipped the signals),
+    write them now. Cheap no-op once today's rows exist."""
+    from .models import Warehouse, WarehouseUtilizationSnapshot
+
+    today = timezone.localdate()
+    have = set(WarehouseUtilizationSnapshot.objects.filter(snapshot_date=today).values_list('warehouse_id', flat=True))
+    missing = set(Warehouse.objects.values_list('id', flat=True)) - have
+    if missing:
+        snapshot_warehouse_utilization(warehouse_ids=missing)
+
+
+def estimate_snapshot_rent(snapshot, warehouse):
+    """(daily_cost, billing_mode) for a snapshot row that has no recorded rent:
+    the day's tonnage x the warehouse's CURRENT rate. Same rule as migration 0058."""
+    if warehouse.ownership_type == 'Internal':
+        return 0.0, 'Internal'
+    if warehouse.rental_billing_method == 'Overall':
+        return float(warehouse.total_capacity_mt * warehouse.rental_cost_per_mt), 'Overall Capacity'
+    return float(snapshot.used_mt * warehouse.rental_cost_per_mt), 'Usage'
+
+
+def rent_history(days=180, end=None):
+    """Daily rent per rented warehouse for the last `days` days, for the chart on
+    Rent Opportunities. A day with no snapshot carries the previous day's value
+    forward (nothing changed that day). Rows without recorded rent are estimated
+    (estimate_snapshot_rent) and flagged. Warehouses that never cost anything in
+    the window (our own) are left out."""
+    from .models import Warehouse, WarehouseUtilizationSnapshot
+
+    end = end or timezone.localdate()
+    start = end - _dt.timedelta(days=days - 1)
+    dates = [start + _dt.timedelta(days=i) for i in range(days)]
+    warehouses = {w.id: w for w in Warehouse.objects.all()}
+
+    by_wh = {}
+    for snap in WarehouseUtilizationSnapshot.objects.filter(snapshot_date__lte=end).order_by('snapshot_date'):
+        w = warehouses.get(snap.warehouse_id)
+        if w is None:
+            continue
+        if snap.daily_rent_cost is None:
+            cost, estimated = estimate_snapshot_rent(snap, w)[0], True
+        else:
+            cost, estimated = float(snap.daily_rent_cost), snap.rent_estimated
+        by_wh.setdefault(w.id, []).append((snap.snapshot_date, cost, estimated))
+
+    series = []
+    for wid, points in by_wh.items():
+        values, estimated_flags = [], []
+        i, last = 0, None
+        for d in dates:
+            while i < len(points) and points[i][0] <= d:
+                last = points[i]
+                i += 1
+            values.append(round(last[1], 2) if last else None)
+            estimated_flags.append(bool(last and last[2]))
+        if any(v for v in values):
+            series.append({'warehouse_id': wid, 'name': warehouses[wid].name,
+                           'values': values, 'estimated': estimated_flags})
+    series.sort(key=lambda x: x['name'].lower())
+
+    daily_total = [round(sum((srs['values'][i] or 0) for srs in series), 2) for i in range(days)]
+    month_start = end.replace(day=1)
+    prev_month_end = month_start - _dt.timedelta(days=1)
+    prev_month_start = prev_month_end.replace(day=1)
+    this_month = sum(t for d, t in zip(dates, daily_total) if d >= month_start)
+    last_month_days = [(d, t) for d, t in zip(dates, daily_total) if prev_month_start <= d <= prev_month_end]
+    last_30 = daily_total[-30:]
+    return {
+        'dates': [d.isoformat() for d in dates],
+        'series': series,
+        'daily_total': daily_total,
+        'this_month': round(this_month, 2),
+        'last_month': round(sum(t for _, t in last_month_days), 2) if last_month_days else None,
+        'avg_per_day_30d': round(sum(last_30) / len(last_30), 2) if last_30 else 0.0,
+        'has_estimates': any(any(srs['estimated']) for srs in series),
+    }
 
 
 def open_batch_rent_expr():
@@ -799,7 +924,7 @@ def open_batch_rent_expr():
     )
 
 
-def warehouse_rent_burn():
+def warehouse_rent_burn(warehouse_ids=None):
     """Per-warehouse true daily rent burn - the single source of truth for
     rental cost, replacing the flat "used_mt * warehouse.rental_cost_per_mt"
     calculations that used to live in views.dashboard_view and
@@ -809,8 +934,11 @@ def warehouse_rent_burn():
     rate to the warehouse's current total)."""
     from .models import Warehouse
 
+    qs = Warehouse.objects.all()
+    if warehouse_ids is not None:
+        qs = qs.filter(id__in=warehouse_ids)
     rows = []
-    for w in Warehouse.objects.annotate(used_mt=used_mt_expr(), quarantined_mt=quarantined_mt_expr(), batch_rent=open_batch_rent_expr()).order_by('name'):
+    for w in qs.annotate(used_mt=used_mt_expr(), quarantined_mt=quarantined_mt_expr(), batch_rent=open_batch_rent_expr()).order_by('name'):
         used_mt = float(w.used_mt or 0)
         if w.ownership_type == 'Internal':
             daily_cost, billing_mode = 0.0, 'Internal'

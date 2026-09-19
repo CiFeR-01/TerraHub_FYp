@@ -102,6 +102,9 @@ SO_ITEMS_LOCKED = ('Ready to Ship', 'Partially Shipped', 'Shipped', 'Delivered')
 SO_REAPPROVE_ON_EDIT = ('Pending Approval', 'Pending', 'Awaiting Acknowledgement', 'In Production')
 # Manual status changes allowed from the status dropdown. Everything else comes from
 # the order's own flow (approval, allocation, manufacturing, shipments).
+# A delivery plan (stock moves / outbound shipments) can be switched while none of
+# its shipments has been approved yet.
+SO_PLAN_SWITCHABLE = ('Draft', 'Logistics Review', 'Pending Approval')
 SO_MANUAL_TRANSITIONS = {
     'Ready to Ship': ['Shipped', 'Delivered'],
     'Partially Shipped': ['Shipped', 'Delivered'],
@@ -2189,7 +2192,8 @@ def so_detail_view(request, pk):
                 product = item.product
                 item.delete()
 
-                from .utils import handle_so_item_removed
+                from .utils import handle_so_item_removed, release_so_product_allocations
+                release_so_product_allocations(so, product, request.user)
                 handle_so_item_removed(so, product, request.user)
 
                 OrderTimeline.objects.create(sales_order=so, action=f"Line item removed: {name}", user=request.user)
@@ -2322,6 +2326,65 @@ def so_detail_view(request, pk):
             except Exception as e:
                 messages.error(request, f"Error unallocating stock: {e}")
 
+        elif action == 'consolidate_stock':
+            # "One delivery": move the order's reserved stock that sits outside its
+            # origin warehouse there first, with one internal transfer per warehouse.
+            # The order keeps owning the reservation (sales_order stays set); the
+            # shipment tag just marks it as being on that truck.
+            from .utils import so_stock_by_warehouse
+            if so.status != 'Ready to Ship':
+                messages.error(request, "An order can only be consolidated once it is Ready to Ship.")
+            else:
+                groups = [g for g in so_stock_by_warehouse(so) if g['warehouse'] and g['warehouse'].id != so.origin_warehouse_id]
+                if not groups:
+                    messages.info(request, f"All of this order's stock is already at {so.origin_warehouse.name}.")
+                else:
+                    created = []
+                    with transaction.atomic():
+                        for g in groups:
+                            tracking = generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4)
+                            sh = Shipment.objects.create(
+                                tracking_number=tracking, direction='Transfer', status='Draft',
+                                sales_order=so, origin_warehouse=g['warehouse'],
+                                destination_warehouse=so.origin_warehouse, last_edited_by=request.user,
+                            )
+                            for a in g['allocations']:
+                                ShipmentItem.objects.create(shipment=sh, product=a.batch.product, material=a.batch.material,
+                                                            batch=a.batch, quantity=a.quantity)
+                                a.shipment = sh
+                                a.save(update_fields=['shipment'])
+                            OrderTimeline.objects.create(shipment=sh, action=f"Drafted to move {so.so_number}'s stock from {g['warehouse'].name} to {so.origin_warehouse.name} for one delivery.", user=request.user)
+                            created.append(tracking)
+                        OrderTimeline.objects.create(
+                            sales_order=so,
+                            action=f"Chose one delivery: moving stock to {so.origin_warehouse.name} first via {', '.join(created)}.",
+                            user=request.user,
+                        )
+                    messages.success(request, f"Drafted stock move(s) {', '.join(created)} to {so.origin_warehouse.name}. Take them through Logistics; once they arrive, create the logistics order to ship everything together.")
+
+        elif action == 'cancel_delivery_plan':
+            # Switch plans: cancel this order's not-yet-approved stock moves or outbound
+            # shipments and hand their reservations back to the order.
+            plan = so.shipments.filter(direction__in=['Transfer', 'Outbound']).exclude(status__in=['Completed', 'Cancelled'])
+            locked = plan.exclude(status__in=SO_PLAN_SWITCHABLE)
+            if not plan.exists():
+                messages.info(request, "There is no delivery plan to switch.")
+            elif locked.exists():
+                messages.error(request, f"{', '.join(locked.values_list('tracking_number', flat=True))} is already approved or on its way, so the plan can't be switched.")
+            else:
+                with transaction.atomic():
+                    for sh in plan:
+                        for a in StockAllocation.objects.filter(shipment=sh):
+                            a.sales_order = so
+                            a.shipment = None
+                            a.save(update_fields=['sales_order', 'shipment'])
+                        sh.status = 'Cancelled'
+                        sh.save(update_fields=['status'])
+                        clear_approval_notifications(sh.tracking_number)
+                        OrderTimeline.objects.create(shipment=sh, action=f"Cancelled: {so.so_number}'s delivery plan was switched. Reservations returned to the order.", user=request.user)
+                    OrderTimeline.objects.create(sales_order=so, action=f"Delivery plan switched. Cancelled {', '.join(sh.tracking_number for sh in plan)}; stock stays reserved for this order.", user=request.user)
+                messages.success(request, "Delivery plan cancelled. The stock is still reserved for this order - choose how to deliver it again.")
+
         return redirect('so_detail', pk=so.pk)
 
     # BOM readiness and Allocation logic
@@ -2409,10 +2472,21 @@ def so_detail_view(request, pk):
 
     has_deficit = any(row['deficit'] > 0 for row in line_items_with_bom)
     manufacturing_plants = Warehouse.objects.filter(location_type__in=Warehouse.MANUFACTURING_TYPES).order_by('name')
-    has_unshipped_allocation = so.allocations.exists()
+    has_unshipped_allocation = so.allocations.filter(shipment__isnull=True).exists()
+
+    from .utils import so_stock_by_warehouse
+    stock_split = so_stock_by_warehouse(so)
+    open_plan = list(so.shipments.filter(direction__in=['Transfer', 'Outbound'])
+                     .exclude(status__in=['Completed', 'Cancelled']).order_by('id'))
+    open_stock_moves = [sh for sh in open_plan if sh.direction == 'Transfer']
+    open_outbound = [sh for sh in open_plan if sh.direction == 'Outbound']
 
     context = {
         'so': so,
+        'stock_split': stock_split,
+        'open_stock_moves': open_stock_moves,
+        'open_outbound': open_outbound,
+        'can_switch_plan': bool(open_plan) and all(sh.status in SO_PLAN_SWITCHABLE for sh in open_plan),
         'line_items': line_items_with_bom,
         'order_total': so.total_value,
         'unpriced_lines': sum(1 for row in line_items_with_bom if row['subtotal'] is None),
@@ -3516,6 +3590,9 @@ def shipment_detail_view(request, pk):
         action = request.POST.get('action')
 
         cargo_before = None
+        if action in ('add_item', 'remove_item') and shipment.direction == 'Transfer' and shipment.sales_order:
+            messages.error(request, f"This stock move's cargo comes from {shipment.sales_order.so_number}. Change the order, or switch its delivery plan, instead.")
+            return redirect('shipment_detail', pk=shipment.pk)
         if action in ('add_item', 'remove_item') and shipment.direction != 'Inbound':
             if shipment.status in SHIPMENT_CARGO_LOCKED:
                 messages.error(request, f"Cargo can't be changed once a shipment is {shipment.status}.")
@@ -3665,6 +3742,18 @@ def shipment_detail_view(request, pk):
             shipment.save()
             messages.success(request, "Shipment submitted to Logistics for review.")
             
+        elif action == 'scrap_shipment' and shipment.direction == 'Transfer' and shipment.sales_order:
+            # A stock move for an order: scrapping the truck must not free the order's
+            # stock - hand the reservations back to the order instead.
+            so = shipment.sales_order
+            with transaction.atomic():
+                StockAllocation.objects.filter(shipment=shipment).update(sales_order=so, shipment=None)
+                shipment.status = 'Cancelled'
+                shipment.save(update_fields=['status'])
+                OrderTimeline.objects.create(shipment=shipment, action=f"Scrapped. {so.so_number} keeps its stock reservations.", user=request.user)
+                OrderTimeline.objects.create(sales_order=so, action=f"Stock move {shipment.tracking_number} scrapped; the stock stays reserved for this order.", user=request.user)
+            messages.success(request, f"Stock move scrapped. {so.so_number} keeps its reserved stock.")
+
         elif action == 'scrap_shipment':
             
             with transaction.atomic():
@@ -4328,6 +4417,8 @@ def so_allocate_view(request, pk):
                         so.status = 'Pending'
                     OrderTimeline.objects.create(sales_order=so, action="Partial allocation completed. Shortages remain.", user=request.user)
                 so.save()
+                from .utils import prompt_delivery_choice
+                prompt_delivery_choice(so, request.user)
 
                 messages.success(request, f"Allocation saved for {so.so_number}.")
                 return redirect('so_detail', pk=so.pk)
@@ -4368,7 +4459,12 @@ def so_create_shipment_view(request, pk):
             messages.error(request, "Order is not ready to ship.")
             return redirect('so_detail', pk=so.pk)
 
-        allocations = list(so.allocations.select_related('batch__product').all())
+        moving = so.shipments.filter(direction='Transfer').exclude(status__in=['Completed', 'Cancelled'])
+        if moving.exists():
+            messages.error(request, f"Stock is still being moved to {so.origin_warehouse.name} ({', '.join(moving.values_list('tracking_number', flat=True))}). Wait for it to arrive, or switch to separate deliveries.")
+            return redirect('so_detail', pk=so.pk)
+
+        allocations = list(so.allocations.filter(shipment__isnull=True).select_related('batch__product'))
         if not allocations:
             existing = so.shipments.filter(direction='Outbound').exclude(status='Cancelled')
             if existing.exists():
