@@ -1,6 +1,7 @@
 from django.test import TestCase, Client
 from django.urls import reverse
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from core.db_tracker import get_db_status, DB_QUERY_LOGS
 from django.db import connection
 from core.models import (
@@ -11,6 +12,14 @@ from core.models import (
 from core.utils import allocate_stock, deduct_stock_from_allocation
 
 User = get_user_model()
+
+
+def make_user(role=None, **kwargs):
+    """Create a user and put them in the `role` Group (seeded by migration 0060)."""
+    user = User.objects.create_user(**kwargs)
+    if role:
+        user.groups.add(Group.objects.get(name=role))
+    return user
 
 class DatabaseConsoleTests(TestCase):
     def setUp(self):
@@ -2236,7 +2245,7 @@ class OpsBriefingCategoryTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='briefer', password='pw')
-        self.manager = User.objects.create_user(username='mgr', password='pw', role='Manager')
+        self.manager = make_user(username='mgr', password='pw', role='Manager')
         self.wh = Warehouse.objects.create(name='FG Store', location_type='Storage')
         self.product = Product.objects.create(
             name='Blend A', sku='PRD-A', unit_of_measure='pcs', price_per_unit=10,
@@ -2460,7 +2469,7 @@ class CategoryBriefingViewTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='viewer', password='pw')
-        self.manager = User.objects.create_user(username='mgr2', password='pw', role='Manager')
+        self.manager = make_user(username='mgr2', password='pw', role='Manager')
         self.wh = Warehouse.objects.create(name='FG Store 2', location_type='Storage')
 
     def _late_so(self, number='SO-CB-LATE'):
@@ -3066,9 +3075,9 @@ class ProcessControlTests(TestCase):
     def setUp(self):
         from core.models import PurchaseOrder
         self.PurchaseOrder = PurchaseOrder
-        self.manager = User.objects.create_user(username='mgr2', password='pw', role='Manager')
-        self.other_manager = User.objects.create_user(username='mgr3', password='pw', role='Manager')
-        self.admin = User.objects.create_user(username='adm2', password='pw', role='Admin')
+        self.manager = make_user(username='mgr2', password='pw', role='Manager')
+        self.other_manager = make_user(username='mgr3', password='pw', role='Manager')
+        self.admin = make_user(username='adm2', password='pw', role='Admin')
         self.wh = Warehouse.objects.create(name='WH PC', location_type='Storage')
         self.product = Product.objects.create(name='Prod PC', sku='PRD-PC', unit_of_measure='kg', price_per_unit=1)
 
@@ -3116,7 +3125,7 @@ class ProcessControlTests(TestCase):
         self.assertEqual(so.status, 'Draft')
 
     def test_request_must_go_to_a_manager(self):
-        staff = User.objects.create_user(username='staff2', password='pw', role='Sales')
+        staff = make_user(username='staff2', password='pw', role='Sales')
         so = self._so()
         self._as(self.manager).post(reverse('so_detail', args=[so.pk]), {'action': 'request_approval', 'manager_id': staff.id})
         so.refresh_from_db()
@@ -3207,7 +3216,7 @@ class ProcessControlTests(TestCase):
                                             expected_yield=Decimal('1'), status='Pending Approval', **kw)
 
     def test_staff_cannot_approve_production_run(self):
-        staff = User.objects.create_user(username='staff_run', password='pw', role='Manufacturing')
+        staff = make_user(username='staff_run', password='pw', role='Manufacturing')
         run = self._run()
         self._as(staff).post(reverse('approvals_inbox'), {'action': 'approve', 'item_type': 'production_run', 'item_id': run.id})
         run.refresh_from_db()
@@ -3231,7 +3240,7 @@ class OrderDisplayTests(TestCase):
     no raw template tags in the list timeline."""
 
     def setUp(self):
-        self.user = User.objects.create_user(username='disp', password='pw', role='Admin')
+        self.user = make_user(username='disp', password='pw', role='Admin')
         self.client = Client()
         self.client.force_login(self.user)
         self.wh = Warehouse.objects.create(name='WH Disp', location_type='Storage')
@@ -3302,7 +3311,7 @@ class TesterFollowUpTests(TestCase):
 
     def setUp(self):
         from core.models import Client as ClientModel
-        self.admin = User.objects.create_user(username='tfu', password='pw', role='Admin', first_name='Ada', last_name='Admin')
+        self.admin = make_user(username='tfu', password='pw', role='Admin', first_name='Ada', last_name='Admin')
         self.client = Client()
         self.client.force_login(self.admin)
         self.hub = Warehouse.objects.create(name='Hub TFU', location_type='Storage')
@@ -3390,8 +3399,8 @@ class UnifiedReceivingTests(TestCase):
     one-click status buttons and Submit & Approve for Admins."""
 
     def setUp(self):
-        self.admin = User.objects.create_user(username='recv_admin', password='pw', role='Admin')
-        self.manager = User.objects.create_user(username='recv_mgr', password='pw', role='Manager')
+        self.admin = make_user(username='recv_admin', password='pw', role='Admin')
+        self.manager = make_user(username='recv_mgr', password='pw', role='Manager')
         self.client = Client()
         self.client.force_login(self.admin)
         self.origin = Warehouse.objects.create(name='Recv Origin', location_type='Storage')
@@ -3490,7 +3499,7 @@ class QaHoldNewFinishedGoodsTests(TestCase):
 
     def setUp(self):
         from core.models import ProductionRun
-        self.admin = User.objects.create_user(username='qa_admin', password='pw', role='Admin')
+        self.admin = make_user(username='qa_admin', password='pw', role='Admin')
         self.client = Client()
         self.client.force_login(self.admin)
         self.plant = Warehouse.objects.create(name='QA Plant', location_type='Manufacturing')
@@ -3544,7 +3553,7 @@ class QuarantinedCapacityDisplayTests(TestCase):
     """Quarantined stock counts toward capacity and is called out on the pages."""
 
     def test_dashboard_and_facilities_show_quarantined_share(self):
-        admin = User.objects.create_user(username='cap_admin', password='pw', role='Admin', is_superuser=True)
+        admin = make_user(username='cap_admin', password='pw', role='Admin', is_superuser=True)
         c = Client()
         c.force_login(admin)
         wh = Warehouse.objects.create(name='Cap WH', location_type='Storage', total_capacity_mt=Decimal('100'))
@@ -3627,7 +3636,7 @@ class RentHistoryTests(TestCase):
         self.assertTrue(h['has_estimates'])
 
     def test_rent_page_fills_today_and_renders_chart(self):
-        admin = User.objects.create_user(username='rh_admin', password='pw', role='Admin')
+        admin = make_user(username='rh_admin', password='pw', role='Admin')
         self._batch(self.rented, 100)          # created without running on-commit callbacks
         c = Client(); c.force_login(admin)
         resp = c.get(reverse('rent_opportunities'))
@@ -3644,7 +3653,7 @@ class SplitStockDeliveryTests(TestCase):
     def setUp(self):
         from core.models import OrderTimeline, Notification
         self.OrderTimeline, self.Notification = OrderTimeline, Notification
-        self.admin = User.objects.create_user(username='split_admin', password='pw', role='Admin')
+        self.admin = make_user(username='split_admin', password='pw', role='Admin')
         self.client = Client()
         self.client.force_login(self.admin)
         self.hub = Warehouse.objects.create(name='Split Hub', location_type='Storage')
@@ -3768,3 +3777,53 @@ class SplitStockDeliveryTests(TestCase):
         self.assertEqual(self.at_alpha.allocated_quantity, Decimal('100'))
         self.assertEqual(StockAllocation.objects.get(batch=self.at_alpha).shipment, None)
         self.assertEqual(self.so.status, 'Ready to Ship')
+
+class GroupPermissionTests(TestCase):
+    """Roles are Groups: what a user may do comes only from the permissions on
+    their groups, so a brand-new group works without any code change."""
+
+    def setUp(self):
+        from django.contrib.auth.models import Permission
+        self.perm = lambda codename: Permission.objects.get(content_type__app_label='core', codename=codename)
+        self.user = make_user(username='gp_user', password='pw')
+        self.client.login(username='gp_user', password='pw')
+
+    def _give(self, *codenames):
+        group = Group.objects.create(name='Night Shift Lead')
+        group.permissions.add(*[self.perm(c) for c in codenames])
+        self.user.groups.add(group)
+
+    def test_standard_groups_are_seeded(self):
+        names = set(Group.objects.values_list('name', flat=True))
+        self.assertTrue({'Admin', 'Manager', 'Staff (Editor)', 'Staff (Viewer)', 'Sales',
+                         'Purchasing', 'Logistics', 'Manufacturing', 'Warehouse'} <= names)
+
+    def test_no_group_means_no_action_center_or_user_management(self):
+        self.assertRedirects(self.client.get(reverse('approvals_inbox')), reverse('dashboard'), fetch_redirect_response=False)
+        self.assertRedirects(self.client.get(reverse('user_management')), reverse('dashboard'), fetch_redirect_response=False)
+
+    def test_new_group_with_approve_permission_can_approve(self):
+        from core.permissions import approvers
+        self.assertNotIn(self.user, approvers())
+        self._give('approve_requests')
+        self.assertIn(self.user, approvers())
+        self.assertEqual(self.client.get(reverse('approvals_inbox')).status_code, 200)
+
+    def test_new_group_with_manage_users_can_assign_groups(self):
+        self._give('manage_users')
+        other = make_user(username='gp_other', password='pw')
+        sales = Group.objects.get(name='Sales')
+        self.client.post(reverse('user_management'), {
+            'action': 'update_user', 'user_id': other.id, 'is_active': 'on', 'roles': [sales.id],
+        })
+        self.assertEqual(list(other.groups.all()), [sales])
+
+    def test_admin_group_overrides_approvals_but_manager_does_not(self):
+        from core.permissions import is_admin_user
+        self.assertTrue(is_admin_user(make_user(username='gp_adm', password='pw', role='Admin')))
+        self.assertFalse(is_admin_user(make_user(username='gp_mgr', password='pw', role='Manager')))
+
+    def test_role_label_lists_groups(self):
+        self.assertEqual(self.user.role_label, 'No role')
+        self._give()
+        self.assertEqual(self.user.role_label, 'Night Shift Lead')

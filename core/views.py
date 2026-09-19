@@ -2,6 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.http import HttpResponse, JsonResponse
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.models import Group
 from django.contrib import messages
 from django import forms
 from django.db import transaction
@@ -19,10 +20,14 @@ from .models import (
     ProductRecipe, ProductionRun, ProductionRunYieldLog, RunMaterialUsage,
     ProductionConsumption, Batch,
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
-    Shipment, ShipmentItem, ShipmentItemReceipt, StockAudit, RegistryLog, OrderTimeline, Notification, Role,
+    Shipment, ShipmentItem, ShipmentItemReceipt, StockAudit, RegistryLog, OrderTimeline, Notification,
     StockAllocation, Supplier, SupplierMaterial, Client
 )
 from .utils import generate_next_code, format_stock_display
+from .permissions import (
+    is_admin_user, can_approve, approvers, users_with_perm,
+    ADJUST_PHYSICAL_STOCK, MANAGE_USERS, HANDLE_PURCHASING, APPROVE_REQUESTS,
+)
 
 
 def apply_list_sort(request, qs, fields, default):
@@ -47,15 +52,6 @@ def apply_list_sort(request, qs, fields, default):
     page_qs = keep.urlencode()
     keep.pop('sort', None)
     return qs, {'sort_key': key, 'sort_desc': desc, 'sort_qs': keep.urlencode(), 'page_qs': page_qs}
-
-
-def is_admin_user(user):
-    return user.is_superuser or getattr(user, 'role', '') == 'Admin'
-
-
-def can_approve(user):
-    """Who may approve anything at all. Single place to swap for configurable permissions later."""
-    return user.is_superuser or getattr(user, 'role', '') in ('Admin', 'Manager')
 
 
 def approver_problem(requester, approver):
@@ -547,7 +543,7 @@ def warehouse_inventory_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'manual_receive':
-            if not request.user.can_adjust_physical_stock:
+            if not request.user.has_perm(ADJUST_PHYSICAL_STOCK):
                 messages.error(request, "Permission Denied: You cannot manually adjust stock.")
                 return redirect('warehouse_inventory')
             
@@ -648,7 +644,7 @@ status='Active').select_related('warehouse',
             'total_batches': batches.count(),
         }
 
-    can_adjust = request.user.can_adjust_physical_stock
+    can_adjust = request.user.has_perm(ADJUST_PHYSICAL_STOCK)
 
     context = {
         'warehouses': warehouses,
@@ -1618,7 +1614,7 @@ def product_list_view(request):
                 messages.error(request, f"Error adding recipe item: {e}")
 
         elif action == 'toggle_active':
-            if request.user.role in ['Admin', 'Manager']:
+            if request.user.has_perm('core.change_product'):
                 product_id = request.POST.get('product_id')
                 prod = get_object_or_404(Product, id=product_id)
                 prod.is_active = not prod.is_active
@@ -1727,7 +1723,7 @@ def material_list_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'toggle_active':
-            if request.user.role in ['Admin', 'Manager']:
+            if request.user.has_perm('core.change_material'):
                 material_id = request.POST.get('material_id')
                 mat = get_object_or_404(Material, id=material_id)
                 mat.is_active = not mat.is_active
@@ -1867,7 +1863,7 @@ def supplier_list_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'toggle_active':
-            if request.user.role in ['Admin', 'Manager']:
+            if request.user.has_perm('core.change_supplier'):
                 supplier_id = request.POST.get('supplier_id')
                 sup = get_object_or_404(Supplier, id=supplier_id)
                 sup.is_active = not sup.is_active
@@ -1932,7 +1928,7 @@ def client_list_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'toggle_active':
-            if request.user.role in ['Admin', 'Manager']:
+            if request.user.has_perm('core.change_client'):
                 client_id = request.POST.get('client_id')
                 cli = get_object_or_404(Client, id=client_id)
                 cli.is_active = not cli.is_active
@@ -2305,8 +2301,8 @@ def so_detail_view(request, pk):
                 messages.success(request, f"Removed {user_to_remove.username} from followers.")
 
         elif action == 'unallocate_so_stock':
-            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
-                messages.error(request, "Only Managers can unallocate stock from an order.")
+            if not request.user.has_perm('core.delete_stockallocation'):
+                messages.error(request, "You don't have permission to unallocate stock from an order.")
                 return redirect('so_detail', pk=so.pk)
 
             alloc_id = request.POST.get('alloc_id')
@@ -2496,7 +2492,7 @@ def so_detail_view(request, pk):
         'warehouses': warehouses,
         'manufacturing_plants': manufacturing_plants,
         'so_status_choices': [c for c in SalesOrder.STATUS_CHOICES if c[0] == so.status or c[0] in SO_MANUAL_TRANSITIONS.get(so.status, [])],
-        'managers': CustomUser.objects.filter(role__in=['Admin', 'Manager']).order_by('username'),
+        'managers': approvers(),
         'all_users': CustomUser.objects.all().order_by('username'),
     }
     return render(request, 'so_detail.html', context)
@@ -2656,7 +2652,7 @@ def po_detail_view(request, pk):
         'materials': materials,
         'warehouses': warehouses,
         'po_status_choices': PurchaseOrder.STATUS_CHOICES,
-        'managers': CustomUser.objects.filter(role__in=['Admin', 'Manager']).order_by('username'),
+        'managers': approvers(),
         'all_users': CustomUser.objects.all().order_by('username'),
     }
     return render(request, 'po_detail.html', context)
@@ -2787,10 +2783,8 @@ def manufacturing_view(request):
             po_number = generate_next_code(PurchaseOrder, 'po_number', 'PO', 601, pad=3)
             
             # Try to auto-assign a purchaser
-            purchaser = CustomUser.objects.filter(roles__name__icontains='Purchasing').first()
-            if not purchaser:
-                 purchaser = CustomUser.objects.filter(role__icontains='purchas').first()
-                 
+            purchaser = users_with_perm(HANDLE_PURCHASING, include_superusers=False).order_by('id').first()
+
             with transaction.atomic():
                 po = PurchaseOrder.objects.create(
                     po_number=po_number,
@@ -2851,7 +2845,7 @@ def manufacturing_view(request):
             return redirect('readiness')
 
         elif action == 'start_run':
-            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager', 'Staff_Edit']:
+            if not request.user.has_perm('core.change_productionrun'):
                 messages.error(request, "Permission Denied: You do not have permission to start Production Runs.")
                 return redirect('readiness')
             run_id = request.POST.get('run_id')
@@ -2863,7 +2857,7 @@ def manufacturing_view(request):
                 messages.success(request, f"Production Run {run.run_number} started.")
 
         elif action == 'complete_run':
-            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager', 'Staff_Edit']:
+            if not request.user.has_perm('core.change_productionrun'):
                 messages.error(request, "Permission Denied: You do not have permission to complete Production Runs.")
                 return redirect('readiness')
             run_id = request.POST.get('run_id')
@@ -3282,11 +3276,10 @@ def qa_dashboard_view(request):
 # --------------------------------------------------------------------------
 # APPROVALS INBOX (Action Center)
 # --------------------------------------------------------------------------
-from .decorators import role_required
+from .decorators import permission_or_redirect
 
 @login_required
-@role_required(['Admin', 'Manager'])
-
+@permission_or_redirect(APPROVE_REQUESTS)
 def approvals_inbox_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
@@ -4180,7 +4173,7 @@ def shipment_detail_view(request, pk):
     if shipment.direction in ('Outbound', 'Transfer') and shipment.origin_warehouse_id:
         # a shipment leaves from one place - only offer stock that's actually there
         batches = batches.filter(warehouse_id=shipment.origin_warehouse_id)
-    managers = CustomUser.objects.filter(role__in=['Admin', 'Manager'])
+    managers = approvers()
     all_users = CustomUser.objects.all().order_by('username')
     
     warehouses = Warehouse.objects.all()
@@ -4233,15 +4226,11 @@ def profile_view(request):
 
 @login_required
 def user_management_view(request):
-    is_admin = request.user.is_superuser or request.user.has_role('Admin') or request.user.role == 'Admin'
-    is_manager = request.user.has_role('Manager') or request.user.role == 'Manager'
-    
-    if not (is_admin or is_manager):
-        messages.error(request, "Permission Denied. Only Admins and Managers can manage users.")
+    if not request.user.has_perm(MANAGE_USERS):
+        messages.error(request, "Permission Denied. You don't have permission to manage users.")
         return redirect('dashboard')
 
-    
-    users = CustomUser.objects.all().prefetch_related('roles', 'allowed_locations')
+    users = CustomUser.objects.all().prefetch_related('groups', 'allowed_locations')
     
     query = request.GET.get('q', '')
     if query:
@@ -4253,7 +4242,7 @@ def user_management_view(request):
             Q(email__icontains=query)
         )
         
-    roles = Role.objects.all()
+    roles = Group.objects.order_by('name')
     warehouses = Warehouse.objects.all()
     
     if request.method == 'POST':
@@ -4278,7 +4267,7 @@ def user_management_view(request):
             
             # Roles
             role_ids = request.POST.getlist('roles')
-            user_obj.roles.set(Role.objects.filter(id__in=role_ids))
+            user_obj.groups.set(Group.objects.filter(id__in=role_ids))
             
             # Locations
             location_ids = request.POST.getlist('locations')
@@ -4977,8 +4966,8 @@ def production_run_detail_view(request, pk):
         'all_shipments_arrived': all_shipments_arrived,
         'pending_shipments_count': pending_shipments_count,
         'bom_materials': bom_materials,
-        'managers': CustomUser.objects.filter(role__in=['Admin', 'Manager']),
-        'all_users': CustomUser.objects.all(),
+        'managers': approvers(),
+        'all_users': CustomUser.objects.prefetch_related('groups'),
         'timeline_events': run.timeline.all().order_by('-timestamp'),
         'allocations': run.allocations.all(),
         'material_usage_rows': material_usage_rows,

@@ -67,7 +67,7 @@
                     </td>
                     <td style="padding:0.85rem 1rem;">
                         <div style="display:flex; flex-wrap:wrap; gap:0.25rem;">
-                            {% for r in u.roles.all %}
+                            {% for r in u.groups.all %}
                             <span class="badge" style="background:var(--primary-light); color:var(--primary); font-size:0.7rem; padding:0.2rem 0.4rem;">{{ r.name }}</span>
                             {% empty %}
                             <span style="font-size:0.75rem; color:var(--text-muted); font-style:italic;">None</span>
@@ -95,7 +95,7 @@
                         <div style="font-size:0.75rem; color:var(--text-muted);">by {{ u.updated_by.username|default:"System" }}</div>
                     </td>
                     <td style="padding:0.85rem 1rem; text-align:right;">
-                        <button onclick="openUserModal('{{ u.id }}', '{{ u.username }}', '{{ u.is_active|yesno:'true,false' }}', [{% for r in u.roles.all %}'{{ r.id }}'{% if not forloop.last %},{% endif %}{% endfor %}], [{% for w in u.allowed_locations.all %}'{{ w.id }}'{% if not forloop.last %},{% endif %}{% endfor %}])" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem;">Edit</button>
+                        <button onclick="openUserModal('{{ u.id }}', '{{ u.username }}', '{{ u.is_active|yesno:'true,false' }}', [{% for r in u.groups.all %}'{{ r.id }}'{% if not forloop.last %},{% endif %}{% endfor %}], [{% for w in u.allowed_locations.all %}'{{ w.id }}'{% if not forloop.last %},{% endif %}{% endfor %}])" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem;">Edit</button>
                     </td>
                 </tr>
                 {% endfor %}

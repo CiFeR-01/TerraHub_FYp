@@ -65,15 +65,11 @@
             </h3>
             <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">Your system roles dictate your permissions across TerraHub. Contact an Admin to request changes.</p>
             <div style="display:flex; flex-wrap:wrap; gap:0.5rem;">
-                {% if user.roles.all %}
-                    {% for r in user.roles.all %}
+                {% for r in user.groups.all %}
                     <span class="badge" style="background:var(--primary-light); color:var(--primary); border:1px solid rgba(79,70,229,0.2); font-size:0.85rem; padding:0.35rem 0.75rem;">{{ r.name }}</span>
-                    {% endfor %}
-                {% elif user.role %}
-                    <span class="badge" style="background:var(--primary-light); color:var(--primary); border:1px solid rgba(79,70,229,0.2); font-size:0.85rem; padding:0.35rem 0.75rem;">{{ user.role }} (Legacy)</span>
-                {% else %}
+                {% empty %}
                     <span style="font-size:0.85rem; color:var(--text-muted); font-style:italic;">No roles assigned.</span>
-                {% endif %}
+                {% endfor %}
             </div>
         </div>
 

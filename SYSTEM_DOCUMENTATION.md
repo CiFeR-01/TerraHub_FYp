@@ -7,7 +7,7 @@ TerraHub is a Django-based manufacturing and warehouse operations platform. It t
 ## 1. System Overview
 
 Core capabilities:
-- **Custom User Model** with role-based access (`CustomUser`, `Role`) and per-location access restrictions.
+- **Custom User Model** with per-location access restrictions. Roles are Django **Groups** (Django admin > Groups); code checks permissions only - per-model ones plus the app-wide ones on `Capability` - via `core/permissions.py`, so roles are added or reshaped without code changes.
 - **Catalog Management**: materials and products, with CSV import/export and per-product recipes (bills of materials).
 - **Warehouse & Inventory**: multi-warehouse, multi-location inventory with full batch/lot tracking, stock audits, and a public batch lookup/print-label flow.
 - **Manufacturing**: production runs consuming materials per recipe, with material allocation and yield tracking.
@@ -54,7 +54,8 @@ D:\TerraHub
 │   ├── management/commands/    # Scheduled jobs (daily snapshots, AI briefing)
 │   ├── urls.py                 # Application URL routing (see §4)
 │   ├── utils.py                # Allocation engine (FEFO), stock helpers
-│   ├── decorators.py           # Role/permission decorators
+│   ├── decorators.py           # permission_or_redirect view decorator
+│   ├── permissions.py          # Central permission helpers (approvers, admin override, ...)
 │   ├── context_processors.py   # Template context (nav, notifications, etc.)
 │   ├── db_tracker.py           # DB query interception & diagnostics
 │   ├── admin.py                # Django admin registrations
@@ -150,7 +151,7 @@ D:\TerraHub
 
 Defined in `core/models.py`:
 
-- **Access**: `Role`, `CustomUser`
+- **Access**: `CustomUser` (+ Django `Group`), `Capability` (table-less holder of app-wide permissions)
 - **Facilities**: `Warehouse`, `WarehouseLocation`
 - **Catalog**: `Material`, `Product`, `ProductRecipe`
 - **Manufacturing**: `ProductionRun`, `RunMaterialUsage`, `ProductionConsumption`
