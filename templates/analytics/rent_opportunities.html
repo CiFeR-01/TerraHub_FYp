@@ -42,6 +42,47 @@
     </div>
 </section>
 
+<section class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+    <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:0.75rem; margin-bottom:1rem;">
+        <div>
+            <h2 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin:0; color:var(--text-main);">Rent History</h2>
+            <div style="font-size:0.8rem; color:var(--text-muted);">Daily rent paid for rented storage, per warehouse</div>
+        </div>
+        <div id="rentRange" style="display:flex; gap:0.35rem;">
+            <button type="button" data-days="90" class="btn btn-secondary" style="padding:0.25rem 0.7rem; font-size:0.78rem;">3 months</button>
+            <button type="button" data-days="180" class="btn btn-secondary" style="padding:0.25rem 0.7rem; font-size:0.78rem;">6 months</button>
+        </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:0.75rem; margin-bottom:1rem;">
+        <div style="background:#f8fafc; border-radius:8px; padding:0.75rem 1rem;">
+            <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">This month so far</div>
+            <div style="font-size:1.15rem; font-weight:700; color:var(--text-main);">RM {{ history.this_month|floatformat:2 }}</div>
+        </div>
+        <div style="background:#f8fafc; border-radius:8px; padding:0.75rem 1rem;">
+            <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Last month</div>
+            <div style="font-size:1.15rem; font-weight:700; color:var(--text-main);">{% if history.last_month is not None %}RM {{ history.last_month|floatformat:2 }}{% else %}&mdash;{% endif %}</div>
+        </div>
+        <div style="background:#f8fafc; border-radius:8px; padding:0.75rem 1rem;">
+            <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Average per day (30 days)</div>
+            <div style="font-size:1.15rem; font-weight:700; color:var(--text-main);">RM {{ history.avg_per_day_30d|floatformat:2 }}</div>
+        </div>
+    </div>
+
+    {% if history.series %}
+    <div style="position:relative; height:280px;"><canvas id="rentHistoryChart" aria-label="Daily rent per rented warehouse"></canvas></div>
+    {% if history.has_estimates %}
+    <p style="font-size:0.75rem; color:var(--text-muted); margin:0.75rem 0 0;">
+        Dashed, lighter stretches are <strong>estimates</strong>: days before daily rent was recorded,
+        worked out as that day's tonnage &times; the warehouse's current rate.
+    </p>
+    {% endif %}
+    {{ history|json_script:"rent-history-data" }}
+    {% else %}
+    <div style="padding:1.5rem; text-align:center; color:var(--text-muted); font-size:0.85rem;">No rent recorded yet &mdash; none of your warehouses is rented.</div>
+    {% endif %}
+</section>
+
 {% if rows %}
     {% for o in rows %}
     <div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.25rem;">
@@ -112,5 +153,74 @@
     No rent-reduction opportunities right now &mdash; either no rented warehouse is Critical/Watch,
     or none of your own storage facilities has spare capacity to move stock into.
 </div>
+{% endif %}
+{% if history.series %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+(function () {
+    const data = JSON.parse(document.getElementById('rent-history-data').textContent);
+    const css = getComputedStyle(document.documentElement);
+    const palette = [css.getPropertyValue('--primary').trim() || '#2563eb', '#d97706', '#059669', '#dc2626', '#7c3aed', '#0891b2'];
+    const withAlpha = (hex, a) => {
+        const h = hex.replace('#', '');
+        if (h.length !== 6) return hex;
+        const n = parseInt(h, 16);
+        return `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+    };
+    let chart = null;
+
+    function draw(days) {
+        const from = Math.max(0, data.dates.length - days);
+        const labels = data.dates.slice(from);
+        const datasets = data.series.map((s, i) => {
+            const colour = palette[i % palette.length];
+            const est = s.estimated.slice(from);
+            return {
+                label: s.name,
+                data: s.values.slice(from),
+                borderColor: colour,
+                backgroundColor: withAlpha(colour, 0.25),
+                fill: true,
+                pointRadius: 0,
+                borderWidth: 2,
+                tension: 0.2,
+                segment: {
+                    borderDash: ctx => est[ctx.p1DataIndex] ? [5, 4] : undefined,
+                    backgroundColor: ctx => withAlpha(colour, est[ctx.p1DataIndex] ? 0.1 : 0.25),
+                },
+            };
+        });
+        if (chart) chart.destroy();
+        chart = new Chart(document.getElementById('rentHistoryChart'), {
+            type: 'line',
+            data: { labels, datasets },
+            options: {
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    x: { ticks: { maxTicksLimit: 8 } },
+                    y: { stacked: true, beginAtZero: true, title: { display: true, text: 'RM / day' } },
+                },
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => `${ctx.dataset.label}: RM ${Number(ctx.parsed.y || 0).toFixed(2)}`
+                                + (data.series[ctx.datasetIndex].estimated[from + ctx.dataIndex] ? ' (estimate)' : ''),
+                        },
+                    },
+                },
+            },
+        });
+        document.querySelectorAll('#rentRange button').forEach(b => {
+            const on = Number(b.dataset.days) === days;
+            b.classList.toggle('btn-primary', on);
+            b.classList.toggle('btn-secondary', !on);
+        });
+    }
+
+    document.querySelectorAll('#rentRange button').forEach(b => b.addEventListener('click', () => draw(Number(b.dataset.days))));
+    draw(90);
+})();
+</script>
 {% endif %}
 {% endblock %}

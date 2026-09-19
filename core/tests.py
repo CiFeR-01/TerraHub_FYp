@@ -1311,6 +1311,63 @@ class StockoutForecastTests(TestCase):
         )
         self.assertEqual(self._row('MK-9')['on_order'], 250.0)
 
+    def _po(self, material, qty, expected_in_days, number):
+        po = PurchaseOrder.objects.create(
+            po_number=number, supplier_name='S', target_warehouse=self.wh, status='Pending',
+            expected_delivery_date=date.today() + timedelta(days=expected_in_days),
+        )
+        PurchaseOrderDetail.objects.create(purchase_order=po, material=material, quantity_ordered=Decimal(str(qty)))
+
+    def _burning(self, sku):
+        """100 in stock, 10/day burn (10 days cover), 14-day lead -> critical on its own."""
+        m = self._material(sku)
+        self._stock(m, 100)
+        self._consume(m, 300)
+        self._lead(m, 14)
+        return m
+
+    def test_po_arriving_before_run_out_extends_cover(self):
+        m = self._burning('MK-PO1')
+        self.assertEqual(self._row('MK-PO1')['status'], 'critical')
+        self._po(m, 500, 5, 'PO-PO1')
+        row = self._row('MK-PO1')
+        self.assertAlmostEqual(row['days_cover'], 60.0)        # (100 + 500) / 10
+        self.assertAlmostEqual(row['days_cover_on_hand'], 10.0)
+        self.assertEqual((row['on_order_counted'], row['on_order_late']), (500.0, 0.0))
+        self.assertEqual(row['status'], 'ok')                  # 60 - 14 = 46 days to reorder
+        self.assertEqual(row['next_po_number'], 'PO-PO1')
+
+    def test_po_arriving_after_run_out_does_not_help(self):
+        m = self._burning('MK-PO2')
+        self._po(m, 500, 20, 'PO-PO2')                         # stock gone on day 10
+        row = self._row('MK-PO2')
+        self.assertAlmostEqual(row['days_cover'], 10.0)
+        self.assertEqual((row['on_order_counted'], row['on_order_late']), (0.0, 500.0))
+        self.assertEqual(row['status'], 'critical')
+
+    def test_overdue_po_counts_as_arriving_today_and_is_flagged(self):
+        m = self._burning('MK-PO3')
+        self._po(m, 500, -3, 'PO-PO3')
+        row = self._row('MK-PO3')
+        self.assertTrue(row['po_overdue'])
+        self.assertAlmostEqual(row['days_cover'], 60.0)
+
+    def test_out_of_stock_with_delivery_today_is_not_critical(self):
+        m = self._material('MK-PO4')
+        self._consume(m, 300)
+        self._lead(m, 14)
+        self._po(m, 1000, 0, 'PO-PO4')
+        row = self._row('MK-PO4')
+        self.assertAlmostEqual(row['days_cover'], 100.0)
+        self.assertEqual(row['status'], 'ok')
+
+    def test_forecast_page_explains_po_cover(self):
+        m = self._burning('MK-PO5')
+        self._po(m, 500, 20, 'PO-PO5')
+        self.client.force_login(self.user)
+        resp = self.client.get(reverse('forecast'))
+        self.assertContains(resp, '500 arrives after run-out')
+
     def test_sorted_worst_first(self):
         crit = self._material('MK-C'); self._stock(crit, 20); self._consume(crit, 300); self._lead(crit, 14)
         idle = self._material('MK-I'); self._stock(idle, 500)
@@ -1505,10 +1562,12 @@ class CapacityForecastTests(TestCase):
         self.assertContains(resp, 'Depot 1')
         self.assertContains(resp, 'Collecting data')  # 3 days < 7
 
-    def test_view_empty_state(self):
+    def test_view_records_today_and_shows_collecting_state(self):
+        # no cron: opening the page fills in today's snapshot if nothing has changed yet
         self.client.login(username='capacity', password='pw')
         resp = self.client.get(reverse('capacity_forecast'))
-        self.assertContains(resp, 'No snapshots yet')
+        self.assertTrue(WarehouseUtilizationSnapshot.objects.filter(warehouse=self.wh, snapshot_date=timezone.localdate()).exists())
+        self.assertContains(resp, 'Collecting data')
 
     def test_view_requires_login(self):
         self.assertEqual(self.client.get(reverse('capacity_forecast')).status_code, 302)
@@ -1741,6 +1800,42 @@ class RentReductionOpportunitiesTests(TestCase):
         self.assertEqual(len(rows[0]['candidate_batches']), 1)
         self.assertEqual(rows[0]['candidate_batches'][0]['rate_per_mt'], 3.0)
         self.assertEqual(rows[0]['excluded_near_expiry'], 1)
+
+    def _internal(self, name, loc, cap):
+        return Warehouse.objects.create(
+            name=name, location_type=loc, ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'), total_capacity_mt=Decimal(cap),
+        )
+
+    def test_manufacturing_only_plant_is_never_suggested(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00')
+        self._internal('Plant Only', 'Manufacturing', '5000')
+        self.assertEqual(rent_reduction_opportunities(), [])
+
+    def test_storage_and_manufacturing_facility_is_suggested(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00')
+        self._internal('Plant Only', 'Manufacturing', '5000')
+        both = self._internal('Plant + Store', 'Both', '500')
+        rows = rent_reduction_opportunities()
+        self.assertEqual([c['destination_id'] for c in rows[0]['candidate_batches']], [both.id])
+        self.assertEqual([d['name'] for d in rows[0]['destination_options']], ['Plant + Store'])
+
+    def test_two_rented_warehouses_share_free_space_once(self):
+        other = Warehouse.objects.create(
+            name='Rented Depot 2', location_type='Storage', ownership_type='ExternalProvider',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('5.00'), total_capacity_mt=Decimal('1000'),
+        )
+        for wh in (self.rented, other):
+            self._flag_critical(wh)
+        self._batch(self.rented, 100, '9.00')
+        self._batch(other, 100, '4.00')
+        self._internal('Small Store', 'Storage', '100')  # room for only one of them
+        rows = {r['warehouse_id']: r for r in rent_reduction_opportunities()}
+        moved = sum(c['move_mt'] for r in rows.values() for c in r['candidate_batches'])
+        self.assertEqual(moved, 100.0)
+        self.assertEqual(rows[self.rented.id]['total_daily_saving'], 900.0)  # higher rate wins the space
 
     def test_view_renders_with_caveat(self):
         self._flag_critical(self.rented)
@@ -3461,3 +3556,215 @@ class QuarantinedCapacityDisplayTests(TestCase):
             resp = c.get(url)
             self.assertContains(resp, 'incl. 10.0 MT quarantined', msg_prefix=url)
         self.assertContains(c.get(reverse('warehouse_list')), '20.0 MT used')
+
+
+class RentHistoryTests(TestCase):
+    """DSS #5: daily occupancy + rent snapshots written on change (no cron),
+    estimated for rows without recorded rent, charted on Rent Opportunities."""
+
+    def setUp(self):
+        from core.models import WarehouseUtilizationSnapshot
+        self.Snap = WarehouseUtilizationSnapshot
+        self.rented = Warehouse.objects.create(
+            name='Rented RH', location_type='Storage', ownership_type='ExternalProvider',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('2.00'), total_capacity_mt=Decimal('1000'),
+        )
+        self.own = Warehouse.objects.create(name='Own RH', location_type='Storage', ownership_type='Internal',
+                                            total_capacity_mt=Decimal('1000'))
+        self.mat = Material.objects.create(name='RH Mat', sku='MAT-RH', category='Raw', safe_storage_days=100,
+                                           weight_mt_per_unit=Decimal('1'))
+
+    def _batch(self, wh, qty):
+        return Batch.objects.create(batch_number=f'B-RH-{wh.id}-{qty}', status='Active', material=self.mat,
+                                    quantity=Decimal(str(qty)), warehouse=wh, manufacturing_date=date.today(),
+                                    expiry_date=date.today() + timedelta(days=100))
+
+    def _today(self, wh):
+        return self.Snap.objects.get(warehouse=wh, snapshot_date=timezone.localdate())
+
+    def test_saving_a_batch_records_todays_rent(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            self._batch(self.rented, 100)
+        snap = self._today(self.rented)
+        self.assertEqual((snap.used_mt, snap.daily_rent_cost, snap.rent_estimated), (Decimal('100.000'), Decimal('200.00'), False))
+
+    def test_last_change_of_the_day_wins(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            b = self._batch(self.rented, 100)
+        with self.captureOnCommitCallbacks(execute=True):
+            b.quantity = Decimal('40'); b.save()
+        self.assertEqual(self._today(self.rented).daily_rent_cost, Decimal('80.00'))
+        self.assertEqual(self.Snap.objects.filter(warehouse=self.rented).count(), 1)
+
+    def test_moving_a_batch_updates_both_warehouses(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            b = self._batch(self.rented, 100)
+        b = Batch.objects.get(pk=b.pk)
+        with self.captureOnCommitCallbacks(execute=True):
+            b.warehouse = self.own; b.save()
+        self.assertEqual(self._today(self.rented).daily_rent_cost, Decimal('0.00'))
+        self.assertEqual(self._today(self.own).used_mt, Decimal('100.000'))
+
+    def test_rate_change_updates_todays_rent(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            self._batch(self.rented, 100)
+        with self.captureOnCommitCallbacks(execute=True):
+            self.rented.rental_cost_per_mt = Decimal('3.00'); self.rented.save()
+        self.assertEqual(self._today(self.rented).daily_rent_cost, Decimal('300.00'))
+
+    def test_history_estimates_missing_rent_and_carries_forward(self):
+        from core.analytics import rent_history
+        today = timezone.localdate()
+        # a seeded-style row 3 days ago with no rent recorded, nothing since
+        self.Snap.objects.create(warehouse=self.rented, snapshot_date=today - timedelta(days=3),
+                                 used_mt=Decimal('50'), capacity_mt=Decimal('1000'), utilization_percent=Decimal('5'))
+        self.Snap.objects.create(warehouse=self.own, snapshot_date=today - timedelta(days=3),
+                                 used_mt=Decimal('500'), capacity_mt=Decimal('1000'), utilization_percent=Decimal('50'))
+        h = rent_history(days=5, end=today)
+        self.assertEqual([s['name'] for s in h['series']], ['Rented RH'])       # own warehouse costs nothing
+        self.assertEqual(h['series'][0]['values'], [None, 100.0, 100.0, 100.0, 100.0])  # 50 MT x 2.00, carried forward
+        self.assertEqual(h['series'][0]['estimated'], [False, True, True, True, True])
+        self.assertTrue(h['has_estimates'])
+
+    def test_rent_page_fills_today_and_renders_chart(self):
+        admin = User.objects.create_user(username='rh_admin', password='pw', role='Admin')
+        self._batch(self.rented, 100)          # created without running on-commit callbacks
+        c = Client(); c.force_login(admin)
+        resp = c.get(reverse('rent_opportunities'))
+        self.assertContains(resp, 'Rent History')
+        self.assertContains(resp, 'id="rent-history-data"')
+        self.assertEqual(self._today(self.rented).daily_rent_cost, Decimal('200.00'))  # safety net wrote it
+
+
+class SplitStockDeliveryTests(TestCase):
+    """An order whose reserved stock is in several warehouses: removing a line frees
+    its stock; the user chooses separate deliveries or moving everything to the
+    order's warehouse first, and can switch until the shipments are approved."""
+
+    def setUp(self):
+        from core.models import OrderTimeline, Notification
+        self.OrderTimeline, self.Notification = OrderTimeline, Notification
+        self.admin = User.objects.create_user(username='split_admin', password='pw', role='Admin')
+        self.client = Client()
+        self.client.force_login(self.admin)
+        self.hub = Warehouse.objects.create(name='Split Hub', location_type='Storage')
+        self.alpha = Warehouse.objects.create(name='Split Alpha', location_type='Storage')
+        self.product = Product.objects.create(name='Split P', sku='PRD-SPLIT', unit_of_measure='kg', price_per_unit=1)
+        self.so = SalesOrder.objects.create(so_number='SO-SPLIT', client_name='AgriCore', origin_warehouse=self.hub,
+                                            status='Ready to Ship', created_by=self.admin)
+        self.line = SalesOrderDetail.objects.create(sales_order=self.so, product=self.product, quantity_ordered=Decimal('200'))
+        self.at_hub = self._reserved(self.hub, 'FG-SPLIT-H')
+        self.at_alpha = self._reserved(self.alpha, 'FG-SPLIT-A')
+
+    def _reserved(self, wh, number, qty='100'):
+        b = Batch.objects.create(batch_number=number, status='Active', product=self.product, quantity=Decimal(qty),
+                                 allocated_quantity=Decimal(qty), manufacturing_date=date.today(),
+                                 expiry_date=date.today() + timedelta(days=200), warehouse=wh)
+        StockAllocation.objects.create(batch=b, sales_order=self.so, quantity=Decimal(qty))
+        return b
+
+    def _post(self, **data):
+        return self.client.post(reverse('so_detail', args=[self.so.pk]), data)
+
+    def _moves(self):
+        return Shipment.objects.filter(sales_order=self.so, direction='Transfer').exclude(status='Cancelled')
+
+    # --- the ported fix
+    def test_removing_a_line_releases_its_reserved_stock(self):
+        self.so.status = 'Pending'; self.so.save()
+        self._post(action='remove_so_item', item_id=self.line.id)
+        for b in (self.at_hub, self.at_alpha):
+            b.refresh_from_db()
+            self.assertEqual(b.allocated_quantity, Decimal('0'))
+        self.assertFalse(StockAllocation.objects.filter(sales_order=self.so).exists())
+
+    def test_removing_a_line_takes_it_off_an_open_stock_move(self):
+        self._post(action='consolidate_stock')
+        move = self._moves().get()
+        self.so.status = 'Pending'; self.so.save()
+        self._post(action='remove_so_item', item_id=self.line.id)
+        move.refresh_from_db()
+        self.assertEqual(move.status, 'Cancelled')
+        self.at_alpha.refresh_from_db()
+        self.assertEqual(self.at_alpha.allocated_quantity, Decimal('0'))
+
+    # --- choosing
+    def test_order_page_offers_the_choice(self):
+        resp = self.client.get(reverse('so_detail', args=[self.so.pk]))
+        self.assertContains(resp, 'Choose how to deliver')
+        self.assertContains(resp, 'Ship separately (2 deliveries)')
+        self.assertContains(resp, 'Move everything to Split Hub first (1 delivery)')
+
+    def test_creator_is_notified_once(self):
+        from core.utils import prompt_delivery_choice
+        prompt_delivery_choice(self.so, self.admin)
+        prompt_delivery_choice(self.so, self.admin)
+        self.assertEqual(self.Notification.objects.filter(user=self.admin, message__contains='SO-SPLIT is ready to ship').count(), 1)
+
+    def test_ship_separately_makes_one_shipment_per_warehouse(self):
+        self.client.post(reverse('so_create_shipment', args=[self.so.pk]))
+        origins = sorted(Shipment.objects.filter(sales_order=self.so, direction='Outbound').values_list('origin_warehouse__name', flat=True))
+        self.assertEqual(origins, ['Split Alpha', 'Split Hub'])
+
+    def test_one_delivery_moves_stock_then_ships_once(self):
+        self._post(action='consolidate_stock')
+        move = self._moves().get()
+        self.assertEqual((move.origin_warehouse, move.destination_warehouse), (self.alpha, self.hub))
+        alloc = StockAllocation.objects.get(batch=self.at_alpha)
+        self.assertEqual((alloc.sales_order, alloc.shipment), (self.so, move))   # still the order's stock
+        self.so.refresh_from_db()
+        self.assertEqual(self.so.status, 'Ready to Ship')
+
+        # can't ship while stock is still moving
+        self.client.post(reverse('so_create_shipment', args=[self.so.pk]))
+        self.assertFalse(Shipment.objects.filter(sales_order=self.so, direction='Outbound').exists())
+
+        # the move arrives: reservation follows the stock to the hub
+        move.status = 'Arrived'; move.save()
+        self.client.post(reverse('shipment_detail', args=[move.pk]), {'action': 'receive_all'})
+        arrived = Batch.objects.get(warehouse=self.hub, batch_number__contains='-TRF-')
+        self.assertEqual(StockAllocation.objects.get(batch=arrived).sales_order, self.so)
+        self.assertEqual(arrived.allocated_quantity, Decimal('100'))
+
+        # now one outbound shipment from the hub carries everything
+        self.client.post(reverse('so_create_shipment', args=[self.so.pk]))
+        outbound = Shipment.objects.filter(sales_order=self.so, direction='Outbound')
+        self.assertEqual(list(outbound.values_list('origin_warehouse__name', flat=True)), ['Split Hub'])
+        self.assertEqual(outbound.get().items.count(), 2)
+
+    # --- switching
+    def test_switch_from_one_delivery_back_to_separate(self):
+        self._post(action='consolidate_stock')
+        self._post(action='cancel_delivery_plan')
+        self.assertFalse(self._moves().exists())
+        alloc = StockAllocation.objects.get(batch=self.at_alpha)
+        self.assertEqual((alloc.sales_order, alloc.shipment), (self.so, None))
+        self.assertContains(self.client.get(reverse('so_detail', args=[self.so.pk])), 'Choose how to deliver')
+
+    def test_switch_from_separate_back_to_one_delivery(self):
+        self.client.post(reverse('so_create_shipment', args=[self.so.pk]))
+        self.assertContains(self.client.get(reverse('so_detail', args=[self.so.pk])), 'Switch to one delivery')
+        self._post(action='cancel_delivery_plan')
+        self.assertFalse(Shipment.objects.filter(sales_order=self.so, direction='Outbound').exclude(status='Cancelled').exists())
+        self.assertEqual(StockAllocation.objects.filter(sales_order=self.so, shipment__isnull=True).count(), 2)
+        for b in (self.at_hub, self.at_alpha):
+            b.refresh_from_db()
+            self.assertEqual(b.allocated_quantity, Decimal('100'))   # never released
+
+    def test_cannot_switch_once_approved(self):
+        self._post(action='consolidate_stock')
+        move = self._moves().get()
+        move.status = 'Preparing'; move.save()
+        self._post(action='cancel_delivery_plan')
+        move.refresh_from_db()
+        self.assertEqual(move.status, 'Preparing')
+
+    def test_scrapping_a_stock_move_keeps_the_reservation(self):
+        self._post(action='consolidate_stock')
+        move = self._moves().get()
+        self.client.post(reverse('shipment_detail', args=[move.pk]), {'action': 'scrap_shipment'})
+        move.refresh_from_db(); self.at_alpha.refresh_from_db(); self.so.refresh_from_db()
+        self.assertEqual(move.status, 'Cancelled')
+        self.assertEqual(self.at_alpha.allocated_quantity, Decimal('100'))
+        self.assertEqual(StockAllocation.objects.get(batch=self.at_alpha).shipment, None)
+        self.assertEqual(self.so.status, 'Ready to Ship')
