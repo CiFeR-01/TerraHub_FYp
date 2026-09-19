@@ -1,15 +1,16 @@
 from django.utils.safestring import mark_safe
 
 from .models import SalesOrder, PurchaseOrder, ProductionRun
+from .permissions import can_approve, MANAGE_USERS
 
 def approvals_count(request):
     """
     Context processor to make the total number of pending approvals
     available in all templates for the Action Center badge.
     """
-    # Only calculate for authenticated users with Admin or Manager roles
+    # Only calculate for users who can approve things
     if request.user.is_authenticated:
-        if request.user.is_superuser or (hasattr(request.user, 'role') and request.user.role in ['Admin', 'Manager']):
+        if can_approve(request.user):
             # For Sales Orders, we assume 'Draft' needs approval to move to 'Pending' (Approved)
             so_count = SalesOrder.objects.filter(status='Draft').count()
 
@@ -99,14 +100,6 @@ ANALYTICS_CATEGORIES = [
 ]
 
 
-def _has_any_role(user, *role_names):
-    if user.is_superuser:
-        return True
-    if getattr(user, 'role', None) in role_names:
-        return True
-    return any(user.has_role(name) for name in role_names)
-
-
 def sidebar_nav(request):
     """
     Builds the sidebar navigation as a single data structure so group/link
@@ -126,7 +119,7 @@ def sidebar_nav(request):
         'label': 'AI Copilot', 'url_name': 'ops_briefing',
         'alias_url_names': ['category_briefing'], 'css_class': 'ai-link',
     })
-    if _has_any_role(user, 'Admin', 'Manager'):
+    if can_approve(user):
         overview_items.append({
             'label': 'Action Center',
             'url_name': 'approvals_inbox',
@@ -198,7 +191,7 @@ def sidebar_nav(request):
 
     # Admin
     admin_items = []
-    if _has_any_role(user, 'Admin', 'Manager'):
+    if user.has_perm(MANAGE_USERS):
         admin_items.append({'label': 'Users Management', 'url_name': 'user_management'})
     if user.is_superuser:
         admin_items.append({'label': 'System Console', 'url_name': 'system'})
