@@ -1,5 +1,6 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.http import HttpResponse, JsonResponse
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import Group
@@ -10,7 +11,7 @@ from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q, 
 from django.db.models.functions import Abs, Coalesce, TruncWeek
 from django.core.paginator import Paginator
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import csv
 import io
 import uuid
@@ -3343,6 +3344,11 @@ def approvals_inbox_view(request):
         item_id = request.POST.get('item_id')
         comment = request.POST.get('comment', '').strip()
 
+        # Lets a detail page reuse this handler and return the user to itself.
+        back = request.POST.get('next', '')
+        if not url_has_allowed_host_and_scheme(back, allowed_hosts={request.get_host()}):
+            back = reverse('approvals_inbox')
+
         if item_type == 'sales_order':
             so = get_object_or_404(SalesOrder, id=item_id)
             if action in ('approve', 'reject') and not may_decide_approval(request.user, so):
@@ -3370,7 +3376,7 @@ def approvals_inbox_view(request):
             run = get_object_or_404(ProductionRun, id=item_id)
             if action in ('approve', 'reject') and not may_decide_run_approval(request.user, run):
                 messages.error(request, "Only a Manager or Admin can decide a production run that is pending approval.")
-                return redirect('approvals_inbox')
+                return redirect(back)
             if action in ('approve', 'reject'):
                 clear_approval_notifications(run.run_number)
             if action == 'approve':
@@ -3453,8 +3459,8 @@ def approvals_inbox_view(request):
                 ship.save()
                 OrderTimeline.objects.create(shipment=ship, action=f"Approval Rejected by Manager. Comment: {comment}" if comment else "Approval Rejected by Manager.", user=request.user)
                 messages.warning(request, f"Shipment {ship.tracking_number} returned to Logistics Review.")
-                
-        return redirect('approvals_inbox')
+
+        return redirect(back)
 
     pending_sos = SalesOrder.objects.filter(status='Pending Approval', assigned_to=request.user).order_by('order_date').prefetch_related('items__product')
     pending_runs = ProductionRun.objects.filter(status='Pending Approval').order_by('start_time')
@@ -4593,8 +4599,13 @@ def production_run_allocate_view(request, pk):
     fefo_recommended_ids = []
     
     for req in run.target_product.recipe_items.all():
-        needed = Decimal(str(req.quantity_required)) * Decimal(str(run.expected_yield))
-        
+        # Recipes are 4dp but stock is held to 2dp, so round the requirement UP
+        # to what can actually be allocated (0.0200 x 115.01 = 2.3002 -> 2.31)
+        # rather than letting it silently truncate and under-allocate.
+        needed = (Decimal(str(req.quantity_required)) * Decimal(str(run.expected_yield))).quantize(
+            Decimal('0.01'), rounding=ROUND_CEILING
+        )
+
         # Get all active batches globally, ordered by expiry date (FEFO)
         batches = Batch.objects.filter(material=req.material, status='Active').annotate(
             avail=F('quantity') - F('allocated_quantity')
@@ -5018,6 +5029,7 @@ def production_run_detail_view(request, pk):
 
     return render(request, 'production_run_detail.html', {
         'run': run,
+        'can_decide_approval': may_decide_run_approval(request.user, run),
         'linked_shipments': linked_shipments,
         'all_shipments_arrived': all_shipments_arrived,
         'pending_shipments_count': pending_shipments_count,

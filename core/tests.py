@@ -3328,6 +3328,24 @@ class TesterFollowUpTests(TestCase):
         self.assertEqual(resp.context['yield_progress_pct'], 100)
         self.assertContains(resp, 'Planned Start')
 
+    def test_variance_approval_from_run_page_returns_to_run_page(self):
+        from core.models import ProductionRun
+        run = ProductionRun.objects.create(run_number='RUN-VAR', target_product=self.product, expected_yield=Decimal('400'),
+                                           actual_yield=Decimal('380'), status='Pending Approval', manufacturing_plant=self.plant)
+        url = reverse('production_run_detail', args=[run.pk])
+        resp = self.client.get(url)
+        self.assertContains(resp, 'name="next"')
+        resp = self.client.post(reverse('approvals_inbox'), {
+            'item_type': 'production_run', 'item_id': run.pk, 'action': 'reject', 'next': url,
+        })
+        self.assertRedirects(resp, url, fetch_redirect_response=False)
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+
+    def test_approvals_inbox_ignores_offsite_next(self):
+        resp = self.client.post(reverse('approvals_inbox'), {'next': 'https://evil.example/'})
+        self.assertRedirects(resp, reverse('approvals_inbox'), fetch_redirect_response=False)
+
     def test_approval_notification_cleared_after_decision(self):
         from core.models import Notification
         so = SalesOrder.objects.create(so_number='SO-TFU', client_name='AgriCore', origin_warehouse=self.hub,
@@ -3827,3 +3845,71 @@ class GroupPermissionTests(TestCase):
         self.assertEqual(self.user.role_label, 'No role')
         self._give()
         self.assertEqual(self.user.role_label, 'Night Shift Lead')
+
+
+class DashboardFiguresTests(TestCase):
+    """Executive dashboard headline figures: raw stock is shown in MT (not the
+    material's kg units), the active-shipments list excludes finished ones, and
+    one full warehouse is flagged even when the network average looks healthy."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='dash_exec', password='pw', is_superuser=True)
+        self.client.force_login(self.user)
+        self.wh = Warehouse.objects.create(name='Dash Big WH', location_type='Storage', total_capacity_mt=Decimal('1000'))
+
+    def _batch(self, number, material, qty, wh):
+        return Batch.objects.create(batch_number=number, status='Active', material=material, quantity=Decimal(qty),
+                                    warehouse=wh, manufacturing_date=date.today(),
+                                    expiry_date=date.today() + timedelta(days=200))
+
+    def test_raw_materials_kpi_is_in_mt(self):
+        kg_mat = Material.objects.create(name='Dash Urea', sku='MAT-DASH-KG', category='Raw', unit_of_measure='kg',
+                                         safe_storage_days=365, weight_mt_per_unit=Decimal('0.001'))
+        self._batch('B-DASH-KG', kg_mat, '5000', self.wh)
+        resp = self.client.get(reverse('dashboard'))
+        self.assertAlmostEqual(resp.context['inventory_metrics']['raw_materials_mt'], 5.0)
+        self.assertContains(resp, '5<span class="kpi-unit">MT</span>')
+
+    def test_active_shipments_exclude_finished(self):
+        for trk, status in (('DASH-DONE', 'Completed'), ('DASH-GONE', 'Cancelled'), ('DASH-DRAFT', 'Draft'),
+                            ('DASH-ROAD', 'Dispatched')):
+            Shipment.objects.create(tracking_number=trk, direction='Outbound', status=status)
+        resp = self.client.get(reverse('dashboard'))
+        self.assertEqual([s.tracking_number for s in resp.context['active_shipments']], ['DASH-ROAD'])
+        self.assertEqual(resp.context['active_shipments_total'], 1)
+
+    def test_single_full_warehouse_is_flagged(self):
+        small = Warehouse.objects.create(name='Dash Small WH', location_type='Storage', total_capacity_mt=Decimal('10'))
+        mt_mat = Material.objects.create(name='Dash Bulk', sku='MAT-DASH-MT', category='Raw',
+                                         safe_storage_days=365, weight_mt_per_unit=Decimal('1'))
+        self._batch('B-DASH-FULL', mt_mat, '12', small)
+        resp = self.client.get(reverse('dashboard'))
+        self.assertLess(resp.context['global_utilization'], 70)
+        self.assertEqual(resp.context['capacity_status'], 'crit')
+        self.assertEqual(resp.context['attention']['over_capacity'], 1)
+        self.assertContains(resp, 'warehouse over capacity')
+
+
+class ProductionAllocateRoundingTests(TestCase):
+    """A 4dp recipe x a fractional yield (0.0200 x 115.01 = 2.3002) must be
+    suggested as a 2dp amount stock can actually hold, rounded up (2.31), and
+    the qty inputs must step from 0 so whole numbers like 5 are accepted."""
+
+    def test_fefo_suggestion_rounds_up_to_2dp(self):
+        user = User.objects.create_user(username='alloc_round', password='pw', is_superuser=True)
+        self.client.force_login(user)
+        wh = Warehouse.objects.create(name='Round WH', location_type='Storage')
+        mat = Material.objects.create(name='Round AN', sku='MAT-RND', category='Raw', unit_of_measure='kg',
+                                      safe_storage_days=365, weight_mt_per_unit=Decimal('0.001'))
+        prod = Product.objects.create(name='Round Prod', sku='PRD-RND', unit_of_measure='kg')
+        ProductRecipe.objects.create(product=prod, material=mat, quantity_required=Decimal('0.0200'))
+        Batch.objects.create(batch_number='B-RND-1', material=mat, quantity=Decimal('171'), status='Active',
+                             warehouse=wh, manufacturing_date=date.today(),
+                             expiry_date=date.today() + timedelta(days=90))
+        run = ProductionRun.objects.create(run_number='RUN-RND', target_product=prod,
+                                           expected_yield=Decimal('115.01'), status='Pending Allocation')
+        resp = self.client.get(reverse('production_run_allocate', args=[run.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['recipe_reqs'][0]['needed'], 2.31)
+        self.assertContains(resp, 'value="2.31"')
+        self.assertContains(resp, 'min="0" step="0.01"')
