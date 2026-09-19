@@ -55,6 +55,19 @@ REGISTRY: dict[str, tuple[object, str, str]] = {
         "Quarantined and must be released on the QA dashboard before they can be "
         "allocated or shipped (a sales order's batch is reserved on release).",
     ),
+    "dss_min_total_saving_rm": (
+        100.0,
+        "float",
+        "Rent Opportunities only suggests moving a batch if the rent it would save "
+        "over the time it would otherwise stay (until used up or expired) is at "
+        "least this much (RM).",
+    ),
+    "dss_saving_horizon_days": (
+        365,
+        "int",
+        "Longest period (days) Rent Opportunities counts rent savings over for a "
+        "batch that isn't expected to be used up or expire sooner.",
+    ),
     "logistics_stall_days": (
         5,
         "int",
