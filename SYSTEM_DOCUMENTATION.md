@@ -61,7 +61,8 @@ D:\TerraHub
 │   ├── admin.py                # Django admin registrations
 │   └── tests.py                # Test suite
 ├── static/
-│   └── css/style.css
+│   ├── css/style.css
+│   └── img/landing-dashboard.png  # Static Operations Overview screenshot used on the landing page
 └── templates/                  # Server-rendered HTML templates
     ├── base.html                    # Shared layout/theme
     ├── home.html / login.html       # Public entry points
@@ -85,7 +86,7 @@ D:\TerraHub
 
 | Path | Name | Controller View | Description |
 | :--- | :--- | :--- | :--- |
-| `/` | `home` | `home_view` | Public landing page |
+| `/` | `home` | `home_view` | Public landing page (hero, the three project objectives, traceability flow, decision support). `?batch=<number>` is the "Trace a batch" box: redirects to that batch's public page, or shows a not-found note. Signed-in users are redirected to `/dashboard/` |
 | `/login/` | `login` | `LoginView` | Authentication |
 | `/logout/` | `logout` | `LogoutView` | Clears session, redirects home |
 | `/dashboard/` | `dashboard` | `dashboard_view` | Main authenticated dashboard |

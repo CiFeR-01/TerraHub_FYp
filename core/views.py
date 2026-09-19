@@ -592,7 +592,21 @@ def db_test_op_view(request):
 
 
 def home_view(request):
-    return render(request, 'home.html')
+    """Public landing page. ?batch=<number> is the "Trace a batch" box: it jumps
+    to that batch's public page (the one its QR label opens), or re-renders with
+    a not-found note. Signed-in users otherwise go straight to the dashboard."""
+    trace_query = request.GET.get('batch', '').strip()[:100]
+    if trace_query:
+        batch_number = Batch.objects.filter(batch_number__iexact=trace_query).values_list('batch_number', flat=True).first()
+        if batch_number:
+            return redirect('batch_public_info', batch_number=batch_number)
+    elif request.user.is_authenticated:
+        return redirect('dashboard')
+
+    return render(request, 'home.html', {
+        'trace_query': trace_query,
+        'trace_not_found': bool(trace_query),
+    })
 
 
 @login_required

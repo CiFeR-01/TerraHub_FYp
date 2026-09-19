@@ -1770,45 +1770,78 @@ class RentReductionOpportunitiesTests(TestCase):
         self.assertEqual(rows[0]['candidate_batches'][0]['mt'], 40.0)
         self.assertEqual(rows[0]['total_daily_saving'], 200.0)  # 40 MT * 5.00, not 100 * 5.00
 
-    def test_near_expiry_batch_is_excluded_with_nothing_else(self):
-        self._flag_critical(self.rented)
-        self._batch(self.rented, 100, '5.00', expiry_days=10)  # expiring soon
-        Warehouse.objects.create(
-            name='Internal Depot Expiry', location_type='Storage', ownership_type='Internal',
-            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
-            total_capacity_mt=Decimal('500'),
+    def _depot(self, cap='500'):
+        return Warehouse.objects.create(
+            name=f'Internal Depot {cap}', location_type='Storage', ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'), total_capacity_mt=Decimal(cap),
         )
-        rows = rent_reduction_opportunities()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['candidate_batches'], [])
-        self.assertEqual(rows[0]['total_daily_saving'], 0)
-        self.assertEqual(rows[0]['excluded_near_expiry'], 1)
 
-    def test_batch_beyond_expiry_threshold_still_included(self):
-        self._flag_critical(self.rented)
-        self._batch(self.rented, 100, '5.00', expiry_days=31)  # just past the 30-day cutoff
-        Warehouse.objects.create(
-            name='Internal Depot Beyond', location_type='Storage', ownership_type='Internal',
-            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
-            total_capacity_mt=Decimal('500'),
-        )
-        rows = rent_reduction_opportunities()
-        self.assertEqual(len(rows[0]['candidate_batches']), 1)
-        self.assertEqual(rows[0]['excluded_near_expiry'], 0)
+    def _consume(self, total):
+        """Production used `total` units of the material over the last 30 days."""
+        from core.models import RegistryLog
+        row = RegistryLog.objects.create(action_type='Consumed_For_Manufacturing', item_name='Opp Sand (Run X)',
+                                         material=self.material, quantity_changed=Decimal(str(total)), warehouse=self.rented)
+        RegistryLog.objects.filter(pk=row.pk).update(timestamp=timezone.now() - timedelta(days=10))
 
-    def test_near_expiry_excluded_alongside_a_healthy_candidate(self):
+    def test_total_saving_counts_until_expiry(self):
         self._flag_critical(self.rented)
-        self._batch(self.rented, 100, '9.00', expiry_days=5)   # excluded despite the higher rate
-        self._batch(self.rented, 100, '3.00', expiry_days=200)  # the only real candidate
-        Warehouse.objects.create(
-            name='Internal Depot Mixed', location_type='Storage', ownership_type='Internal',
-            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
-            total_capacity_mt=Decimal('500'),
-        )
+        self._batch(self.rented, 100, '5.00', expiry_days=10)
+        self._depot()
+        c = rent_reduction_opportunities()[0]['candidate_batches'][0]
+        self.assertEqual((c['stay_days'], c['stay_reason'], c['total_saving']), (10, 'expires', 5000.0))  # 100 MT x 5 x 10
+
+    def test_total_saving_counts_until_used_up(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00', expiry_days=300)
+        self._consume(300)                                   # 10 MT/day -> gone in 10 days
+        self._depot()
+        c = rent_reduction_opportunities()[0]['candidate_batches'][0]
+        self.assertEqual((c['stay_days'], c['stay_reason'], c['total_saving']), (10, 'used up', 5000.0))
+
+    def test_older_stock_is_used_first(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00', expiry_days=300)
+        self._batch(self.rented, 50, '5.00', expiry_days=100)  # older - used before the 100 MT batch
+        self._consume(300)                                     # 10/day: 50 first, then 100 -> 15 days
+        self._depot()
+        cands = {c['mt']: c for c in rent_reduction_opportunities()[0]['candidate_batches']}
+        self.assertEqual((cands[50.0]['stay_days'], cands[100.0]['stay_days']), (5, 15))
+
+    def test_saving_is_capped_at_the_horizon(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00', expiry_days=1000)
+        self._depot()
+        c = rent_reduction_opportunities()[0]['candidate_batches'][0]
+        self.assertEqual((c['stay_days'], c['stay_reason']), (365, 'horizon'))
+
+    def test_moves_below_the_minimum_saving_are_left_out(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 2, '5.00', expiry_days=5)   # 2 MT x 5 x 5 days = RM50 < RM100
+        self._depot()
         rows = rent_reduction_opportunities()
-        self.assertEqual(len(rows[0]['candidate_batches']), 1)
-        self.assertEqual(rows[0]['candidate_batches'][0]['rate_per_mt'], 3.0)
-        self.assertEqual(rows[0]['excluded_near_expiry'], 1)
+        self.assertEqual((rows[0]['candidate_batches'], rows[0]['excluded_low_saving']), ([], 1))
+
+    def test_finished_goods_use_the_sales_rate(self):
+        self._flag_critical(self.rented)
+        prod = Product.objects.create(name='Opp FG', sku='PRD-OPP', unit_of_measure='kg', price_per_unit=1,
+                                      weight_mt_per_unit=Decimal('1'))
+        Batch.objects.create(batch_number='FG-OPP', product=prod, quantity=Decimal('90'), status='Active',
+                             warehouse=self.rented, manufacturing_date=date.today(),
+                             expiry_date=date.today() + timedelta(days=300), rental_rate_per_mt=Decimal('5'))
+        so = SalesOrder.objects.create(so_number='SO-OPP', client_name='C', origin_warehouse=self.rented, status='Delivered')
+        SalesOrderDetail.objects.create(sales_order=so, product=prod, quantity_ordered=Decimal('1800'))  # 10/day over 180 days
+        self._depot()
+        c = rent_reduction_opportunities()[0]['candidate_batches'][0]
+        self.assertEqual((c['stay_days'], c['stay_reason']), (9, 'used up'))
+
+    def test_space_goes_to_the_biggest_total_saving_not_the_highest_rate(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '9.00', expiry_days=5)    # RM4,500 in total
+        self._batch(self.rented, 100, '3.00', expiry_days=200)  # RM60,000 in total
+        self._depot('100')                                      # room for one
+        rows = rent_reduction_opportunities()
+        self.assertEqual([c['rate_per_mt'] for c in rows[0]['candidate_batches']], [3.0])
+        self.assertEqual(rows[0]['total_saving'], 60000.0)
 
     def _internal(self, name, loc, cap):
         return Warehouse.objects.create(
@@ -3913,3 +3946,34 @@ class ProductionAllocateRoundingTests(TestCase):
         self.assertEqual(resp.context['recipe_reqs'][0]['needed'], 2.31)
         self.assertContains(resp, 'value="2.31"')
         self.assertContains(resp, 'min="0" step="0.01"')
+
+
+class HomeLandingTests(TestCase):
+    """Public landing page: renders for guests, sends signed-in users to the
+    dashboard, and its "Trace a batch" box jumps to the batch's public page."""
+
+    def setUp(self):
+        mat = Material.objects.create(name='Landing Mat', sku='MAT-LAND', category='Raw',
+                                      safe_storage_days=365, weight_mt_per_unit=Decimal('0.001'))
+        Batch.objects.create(batch_number='RM-LAND-1', material=mat, quantity=Decimal('10'), status='Active',
+                             manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=90))
+
+    def test_guest_sees_landing(self):
+        resp = self.client.get(reverse('home'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Every batch, in every warehouse, used before it expires.')
+        self.assertContains(resp, 'img/landing-dashboard.png')
+
+    def test_signed_in_user_goes_to_dashboard(self):
+        self.client.force_login(User.objects.create_user(username='land_user', password='pw'))
+        self.assertRedirects(self.client.get(reverse('home')), reverse('dashboard'), fetch_redirect_response=False)
+
+    def test_trace_known_batch_redirects_to_public_page(self):
+        resp = self.client.get(reverse('home'), {'batch': ' rm-land-1 '})
+        self.assertRedirects(resp, reverse('batch_public_info', args=['RM-LAND-1']))
+
+    def test_trace_unknown_batch_shows_error(self):
+        resp = self.client.get(reverse('home'), {'batch': 'NOPE-123'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'No batch found with the number')
+        self.assertContains(resp, 'value="NOPE-123"')

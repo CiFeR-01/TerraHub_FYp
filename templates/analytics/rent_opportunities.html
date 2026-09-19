@@ -26,8 +26,10 @@
 {% include "analytics/partials/_analytics_tabs.html" %}
 
 <div class="animate-fade-in-up" style="background:#fef3c7; border:1px solid rgba(180,83,9,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.85rem; color:#854d0e;">
-    <strong>Estimated potential savings only.</strong> Does not account for transfer/freight
-    cost or lead time. This is a signal for manual review, not an auto-executable
+    <strong>Estimated potential savings only.</strong> <em>Total saving</em> counts rent only for as
+    long as each batch would otherwise stay: until it expires or is used up (oldest stock first, at
+    the current usage or sales rate). Moves saving less than the <em>minimum total saving</em>
+    setting are left out. Does not account for transfer/freight cost or lead time. This is a signal for manual review, not an auto-executable
     transfer order.
 </div>
 
@@ -39,6 +41,10 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Potential Daily Saving</span>
         <div class="kpi-value-row"><span class="kpi-value" style="color:var(--success-strong);">RM {{ summary.total_potential_daily_saving|floatformat:2 }}</span></div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Potential Total Saving</span>
+        <div class="kpi-value-row"><span class="kpi-value" style="color:var(--success-strong);">RM {{ summary.total_potential_saving|floatformat:2 }}</span></div>
     </div>
 </section>
 
@@ -95,7 +101,10 @@
                 <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">Watch</span>
                 {% endif %}
             </div>
-            <div style="font-weight:700; color:var(--success-strong);">Up to RM {{ o.total_daily_saving|floatformat:2 }}/day if relocated</div>
+            <div style="text-align:right;">
+                <div style="font-weight:700; color:var(--success-strong);">Up to RM {{ o.total_saving|floatformat:2 }} in total if relocated</div>
+                <div style="font-size:0.78rem; color:var(--text-muted);">RM {{ o.total_daily_saving|floatformat:2 }}/day while the stock would otherwise stay</div>
+            </div>
         </div>
 
         {% if o.candidate_batches %}
@@ -109,6 +118,8 @@
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Rate / MT</th>
                         <th style="padding:0.5rem 0.75rem;">Move To</th>
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Daily Saving</th>
+                        <th style="padding:0.5rem 0.75rem; text-align:right;">Would Stay</th>
+                        <th style="padding:0.5rem 0.75rem; text-align:right;">Total Saving</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -119,7 +130,9 @@
                         <td style="padding:0.55rem 0.75rem; text-align:right;">{{ c.move_mt|mt_display }}{% if c.move_mt < c.mt %}<div style="font-size:0.72rem; color:var(--text-muted);">of {{ c.mt|mt_display }} (destination full)</div>{% endif %}</td>
                         <td style="padding:0.55rem 0.75rem; text-align:right;">RM {{ c.rate_per_mt|floatformat:2 }}</td>
                         <td style="padding:0.55rem 0.75rem;">{{ c.destination }}</td>
-                        <td style="padding:0.55rem 0.75rem; text-align:right; font-weight:600; color:var(--success-strong);">RM {{ c.daily_saving|floatformat:2 }}</td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right;">RM {{ c.daily_saving|floatformat:2 }}</td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right;">~{{ c.stay_days }} day{{ c.stay_days|pluralize }}<div style="font-size:0.72rem; color:var(--text-muted);">{% if c.stay_reason == 'expires' %}until it expires{% elif c.stay_reason == 'used up' %}until used up{% else %}capped{% endif %}</div></td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right; font-weight:700; color:var(--success-strong);">RM {{ c.total_saving|floatformat:2 }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -132,18 +145,17 @@
         </div>
         {% else %}
         <div style="font-size:0.85rem; color:var(--text-muted); padding:0.75rem 0;">
-            No batches worth relocating here right now — all {{ o.excluded_near_expiry }}
-            batch{{ o.excluded_near_expiry|pluralize }} in this warehouse
-            {{ o.excluded_near_expiry|pluralize:"is,are" }} within 30 days of expiring and
-            will clear out on its own.
+            No batches worth relocating here right now — moving any of the
+            {{ o.excluded_low_saving }} batch{{ o.excluded_low_saving|pluralize:"es" }} here would save less than
+            RM {{ o.min_total_saving|floatformat:0 }} before {{ o.excluded_low_saving|pluralize:"it expires or is,they expire or are" }} used up.
         </div>
         {% endif %}
 
-        {% if o.excluded_near_expiry and o.candidate_batches %}
+        {% if o.excluded_low_saving and o.candidate_batches %}
         <div style="margin-top:0.5rem; font-size:0.75rem; color:var(--text-muted); font-style:italic;">
-            {{ o.excluded_near_expiry }} other batch{{ o.excluded_near_expiry|pluralize }} in this warehouse
-            {{ o.excluded_near_expiry|pluralize:"is,are" }} within 30 days of expiry and excluded — relocating
-            something about to clear out on its own isn't worth the effort.
+            {{ o.excluded_low_saving }} other batch{{ o.excluded_low_saving|pluralize:"es" }} left out: moving
+            {{ o.excluded_low_saving|pluralize:"it,them" }} would save less than RM {{ o.min_total_saving|floatformat:0 }}
+            before {{ o.excluded_low_saving|pluralize:"it expires or is,they expire or are" }} used up.
         </div>
         {% endif %}
     </div>

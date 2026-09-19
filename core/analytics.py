@@ -1034,31 +1034,79 @@ def capacity_forecast():
     return rows
 
 
-_DSS_NEAR_EXPIRY_DAYS = 30  # same threshold qa_dashboard_view uses for "near expiry"
+def _daily_usage_rates(material_ids, product_ids, today):
+    """How fast stock leaves on its own, per unit per day: materials from the last
+    DEFAULT_WINDOW_DAYS of production consumption, products from the last 180
+    days of sales orders (excluding Draft/Rejected)."""
+    from .models import SalesOrderDetail
+
+    rates = {('material', mid): r for mid, r in
+             consumption_rates(material_ids, window_days=DEFAULT_WINDOW_DAYS, end=today).items()}
+    if product_ids:
+        window = 180
+        for r in (SalesOrderDetail.objects
+                  .filter(product_id__in=product_ids,
+                          sales_order__order_date__gt=today - _dt.timedelta(days=window),
+                          sales_order__order_date__lte=today)
+                  .exclude(sales_order__status__in=_TREND_EXCLUDED_SO_STATUSES)
+                  .values('product_id').annotate(q=Sum('quantity_ordered'))):
+            if r['q']:
+                rates[('product', r['product_id'])] = r['q'] / Decimal(window)
+    return rates
+
+
+def _days_batch_would_stay(batch, rates, fefo_ahead, horizon):
+    """(days, reason) this batch's free stock would sit where it is if left alone:
+    the earlier of its expiry and when it'll be used up - drawn oldest-first
+    (FEFO), so the free stock in batches ahead of it goes first - capped at
+    `horizon`. reason is 'expires', 'used up' or 'horizon'."""
+    options = [(horizon, 'horizon')]
+    if batch.days_until_expiry is not None:
+        options.append((max(batch.days_until_expiry, 0), 'expires'))
+    key = ('material', batch.material_id) if batch.material_id else ('product', batch.product_id)
+    rate = rates.get(key)
+    if rate and rate > 0 and batch.status == 'Active':
+        used_up = (fefo_ahead.get(batch.id, Decimal('0')) + batch.available_quantity) / rate
+        options.append((float(used_up), 'used up'))
+    days, reason = min(options, key=lambda o: o[0])
+    return max(float(days), 0.0), reason
+
+
+def _fefo_ahead(batches):
+    """{batch_id: free quantity in same-item Active batches that will be used before it}."""
+    from .models import Batch
+
+    ahead = {}
+    items = {(b.material_id, b.product_id) for b in batches}
+    for material_id, product_id in items:
+        running = Decimal('0')
+        qs = Batch.objects.filter(status='Active', material_id=material_id, product_id=product_id)
+        for b in qs.order_by('expiry_date', 'manufacturing_date', 'id'):
+            ahead[b.id] = running
+            running += max(b.quantity - b.allocated_quantity, Decimal('0'))
+    return ahead
 
 
 def rent_reduction_opportunities():
     """DSS: for rented (Usage-billed) warehouses capacity_forecast() flags
     critical/watch, suggests batches to relocate into our own warehouses and
-    estimates the daily rent that would stop accruing.
+    estimates the rent that would stop accruing - per day and in total.
 
     Destinations are Internal warehouses that can store stock (location_type
     Storage or Both - a manufacturing-only plant is never suggested), each with
-    its OWN spare capacity. Candidate batches from every flagged warehouse are
-    placed highest rent rate first, each into the destination with the most spare
-    room left, and that room is used up as it's taken - so two flagged warehouses
-    can never both claim the same free space, and every suggestion names a real
-    destination that can hold it.
+    its OWN spare capacity, used up as it's taken - so two flagged warehouses can
+    never both claim the same free space.
 
-    Only counts each batch's available_weight_mt (unallocated portion) as
-    moveable - the allocated portion is already committed to an outgoing
-    SO/production run and isn't actually free to relocate.
+    Only each batch's unallocated portion counts as movable (the allocated part is
+    already committed to an outgoing SO/production run).
 
-    Expiry-aware: a batch within _DSS_NEAR_EXPIRY_DAYS of expiring is excluded
-    entirely - it's about to leave the warehouse on its own (consumed or spoiled)
-    regardless of what's recommended. Excluded counts are surfaced per warehouse
-    so this isn't a silent gap in the numbers."""
+    Total saving = daily saving x the days the batch would otherwise stay: the
+    earlier of expiry and being used up (FEFO, at the current usage/sales rate),
+    capped at dss_saving_horizon_days. Batches saving less than
+    dss_min_total_saving_rm in total are left out and counted per warehouse.
+    Free space goes first to the batches that save the most per MT."""
     from .models import Warehouse, Batch
+    from .settings_store import get_setting
 
     forecast_rows = {r['warehouse_id']: r for r in capacity_forecast()}
     flagged = [wid for wid, r in forecast_rows.items() if r['status'] in ('critical', 'watch')]
@@ -1077,35 +1125,50 @@ def rent_reduction_opportunities():
         return []
     remaining = {wid: d['spare_mt'] for wid, d in spare_by_dest.items()}
 
+    today = timezone.localdate()
+    horizon = int(get_setting('dss_saving_horizon_days'))
+    min_saving = float(get_setting('dss_min_total_saving_rm'))
+
     # Gather every movable batch across all flagged rented warehouses first ...
     origins = {}
-    pool = []
+    batches = []
     for w in Warehouse.objects.filter(id__in=flagged):
         if w.ownership_type == 'Internal' or w.rental_billing_method != 'Usage':
             continue  # nothing to save moving off a free or flat-Overall-billed warehouse
-        origins[w.id] = {'warehouse': w, 'candidates': [], 'excluded_near_expiry': 0}
+        origins[w.id] = {'warehouse': w, 'candidates': [], 'excluded_low_saving': 0}
         for b in (Batch.objects.filter(warehouse=w, status__in=['Active', 'Quarantined'])
                   .select_related('material', 'product')):
-            days_left = b.days_until_expiry
-            if days_left is not None and days_left <= _DSS_NEAR_EXPIRY_DAYS:
-                origins[w.id]['excluded_near_expiry'] += 1
-                continue  # will deplete/expire on its own soon - not worth relocating
-            mt = float(b.available_weight_mt)
-            if mt <= 0:
-                continue
-            # Effective rate = the batch's own locked-in rate if it has one, else this
-            # warehouse's current standing rate (same fallback as open_batch_rent_expr()).
-            rate = float(b.rental_rate_per_mt if b.rental_rate_per_mt is not None else w.rental_cost_per_mt)
-            pool.append((rate, mt, b, w.id))
+            if float(b.available_weight_mt) > 0:
+                batches.append((b, w))
 
-    # ... then place them highest rate first, so shared free space goes where it
-    # saves the most, drawing each destination's space down as it's used.
-    pool.sort(key=lambda p: (-p[0], -p[1], p[2].batch_number))
-    for rate, mt, b, origin_id in pool:
+    rates = _daily_usage_rates({b.material_id for b, _ in batches if b.material_id},
+                               {b.product_id for b, _ in batches if b.product_id}, today)
+    ahead = _fefo_ahead([b for b, _ in batches])
+
+    pool = []
+    for b, w in batches:
+        # Effective rate = the batch's own locked-in rate if it has one, else this
+        # warehouse's current standing rate (same fallback as open_batch_rent_expr()).
+        rate = float(b.rental_rate_per_mt if b.rental_rate_per_mt is not None else w.rental_cost_per_mt)
+        stay_days, stay_reason = _days_batch_would_stay(b, rates, ahead, horizon)
+        mt = float(b.available_weight_mt)
+        if mt * rate * stay_days < min_saving:
+            origins[w.id]['excluded_low_saving'] += 1
+            continue  # leaves soon / too small - not worth relocating
+        pool.append((rate * stay_days, rate, stay_days, stay_reason, mt, b, w.id))
+
+    # ... then place them best saving per MT first (free space is the limit),
+    # drawing each destination's space down as it's used.
+    pool.sort(key=lambda p: (-p[0], -p[4], p[5].batch_number))
+    for per_mt, rate, stay_days, stay_reason, mt, b, origin_id in pool:
         dest_id = max(remaining, key=lambda d: remaining[d])
         if remaining[dest_id] <= 0:
             break  # every destination is full
         take_mt = min(mt, remaining[dest_id])
+        total = take_mt * per_mt
+        if total < min_saving:
+            origins[origin_id]['excluded_low_saving'] += 1
+            continue  # only a sliver of space left for it
         remaining[dest_id] -= take_mt
         origins[origin_id]['candidates'].append({
             'batch_id': b.id,
@@ -1115,23 +1178,28 @@ def rent_reduction_opportunities():
             'move_mt': round(take_mt, 3),
             'rate_per_mt': rate,
             'daily_saving': round(take_mt * rate, 2),
+            'stay_days': round(stay_days),
+            'stay_reason': stay_reason,
+            'total_saving': round(total, 2),
             'destination_id': dest_id,
             'destination': spare_by_dest[dest_id]['name'],
         })
 
     opportunities = []
     for wid, o in origins.items():
-        if o['candidates'] or o['excluded_near_expiry']:
+        if o['candidates'] or o['excluded_low_saving']:
             opportunities.append({
                 'warehouse_id': wid,
                 'name': o['warehouse'].name,
                 'status': forecast_rows[wid]['status'],
                 'candidate_batches': o['candidates'],
                 'total_daily_saving': round(sum(c['daily_saving'] for c in o['candidates']), 2),
+                'total_saving': round(sum(c['total_saving'] for c in o['candidates']), 2),
                 'destination_options': destination_options,
-                'excluded_near_expiry': o['excluded_near_expiry'],
+                'excluded_low_saving': o['excluded_low_saving'],
+                'min_total_saving': min_saving,
             })
-    opportunities.sort(key=lambda o: -o['total_daily_saving'])
+    opportunities.sort(key=lambda o: -o['total_saving'])
     return opportunities
 
 
