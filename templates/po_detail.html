@@ -321,7 +321,7 @@
                 <select name="manager_id" class="form-select" required style="width:100%; padding:0.6rem 0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.9rem;">
                     <option value="">-- Select Manager --</option>
                     {% for mgr in managers %}
-                    <option value="{{ mgr.id }}" {% if mgr.id == po.assigned_to.id %}selected{% endif %}>{{ mgr.get_full_name|default:mgr.username }} ({{ mgr.role }})</option>
+                    <option value="{{ mgr.id }}" {% if mgr.id == po.assigned_to.id %}selected{% endif %}>{{ mgr.get_full_name|default:mgr.username }} ({{ mgr.role_label }})</option>
                     {% endfor %}
                 </select>
             </div>
@@ -349,7 +349,7 @@
             <select name="manager_id" class="form-select" required style="width:100%; padding:0.6rem 0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.9rem;">
                 <option value="">-- Select Manager --</option>
                 {% for mgr in managers %}
-                <option value="{{ mgr.id }}">{{ mgr.get_full_name|default:mgr.username }} ({{ mgr.role }})</option>
+                <option value="{{ mgr.id }}">{{ mgr.get_full_name|default:mgr.username }} ({{ mgr.role_label }})</option>
                 {% endfor %}
             </select>
         </div>

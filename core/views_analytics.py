@@ -278,11 +278,11 @@ def forecast_view(request):
 
 @login_required
 def capacity_forecast_view(request):
-    can_run_snapshot = _is_admin_or_manager(request.user)
+    can_run_snapshot = request.user.has_perm("core.add_warehouseutilizationsnapshot")
 
     if request.method == "POST":
         if not can_run_snapshot:
-            messages.error(request, "Only Admin or Manager can run a snapshot.")
+            messages.error(request, "You don't have permission to run a snapshot.")
         else:
             count, snap_date = analytics.snapshot_warehouse_utilization()
             messages.success(request, f"Snapshotted {count} warehouse(s) for {snap_date}.")
@@ -350,8 +350,8 @@ def rent_opportunities_view(request):
 # --------------------------------------------------------------------------------
 # Six company-wide, category-scoped briefings (core/briefing.py) plus one
 # personal "My Open Jobs" checklist. The checklist ("AI Copilot" sidebar link)
-# is any authenticated user's own data; the category briefings are Admin/
-# Manager-gated, same as System Settings-adjacent, cost-sensitive features.
+# is any authenticated user's own data; generating a category briefing needs
+# core.add_opsbriefing, since each run is a paid model call.
 
 CATEGORY_TABS = (
     ("materials", "Materials"),
@@ -377,10 +377,6 @@ _CATEGORY_SIGNAL_LINKS = {
         ("stock_audit_accuracy", "audit_accuracy", "Inventory Audit Accuracy"),
     ],
 }
-
-
-def _is_admin_or_manager(user):
-    return user.is_superuser or getattr(user, "role", None) in ("Admin", "Manager")
 
 
 def _parse_briefing_body(briefing):
@@ -420,17 +416,17 @@ def _signal_sections_for(latest, links):
 @login_required
 def category_briefing_view(request, category):
     """One of the six domain briefings (Materials/Products/Sales/Purchase/
-    Logistics/Warehouse). Admin/Manager can trigger a run; anyone can read."""
+    Logistics/Warehouse). Users with core.add_opsbriefing can trigger a run; anyone can read."""
     from .models import OpsBriefing
 
     if category not in _CATEGORY_LABELS:
         raise Http404(f"Unknown briefing category: {category!r}")
 
-    can_generate = _is_admin_or_manager(request.user)
+    can_generate = request.user.has_perm("core.add_opsbriefing")
 
     if request.method == "POST":
         if not can_generate:
-            messages.error(request, "Only Admin or Manager can generate a briefing.")
+            messages.error(request, "You don't have permission to generate a briefing.")
             return redirect("category_briefing", category=category)
         from .briefing import generate_briefing
         b = generate_briefing(category=category, period=request.POST.get("period", "daily"), user=request.user)
@@ -473,7 +469,7 @@ def ops_briefing_view(request):
     The personal checklist - "My Open Jobs". The table of live_items is always
     computed straight from the database (no API dependency); the optional
     Claude-prioritised card on top is generated on demand by the user it's
-    for - any authenticated user, not just Admin/Manager, since it is only
+    for - any authenticated user, not just those who can run category briefings, since it is only
     ever their own data and their own click.
     """
     from .models import OpsBriefing

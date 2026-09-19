@@ -80,7 +80,7 @@
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--success-strong);">RM{{ item.total_value|floatformat:2 }}</td>
                     <td style="padding:0.85rem 1rem; text-align:right;">
                         <div style="display:flex; justify-content:flex-end; gap:0.5rem; align-items:center;">
-                            {% if request.user.role == 'Admin' or request.user.role == 'Manager' %}
+                            {% if perms.core.change_material %}
                             <form method="post" style="display:inline; margin:0;">
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="toggle_active">

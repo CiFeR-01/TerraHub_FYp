@@ -2,31 +2,40 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from datetime import date
 
-class Role(models.Model):
-    name = models.CharField(max_length=50, unique=True)
-    description = models.CharField(max_length=255, blank=True, null=True)
+class Capability(models.Model):
+    """No table - just a home for the app-wide permissions that aren't about
+    one model. Roles are Django Groups (Django admin > Groups); an Admin grants
+    these, alongside the normal per-model add/change/view/delete permissions,
+    to whichever groups should have them. Code checks the permission, never a
+    role or group name (see core/permissions.py)."""
 
-    def __str__(self):
-        return self.name
+    class Meta:
+        managed = False
+        default_permissions = ()
+        permissions = [
+            ('approve_requests', 'Can approve requests (orders, shipments, production runs)'),
+            ('override_approvals', 'Can self-approve and decide any pending approval'),
+            ('adjust_physical_stock', 'Can manually adjust physical stock'),
+            ('manage_users', 'Can manage users and their facility access'),
+            ('set_order_status', 'Can set a sales order status by hand'),
+            ('handle_purchasing', 'Receives purchase orders drafted for material shortages'),
+        ]
+
 
 class CustomUser(AbstractUser):
-    ROLE_CHOICES = (
-        ('Admin', 'Admin'),
-        ('Manager', 'Manager'),
-        ('Staff_Edit', 'Staff (Editor)'),
-        ('Staff_View', 'Staff (Viewer)'),
-    )
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='Staff_View')
     branch = models.CharField(max_length=100, default='HQ', help_text="Department / Division mapping")
-    can_adjust_physical_stock = models.BooleanField(default=False, help_text="Explicit permission to adjust warehouse stock")
 
-    roles = models.ManyToManyField(Role, blank=True, related_name='users')
     allowed_locations = models.ManyToManyField('Warehouse', blank=True, related_name='allowed_users')
     updated_by = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_users')
     updated_at = models.DateTimeField(auto_now=True)
-    
-    def has_role(self, role_name):
-        return self.roles.filter(name=role_name).exists()
+
+    @property
+    def role_label(self):
+        """The user's group names for display, e.g. "Manager" or "Sales, Logistics"."""
+        names = [g.name for g in self.groups.all()]
+        if names:
+            return ', '.join(names)
+        return 'Superuser' if self.is_superuser else 'No role'
 
     @property
     def unread_notifications_count(self):

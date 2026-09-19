@@ -421,7 +421,7 @@ def finalize_production_run(run, user):
     from django.utils import timezone
     from datetime import timedelta
     from django.urls import reverse
-    from .models import Batch, OrderTimeline, RegistryLog, CustomUser, Notification
+    from .models import Batch, OrderTimeline, RegistryLog, Notification
     from .settings_store import get_setting
 
     consume_materials_for_run(run, user)
@@ -463,7 +463,8 @@ def finalize_production_run(run, user):
                 action=f"Production Run {run.run_number} completed. FG batch {fg_batch.batch_number} is awaiting QA release before it can be allocated.",
                 user=user
             )
-        for reviewer in CustomUser.objects.filter(role__in=['Admin', 'Manager']):
+        from .permissions import approvers
+        for reviewer in approvers():
             Notification.objects.create(
                 user=reviewer,
                 message=f"QA release needed: batch {fg_batch.batch_number} ({run.target_product.name}) from Run {run.run_number}.",
