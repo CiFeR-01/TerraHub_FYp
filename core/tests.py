@@ -3634,3 +3634,137 @@ class RentHistoryTests(TestCase):
         self.assertContains(resp, 'Rent History')
         self.assertContains(resp, 'id="rent-history-data"')
         self.assertEqual(self._today(self.rented).daily_rent_cost, Decimal('200.00'))  # safety net wrote it
+
+
+class SplitStockDeliveryTests(TestCase):
+    """An order whose reserved stock is in several warehouses: removing a line frees
+    its stock; the user chooses separate deliveries or moving everything to the
+    order's warehouse first, and can switch until the shipments are approved."""
+
+    def setUp(self):
+        from core.models import OrderTimeline, Notification
+        self.OrderTimeline, self.Notification = OrderTimeline, Notification
+        self.admin = User.objects.create_user(username='split_admin', password='pw', role='Admin')
+        self.client = Client()
+        self.client.force_login(self.admin)
+        self.hub = Warehouse.objects.create(name='Split Hub', location_type='Storage')
+        self.alpha = Warehouse.objects.create(name='Split Alpha', location_type='Storage')
+        self.product = Product.objects.create(name='Split P', sku='PRD-SPLIT', unit_of_measure='kg', price_per_unit=1)
+        self.so = SalesOrder.objects.create(so_number='SO-SPLIT', client_name='AgriCore', origin_warehouse=self.hub,
+                                            status='Ready to Ship', created_by=self.admin)
+        self.line = SalesOrderDetail.objects.create(sales_order=self.so, product=self.product, quantity_ordered=Decimal('200'))
+        self.at_hub = self._reserved(self.hub, 'FG-SPLIT-H')
+        self.at_alpha = self._reserved(self.alpha, 'FG-SPLIT-A')
+
+    def _reserved(self, wh, number, qty='100'):
+        b = Batch.objects.create(batch_number=number, status='Active', product=self.product, quantity=Decimal(qty),
+                                 allocated_quantity=Decimal(qty), manufacturing_date=date.today(),
+                                 expiry_date=date.today() + timedelta(days=200), warehouse=wh)
+        StockAllocation.objects.create(batch=b, sales_order=self.so, quantity=Decimal(qty))
+        return b
+
+    def _post(self, **data):
+        return self.client.post(reverse('so_detail', args=[self.so.pk]), data)
+
+    def _moves(self):
+        return Shipment.objects.filter(sales_order=self.so, direction='Transfer').exclude(status='Cancelled')
+
+    # --- the ported fix
+    def test_removing_a_line_releases_its_reserved_stock(self):
+        self.so.status = 'Pending'; self.so.save()
+        self._post(action='remove_so_item', item_id=self.line.id)
+        for b in (self.at_hub, self.at_alpha):
+            b.refresh_from_db()
+            self.assertEqual(b.allocated_quantity, Decimal('0'))
+        self.assertFalse(StockAllocation.objects.filter(sales_order=self.so).exists())
+
+    def test_removing_a_line_takes_it_off_an_open_stock_move(self):
+        self._post(action='consolidate_stock')
+        move = self._moves().get()
+        self.so.status = 'Pending'; self.so.save()
+        self._post(action='remove_so_item', item_id=self.line.id)
+        move.refresh_from_db()
+        self.assertEqual(move.status, 'Cancelled')
+        self.at_alpha.refresh_from_db()
+        self.assertEqual(self.at_alpha.allocated_quantity, Decimal('0'))
+
+    # --- choosing
+    def test_order_page_offers_the_choice(self):
+        resp = self.client.get(reverse('so_detail', args=[self.so.pk]))
+        self.assertContains(resp, 'Choose how to deliver')
+        self.assertContains(resp, 'Ship separately (2 deliveries)')
+        self.assertContains(resp, 'Move everything to Split Hub first (1 delivery)')
+
+    def test_creator_is_notified_once(self):
+        from core.utils import prompt_delivery_choice
+        prompt_delivery_choice(self.so, self.admin)
+        prompt_delivery_choice(self.so, self.admin)
+        self.assertEqual(self.Notification.objects.filter(user=self.admin, message__contains='SO-SPLIT is ready to ship').count(), 1)
+
+    def test_ship_separately_makes_one_shipment_per_warehouse(self):
+        self.client.post(reverse('so_create_shipment', args=[self.so.pk]))
+        origins = sorted(Shipment.objects.filter(sales_order=self.so, direction='Outbound').values_list('origin_warehouse__name', flat=True))
+        self.assertEqual(origins, ['Split Alpha', 'Split Hub'])
+
+    def test_one_delivery_moves_stock_then_ships_once(self):
+        self._post(action='consolidate_stock')
+        move = self._moves().get()
+        self.assertEqual((move.origin_warehouse, move.destination_warehouse), (self.alpha, self.hub))
+        alloc = StockAllocation.objects.get(batch=self.at_alpha)
+        self.assertEqual((alloc.sales_order, alloc.shipment), (self.so, move))   # still the order's stock
+        self.so.refresh_from_db()
+        self.assertEqual(self.so.status, 'Ready to Ship')
+
+        # can't ship while stock is still moving
+        self.client.post(reverse('so_create_shipment', args=[self.so.pk]))
+        self.assertFalse(Shipment.objects.filter(sales_order=self.so, direction='Outbound').exists())
+
+        # the move arrives: reservation follows the stock to the hub
+        move.status = 'Arrived'; move.save()
+        self.client.post(reverse('shipment_detail', args=[move.pk]), {'action': 'receive_all'})
+        arrived = Batch.objects.get(warehouse=self.hub, batch_number__contains='-TRF-')
+        self.assertEqual(StockAllocation.objects.get(batch=arrived).sales_order, self.so)
+        self.assertEqual(arrived.allocated_quantity, Decimal('100'))
+
+        # now one outbound shipment from the hub carries everything
+        self.client.post(reverse('so_create_shipment', args=[self.so.pk]))
+        outbound = Shipment.objects.filter(sales_order=self.so, direction='Outbound')
+        self.assertEqual(list(outbound.values_list('origin_warehouse__name', flat=True)), ['Split Hub'])
+        self.assertEqual(outbound.get().items.count(), 2)
+
+    # --- switching
+    def test_switch_from_one_delivery_back_to_separate(self):
+        self._post(action='consolidate_stock')
+        self._post(action='cancel_delivery_plan')
+        self.assertFalse(self._moves().exists())
+        alloc = StockAllocation.objects.get(batch=self.at_alpha)
+        self.assertEqual((alloc.sales_order, alloc.shipment), (self.so, None))
+        self.assertContains(self.client.get(reverse('so_detail', args=[self.so.pk])), 'Choose how to deliver')
+
+    def test_switch_from_separate_back_to_one_delivery(self):
+        self.client.post(reverse('so_create_shipment', args=[self.so.pk]))
+        self.assertContains(self.client.get(reverse('so_detail', args=[self.so.pk])), 'Switch to one delivery')
+        self._post(action='cancel_delivery_plan')
+        self.assertFalse(Shipment.objects.filter(sales_order=self.so, direction='Outbound').exclude(status='Cancelled').exists())
+        self.assertEqual(StockAllocation.objects.filter(sales_order=self.so, shipment__isnull=True).count(), 2)
+        for b in (self.at_hub, self.at_alpha):
+            b.refresh_from_db()
+            self.assertEqual(b.allocated_quantity, Decimal('100'))   # never released
+
+    def test_cannot_switch_once_approved(self):
+        self._post(action='consolidate_stock')
+        move = self._moves().get()
+        move.status = 'Preparing'; move.save()
+        self._post(action='cancel_delivery_plan')
+        move.refresh_from_db()
+        self.assertEqual(move.status, 'Preparing')
+
+    def test_scrapping_a_stock_move_keeps_the_reservation(self):
+        self._post(action='consolidate_stock')
+        move = self._moves().get()
+        self.client.post(reverse('shipment_detail', args=[move.pk]), {'action': 'scrap_shipment'})
+        move.refresh_from_db(); self.at_alpha.refresh_from_db(); self.so.refresh_from_db()
+        self.assertEqual(move.status, 'Cancelled')
+        self.assertEqual(self.at_alpha.allocated_quantity, Decimal('100'))
+        self.assertEqual(StockAllocation.objects.get(batch=self.at_alpha).shipment, None)
+        self.assertEqual(self.so.status, 'Ready to Ship')

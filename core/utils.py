@@ -235,6 +235,85 @@ def handle_so_item_removed(so, product, user):
         )
 
 
+def release_so_product_allocations(so, product, user):
+    """A line item was removed from a Sales Order: free every finished-goods
+    reservation this order holds for that product, and take those batches off any
+    stock-move transfer still in progress for the order (cancelling a transfer
+    left with no cargo)."""
+    from .models import StockAllocation, ShipmentItem, OrderTimeline
+
+    allocs = list(
+        StockAllocation.objects.filter(sales_order=so, batch__product=product)
+        .select_related('batch', 'shipment')
+    )
+    if not allocs:
+        return
+
+    touched = {}
+    for a in allocs:
+        b = a.batch
+        sh = a.shipment
+        if sh and sh.direction == 'Transfer' and sh.status not in ('Completed', 'Cancelled'):
+            ShipmentItem.objects.filter(shipment=sh, batch=b).delete()
+            touched[sh.id] = sh
+        b.allocated_quantity = max((b.allocated_quantity or Decimal('0')) - a.quantity, Decimal('0'))
+        b.save(update_fields=['allocated_quantity'])
+        a.delete()
+
+    for sh in touched.values():
+        if not sh.items.exists():
+            sh.status = 'Cancelled'
+            sh.save(update_fields=['status'])
+            OrderTimeline.objects.create(shipment=sh, action=f"Auto-cancelled: nothing left to move after {product.sku} was removed from {so.so_number}.", user=user)
+        else:
+            OrderTimeline.objects.create(shipment=sh, action=f"{product.sku} batches removed after the line was dropped from {so.so_number}.", user=user)
+    OrderTimeline.objects.create(sales_order=so, action=f"Released the stock reserved for {product.sku} after its line was removed.", user=user)
+
+
+# ---------------------------------------------------------------------------
+# Delivering an order whose stock is in several warehouses
+# ---------------------------------------------------------------------------
+# Either ship separately (one outbound shipment per warehouse - so_create_shipment)
+# or first move everything to the order's origin with internal transfers linked to
+# the order, then ship once. While a stock-move transfer is in progress its
+# reservation rows carry BOTH sales_order (the order owns the stock) and shipment
+# (the truck carrying it); on arrival the reservation moves to the arrived batch.
+
+def so_stock_by_warehouse(so):
+    """The order's reserved stock not yet on any shipment, per warehouse:
+    [{'warehouse': Warehouse, 'qty': Decimal, 'allocations': [...]}, ...]."""
+    from .models import StockAllocation
+
+    groups = {}
+    for a in (StockAllocation.objects.filter(sales_order=so, shipment__isnull=True)
+              .select_related('batch__warehouse', 'batch__product')):
+        g = groups.setdefault(a.batch.warehouse_id, {'warehouse': a.batch.warehouse, 'qty': Decimal('0'), 'allocations': []})
+        g['qty'] += a.quantity
+        g['allocations'].append(a)
+    return sorted(groups.values(), key=lambda g: (g['warehouse'].name if g['warehouse'] else ''))
+
+
+def prompt_delivery_choice(so, user):
+    """When an order is Ready to Ship with its stock in more than one warehouse, tell
+    whoever created it to choose how to deliver (once - not on every recheck)."""
+    from django.urls import reverse
+    from .models import Notification, OrderTimeline
+
+    if so.status != 'Ready to Ship':
+        return
+    split = so_stock_by_warehouse(so)
+    if len(split) < 2:
+        return
+    message = f"{so.so_number} is ready to ship, but its stock is in {len(split)} warehouses. Choose how to deliver it."
+    if so.created_by and not Notification.objects.filter(user=so.created_by, message=message).exists():
+        Notification.objects.create(user=so.created_by, message=message, link=reverse('so_detail', args=[so.pk]))
+        OrderTimeline.objects.create(
+            sales_order=so,
+            action=f"Stock is in {len(split)} warehouses ({', '.join(g['warehouse'].name for g in split if g['warehouse'])}). Choose to ship separately or move it all to {so.origin_warehouse.name} first.",
+            user=user,
+        )
+
+
 def consume_materials_for_run(run, user):
     """Deducts the raw materials a completed run used: consumes from its
     allocations first, then tops up from plant stock via FEFO if actual usage
@@ -443,6 +522,7 @@ def allocate_finished_batch_to_order(run, fg_batch, user, event):
         action=event + (" Order fully covered — moved to Ready to Ship." if fully_covered else " Order still has outstanding items."),
         user=user
     )
+    prompt_delivery_choice(so, user)
 
 
 def get_batch_reservations(batch):
@@ -725,10 +805,28 @@ def receive_transfer_into_destination(shipment, user):
         # reservation - carry it onto the arrived batch so the stock stays held for
         # the run instead of sitting unreserved at the plant.
         run = shipment.linked_production_run
+        so = shipment.sales_order
         if run and run.status not in ('Completed', 'Cancelled'):
             new_batch.allocated_quantity = rcv_qty
             new_batch.save(update_fields=['allocated_quantity'])
             StockAllocation.objects.create(batch=new_batch, production_run=run, quantity=rcv_qty)
+        elif so and so.status not in ('Shipped', 'Delivered', 'Cancelled', 'Rejected'):
+            # stock moved to the order's warehouse for one delivery - keep it reserved
+            new_batch.allocated_quantity = rcv_qty
+            new_batch.save(update_fields=['allocated_quantity'])
+            StockAllocation.objects.create(batch=new_batch, sales_order=so, quantity=rcv_qty)
+
+    so = shipment.sales_order
+    if so:
+        from .models import OrderTimeline
+        _resync_so_fulfillment_status(so, user)   # a short delivery can leave it under-covered
+        still_moving = so.shipments.filter(direction='Transfer').exclude(status__in=['Completed', 'Cancelled'])
+        OrderTimeline.objects.create(
+            sales_order=so,
+            action=(f"Stock move {shipment.tracking_number} arrived at {dest.name}."
+                    + ("" if still_moving.exists() else " All stock is now together - create the logistics order to ship it in one delivery.")),
+            user=user,
+        )
 
 
 def apply_so_product_shipment(so_detail, delta_qty):
