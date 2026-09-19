@@ -333,6 +333,7 @@ def rent_opportunities_view(request):
     summary = {
         "opportunity_count": len(rows),
         "total_potential_daily_saving": sum(o["total_daily_saving"] for o in rows),
+        "total_potential_saving": sum(o["total_saving"] for o in rows),
     }
     analytics_category, analytics_tabs = _analytics_tabs(request, "rent_opportunities")
     return render(request, "analytics/rent_opportunities.html", {
