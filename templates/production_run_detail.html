@@ -352,6 +352,16 @@
                       {% if run.assigned_to %}
                       <p style="font-size:0.85rem; color:#854d0e; margin-top:0.5rem;">Assigned to: {{ run.assigned_to.get_full_name|default:run.assigned_to.username }}</p>
                       {% endif %}
+                      {% if can_decide_approval and run.actual_yield is not None %}
+                      <form method="post" action="{% url 'approvals_inbox' %}" style="display:flex; gap:0.5rem; justify-content:center; margin-top:1rem;">
+                          {% csrf_token %}
+                          <input type="hidden" name="item_type" value="production_run">
+                          <input type="hidden" name="item_id" value="{{ run.id }}">
+                          <input type="hidden" name="next" value="{{ request.path }}">
+                          <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject (Rework)</button>
+                          <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem; background:#854d0e; border-color:#854d0e;">Approve &amp; Complete</button>
+                      </form>
+                      {% endif %}
                   </div>
             {% elif run.status == 'Completed' %}
                 <div style="background:#f8fafc; border:1px solid #bbf7d0; border-radius:8px; padding:1.5rem; text-align:center; margin-bottom: 1.5rem;">

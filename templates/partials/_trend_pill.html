@@ -1,0 +1,10 @@
+{% comment %}Period-over-period pill for a KPI card. Expects `t` = {'dir', 'pct', 'prev'} from dashboard_view's _trend().{% endcomment %}
+{% if t.dir == 'none' %}
+<span class="trend-pill flat"><svg aria-hidden="true"><use href="#i-minus"/></svg> no baseline</span>
+{% elif t.dir == 'flat' %}
+<span class="trend-pill flat" title="Prior 30 days: {{ t.prev|floatformat:0 }}{% if unit %} {{ unit }}{% endif %}. Large swings from a small base are shown neutral."><svg aria-hidden="true"><use href="#i-{% if t.pct >= 0 %}trend-up{% else %}trend-down{% endif %}"/></svg>{% if t.pct >= 0 %}+{% endif %}{{ t.pct|floatformat:0 }}% · low base</span>
+{% elif t.dir == 'up' %}
+<span class="trend-pill up"><svg aria-hidden="true"><use href="#i-trend-up"/></svg><span class="sr-only">up </span>+{{ t.pct|floatformat:0 }}%</span>
+{% else %}
+<span class="trend-pill down"><svg aria-hidden="true"><use href="#i-trend-down"/></svg><span class="sr-only">down </span>{{ t.pct|floatformat:0 }}%</span>
+{% endif %}
