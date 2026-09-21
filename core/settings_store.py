@@ -62,6 +62,12 @@ REGISTRY: dict[str, tuple[object, str, str]] = {
         "over the time it would otherwise stay (until used up or expired) is at "
         "least this much (RM).",
     ),
+    "dss_dismiss_snooze_days": (
+        30,
+        "int",
+        "How many days a batch stays out of the Rent Opportunities suggestions "
+        "after someone dismisses it.",
+    ),
     "dss_saving_horizon_days": (
         365,
         "int",
