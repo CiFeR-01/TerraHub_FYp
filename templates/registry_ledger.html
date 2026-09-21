@@ -96,6 +96,8 @@
                         <span class="badge badge-emerald">Produced</span>
                         {% elif log.action_type == 'Spoiled_Disposal' %}
                         <span class="badge badge-rose">Disposed</span>
+                        {% elif log.action_type == 'Draft_Transfer_Deleted' %}
+                        <span class="badge badge-amber">Draft deleted</span>
                         {% else %}
                         <span class="badge badge-sky">{{ log.get_action_type_display }}</span>
                         {% endif %}

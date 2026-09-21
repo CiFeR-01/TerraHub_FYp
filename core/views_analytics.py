@@ -175,6 +175,7 @@ def production_yield_view(request):
             {"title": "By product", "label": "Product", "rows": data["by_product"]},
             {"title": "By supervisor", "label": "Supervisor", "rows": data["by_supervisor"]},
         ],
+        "unrecorded": analytics.unrecorded_material_usage(),
         "summary": summary,
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,

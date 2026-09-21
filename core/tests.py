@@ -930,8 +930,9 @@ class SalesOrderDeliveryRiskTests(TestCase):
         )
         # Freeze "today" once so fixtures built here and analytics.sales_order_delivery_risk()'s
         # own timezone.now() call agree, even if the test runs across a real midnight rollover.
+        # "Today" is the local (Kuala Lumpur) date, which is what the analytics use.
         frozen_now = timezone.now()
-        self.today = frozen_now.date()
+        self.today = timezone.localdate(frozen_now)
         patcher = _mock.patch('core.analytics.timezone.now', return_value=frozen_now)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -1207,6 +1208,677 @@ class ProductionYieldVarianceTests(TestCase):
         self.assertContains(resp, 'By supervisor')
 
 
+class ProductionRunDetailTests(TestCase):
+    """Run detail page: yield log persistence, auto-fill on completion, approval from detail."""
+
+    def setUp(self):
+        self.client = Client()
+        self.boss = User.objects.create_superuser(username='boss', password='pw')
+        self.plain = User.objects.create_user(username='plain', password='pw')
+        self.product = Product.objects.create(
+            name='Compound Y', sku='PRD-Y', unit_of_measure='kg', price_per_unit=5,
+        )
+
+    def _run(self, status, **kw):
+        return ProductionRun.objects.create(
+            run_number='RD-1', target_product=self.product,
+            expected_yield=Decimal('484.01'), status=status, **kw,
+        )
+
+    def test_complete_autofills_remaining_yield(self):
+        from core.models import ProductionRunYieldLog
+        run = self._run('InProgress')
+        ProductionRunYieldLog.objects.create(
+            production_run=run, quantity=Decimal('400'), log_date=timezone.now().date(), logged_by=self.boss)
+        self.client.login(username='boss', password='pw')
+        self.client.post(reverse('production_run_detail', args=[run.pk]),
+                         {'action': 'complete_production', 'actual_yield': '484.01'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Completed')
+        total = sum(y.quantity for y in run.yield_logs.all())
+        self.assertEqual(total, Decimal('484.01'))
+        self.assertTrue(run.yield_logs.filter(notes='Auto-filled on completion').exists())
+
+    def test_complete_with_lower_figure_does_not_autofill(self):
+        from core.models import ProductionRunYieldLog
+        run = self._run('InProgress')
+        ProductionRunYieldLog.objects.create(
+            production_run=run, quantity=Decimal('400'), log_date=timezone.now().date(), logged_by=self.boss)
+        self.client.login(username='boss', password='pw')
+        self.client.post(reverse('production_run_detail', args=[run.pk]),
+                         {'action': 'complete_production', 'actual_yield': '400'})
+        self.assertEqual(run.yield_logs.count(), 1)
+
+    def test_yield_log_visible_after_completion(self):
+        from core.models import ProductionRunYieldLog
+        run = self._run('Completed', actual_yield=Decimal('400'))
+        ProductionRunYieldLog.objects.create(
+            production_run=run, quantity=Decimal('400'), log_date=timezone.now().date(),
+            logged_by=self.boss, notes='first batch')
+        self.client.login(username='boss', password='pw')
+        resp = self.client.get(reverse('production_run_detail', args=[run.pk]))
+        self.assertContains(resp, 'Yield Log')
+        self.assertContains(resp, 'first batch')
+
+    def test_pre_production_approval_from_detail_records_approver(self):
+        run = self._run('Pending Approval')
+        self.client.login(username='boss', password='pw')
+        url = reverse('production_run_detail', args=[run.pk])
+        resp = self.client.get(url)
+        self.assertContains(resp, 'Pending Approval')
+        self.assertNotContains(resp, 'Variance Approval')
+        self.assertContains(resp, 'value="approve"')
+        self.assertNotContains(resp, 'Approve &amp; Complete')
+        self.client.post(reverse('approvals_inbox'), {
+            'item_type': 'production_run', 'item_id': run.pk, 'action': 'approve', 'next': url})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Pending Allocation')
+        self.assertEqual(run.approved_by, self.boss)
+        self.assertContains(self.client.get(url), 'Allocate Materials')
+
+    def test_non_approver_gets_no_approve_button(self):
+        run = self._run('Pending Approval')
+        self.client.login(username='plain', password='pw')
+        resp = self.client.get(reverse('production_run_detail', args=[run.pk]))
+        self.assertNotContains(resp, 'value="approve"')
+
+    def _allocation_setup(self, stock_at_plant):
+        from core.models import Warehouse, Material, ProductRecipe, Batch
+        plant = Warehouse.objects.create(name='Plant', location_type='Manufacturing')
+        other = Warehouse.objects.create(name='Store', location_type='Storage')
+        mat = Material.objects.create(name='Resin', sku='MAT-R', category='Bulk',
+                                      unit_of_measure='kg', safe_storage_days=365)
+        ProductRecipe.objects.create(product=self.product, material=mat, quantity_required=1)
+        batch = Batch.objects.create(
+            batch_number='B-R-1', material=mat, quantity=Decimal('1000'), status='Active',
+            manufacturing_date='2026-01-01', expiry_date='2027-01-01',
+            warehouse=plant if stock_at_plant else other)
+        run = self._run('Pending Allocation', manufacturing_plant=plant)
+        self.client.login(username='boss', password='pw')
+        return run, batch
+
+    def test_allocation_uses_run_plant_and_skips_transfer_for_local_stock(self):
+        from core.models import Shipment
+        run, batch = self._allocation_setup(stock_at_plant=True)
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Planned')
+        self.assertFalse(Shipment.objects.filter(linked_production_run=run).exists())
+        self.assertEqual(run.allocations.count(), 1)
+
+    def test_allocation_of_remote_stock_creates_transfer(self):
+        from core.models import Shipment
+        run, batch = self._allocation_setup(stock_at_plant=False)
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Awaiting Materials')
+        self.assertEqual(Shipment.objects.filter(linked_production_run=run).count(), 1)
+        self.assertEqual(run.manufacturing_plant.name, 'Plant')
+
+    def test_cannot_start_unallocated_run(self):
+        run = self._run('Pending Allocation')
+        self.client.login(username='boss', password='pw')
+        url = reverse('production_run_detail', args=[run.pk])
+        resp = self.client.get(url)
+        self.assertNotContains(resp, 'value="start_production"')
+        self.assertContains(resp, 'Materials must be allocated')
+        self.client.post(url, {'action': 'start_production'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Pending Allocation')
+
+    def test_allocated_batches_listed_on_page(self):
+        run, batch = self._allocation_setup(stock_at_plant=True)
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        resp = self.client.get(reverse('production_run_detail', args=[run.pk]))
+        self.assertContains(resp, 'Materials Allocated')
+        self.assertContains(resp, 'B-R-1')
+        self.assertContains(resp, 'At plant')
+        self.assertContains(resp, 'value="start_production"')
+
+    def test_topping_up_a_short_allocation_needs_no_acknowledgement(self):
+        from core.models import Shipment
+        run, batch = self._allocation_setup(stock_at_plant=False)
+        alloc_url = reverse('production_run_allocate', args=[run.pk])
+        detail = reverse('production_run_detail', args=[run.pk])
+        self.client.post(alloc_url, {'action': 'allocate_run', f'batch_qty_{batch.pk}': '400', 'allocate_short': '1'})
+        self.assertEqual(run.allocations.count(), 1)
+        # Still short, so the run page offers to allocate the remainder (no scary confirm)
+        resp = self.client.get(detail)
+        self.assertContains(resp, '+ Allocate Materials')
+        self.assertNotContains(resp, 'Allocating again adds to them')
+        # The allocate page shows what is already there and suggests only the shortfall
+        resp = self.client.get(alloc_url)
+        self.assertContains(resp, 'Already allocated to this run')
+        self.assertNotContains(resp, 'acknowledge_existing')
+        self.assertEqual(resp.context['recipe_reqs'][0]['needed'], 84.01)
+        # The remainder goes through with no acknowledgement and is added on top
+        self.client.post(alloc_url, {'action': 'allocate_run', f'batch_qty_{batch.pk}': '84.01'})
+        self.assertEqual(run.allocations.count(), 2)
+        self.assertEqual(Shipment.objects.filter(linked_production_run=run).count(), 2)
+        # Fully allocated now: nothing left to offer
+        self.assertContains(self.client.get(detail), alloc_url)   # extra can still be added
+
+    def test_allocating_after_production_starts_keeps_the_run_in_progress(self):
+        run, batch = self._allocation_setup(stock_at_plant=True)
+        alloc_url = reverse('production_run_allocate', args=[run.pk])
+        detail = reverse('production_run_detail', args=[run.pk])
+        self.client.post(alloc_url, {'action': 'allocate_run', f'batch_qty_{batch.pk}': '400', 'allocate_short': '1'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Planned')
+        # Start page warns about the shortfall and asks to confirm
+        resp = self.client.get(detail)
+        self.assertContains(resp, 'Not fully allocated')
+        self.assertContains(resp, 'Start production anyway?')
+        self.client.post(detail, {'action': 'start_production'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+        started_at = run.exact_start_time
+        # Still short and under way: the remainder can be allocated, and the run stays In Progress
+        self.assertContains(self.client.get(detail), '+ Allocate Materials')
+        self.client.post(alloc_url, {'action': 'allocate_run', f'batch_qty_{batch.pk}': '84.01'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+        self.assertEqual(run.exact_start_time, started_at)
+        self.assertEqual(sum(a.quantity for a in run.allocations.all()), Decimal('484.01'))
+
+    def test_allocating_to_a_finished_run_is_refused(self):
+        run, batch = self._allocation_setup(stock_at_plant=True)
+        ProductionRun.objects.filter(pk=run.pk).update(status='Completed')
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Completed')
+        self.assertEqual(run.allocations.count(), 0)
+
+    def test_bom_shows_allocated_and_in_hand(self):
+        run, batch = self._allocation_setup(stock_at_plant=False)
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        url = reverse('production_run_detail', args=[run.pk])
+        row = self.client.get(url).context['bom_materials'][0]
+        self.assertEqual((row['allocated'], row['ready'], row['state']), (484.01, 0, 'in_transit'))
+        # Once the transfer arrives the material counts as in hand
+        from core.models import Shipment
+        Shipment.objects.filter(linked_production_run=run).update(status='Arrived')
+        row = self.client.get(url).context['bom_materials'][0]
+        self.assertEqual((row['ready'], row['state']), (484.01, 'ready'))
+        self.assertContains(self.client.get(url), 'In Hand at Plant')
+        self.assertContains(self.client.get(url), reverse('production_run_allocate', args=[run.pk]))
+
+    def _extra_setup(self):
+        """Run of 100 units (recipe 1 kg/unit): 100 kg allocated from batch A and started,
+        plus a second free batch B (50 kg) at the plant."""
+        from core.models import Warehouse, Material, ProductRecipe, Batch
+        plant = Warehouse.objects.create(name='Plant', location_type='Manufacturing')
+        self.mat = Material.objects.create(name='Resin', sku='MAT-R', category='Bulk',
+                                           unit_of_measure='kg', safe_storage_days=365)
+        ProductRecipe.objects.create(product=self.product, material=self.mat, quantity_required=1)
+        self.batch_a = Batch.objects.create(
+            batch_number='B-A', material=self.mat, quantity=Decimal('1000'), status='Active',
+            manufacturing_date='2026-01-01', expiry_date='2027-01-01', warehouse=plant)
+        self.batch_b = Batch.objects.create(
+            batch_number='B-B', material=self.mat, quantity=Decimal('50'), status='Active',
+            manufacturing_date='2026-02-01', expiry_date='2027-06-01', warehouse=plant)
+        run = ProductionRun.objects.create(
+            run_number='RX-1', target_product=self.product, expected_yield=Decimal('100'),
+            status='Pending Allocation', manufacturing_plant=plant)
+        self.client.login(username='boss', password='pw')
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{self.batch_a.pk}': '100'})
+        url = reverse('production_run_detail', args=[run.pk])
+        self.client.post(url, {'action': 'start_production'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+        return run, url
+
+    def _complete(self, url, actual, **extra):
+        data = {'action': 'complete_production', 'actual_yield': '100', f'actual_qty_{self.mat.pk}': actual}
+        data.update(extra)
+        return self.client.post(url, data)
+
+    def _extra(self, batches, qtys, reasons=None, confirm=True):
+        m = self.mat.pk
+        data = {f'extra_batch_{m}': batches, f'extra_qty_{m}': qtys,
+                f'extra_reason_{m}': reasons or [''] * len(batches)}
+        if confirm:
+            data[f'extra_confirm_{m}'] = '1'
+        return data
+
+    def test_extra_material_needs_confirmation(self):
+        run, url = self._extra_setup()
+        self._complete(url, '102', **self._extra([str(self.batch_b.pk)], ['2'], confirm=False))
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+
+    def test_extra_material_sources_must_add_up(self):
+        run, url = self._extra_setup()
+        self._complete(url, '102', **self._extra([str(self.batch_b.pk)], ['1']))
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+
+    def test_unrecorded_extra_needs_reason(self):
+        run, url = self._extra_setup()
+        self._complete(url, '102', **self._extra(['unrecorded'], ['2'], ['  ']))
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+
+    def test_extra_from_batch_deducts_that_batch(self):
+        from core.models import ProductionConsumption
+        run, url = self._extra_setup()
+        self._complete(url, '102', **self._extra([str(self.batch_b.pk)], ['2']))
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Completed')
+        self.batch_a.refresh_from_db()
+        self.batch_b.refresh_from_db()
+        self.assertEqual(self.batch_a.quantity, Decimal('900'))     # the 100 allocated
+        self.assertEqual(self.batch_b.quantity, Decimal('48'))      # the 2 extra, from the chosen batch
+        self.assertTrue(ProductionConsumption.objects.filter(
+            production_run=run, consumed_batch=self.batch_b, quantity_used=Decimal('2')).exists())
+
+    def test_extra_split_across_batch_and_unrecorded(self):
+        from core.models import RunExtraMaterial
+        run, url = self._extra_setup()
+        self._complete(url, '103', **self._extra(
+            [str(self.batch_b.pk), 'unrecorded'], ['1', '2'], ['', 'leftover from RUN-9']))
+        run.refresh_from_db()
+        # 3% over the BOM goes to variance approval; the sources are stored either way
+        self.assertIn(run.status, ('Completed', 'Pending Approval'))
+        rows = list(RunExtraMaterial.objects.filter(production_run=run).order_by('id'))
+        self.assertEqual([(r.batch_id, r.quantity, r.reason) for r in rows],
+                         [(self.batch_b.pk, Decimal('1'), ''), (None, Decimal('2'), 'leftover from RUN-9')])
+        self.assertContains(self.client.get(url), 'leftover from RUN-9')
+
+    def test_unrecorded_extra_deducts_no_stock_and_keeps_reason(self):
+        run, url = self._extra_setup()
+        self._complete(url, '102', **self._extra(['unrecorded'], ['2'], ['balance left from RUN-9']))
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Completed')
+        self.batch_a.refresh_from_db()
+        self.batch_b.refresh_from_db()
+        self.assertEqual(self.batch_a.quantity, Decimal('900'))
+        self.assertEqual(self.batch_b.quantity, Decimal('50'))      # untouched
+        resp = self.client.get(url)
+        self.assertContains(resp, 'Not in records')
+        self.assertContains(resp, 'balance left from RUN-9')
+
+    def test_extra_cannot_exceed_batch_free_stock(self):
+        run, url = self._extra_setup()
+        self._complete(url, '160', **self._extra([str(self.batch_b.pk)], ['60']))
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+
+    def test_so_page_hides_cancelled_runs(self):
+        from core.models import Warehouse, SalesOrder, SalesOrderDetail
+        wh = Warehouse.objects.create(name='Hub', location_type='Storage')
+        so = SalesOrder.objects.create(so_number='SO-HIDE', client_name='C', origin_warehouse=wh, status='Pending')
+        SalesOrderDetail.objects.create(sales_order=so, product=self.product, quantity_ordered=Decimal('10'))
+        ProductionRun.objects.create(run_number='RUN-OLD', target_product=self.product,
+                                     expected_yield=Decimal('10'), status='Cancelled', sales_order=so)
+        ProductionRun.objects.create(run_number='RUN-LIVE', target_product=self.product,
+                                     expected_yield=Decimal('10'), status='Completed', sales_order=so)
+        self.client.login(username='boss', password='pw')
+        resp = self.client.get(reverse('so_detail', args=[so.pk]))
+        self.assertContains(resp, 'RUN-LIVE')
+        self.assertNotContains(resp, 'RUN-OLD')
+
+    def test_start_production_only_from_planned_or_awaiting(self):
+        for status in ('InProgress', 'Paused', 'Completed', 'Cancelled'):
+            run = ProductionRun.objects.create(
+                run_number=f'RS-{status}', target_product=self.product, expected_yield=Decimal('10'),
+                status=status)
+            self.client.login(username='boss', password='pw')
+            self.client.post(reverse('production_run_detail', args=[run.pk]), {'action': 'start_production'})
+            run.refresh_from_db()
+            self.assertEqual(run.status, status)
+            self.assertIsNone(run.exact_start_time)
+        ok = ProductionRun.objects.create(run_number='RS-OK', target_product=self.product,
+                                          expected_yield=Decimal('10'), status='Planned')
+        self.client.post(reverse('production_run_detail', args=[ok.pk]), {'action': 'start_production'})
+        ok.refresh_from_db()
+        self.assertEqual(ok.status, 'InProgress')
+
+    def _delivered_so(self):
+        from core.models import Warehouse, SalesOrder, SalesOrderDetail
+        wh = Warehouse.objects.create(name='Hub2', location_type='Storage')
+        so = SalesOrder.objects.create(so_number='SO-DONE', client_name='C', origin_warehouse=wh, status='Delivered')
+        SalesOrderDetail.objects.create(sales_order=so, product=self.product,
+                                        quantity_ordered=Decimal('10'), quantity_shipped=Decimal('10'))
+        self.client.login(username='boss', password='pw')
+        return so
+
+    def test_allocating_to_a_delivered_order_is_refused(self):
+        so = self._delivered_so()
+        self.client.post(reverse('so_allocate', args=[so.pk]), {'action': 'allocate_manual'})
+        so.refresh_from_db()
+        self.assertEqual(so.status, 'Delivered')
+
+    def test_scrapping_a_shipment_does_not_reset_a_delivered_order(self):
+        from core.models import Shipment
+        so = self._delivered_so()
+        stray = Shipment.objects.create(tracking_number='SHP-STRAY', direction='Outbound',
+                                        status='Draft', sales_order=so)
+        self.client.post(reverse('shipment_detail', args=[stray.pk]), {'action': 'scrap_shipment'})
+        stray.refresh_from_db()
+        self.assertEqual(stray.status, 'Cancelled')
+        so.refresh_from_db()
+        self.assertEqual(so.status, 'Delivered')
+
+    def test_po_detail_renders_with_materials_in_id_order(self):
+        from core.models import Warehouse, Material, PurchaseOrder
+        wh = Warehouse.objects.create(name='PO Hub', location_type='Storage')
+        second = Material.objects.create(name='Aaa first by name', sku='MAT-2', category='Bulk',
+                                         unit_of_measure='kg', safe_storage_days=30)
+        first_by_id = Material.objects.create(name='Zzz last by name', sku='MAT-1', category='Bulk',
+                                              unit_of_measure='kg', safe_storage_days=30)
+        # created in this order, so ids ascend: 'Aaa...' then 'Zzz...'; reverse them to prove id order wins
+        Material.objects.filter(pk=second.pk).update(name='Zzz name-last')
+        Material.objects.filter(pk=first_by_id.pk).update(name='Aaa name-first')
+        po = PurchaseOrder.objects.create(po_number='PO-ORD', supplier_name='S', target_warehouse=wh)
+        self.client.login(username='boss', password='pw')
+        resp = self.client.get(reverse('po_detail', args=[po.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual([m.pk for m in resp.context['materials']], sorted(m.pk for m in resp.context['materials']))
+        html = resp.content.decode()
+        self.assertLess(html.index('MAT-2'), html.index('MAT-1'))
+
+    def test_list_complete_button_sends_user_to_run_page(self):
+        run = self._run('InProgress')
+        self.client.login(username='boss', password='pw')
+        detail = reverse('production_run_detail', args=[run.pk])
+        # The button on the list is a link to the run page's finalize section
+        self.assertContains(self.client.get(reverse('readiness')), f'href="{detail}#finalize"')
+        # A direct post of the old action no longer completes anything
+        resp = self.client.post(reverse('readiness'), {'action': 'complete_run', 'run_id': run.pk,
+                                                        'actual_yield': '484.01'})
+        self.assertRedirects(resp, detail + '#finalize', fetch_redirect_response=False)
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+        self.assertIsNone(run.actual_yield)
+
+    def test_short_allocation_needs_acknowledgement(self):
+        run, batch = self._allocation_setup(stock_at_plant=True)
+        url = reverse('production_run_allocate', args=[run.pk])
+        self.client.post(url, {'action': 'allocate_run', f'batch_qty_{batch.pk}': '400'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Pending Allocation')
+        self.assertEqual(run.allocations.count(), 0)
+        # Acknowledged: goes through and the shortfall is recorded on the timeline
+        self.client.post(url, {'action': 'allocate_run', 'allocate_short': '1', f'batch_qty_{batch.pk}': '400'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Planned')
+        self.assertTrue(run.timeline.filter(action__icontains='shortfall').exists())
+
+    def test_nothing_selected_cannot_skip_the_allocation_gate(self):
+        run, batch = self._allocation_setup(stock_at_plant=True)
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {'action': 'allocate_run'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Pending Allocation')
+
+    def test_over_allocation_is_refused(self):
+        run, batch = self._allocation_setup(stock_at_plant=True)
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', 'allocate_short': '1', f'batch_qty_{batch.pk}': '600'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Pending Allocation')
+        self.assertEqual(run.allocations.count(), 0)
+
+    def test_allocation_cannot_exceed_batch_free_stock(self):
+        from core.models import Batch
+        run, batch = self._allocation_setup(stock_at_plant=True)
+        Batch.objects.filter(pk=batch.pk).update(allocated_quantity=Decimal('900'))   # only 100 free
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Pending Allocation')
+
+    def test_allocate_page_has_live_status_and_no_side_panel(self):
+        run, batch = self._allocation_setup(stock_at_plant=True)
+        resp = self.client.get(reverse('production_run_allocate', args=[run.pk]))
+        self.assertContains(resp, 'mat-status')
+        self.assertContains(resp, 'alloc-summary')
+        self.assertNotContains(resp, 'Auto-Logistics Split')
+
+    def test_send_shortages_to_manufacturing_after_a_cancelled_run(self):
+        from core.models import Warehouse, SalesOrder, SalesOrderDetail
+        wh = Warehouse.objects.create(name='Hub3', location_type='Storage')
+        so = SalesOrder.objects.create(so_number='SO-RETRY', client_name='C', origin_warehouse=wh, status='Pending')
+        SalesOrderDetail.objects.create(sales_order=so, product=self.product, quantity_ordered=Decimal('10'))
+        base = f'PR-SO-RETRY-{self.product.sku}'
+        ProductionRun.objects.create(run_number=base, target_product=self.product, expected_yield=Decimal('10'),
+                                     status='Cancelled', sales_order=so)
+        self.client.login(username='boss', password='pw')
+        resp = self.client.post(reverse('so_detail', args=[so.pk]), {'action': 'send_to_manufacturing'})
+        self.assertEqual(resp.status_code, 302)
+        new_run = ProductionRun.objects.filter(sales_order=so).exclude(status='Cancelled').get()
+        self.assertEqual(new_run.run_number, base + '-2')
+        # Cancelling that one and sending again picks the next free suffix
+        ProductionRun.objects.filter(pk=new_run.pk).update(status='Cancelled')
+        self.client.post(reverse('so_detail', args=[so.pk]), {'action': 'send_to_manufacturing'})
+        self.assertEqual(ProductionRun.objects.filter(sales_order=so).exclude(status='Cancelled').get().run_number, base + '-3')
+
+    def test_allocation_lines_have_no_update_button(self):
+        run, batch = self._allocation_setup(stock_at_plant=False)
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        detail = reverse('production_run_detail', args=[run.pk])
+        resp = self.client.get(detail)
+        self.assertNotContains(resp, 'update_allocations')
+        # The old action does nothing to the allocation or its transfer
+        alloc = run.allocations.get()
+        self.client.post(detail, {'action': 'update_allocations', 'alloc_id': alloc.pk, 'quantity': '1'})
+        alloc.refresh_from_db()
+        self.assertEqual(alloc.quantity, Decimal('484.01'))
+
+    def test_cancel_allocation_releases_stock_and_draft_transfers(self):
+        from core.models import Shipment
+        run, batch = self._allocation_setup(stock_at_plant=False)
+        detail = reverse('production_run_detail', args=[run.pk])
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        self.assertContains(self.client.get(detail), 'Cancel allocation &amp; start over')
+        self.client.post(detail, {'action': 'cancel_allocation'})
+        run.refresh_from_db()
+        batch.refresh_from_db()
+        self.assertEqual(run.status, 'Pending Allocation')
+        self.assertEqual(run.allocations.count(), 0)
+        self.assertEqual(batch.allocated_quantity, 0)
+        self.assertFalse(Shipment.objects.filter(linked_production_run=run).exclude(status='Cancelled').exists())
+
+    def test_cancel_allocation_refused_once_a_transfer_is_under_way(self):
+        from core.models import Shipment
+        run, batch = self._allocation_setup(stock_at_plant=False)
+        detail = reverse('production_run_detail', args=[run.pk])
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        Shipment.objects.filter(linked_production_run=run).update(status='Dispatched')
+        self.client.post(detail, {'action': 'cancel_allocation'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Awaiting Materials')
+        self.assertEqual(run.allocations.count(), 1)
+
+    def test_cancel_allocation_refused_after_production_starts(self):
+        run, url = self._extra_setup()                       # allocated and started
+        self.assertEqual(run.status, 'InProgress')
+        self.assertNotContains(self.client.get(url), 'Cancel allocation &amp; start over')
+        self.client.post(url, {'action': 'cancel_allocation'})
+        self.client.post(reverse('readiness'), {'action': 'cancel_allocation', 'run_id': run.pk})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+        self.assertEqual(run.allocations.count(), 1)
+
+    def test_extra_beyond_recipe_only_while_production_is_under_way(self):
+        run, batch = self._allocation_setup(stock_at_plant=True)
+        alloc_url = reverse('production_run_allocate', args=[run.pk])
+        detail = reverse('production_run_detail', args=[run.pk])
+        self.client.post(alloc_url, {'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Planned')
+        # Before start the recipe requirement is a hard cap, however much is asked for
+        self.client.post(alloc_url, {'action': 'allocate_run', 'extra_reason': 'more please', f'batch_qty_{batch.pk}': '10'})
+        self.assertEqual(sum(a.quantity for a in run.allocations.all()), Decimal('484.01'))
+        self.assertNotContains(self.client.get(alloc_url), 'more than the recipe needs')
+        # Under way: extra is allowed, but only with a reason
+        self.client.post(detail, {'action': 'start_production'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+        self.assertContains(self.client.get(alloc_url), 'more than the recipe needs')
+        self.client.post(alloc_url, {'action': 'allocate_run', f'batch_qty_{batch.pk}': '10'})
+        self.assertEqual(sum(a.quantity for a in run.allocations.all()), Decimal('484.01'))   # no reason: refused
+        self.client.post(alloc_url, {'action': 'allocate_run', 'extra_reason': 'second mix needs a top-up',
+                                     f'batch_qty_{batch.pk}': '10'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+        self.assertEqual(sum(a.quantity for a in run.allocations.all()), Decimal('494.01'))
+        note = run.timeline.filter(action__icontains='Extra material allocated').get()
+        self.assertIn('second mix needs a top-up', note.action)
+        self.assertIn('10.00', note.action)
+
+    def test_extra_allocation_from_another_warehouse_creates_a_transfer_while_running(self):
+        from core.models import Shipment
+        run, batch = self._allocation_setup(stock_at_plant=True)     # 1000 kg at the plant
+        alloc_url = reverse('production_run_allocate', args=[run.pk])
+        self.client.post(alloc_url, {'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        self.client.post(reverse('production_run_detail', args=[run.pk]), {'action': 'start_production'})
+        from core.models import Warehouse, Batch
+        store = Warehouse.objects.create(name='Far Store', location_type='Storage')
+        far = Batch.objects.create(batch_number='B-FAR', material=batch.material, quantity=Decimal('50'), status='Active',
+                                   manufacturing_date='2026-01-01', expiry_date='2027-01-01', warehouse=store)
+        self.client.post(alloc_url, {'action': 'allocate_run', 'extra_reason': 'top-up', f'batch_qty_{far.pk}': '20'})
+        transfer = Shipment.objects.get(linked_production_run=run, origin_warehouse=store)
+        self.assertEqual(transfer.status, 'Draft')
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+
+    def test_remove_one_line_keeps_the_others(self):
+        from core.models import Shipment, Warehouse, Batch
+        run, batch = self._allocation_setup(stock_at_plant=False)    # 1000 kg at 'Store', not the plant
+        detail = reverse('production_run_detail', args=[run.pk])
+        other = Warehouse.objects.create(name='Second Store', location_type='Storage')
+        second = Batch.objects.create(batch_number='B-2ND', material=batch.material, quantity=Decimal('500'), status='Active',
+                                      manufacturing_date='2026-02-01', expiry_date='2027-06-01', warehouse=other)
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', 'override_reason': 'test split across two stores',
+            f'batch_qty_{batch.pk}': '300', f'batch_qty_{second.pk}': '184.01'})
+        self.assertEqual(run.allocations.count(), 2)
+        self.assertContains(self.client.get(detail), 'value="remove_allocation"')
+        gone = run.allocations.get(batch=second)
+        self.client.post(detail, {'action': 'remove_allocation', 'alloc_id': gone.pk})
+        self.assertEqual(run.allocations.count(), 1)
+        self.assertEqual(run.allocations.get().batch, batch)
+        second.refresh_from_db()
+        self.assertEqual(second.allocated_quantity, 0)
+        # Its own (now empty) draft transfer is cancelled; the other transfer is untouched
+        self.assertFalse(Shipment.objects.filter(linked_production_run=run, origin_warehouse=other).exists())   # deleted
+        from core.models import RegistryLog
+        self.assertEqual(RegistryLog.objects.filter(action_type='Draft_Transfer_Deleted', quantity_changed=Decimal('184.01')).count(), 1)
+        self.assertEqual(Shipment.objects.get(linked_production_run=run, origin_warehouse=batch.warehouse).status, 'Draft')
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Awaiting Materials')
+        # Removing the last line puts the run back to Pending Allocation
+        last = run.allocations.get()
+        self.client.post(detail, {'action': 'remove_allocation', 'alloc_id': last.pk})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Pending Allocation')
+        self.assertEqual(run.allocations.count(), 0)
+
+    def test_remove_line_refused_when_its_transfer_has_left_draft_or_run_started(self):
+        from core.models import Shipment
+        run, batch = self._allocation_setup(stock_at_plant=False)
+        detail = reverse('production_run_detail', args=[run.pk])
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        Shipment.objects.filter(linked_production_run=run).update(status='Preparing')
+        page = self.client.get(detail)
+        self.assertNotContains(page, 'value="remove_allocation"')
+        self.assertContains(page, 'In logistics')
+        alloc = run.allocations.get()
+        self.client.post(detail, {'action': 'remove_allocation', 'alloc_id': alloc.pk})
+        self.assertEqual(run.allocations.count(), 1)
+        # Once production has started nothing can be removed
+        Shipment.objects.filter(linked_production_run=run).update(status='Arrived')
+        ProductionRun.objects.filter(pk=run.pk).update(status='InProgress')
+        self.client.post(detail, {'action': 'remove_allocation', 'alloc_id': alloc.pk})
+        self.assertEqual(run.allocations.count(), 1)
+
+    def test_cancelling_an_allocation_deletes_its_draft_transfers_and_leaves_a_ledger_trace(self):
+        from core.models import Shipment, RegistryLog
+        run, batch = self._allocation_setup(stock_at_plant=False)
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        tracking = Shipment.objects.get(linked_production_run=run).tracking_number
+        self.client.post(reverse('production_run_detail', args=[run.pk]), {'action': 'cancel_allocation'})
+        self.assertFalse(Shipment.objects.filter(tracking_number=tracking).exists())     # gone, not 'Cancelled'
+        row = RegistryLog.objects.get(action_type='Draft_Transfer_Deleted')
+        self.assertEqual(row.quantity_changed, Decimal('484.01'))
+        self.assertEqual(row.material, batch.material)
+        self.assertIn(tracking, row.item_name)
+        self.assertIn(run.run_number, row.item_name)
+        self.assertEqual(row.warehouse, batch.warehouse)
+        self.assertTrue(run.timeline.filter(action__icontains=tracking).exists())
+        # Stock is back and the ledger page lists the trace under its own filter
+        batch.refresh_from_db()
+        self.assertEqual(batch.allocated_quantity, 0)
+        resp = self.client.get(reverse('registry') + '?action=Draft_Transfer_Deleted')
+        self.assertContains(resp, tracking)
+        self.assertContains(resp, 'Draft deleted')
+
+    def test_scrapping_a_draft_run_transfer_deletes_it_and_returns_to_the_run(self):
+        from core.models import Shipment, RegistryLog
+        run, batch = self._allocation_setup(stock_at_plant=False)
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        shipment = Shipment.objects.get(linked_production_run=run)
+        resp = self.client.post(reverse('shipment_detail', args=[shipment.pk]), {'action': 'scrap_shipment'})
+        self.assertRedirects(resp, reverse('production_run_detail', args=[run.pk]), fetch_redirect_response=False)
+        self.assertFalse(Shipment.objects.filter(pk=shipment.pk).exists())
+        self.assertEqual(RegistryLog.objects.filter(action_type='Draft_Transfer_Deleted').count(), 1)
+        batch.refresh_from_db()
+        self.assertEqual(batch.allocated_quantity, 0)
+
+    def test_a_transfer_that_went_for_approval_is_cancelled_not_deleted(self):
+        from core.models import Shipment, RegistryLog
+        run, batch = self._allocation_setup(stock_at_plant=False)
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        shipment = Shipment.objects.get(linked_production_run=run)
+        Shipment.objects.filter(pk=shipment.pk).update(status='Preparing')
+        self.client.post(reverse('shipment_detail', args=[shipment.pk]), {'action': 'scrap_shipment'})
+        shipment.refresh_from_db()
+        self.assertEqual(shipment.status, 'Cancelled')
+        self.assertFalse(RegistryLog.objects.filter(action_type='Draft_Transfer_Deleted').exists())
+
+    def test_scrapping_a_run_deletes_its_draft_transfers(self):
+        from core.models import Shipment, RegistryLog
+        run, batch = self._allocation_setup(stock_at_plant=False)
+        self.client.post(reverse('production_run_allocate', args=[run.pk]), {
+            'action': 'allocate_run', f'batch_qty_{batch.pk}': '484.01'})
+        self.client.post(reverse('production_run_detail', args=[run.pk]), {'action': 'scrap_run', 'reason': 'not needed'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Cancelled')
+        self.assertFalse(Shipment.objects.filter(linked_production_run=run).exists())
+        self.assertEqual(RegistryLog.objects.filter(action_type='Draft_Transfer_Deleted').count(), 1)
+
+    def test_a_manually_made_draft_shipment_is_not_touched(self):
+        from core.models import Shipment, Warehouse
+        wh = Warehouse.objects.create(name='Manual Hub', location_type='Storage')
+        run, batch = self._allocation_setup(stock_at_plant=False)
+        manual = Shipment.objects.create(tracking_number='SHP-MANUAL', direction='Transfer', status='Draft',
+                                         origin_warehouse=wh, linked_production_run=run)   # not auto-generated
+        self.client.post(reverse('production_run_detail', args=[run.pk]), {'action': 'scrap_run', 'reason': 'not needed'})
+        self.assertTrue(Shipment.objects.filter(pk=manual.pk).exists())
+
+    def test_allocate_button_on_awaiting_materials(self):
+        from core.models import Material, ProductRecipe
+        mat = Material.objects.create(name='Gum', sku='MAT-G', category='Bulk', unit_of_measure='kg', safe_storage_days=30)
+        ProductRecipe.objects.create(product=self.product, material=mat, quantity_required=1)
+        run = self._run('Awaiting Materials')
+        self.client.login(username='boss', password='pw')
+        resp = self.client.get(reverse('production_run_detail', args=[run.pk]))
+        self.assertContains(resp, 'Allocate Materials')
+
 
 
 class StockoutForecastTests(TestCase):
@@ -1367,6 +2039,26 @@ class StockoutForecastTests(TestCase):
         self._lead(m, 14)
         self._po(m, 1000, 0, 'PO-PO4')
         row = self._row('MK-PO4')
+        self.assertAlmostEqual(row['days_cover'], 100.0)
+        self.assertEqual(row['status'], 'ok')
+
+    def test_todays_delivery_counts_as_today_across_the_utc_day_boundary(self):
+        """At 01:00 in Kuala Lumpur it is still the previous day in UTC. 'Today' for the
+        forecast is the local date, so a delivery dated today must count as arriving today."""
+        from datetime import datetime, timezone as dt_timezone
+        from unittest import mock
+        boundary = datetime(2026, 9, 21, 17, 0, tzinfo=dt_timezone.utc)      # 01:00, 22 Sep, Kuala Lumpur
+        with mock.patch('django.utils.timezone.now', return_value=boundary):
+            local_today = timezone.localdate()
+            self.assertEqual(local_today, date(2026, 9, 22))
+            m = self._material('MK-TZ')
+            self._consume(m, 300)                     # 10/day
+            self._lead(m, 14)
+            po = PurchaseOrder.objects.create(
+                po_number='PO-TZ', supplier_name='S', target_warehouse=self.wh, status='Pending',
+                expected_delivery_date=local_today)
+            PurchaseOrderDetail.objects.create(purchase_order=po, material=m, quantity_ordered=Decimal('1000'))
+            row = self._row('MK-TZ')
         self.assertAlmostEqual(row['days_cover'], 100.0)
         self.assertEqual(row['status'], 'ok')
 
@@ -4242,3 +4934,268 @@ class RentResultsTests(TestCase):
         self.assertContains(resp, 'Did the moves you accepted save what was promised?')
         self.assertContains(resp, 'T-RR-0')
         self.assertContains(resp, 'Measured')
+
+
+class SOAllocateFullyAllocatedTests(TestCase):
+    """A line that is already fully covered shows a tick, not the batch picker."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='fa_user', password='pw')
+        self.client.login(username='fa_user', password='pw')
+        self.wh = Warehouse.objects.create(name='FG Hub FA', location_type='Storage')
+        self.product = Product.objects.create(name='FA Product', sku='PRD-FA', unit_of_measure='kg', price_per_unit=1)
+        self.batch = Batch.objects.create(
+            batch_number='FG-FA', status='Active', product=self.product, quantity=Decimal('500'),
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=300), warehouse=self.wh)
+        self.so = SalesOrder.objects.create(so_number='SO-FA', client_name='Acme', origin_warehouse=self.wh, status='Pending')
+        self.item = SalesOrderDetail.objects.create(sales_order=self.so, product=self.product, quantity_ordered=Decimal('100'))
+
+    def test_line_still_needing_stock_shows_the_picker(self):
+        resp = self.client.get(reverse('so_allocate', args=[self.so.pk]))
+        self.assertContains(resp, 'Needed to Allocate: <span')
+        self.assertContains(resp, f'name="batch_qty_{self.item.id}_{self.batch.id}"')
+        self.assertNotContains(resp, 'Fully Allocated')
+
+    def test_fully_allocated_line_shows_a_tick_and_no_picker(self):
+        StockAllocation.objects.create(batch=self.batch, sales_order=self.so, quantity=Decimal('100'))
+        self.batch.allocated_quantity = Decimal('100')
+        self.batch.save(update_fields=['allocated_quantity'])
+        resp = self.client.get(reverse('so_allocate', args=[self.so.pk]))
+        self.assertContains(resp, 'Fully Allocated')
+        self.assertContains(resp, 'Allocation complete for this line item')
+        self.assertNotContains(resp, 'Needed to Allocate: <span')
+        self.assertNotContains(resp, f'name="batch_qty_{self.item.id}_{self.batch.id}"')
+
+
+class UnrecordedMaterialUsageTests(TestCase):
+    """Yield page: usage entered as 'batch not in records', per material."""
+
+    def setUp(self):
+        from core.models import Warehouse, Material
+        self.client = Client()
+        self.user = User.objects.create_superuser(username='boss', password='pw')
+        self.other = User.objects.create_user(username='op2', password='pw')
+        self.product = Product.objects.create(name='Blend', sku='PRD-B', unit_of_measure='kg', price_per_unit=5)
+        self.plant = Warehouse.objects.create(name='Plant', location_type='Manufacturing')
+        self.resin = Material.objects.create(name='Resin', sku='MAT-R', category='Bulk', unit_of_measure='kg', safe_storage_days=30)
+        self.dye = Material.objects.create(name='Dye', sku='MAT-D', category='Bulk', unit_of_measure='kg', safe_storage_days=30)
+
+    def _completed_run(self, number, poured, material=None):
+        run = ProductionRun.objects.create(
+            run_number=number, target_product=self.product, expected_yield=Decimal('100'),
+            actual_yield=Decimal('100'), status='Completed', exact_end_time=timezone.now())
+        RunMaterialUsage.objects.create(production_run=run, material=material or self.resin,
+                                        expected_qty=Decimal(str(poured)), actual_qty=Decimal(str(poured)))
+        return run
+
+    def _extra(self, run, material, qty, reason, user=None, batch=None):
+        from core.models import RunExtraMaterial
+        return RunExtraMaterial.objects.create(production_run=run, material=material, quantity=Decimal(str(qty)),
+                                               reason=reason, batch=batch, recorded_by=user or self.user)
+
+    def test_counts_shares_reasons_and_people(self):
+        from core.analytics import unrecorded_material_usage
+        run = self._completed_run('U-1', 100)
+        self._extra(run, self.resin, 3, 'Leftover from RUN-9')
+        self._extra(run, self.resin, 2, ' leftover from run-9 ', user=self.other)
+        self._extra(run, self.resin, 1, 'caking')
+        data = unrecorded_material_usage()
+        self.assertEqual(len(data['rows']), 1)
+        row = data['rows'][0]
+        self.assertEqual((row['events_recent'], row['qty_recent'], row['events_window']), (3, 6.0, 3))
+        self.assertAlmostEqual(row['share_pct'], 6.0)
+        top_reason, top_count = row['top_reasons'][0]
+        self.assertEqual((top_reason.lower(), top_count), ('leftover from run-9', 2))   # case / spacing merged
+        self.assertEqual(dict(row['top_people']), {'boss': 2, 'op2': 1})
+        self.assertEqual([r['number'] for r in row['runs']], ['U-1'])
+        self.assertEqual((data['events_recent'], data['materials_recent']), (3, 1))
+
+    def test_batch_entries_and_old_entries_are_left_out(self):
+        from core.analytics import unrecorded_material_usage
+        from core.models import Batch, RunExtraMaterial
+        run = self._completed_run('U-2', 100)
+        batch = Batch.objects.create(batch_number='B-U', material=self.resin, quantity=Decimal('50'), status='Active',
+                                     manufacturing_date='2026-01-01', expiry_date='2027-01-01', warehouse=self.plant)
+        self._extra(run, self.resin, 4, '', batch=batch)                    # traced to a batch: not "unrecorded"
+        old = self._extra(run, self.resin, 5, 'ancient')
+        RunExtraMaterial.objects.filter(pk=old.pk).update(created_at=timezone.now() - timedelta(days=40))
+        self.assertEqual(unrecorded_material_usage()['rows'], [])
+
+    def test_recent_versus_window_and_worst_share_first(self):
+        from core.analytics import unrecorded_material_usage
+        from core.models import RunExtraMaterial
+        run = self._completed_run('U-3', 100)
+        RunMaterialUsage.objects.create(production_run=run, material=self.dye,
+                                        expected_qty=Decimal('100'), actual_qty=Decimal('100'))
+        older = self._extra(run, self.resin, 2, 'spill')
+        RunExtraMaterial.objects.filter(pk=older.pk).update(created_at=timezone.now() - timedelta(days=15))
+        self._extra(run, self.dye, 10, 'unlabelled drum')
+        data = unrecorded_material_usage()
+        self.assertEqual([r['name'] for r in data['rows']], ['Dye', 'Resin'])       # 10% then 2%
+        resin = data['rows'][1]
+        self.assertEqual((resin['events_recent'], resin['events_window']), (0, 1))
+
+    def test_yield_page_shows_the_section(self):
+        run = self._completed_run('U-4', 100)
+        self._extra(run, self.resin, 3, 'caking')
+        self.client.login(username='boss', password='pw')
+        resp = self.client.get(reverse('production_yield'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Unrecorded material usage')
+        self.assertContains(resp, 'caking')
+        self.assertContains(resp, 'U-4')
+        self.assertContains(resp, 'Unrecorded Usage (7 days)')
+
+
+class LocalDateAnalyticsTests(TestCase):
+    """'Today' in analytics is the local (Kuala Lumpur) date. Between local midnight and 08:00 the UTC
+    date is still yesterday, so these pin the clock to 01:00 local and check each function agrees."""
+
+    LOCAL_TODAY = date(2026, 9, 22)
+
+    def setUp(self):
+        from datetime import datetime, timezone as dt_timezone
+        from unittest import mock
+        boundary = datetime(2026, 9, 21, 17, 0, tzinfo=dt_timezone.utc)      # 01:00, 22 Sep, Kuala Lumpur
+        patcher = mock.patch('django.utils.timezone.now', return_value=boundary)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.assertEqual(timezone.localdate(), self.LOCAL_TODAY)
+        self.wh = Warehouse.objects.create(name='Hub', location_type='Storage')
+        self.user = User.objects.create_user(username='owner', password='pw')
+        self.product = Product.objects.create(name='Blend', sku='PRD-TZ', unit_of_measure='kg', price_per_unit=5)
+
+    def _so(self, number, **kw):
+        from core.models import SalesOrder, SalesOrderDetail
+        so = SalesOrder.objects.create(so_number=number, client_name='C', origin_warehouse=self.wh,
+                                       status=kw.pop('status', 'Pending'), created_by=self.user, **kw)
+        SalesOrderDetail.objects.create(sales_order=so, product=self.product, quantity_ordered=Decimal('10'))
+        return so
+
+    def test_delivery_risk_treats_yesterdays_deadline_as_late(self):
+        from core.analytics import sales_order_delivery_risk
+        self._so('SO-TZ1', fulfillment_deadline=self.LOCAL_TODAY - timedelta(days=1))
+        row = next(r for r in sales_order_delivery_risk() if r['so_number'] == 'SO-TZ1')
+        self.assertEqual(row['risk'], 'late')          # 21 Sep < today (22 Sep); against UTC it read as due today
+
+    def test_shipment_logistics_flags_an_eta_that_passed_yesterday(self):
+        from core.analytics import shipment_logistics
+        from core.models import Shipment
+        Shipment.objects.create(tracking_number='SHP-TZ', direction='Outbound', status='Dispatched',
+                                dispatch_date=self.LOCAL_TODAY - timedelta(days=3),
+                                expected_eta_date=self.LOCAL_TODAY - timedelta(days=1))
+        row = next(r for r in shipment_logistics() if r['tracking_number'] == 'SHP-TZ')
+        self.assertEqual(row['risk'], 'overdue')
+
+    def test_my_open_jobs_ages_todays_order_as_zero_days(self):
+        from core.analytics import my_open_jobs
+        from core.models import SalesOrder
+        so = self._so('SO-TZ2')
+        SalesOrder.objects.filter(pk=so.pk).update(order_date=self.LOCAL_TODAY)
+        row = next(r for r in my_open_jobs(self.user) if r['reference'] == 'SO-TZ2')
+        self.assertEqual(row['age_days'], 0)            # not -1
+
+    def test_sales_trend_uses_the_local_month(self):
+        from core.analytics import product_sales_trend
+        from core.models import SalesOrder
+        from datetime import datetime, timezone as dt_timezone
+        from unittest import mock
+        # 01:00 on 1 Oct in Kuala Lumpur is still 30 Sep in UTC: the trend must already be in October
+        with mock.patch('django.utils.timezone.now',
+                        return_value=datetime(2026, 9, 30, 17, 0, tzinfo=dt_timezone.utc)):
+            so = self._so('SO-TZ3')
+            SalesOrder.objects.filter(pk=so.pk).update(order_date=date(2026, 10, 1))
+            row = next(r for r in product_sales_trend() if r['sku'] == 'PRD-TZ')
+        self.assertEqual(row['monthly_qty'][-1], 10.0)
+
+
+class SOCommitmentTests(TestCase):
+    """Stock that has moved onto an order's logistics orders still counts as covering the order
+    (the SO-1002 case: 312 on a draft shipment, 188 already shipped, nothing 'allocated')."""
+
+    def setUp(self):
+        from core.models import Warehouse, SalesOrder, SalesOrderDetail, Batch, Shipment, StockAllocation
+        self.client = Client()
+        self.boss = User.objects.create_superuser(username='boss', password='pw')
+        self.plant = Warehouse.objects.create(name='Plant', location_type='Manufacturing')
+        self.hub = Warehouse.objects.create(name='Hub', location_type='Storage')
+        self.product = Product.objects.create(name='Chloride', sku='PRD-CL', unit_of_measure='kg', price_per_unit=5)
+        self.so = SalesOrder.objects.create(so_number='SO-C1', client_name='C', origin_warehouse=self.hub,
+                                            status='Partially Shipped')
+        self.item = SalesOrderDetail.objects.create(sales_order=self.so, product=self.product,
+                                                    quantity_ordered=Decimal('500'), quantity_shipped=Decimal('188'))
+        self.b312 = self._batch('B-312', 312)
+        self.b188 = self._batch('B-188', 188)
+        # 188 already shipped: its shipment is credited, and still holds its reservation until it completes
+        self.shipped = Shipment.objects.create(tracking_number='SHP-C1', direction='Outbound', status='Arrived',
+                                               sales_order=self.so, origin_warehouse=self.hub, credited_to_so=True)
+        StockAllocation.objects.create(batch=self.b188, shipment=self.shipped, quantity=Decimal('188'))
+        # 312 sits on a draft logistics order; the reservation moved off the order onto the shipment
+        self.draft = Shipment.objects.create(tracking_number='SHP-C2', direction='Outbound', status='Draft',
+                                             sales_order=self.so, origin_warehouse=self.plant)
+        StockAllocation.objects.create(batch=self.b312, shipment=self.draft, quantity=Decimal('312'))
+
+    def _batch(self, number, qty):
+        from core.models import Batch
+        return Batch.objects.create(batch_number=number, product=self.product, quantity=Decimal(str(qty)),
+                                    allocated_quantity=Decimal(str(qty)), status='Active', warehouse=self.plant,
+                                    manufacturing_date='2026-01-01', expiry_date='2027-01-01')
+
+    def _line(self):
+        self.client.login(username='boss', password='pw')
+        resp = self.client.get(reverse('so_detail', args=[self.so.pk]))
+        self.assertEqual(resp.status_code, 200)
+        return resp, resp.context['line_items'][0]
+
+    def test_commitment_counts_logistics_stock_once_and_leaves_out_credited_shipments(self):
+        from core.utils import so_line_commitment
+        c = so_line_commitment(self.so, self.product)
+        self.assertEqual((c['held'], c['in_logistics'], c['shipped'], c['total']),
+                         (Decimal('0'), Decimal('312'), Decimal('188'), Decimal('500')))
+
+    def test_order_page_shows_no_deficit_and_the_logistics_split(self):
+        resp, row = self._line()
+        self.assertEqual((row['allocated'], row['in_logistics'], row['deficit']), (0.0, 312.0, 0.0))
+        self.assertTrue(row['fulfilled'])
+        self.assertContains(resp, 'In Logistics')
+        self.assertNotContains(resp, 'Insufficient')
+
+    def test_a_cancelled_shipment_holds_nothing(self):
+        from core.models import Shipment
+        Shipment.objects.filter(pk=self.draft.pk).update(status='Cancelled')
+        resp, row = self._line()
+        self.assertEqual((row['in_logistics'], row['deficit']), (0.0, 312.0))
+        self.assertFalse(row['fulfilled'])
+
+    def test_reservation_kept_on_the_order_is_not_counted_twice(self):
+        # A stock move (consolidation) tags the order's own reservation with a transfer; it is 'held', not 'in logistics'
+        from core.models import Shipment, StockAllocation
+        move = Shipment.objects.create(tracking_number='SHP-MOVE', direction='Transfer', status='Draft',
+                                       sales_order=self.so, origin_warehouse=self.plant, destination_warehouse=self.hub)
+        StockAllocation.objects.filter(shipment=self.draft).delete()
+        StockAllocation.objects.create(batch=self.b312, sales_order=self.so, shipment=move, quantity=Decimal('312'))
+        from core.utils import so_line_commitment
+        c = so_line_commitment(self.so, self.product)
+        self.assertEqual((c['held'], c['in_logistics'], c['total']), (Decimal('312'), Decimal('0'), Decimal('500')))
+
+    def test_no_new_manufacturing_run_for_stock_already_committed(self):
+        from core.utils import create_shortage_production_runs
+        self.assertFalse(create_shortage_production_runs(self.so, self.plant, self.boss))
+        self.assertEqual(ProductionRun.objects.filter(sales_order=self.so).count(), 0)
+
+    def test_send_shortages_button_path_does_not_create_a_run(self):
+        self.client.login(username='boss', password='pw')
+        self.client.post(reverse('so_detail', args=[self.so.pk]), {'action': 'send_to_manufacturing'})
+        self.assertEqual(ProductionRun.objects.filter(sales_order=self.so).count(), 0)
+
+    def test_allocate_screen_offers_nothing_more_for_a_fully_covered_order(self):
+        from core.models import Batch
+        extra = Batch.objects.create(batch_number='B-EXTRA', product=self.product, quantity=Decimal('100'), status='Active',
+                                     warehouse=self.hub, manufacturing_date='2026-02-01', expiry_date='2027-06-01')
+        self.client.login(username='boss', password='pw')
+        self.client.post(reverse('so_allocate', args=[self.so.pk]), {
+            'action': 'allocate_manual', f'batch_qty_{self.item.pk}_{extra.pk}': '50'})
+        self.assertEqual(self.so.allocations.count(), 0)          # nothing taken: the order needs no more
+        extra.refresh_from_db()
+        self.assertEqual(extra.allocated_quantity, 0)

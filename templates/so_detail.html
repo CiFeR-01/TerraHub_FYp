@@ -101,7 +101,7 @@
                 <div>
                     <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Manufacturing</div>
                     <div style="font-size:0.95rem; font-weight:600; display:flex; flex-direction:column; gap:0.35rem;">
-                        {% for run in so.production_runs.all %}
+                        {% for run in so_runs %}
                         <a href="{% url 'production_run_detail' run.pk %}" style="color:var(--primary); text-decoration:none; display:flex; align-items:center; gap:0.4rem;">
                             {{ run.run_number }}
                             <span class="badge {% if run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.65rem;">{{ run.status }}</span>
@@ -211,6 +211,7 @@
                     <th style="padding:0.6rem 1rem;">SKU</th>
                     <th style="padding:0.6rem 1rem;">Qty Ordered</th>
                     <th style="padding:0.6rem 1rem;">Allocated</th>
+                    <th style="padding:0.6rem 1rem;">In Logistics</th>
                     <th style="padding:0.6rem 1rem;">Deficit</th>
                     <th style="padding:0.6rem 1rem;">Qty Shipped</th>
                     <th style="padding:0.6rem 1rem;">Unit Price</th>
@@ -227,10 +228,11 @@
                     <td style="padding:0.85rem 1rem; font-family:monospace; font-size:0.8rem; color:var(--text-muted);">{{ row.item.product.sku }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{{ row.item.quantity_ordered|floatformat:1 }} units<br><span style="font-size:0.72rem; font-weight:400; color:var(--text-muted);">≈ {{ row.item.quantity_ordered|weight_display:row.item.product }}</span></td>
                     <td style="padding:0.85rem 1rem; font-weight:600; color:{% if row.allocated > 0 %}var(--success-strong){% else %}var(--text-muted){% endif %};">{{ row.allocated|floatformat:1 }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600; color:{% if row.in_logistics > 0 %}var(--primary){% else %}var(--text-muted){% endif %};">{{ row.in_logistics|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600; color:{% if row.deficit > 0 %}#dc2626{% else %}var(--text-muted){% endif %};">{{ row.deficit|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem;">{{ row.item.quantity_shipped|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem;">{% if row.item.unit_price %}RM {{ row.item.unit_price|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:600;">
+                    <td style="padding:0.85rem 1rem; font-weight:600; white-space:nowrap;">
                         {% if row.subtotal is not None %}
                         RM {{ row.subtotal|floatformat:2 }}
                         {% else %}<span style="color:var(--text-muted);">—</span>{% endif %}
@@ -257,7 +259,7 @@
                 <!-- Allocated Batches Detail Row -->
                 {% if row.allocation_rows %}
                 <tr id="batches-{{ row.item.id }}" style="display:none; background:#f8fafc;">
-                    <td colspan="11" style="padding:0.75rem 1.5rem 1rem 2rem;">
+                    <td colspan="12" style="padding:0.75rem 1.5rem 1rem 2rem;">
                         <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">Allocated Batches — {{ row.item.product.name }}</div>
                         <table style="width:100%; border-collapse:collapse; font-size:0.82rem; max-width:1000px;">
                             <tr style="color:var(--text-muted); font-weight:600; border-bottom:1px solid var(--border-light);">
@@ -313,7 +315,7 @@
                 {% endif %}
                 <!-- BOM Detail Row -->
                 <tr id="bom-{{ row.item.id }}" style="display:none; background:#f8fafc;">
-                    <td colspan="11" style="padding:0.75rem 1.5rem 1rem 2rem;">
+                    <td colspan="12" style="padding:0.75rem 1.5rem 1rem 2rem;">
                         <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">BOM — {{ row.item.product.name }}</div>
                         {% if row.bom_rows %}
                         <table style="width:100%; border-collapse:collapse; font-size:0.82rem; max-width:700px;">
@@ -342,12 +344,16 @@
                 </tr>
                 {% endfor %}
             </tbody>
+            <tfoot>
+                <tr style="border-top:2px solid var(--border-light);">
+                    <td colspan="8" style="padding:0.85rem 1rem; text-align:right; font-size:0.78rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">
+                        {% if unpriced_lines %}<span style="font-weight:400; text-transform:none; letter-spacing:0; margin-right:0.75rem;">{{ unpriced_lines }} line{{ unpriced_lines|pluralize }} without a unit price not included</span>{% endif %}Order Total
+                    </td>
+                    <td style="padding:0.85rem 1rem; font-size:1.05rem; font-weight:700; color:var(--primary); white-space:nowrap;">RM {{ order_total|floatformat:2 }}</td>
+                    <td colspan="2"></td>
+                </tr>
+            </tfoot>
         </table>
-    </div>
-    <div style="display:flex; justify-content:flex-end; align-items:baseline; gap:1rem; padding:0.85rem 1rem 0; border-top:2px solid var(--border-light);">
-        {% if unpriced_lines %}<span style="font-size:0.78rem; color:var(--text-muted);">{{ unpriced_lines }} line{{ unpriced_lines|pluralize }} without a unit price not included</span>{% endif %}
-        <span style="font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Order Total</span>
-        <span style="font-size:1.1rem; font-weight:700; color:var(--text-main);">RM {{ order_total|floatformat:2 }}</span>
     </div>
     {% else %}
     <div style="text-align:center; padding:3rem; color:var(--text-muted);">
@@ -397,11 +403,11 @@
 <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.08s;">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:0.75rem;">SO Fulfillment</h3>
     <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.25rem;">Allocate finished goods from the warehouse to fulfill this Sales Order. You must allocate enough stock to meet the ordered quantity before this order can be shipped.</p>
-    {% if so.production_runs.all %}
+    {% if so_runs %}
     <div style="margin-bottom:1.25rem;">
         <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.5rem;">Manufacturing orders already created for this SO</div>
         <div style="display:flex; flex-direction:column; gap:0.4rem;">
-            {% for run in so.production_runs.all %}
+            {% for run in so_runs %}
             <a href="{% url 'production_run_detail' run.pk %}" style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; padding:0.6rem 0.85rem; background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; text-decoration:none; color:var(--text-main); font-size:0.85rem;">
                 <span><strong style="color:var(--primary);">{{ run.run_number }}</strong> — {{ run.target_product.name }} ({{ run.expected_yield|floatformat:0 }} units ≈ {{ run.expected_yield|weight_display:run.target_product }})</span>
                 <span class="badge {% if run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.7rem;">{{ run.status }}</span>

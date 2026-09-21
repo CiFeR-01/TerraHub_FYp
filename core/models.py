@@ -187,6 +187,8 @@ class ProductionRun(models.Model):
     fefo_override_reason = models.TextField(blank=True, null=True)
     supervisor_signoff = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='signed_off_runs')
     signoff_reason = models.TextField(blank=True, null=True)
+    approved_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_runs')
+    approved_at = models.DateTimeField(null=True, blank=True)
     exact_start_time = models.DateTimeField(null=True, blank=True)
     exact_end_time = models.DateTimeField(null=True, blank=True)
 
@@ -224,6 +226,27 @@ class RunMaterialUsage(models.Model):
 
     def __str__(self):
         return f"{self.production_run.run_number} - {self.material.sku} Usage"
+
+class RunExtraMaterial(models.Model):
+    """Material poured beyond what was allocated to a run, and where it came from:
+    a specific batch (stock is deducted from it when the run completes) or, with
+    batch=None, stock that isn't in the records (usage is noted with a mandatory
+    reason but nothing is deducted, since the system never held it)."""
+    production_run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, related_name='extra_sources')
+    material = models.ForeignKey(Material, on_delete=models.CASCADE)
+    batch = models.ForeignKey('Batch', on_delete=models.SET_NULL, null=True, blank=True, related_name='extra_usages')
+    quantity = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.TextField(blank=True, default='')
+    recorded_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['id']
+
+    def __str__(self):
+        src = self.batch.batch_number if self.batch_id else 'batch not in records'
+        return f"{self.production_run.run_number}: +{self.quantity} {self.material.sku} ({src})"
+
 
 class ProductionConsumption(models.Model):
     production_run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, related_name='consumptions')
@@ -531,6 +554,7 @@ class RegistryLog(models.Model):
         ('Produced', 'Produced'),
         ('Spoiled_Disposal', 'Spoiled / Disposed'),
         ('QA_Extension', 'Expiry Extended (QA)'),
+        ('Draft_Transfer_Deleted', 'Draft Transfer Deleted'),
     )
     action_type = models.CharField(max_length=50, choices=ACTION_CHOICES)
     item_name = models.CharField(max_length=255)

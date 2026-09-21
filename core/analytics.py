@@ -69,7 +69,7 @@ def daily_consumption(material, *, window_days: int = DEFAULT_WINDOW_DAYS, end=N
     {date: Decimal} of material consumed for manufacturing per day over the
     trailing window ending on ``end``. Untagged RegistryLog rows are skipped.
     """
-    end = end or timezone.now().date()
+    end = end or timezone.localdate()
     start = end - _dt.timedelta(days=window_days)
     rows = (
         material.registry_logs.filter(
@@ -307,7 +307,7 @@ def sales_order_delivery_risk():
     from .settings_store import get_setting
 
     at_risk_window = get_setting("so_at_risk_window_days")
-    today = timezone.now().date()
+    today = timezone.localdate()
 
     sos = (
         SalesOrder.objects.filter(status__in=_OPEN_SO_STATUSES)
@@ -536,6 +536,83 @@ def production_yield_variance():
     }
 
 
+def unrecorded_material_usage(recent_days=7, window_days=28, now=None):
+    """Material poured into runs from stock that isn't in the records (the "batch not
+    in records" option when a run uses more than was allocated), per material, worst
+    first. Each row: events / quantity over the recent window and the longer one, the
+    share of what was poured in completed runs over the longer window, the most common
+    reasons, who entered them, and the runs involved. Nothing is deducted from stock for
+    these, so a high share means inventory records and the shop floor are drifting apart."""
+    from collections import Counter
+
+    from .models import RunExtraMaterial, RunMaterialUsage
+
+    now = now or timezone.now()
+    recent_cut = now - _dt.timedelta(days=recent_days)
+    window_cut = now - _dt.timedelta(days=window_days)
+
+    entries = (
+        RunExtraMaterial.objects.filter(batch__isnull=True, created_at__gte=window_cut)
+        .select_related("material", "production_run", "recorded_by")
+        .order_by("-created_at")
+    )
+
+    buckets = {}
+    for e in entries:
+        qty = float(e.quantity)
+        b = buckets.setdefault(e.material_id, {
+            "material_id": e.material_id, "name": e.material.name, "sku": e.material.sku,
+            "unit": e.material.unit_of_measure,
+            "events_recent": 0, "qty_recent": 0.0, "events_window": 0, "qty_window": 0.0,
+            "_reasons": Counter(), "_reason_label": {}, "_people": Counter(), "runs": [],
+        })
+        b["events_window"] += 1
+        b["qty_window"] += qty
+        if e.created_at >= recent_cut:
+            b["events_recent"] += 1
+            b["qty_recent"] += qty
+        reason = (e.reason or "").strip()
+        if reason:
+            key = reason.lower()
+            b["_reasons"][key] += 1
+            b["_reason_label"].setdefault(key, reason)
+        person = (e.recorded_by.get_full_name() or e.recorded_by.get_username()) if e.recorded_by else "Unknown"
+        b["_people"][person] += 1
+        run = e.production_run
+        if all(r["pk"] != run.pk for r in b["runs"]):
+            b["runs"].append({"pk": run.pk, "number": run.run_number})
+
+    poured = {
+        row["material_id"]: float(row["s"] or 0)
+        for row in RunMaterialUsage.objects.filter(
+            material_id__in=list(buckets),
+            production_run__status="Completed",
+            production_run__exact_end_time__gte=window_cut,
+        ).values("material_id").annotate(s=Sum("actual_qty"))
+    }
+
+    rows = []
+    for b in buckets.values():
+        reasons, labels, people = b.pop("_reasons"), b.pop("_reason_label"), b.pop("_people")
+        total = poured.get(b["material_id"], 0.0)
+        b["share_pct"] = min(b["qty_window"] / total * 100.0, 100.0) if total > 0 else None
+        b["top_reasons"] = [(labels[k], n) for k, n in reasons.most_common(3)]
+        b["top_people"] = people.most_common(2)
+        b["runs"] = b["runs"][:5]
+        rows.append(b)
+
+    # Highest share first (unknown share last), then the biggest quantities
+    rows.sort(key=lambda r: (r["share_pct"] is None, -(r["share_pct"] or 0.0), -r["qty_window"], r["name"].lower()))
+    return {
+        "rows": rows,
+        "events_recent": sum(r["events_recent"] for r in rows),
+        "materials_recent": sum(1 for r in rows if r["events_recent"]),
+        "events_window": sum(r["events_window"] for r in rows),
+        "recent_days": recent_days,
+        "window_days": window_days,
+    }
+
+
 # --------------------------------------------------------------------------------
 # Tier 2 - Consumption-rate stockout forecast
 # --------------------------------------------------------------------------------
@@ -558,7 +635,7 @@ def consumption_rates(material_ids, *, window_days=DEFAULT_WINDOW_DAYS, end=None
         return {}
     from .models import RegistryLog
 
-    end = end or timezone.now().date()
+    end = end or timezone.localdate()
     start = end - _dt.timedelta(days=window_days)
     rows = (
         RegistryLog.objects.filter(
@@ -606,7 +683,7 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
     from .models import Material, Batch, SupplierMaterial, PurchaseOrderDetail
     from .settings_store import get_setting
 
-    today = end or timezone.now().date()
+    today = end or timezone.localdate()
     materials = list(Material.objects.filter(is_active=True))
     ids = [m.id for m in materials]
 
@@ -1383,7 +1460,7 @@ def shipment_logistics():
     from .models import Shipment
     from .settings_store import get_setting
 
-    today = timezone.now().date()
+    today = timezone.localdate()
     at_risk_window = get_setting("logistics_at_risk_window_days")
     stall_days = get_setting("logistics_stall_days")
 
@@ -1460,7 +1537,7 @@ def my_open_jobs(user):
     first. See §8.11 for the row shape and how `context` is populated."""
     from .models import SalesOrder, PurchaseOrder, ProductionRun, StockAudit, Shipment
 
-    today = timezone.now().date()
+    today = timezone.localdate()
 
     def _age(d):
         return (today - d).days if d else None
@@ -1582,7 +1659,7 @@ def product_sales_trend(*, window_months=TREND_WINDOW_MONTHS, end=None):
     """
     from .models import SalesOrderDetail
 
-    end = end or timezone.now().date()
+    end = end or timezone.localdate()
     month_keys = _trailing_month_keys(end, window_months)
     earliest = _dt.date(*(int(p) for p in month_keys[0].split("-")), 1)
     recent_n = max(1, window_months // 2)
