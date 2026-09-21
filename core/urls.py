@@ -26,6 +26,7 @@ urlpatterns = [
     path('warehouse/forecast/', views_analytics.forecast_view, name='forecast'),
     path('warehouse/capacity/', views_analytics.capacity_forecast_view, name='capacity_forecast'),
     path('warehouse/rent-opportunities/', views_analytics.rent_opportunities_view, name='rent_opportunities'),
+    path('warehouse/rent-opportunities/decide/', views_analytics.rent_suggestion_decide, name='rent_suggestion_decide'),
     path('assistant/briefing/', views_analytics.ops_briefing_view, name='ops_briefing'),
     path('assistant/briefing/<str:category>/', views_analytics.category_briefing_view, name='category_briefing'),
     path('warehouse/registry/', views.registry_ledger_view, name='registry'),

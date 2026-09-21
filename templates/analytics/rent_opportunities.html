@@ -25,9 +25,19 @@
 
 {% include "analytics/partials/_analytics_tabs.html" %}
 
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom:1.25rem;">
+    {% for message in messages %}
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.2); color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.2); color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.2); color:var(--success-strong);{% endif %}">{{ message }}</div>
+    {% endfor %}
+</div>
+{% endif %}
+
 <div class="animate-fade-in-up" style="background:#fef3c7; border:1px solid rgba(180,83,9,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.85rem; color:#854d0e;">
-    <strong>Estimated potential savings only.</strong> Does not account for transfer/freight
-    cost or lead time. This is a signal for manual review, not an auto-executable
+    <strong>Estimated potential savings only.</strong> <em>Total saving</em> counts rent only for as
+    long as each batch would otherwise stay: until it expires or is used up (oldest stock first, at
+    the current usage or sales rate). Moves saving less than the <em>minimum total saving</em>
+    setting are left out. Does not account for transfer/freight cost or lead time. This is a signal for manual review, not an auto-executable
     transfer order.
 </div>
 
@@ -39,6 +49,10 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Potential Daily Saving</span>
         <div class="kpi-value-row"><span class="kpi-value" style="color:var(--success-strong);">RM {{ summary.total_potential_daily_saving|floatformat:2 }}</span></div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Potential Total Saving</span>
+        <div class="kpi-value-row"><span class="kpi-value" style="color:var(--success-strong);">RM {{ summary.total_potential_saving|floatformat:2 }}</span></div>
     </div>
 </section>
 
@@ -83,6 +97,69 @@
     {% endif %}
 </section>
 
+<section class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+    <h2 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin:0; color:var(--text-main);">Results</h2>
+    <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.9rem;">Did the moves you accepted save what was promised?</div>
+
+    {% if results.accepted or results.dismissed %}
+    <div style="font-size:0.88rem; color:var(--text-main); margin-bottom:1rem;">
+        <strong>{{ results.accepted }}</strong> move{{ results.accepted|pluralize }} accepted,
+        <strong>{{ results.dismissed }}</strong> dismissed{% if results.pending %}, <strong>{{ results.pending }}</strong> still waiting to complete{% endif %}.
+        {% if results.measured_count %}
+        Of the {{ results.measured_count }} clearly measured, rent is down
+        <strong style="color:var(--success-strong);">RM {{ results.measured_daily_total|floatformat:2 }} a day</strong>
+        against RM {{ results.promised_daily_total|floatformat:2 }} promised.
+        {% else %}
+        No move has been measured yet.
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if results.moves %}
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">
+                    <th style="padding:0.5rem 0.75rem;">Transfer</th>
+                    <th style="padding:0.5rem 0.75rem;">Route</th>
+                    <th style="padding:0.5rem 0.75rem; text-align:right;">Moved</th>
+                    <th style="padding:0.5rem 0.75rem; text-align:right;">Promised / day</th>
+                    <th style="padding:0.5rem 0.75rem; text-align:right;">Measured / day</th>
+                    <th style="padding:0.5rem 0.75rem;">Result</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in results.moves %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                    <td style="padding:0.55rem 0.75rem;">
+                        {% if m.shipment %}<a href="{% url 'shipment_detail' m.shipment.pk %}">{{ m.shipment.tracking_number }}</a>{% else %}&mdash;{% endif %}
+                        <div style="font-size:0.72rem; color:var(--text-muted);">{% if m.moved_on %}moved {{ m.moved_on|date:"j M Y" }}{% else %}accepted {{ m.accepted_at|date:"j M Y" }}{% endif %}</div>
+                    </td>
+                    <td style="padding:0.55rem 0.75rem;">{{ m.origin.name|default:"?" }} &rarr; {{ m.destination.name|default:"?" }}</td>
+                    <td style="padding:0.55rem 0.75rem; text-align:right;">{{ m.move_mt|floatformat:1 }} MT</td>
+                    <td style="padding:0.55rem 0.75rem; text-align:right;">RM {{ m.promised_daily|floatformat:2 }}</td>
+                    <td style="padding:0.55rem 0.75rem; text-align:right;">{% if m.measured_daily is not None %}RM {{ m.measured_daily|floatformat:2 }}{% else %}&mdash;{% endif %}</td>
+                    <td style="padding:0.55rem 0.75rem; font-size:0.8rem;">
+                        {% if m.status == "measured" %}<span style="color:var(--success-strong); font-weight:600;">Measured</span>
+                        {% elif m.status == "unclear" %}<span style="color:var(--warning-strong); font-weight:600;">Unclear</span>
+                        {% else %}<span style="color:var(--text-muted); font-weight:600;">{% if m.status == "unavailable" %}No data{% else %}Waiting{% endif %}</span>{% endif %}
+                        {% if m.note %}<div style="font-size:0.72rem; color:var(--text-muted);">{{ m.note }}</div>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <div style="margin-top:0.75rem; font-size:0.75rem; color:var(--text-muted);">
+        Measured = the origin&rsquo;s average recorded daily rent for the {{ results.window_days }} days before the move, minus the {{ results.window_days }} days after
+        (any rent added at the destination is netted off). Moves are marked <em>Unclear</em> when other stock at the origin also changed
+        by more than half the move&rsquo;s size. Latest {{ results.moves|length }} shown.
+    </div>
+    {% else %}
+    <div style="font-size:0.85rem; color:var(--text-muted);">No moves accepted yet. Accepted suggestions will appear here once the transfer has completed and a few days of rent have been recorded.</div>
+    {% endif %}
+</section>
+
 {% if rows %}
     {% for o in rows %}
     <div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.25rem;">
@@ -95,36 +172,61 @@
                 <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">Watch</span>
                 {% endif %}
             </div>
-            <div style="font-weight:700; color:var(--success-strong);">Up to RM {{ o.total_daily_saving|floatformat:2 }}/day if relocated</div>
+            <div style="text-align:right;">
+                <div style="font-weight:700; color:var(--success-strong);">Up to RM {{ o.total_saving|floatformat:2 }} in total if relocated</div>
+                <div style="font-size:0.78rem; color:var(--text-muted);">RM {{ o.total_daily_saving|floatformat:2 }}/day while the stock would otherwise stay</div>
+            </div>
         </div>
 
         {% if o.candidate_batches %}
+        <form method="post" action="{% url 'rent_suggestion_decide' %}" class="rent-decide-form">
+        {% csrf_token %}
         <div class="table-responsive">
             <table class="modern-table" style="width:100%; border-collapse:collapse;">
                 <thead>
                     <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">
+                        {% if can_act %}<th style="padding:0.5rem 0.75rem; width:1.5rem;"><input type="checkbox" class="rent-pick-all" title="Select all" aria-label="Select all batches in {{ o.name }}"></th>{% endif %}
                         <th style="padding:0.5rem 0.75rem;">Batch</th>
                         <th style="padding:0.5rem 0.75rem;">Item</th>
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Weight</th>
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Rate / MT</th>
                         <th style="padding:0.5rem 0.75rem;">Move To</th>
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Daily Saving</th>
+                        <th style="padding:0.5rem 0.75rem; text-align:right;">Would Stay</th>
+                        <th style="padding:0.5rem 0.75rem; text-align:right;">Total Saving</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for c in o.candidate_batches %}
                     <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                        {% if can_act %}<td style="padding:0.55rem 0.75rem;"><input type="checkbox" class="rent-pick" name="pick" value="{{ c.batch_id }}:{{ c.destination_id }}" aria-label="Select batch {{ c.batch_number }}"></td>{% endif %}
                         <td style="padding:0.55rem 0.75rem; font-family:monospace; font-size:0.8rem;">{{ c.batch_number }}</td>
                         <td style="padding:0.55rem 0.75rem;">{{ c.item }}</td>
                         <td style="padding:0.55rem 0.75rem; text-align:right;">{{ c.move_mt|mt_display }}{% if c.move_mt < c.mt %}<div style="font-size:0.72rem; color:var(--text-muted);">of {{ c.mt|mt_display }} (destination full)</div>{% endif %}</td>
                         <td style="padding:0.55rem 0.75rem; text-align:right;">RM {{ c.rate_per_mt|floatformat:2 }}</td>
                         <td style="padding:0.55rem 0.75rem;">{{ c.destination }}</td>
-                        <td style="padding:0.55rem 0.75rem; text-align:right; font-weight:600; color:var(--success-strong);">RM {{ c.daily_saving|floatformat:2 }}</td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right;">RM {{ c.daily_saving|floatformat:2 }}</td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right;">~{{ c.stay_days }} day{{ c.stay_days|pluralize }}<div style="font-size:0.72rem; color:var(--text-muted);">{% if c.stay_reason == 'expires' %}until it expires{% elif c.stay_reason == 'used up' %}until used up{% else %}capped{% endif %}</div></td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right; font-weight:700; color:var(--success-strong);">RM {{ c.total_saving|floatformat:2 }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
+
+        {% if can_act %}
+        <div style="display:flex; flex-wrap:wrap; gap:0.6rem; align-items:center; margin-top:0.9rem; padding-top:0.9rem; border-top:1px dashed var(--border-light);">
+            <button type="submit" name="decision" value="accept" class="btn btn-primary rent-accept" style="padding:0.45rem 1rem; font-size:0.85rem;">Create transfer for selected</button>
+            <span style="font-size:0.78rem; color:var(--text-muted);">or</span>
+            <select name="reason" class="form-select" style="padding:0.4rem 0.6rem; font-size:0.82rem; border-radius:6px; border:1px solid var(--border-light);" aria-label="Reason for dismissing">
+                <option value="">Dismiss selected because&hellip;</option>
+                {% for code, label in dismiss_reasons %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
+            </select>
+            <input type="text" name="note" maxlength="255" placeholder="Note (optional)" class="form-input" style="padding:0.4rem 0.6rem; font-size:0.82rem; width:14rem; border-radius:6px; border:1px solid var(--border-light);">
+            <button type="submit" name="decision" value="dismiss" class="btn btn-secondary rent-dismiss" style="padding:0.45rem 1rem; font-size:0.85rem;">Dismiss selected</button>
+        </div>
+        {% endif %}
+        </form>
 
         <div style="margin-top:0.9rem; font-size:0.78rem; color:var(--text-muted);">
             <strong>Own storage with spare capacity (before these moves):</strong>
@@ -132,18 +234,24 @@
         </div>
         {% else %}
         <div style="font-size:0.85rem; color:var(--text-muted); padding:0.75rem 0;">
-            No batches worth relocating here right now — all {{ o.excluded_near_expiry }}
-            batch{{ o.excluded_near_expiry|pluralize }} in this warehouse
-            {{ o.excluded_near_expiry|pluralize:"is,are" }} within 30 days of expiring and
-            will clear out on its own.
+            No batches to relocate here right now.
+            {% if o.excluded_low_saving %}Moving any of the
+            {{ o.excluded_low_saving }} other batch{{ o.excluded_low_saving|pluralize:"es" }} would save less than
+            RM {{ o.min_total_saving|floatformat:0 }} before {{ o.excluded_low_saving|pluralize:"it expires or is,they expire or are" }} used up.{% endif %}
         </div>
         {% endif %}
 
-        {% if o.excluded_near_expiry and o.candidate_batches %}
+        {% if o.dismissed_hidden %}
         <div style="margin-top:0.5rem; font-size:0.75rem; color:var(--text-muted); font-style:italic;">
-            {{ o.excluded_near_expiry }} other batch{{ o.excluded_near_expiry|pluralize }} in this warehouse
-            {{ o.excluded_near_expiry|pluralize:"is,are" }} within 30 days of expiry and excluded — relocating
-            something about to clear out on its own isn't worth the effort.
+            {{ o.dismissed_hidden }} batch{{ o.dismissed_hidden|pluralize:"es" }} you dismissed {{ o.dismissed_hidden|pluralize:"is,are" }} hidden for up to {{ o.snooze_days }} days.
+        </div>
+        {% endif %}
+
+        {% if o.excluded_low_saving and o.candidate_batches %}
+        <div style="margin-top:0.5rem; font-size:0.75rem; color:var(--text-muted); font-style:italic;">
+            {{ o.excluded_low_saving }} other batch{{ o.excluded_low_saving|pluralize:"es" }} left out: moving
+            {{ o.excluded_low_saving|pluralize:"it,them" }} would save less than RM {{ o.min_total_saving|floatformat:0 }}
+            before {{ o.excluded_low_saving|pluralize:"it expires or is,they expire or are" }} used up.
         </div>
         {% endif %}
     </div>
@@ -153,6 +261,27 @@
     No rent-reduction opportunities right now &mdash; either no rented warehouse is Critical/Watch,
     or none of your own storage facilities has spare capacity to move stock into.
 </div>
+{% endif %}
+{% if can_act %}
+<script>
+(function () {
+    document.querySelectorAll('.rent-decide-form').forEach(function (form) {
+        const picks = () => form.querySelectorAll('.rent-pick');
+        const chosen = () => Array.from(picks()).filter(c => c.checked).length;
+        const all = form.querySelector('.rent-pick-all');
+        if (all) all.addEventListener('change', () => picks().forEach(c => { c.checked = all.checked; }));
+        form.querySelector('.rent-accept').addEventListener('click', function (e) {
+            const n = chosen();
+            if (!n) { e.preventDefault(); alert("Tick at least one batch first."); return; }
+            if (!confirm("Create a draft transfer for " + n + " batch" + (n === 1 ? "" : "es") + "? Their stock is reserved for it straight away.")) e.preventDefault();
+        });
+        form.querySelector('.rent-dismiss').addEventListener('click', function (e) {
+            if (!chosen()) { e.preventDefault(); alert("Tick at least one batch first."); return; }
+            if (!form.querySelector('[name=reason]').value) { e.preventDefault(); alert("Choose a reason for dismissing."); }
+        });
+    });
+})();
+</script>
 {% endif %}
 {% if history.series %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>

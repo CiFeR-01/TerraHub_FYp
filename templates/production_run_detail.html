@@ -320,7 +320,7 @@
                               <select name="approver_id" class="form-input" style="width:100%; padding:0.5rem; margin-bottom:0.75rem;">
                                   <option value="">-- Auto-detect or Select --</option>
                                   {% for m in managers %}
-                                  <option value="{{ m.id }}">{{ m.get_full_name|default:m.username }} ({{ m.role }})</option>
+                                  <option value="{{ m.id }}">{{ m.get_full_name|default:m.username }} ({{ m.role_label }})</option>
                                   {% endfor %}
                               </select>
                               
@@ -351,6 +351,16 @@
                       <p style="font-size:0.85rem; color:#854d0e;">This run exceeded 3% material variance and is awaiting manager approval.</p>
                       {% if run.assigned_to %}
                       <p style="font-size:0.85rem; color:#854d0e; margin-top:0.5rem;">Assigned to: {{ run.assigned_to.get_full_name|default:run.assigned_to.username }}</p>
+                      {% endif %}
+                      {% if can_decide_approval and run.actual_yield is not None %}
+                      <form method="post" action="{% url 'approvals_inbox' %}" style="display:flex; gap:0.5rem; justify-content:center; margin-top:1rem;">
+                          {% csrf_token %}
+                          <input type="hidden" name="item_type" value="production_run">
+                          <input type="hidden" name="item_id" value="{{ run.id }}">
+                          <input type="hidden" name="next" value="{{ request.path }}">
+                          <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject (Rework)</button>
+                          <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem; background:#854d0e; border-color:#854d0e;">Approve &amp; Complete</button>
+                      </form>
                       {% endif %}
                   </div>
             {% elif run.status == 'Completed' %}
@@ -611,7 +621,7 @@
                     <option value="">-- Add Colleague --</option>
                     {% for u in all_users %}
                         {% if u not in run.followers.all %}
-                        <option value="{{ u.id }}">{{ u.get_full_name|default:u.username }} ({{ u.role }})</option>
+                        <option value="{{ u.id }}">{{ u.get_full_name|default:u.username }} ({{ u.role_label }})</option>
                         {% endif %}
                     {% endfor %}
                 </select>

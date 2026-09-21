@@ -1,46 +1,177 @@
 {% extends "base.html" %}
+{% load static %}
 
-{% block title %}TerraHub - Next-Generation Geospatial Intelligence{% endblock %}
-
-
+{% block title %}TerraHub - Integrated Inventory Warehouse Management{% endblock %}
 
 {% block content %}
-<section class="hero-section animate-fade-in-up">
-    <div class="hero-badge">v1.0.0 Stable Release</div>
-    <h1 class="hero-title">Next-Generation Environmental Intelligence</h1>
-    <p class="hero-desc">
-        TerraHub orchestrates global environmental, geospatial, and infrastructure data feeds into a unified high-performance dashboard workspace.
-    </p>
-    <div class="hero-buttons">
-        {% if user.is_authenticated %}
-            <a href="{% url 'dashboard' %}" class="btn btn-primary">Go to Dashboard</a>
-        {% else %}
-            <a href="{% url 'login' %}" class="btn btn-primary">Launch Console</a>
-            <a href="#features" class="btn btn-secondary">Explore Platform</a>
-        {% endif %}
+{% comment %}Icon sprite — referenced with <svg><use href="#i-..."/></svg> below.{% endcomment %}
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+        <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"/><path d="M4 6v12c0 1.1.9 2 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></symbol>
+        <symbol id="i-hammer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5"/></symbol>
+        <symbol id="i-truck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62l-3.48-4.35A1 1 0 0 0 18.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></symbol>
+        <symbol id="i-shield-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z"/><path d="m9 12 2 2 4-4"/></symbol>
+        <symbol id="i-building" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01"/><path d="M16 6h.01"/><path d="M8 10h.01"/><path d="M16 10h.01"/><path d="M8 14h.01"/><path d="M16 14h.01"/></symbol>
+        <symbol id="i-clipboard-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></symbol>
+        <symbol id="i-check-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.801 10A10 10 0 1 1 17 3.335"/><path d="m9 11 3 3L22 4"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+        <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
+    </defs>
+</svg>
+
+<!-- ===================== Hero ===================== -->
+<section class="lp-hero">
+    <div class="lp-hero-copy">
+        <span class="lp-eyebrow">Integrated Inventory Warehouse Management &middot; Agribusiness</span>
+        <h1 class="lp-title">Every batch, in every warehouse, used before it expires.</h1>
+        <p class="lp-lede">
+            TerraHub keeps owned and rented warehouses in one ledger, allocates stock
+            first-expired-first-out, and shows what your space is really costing you.
+        </p>
+
+        <div class="lp-actions">
+            <a href="{% url 'login' %}" class="btn btn-primary lp-btn">Sign in</a>
+            <a href="#what-it-solves" class="btn btn-secondary lp-btn">See how it works</a>
+        </div>
+
+        <form class="lp-trace" method="get" action="{% url 'home' %}" role="search">
+            <label for="trace-input" class="lp-trace-label">
+                <svg aria-hidden="true"><use href="#i-shield-check"/></svg>
+                Trace a batch
+            </label>
+            <div class="lp-trace-row">
+                <input id="trace-input" type="text" name="batch" value="{{ trace_query }}" placeholder="e.g. RM-MAT-1006-29"
+                       autocomplete="off" spellcheck="false" required maxlength="100"
+                       {% if trace_not_found %}aria-invalid="true" aria-describedby="trace-error"{% endif %}>
+                <button type="submit" class="btn btn-secondary">Trace</button>
+            </div>
+            {% if trace_not_found %}
+            <p class="lp-trace-error" id="trace-error" role="alert">No batch found with the number &ldquo;{{ trace_query }}&rdquo;. Check the label and try again.</p>
+            {% else %}
+            <p class="lp-trace-note">No account needed &mdash; it's the same page a batch label's QR code opens.</p>
+            {% endif %}
+        </form>
+    </div>
+
+    <figure class="lp-shot">
+        <div class="lp-shot-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+        <img src="{% static 'img/landing-dashboard.png' %}" width="1440" height="900"
+             alt="TerraHub Operations Overview: attention alerts, stock on hand, space used and production runs">
+    </figure>
+</section>
+
+<!-- ===================== Three objectives ===================== -->
+<section class="lp-section" id="what-it-solves">
+    <div class="lp-head">
+        <span class="lp-kicker">What it solves</span>
+        <h2>One ledger. Fresher stock. Cheaper space.</h2>
+    </div>
+
+    <div class="lp-pillars">
+        <article class="lp-pillar">
+            <span class="lp-icon"><svg aria-hidden="true"><use href="#i-building"/></svg></span>
+            <h3>One version of truth, owned or rented</h3>
+            <p>Every receipt, transfer, consumption and dispatch is written to a single registry, whichever warehouse it happened in.</p>
+            <ul>
+                <li>Internal and rented warehouses side by side</li>
+                <li>Transfers tracked in transit, not just at each end</li>
+                <li>Full audit trail of who moved what, and when</li>
+            </ul>
+        </article>
+
+        <article class="lp-pillar">
+            <span class="lp-icon"><svg aria-hidden="true"><use href="#i-clock"/></svg></span>
+            <h3>Stock used before it degrades</h3>
+            <p>Allocation picks the batch that expires first, automatically, for every sales order and production run.</p>
+            <ul>
+                <li>FEFO batch suggested on every allocation</li>
+                <li>Batches flagged 30 days before they expire</li>
+                <li>Quarantined stock can't be allocated</li>
+            </ul>
+        </article>
+
+        <article class="lp-pillar">
+            <span class="lp-icon"><svg aria-hidden="true"><use href="#i-wallet"/></svg></span>
+            <h3>Know what your space costs</h3>
+            <p>Capacity and rent for every site on one dashboard, so full warehouses and idle rent show up early.</p>
+            <ul>
+                <li>Space used per site, with over-capacity alerts</li>
+                <li>Daily rent for every rented warehouse</li>
+                <li>Rent-saving opportunities and capacity runway</li>
+            </ul>
+        </article>
     </div>
 </section>
 
-<section id="features" class="animate-fade-in" style="animation-delay: 0.2s;">
-    <h2 style="font-family: 'Outfit', sans-serif; font-size: 2rem; font-weight: 700; text-align: center; margin-bottom: 3rem;">
-        Engineered for Earth Analytics
-    </h2>
-    <div class="features-grid">
-        <div class="feature-card">
-            <div class="feature-icon">🛰️</div>
-            <h3>Real-time Planetary Feeds</h3>
-            <p>Monitor multi-spectral geospatial telemetry, atmosphere conditions, and environmental changes with zero-latency synchronization.</p>
+<!-- ===================== Traceability flow ===================== -->
+<section class="lp-section lp-band">
+    <div class="lp-head">
+        <span class="lp-kicker">Traceability</span>
+        <h2>From supplier to customer, one unbroken trail</h2>
+    </div>
+
+    <ol class="lp-flow">
+        <li><span class="lp-step" aria-hidden="true">1</span><strong>Purchase order</strong><span>Approved, then expected on a date</span></li>
+        <li><span class="lp-step" aria-hidden="true">2</span><strong>Receive &amp; QA</strong><span>Each delivery becomes a dated batch</span></li>
+        <li><span class="lp-step" aria-hidden="true">3</span><strong>Store</strong><span>In an owned or rented warehouse</span></li>
+        <li><span class="lp-step" aria-hidden="true">4</span><strong>Transfer</strong><span>Moves between sites stay on record</span></li>
+        <li><span class="lp-step" aria-hidden="true">5</span><strong>Allocate by FEFO</strong><span>Soonest-expiring stock goes first</span></li>
+        <li><span class="lp-step" aria-hidden="true">6</span><strong>Ship &amp; deliver</strong><span>Pick lists, dispatch and arrival</span></li>
+    </ol>
+</section>
+
+<!-- ===================== Decision support ===================== -->
+<section class="lp-section">
+    <div class="lp-head">
+        <span class="lp-kicker">Decision support</span>
+        <h2>Answers, not just records</h2>
+    </div>
+
+    <div class="lp-questions">
+        <div class="lp-q"><p>Which warehouse fills up first?</p><span>Capacity runway</span></div>
+        <div class="lp-q"><p>When will this material run out, counting what's already on order?</p><span>Stock-out forecast</span></div>
+        <div class="lp-q"><p>Which sales orders are at risk of missing their deadline?</p><span>Delivery risk</span></div>
+        <div class="lp-q"><p>Which suppliers deliver late or short?</p><span>Supplier scorecard</span></div>
+        <div class="lp-q"><p>Where are we paying rent we don't need to?</p><span>Rent opportunities</span></div>
+        <div class="lp-q"><p>What needs my attention today?</p><span>AI Copilot briefings</span></div>
+    </div>
+</section>
+
+<!-- ===================== Beyond the warehouse ===================== -->
+<section class="lp-section lp-band">
+    <div class="lp-head">
+        <span class="lp-kicker">Beyond the warehouse</span>
+        <h2>Runs the operation around it, too</h2>
+    </div>
+
+    <div class="lp-extras">
+        <div class="lp-extra">
+            <span class="lp-icon lp-icon--sm"><svg aria-hidden="true"><use href="#i-hammer"/></svg></span>
+            <h3>Manufacturing</h3>
+            <p>Production runs built from recipes. Material use is checked against the recipe, and anything over &plusmn;3% needs sign-off.</p>
         </div>
-        <div class="feature-card">
-            <div class="feature-icon">📊</div>
-            <h3>Intelligent Processing</h3>
-            <p>Leverage custom algorithmic analytics directly inside Django pipelines to aggregate telemetry and identify anomalies.</p>
+        <div class="lp-extra">
+            <span class="lp-icon lp-icon--sm"><svg aria-hidden="true"><use href="#i-truck"/></svg></span>
+            <h3>Orders &amp; shipments</h3>
+            <p>Purchase and sales orders with line-level allocation, pick lists and delivery tracking.</p>
         </div>
-        <div class="feature-card">
-            <div class="feature-icon">🛡️</div>
-            <h3>Enterprise Workspace</h3>
-            <p>Unified security featuring custom user roles, SQLite/PostgreSQL redundancy, and fully protected endpoints.</p>
+        <div class="lp-extra">
+            <span class="lp-icon lp-icon--sm"><svg aria-hidden="true"><use href="#i-check-circle"/></svg></span>
+            <h3>Approvals &amp; roles</h3>
+            <p>One approvals inbox. Roles are permission groups you define, with no code changes.</p>
+        </div>
+        <div class="lp-extra">
+            <span class="lp-icon lp-icon--sm"><svg aria-hidden="true"><use href="#i-clipboard-check"/></svg></span>
+            <h3>Audits &amp; labels</h3>
+            <p>Stock audits with accuracy tracking, and printable QR labels for every batch.</p>
         </div>
     </div>
+</section>
+
+<!-- ===================== Closing CTA ===================== -->
+<section class="lp-cta">
+    <h2>Ready to look around?</h2>
+    <p>Sign in to see live stock, capacity and rent across every warehouse.</p>
+    <a href="{% url 'login' %}" class="btn btn-primary lp-btn">Sign in <svg aria-hidden="true"><use href="#i-arrow-right"/></svg></a>
 </section>
 {% endblock %}

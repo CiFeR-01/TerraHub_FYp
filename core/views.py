@@ -1,15 +1,17 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.http import HttpResponse, JsonResponse
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.models import Group
 from django.contrib import messages
 from django import forms
 from django.db import transaction
 from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q, Avg
-from django.db.models.functions import Coalesce, TruncWeek
+from django.db.models.functions import Abs, Coalesce, TruncWeek
 from django.core.paginator import Paginator
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import csv
 import io
 import uuid
@@ -19,10 +21,14 @@ from .models import (
     ProductRecipe, ProductionRun, ProductionRunYieldLog, RunMaterialUsage,
     ProductionConsumption, Batch,
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
-    Shipment, ShipmentItem, ShipmentItemReceipt, StockAudit, RegistryLog, OrderTimeline, Notification, Role,
+    Shipment, ShipmentItem, ShipmentItemReceipt, StockAudit, RegistryLog, OrderTimeline, Notification,
     StockAllocation, Supplier, SupplierMaterial, Client
 )
 from .utils import generate_next_code, format_stock_display
+from .permissions import (
+    is_admin_user, can_approve, approvers, users_with_perm,
+    ADJUST_PHYSICAL_STOCK, MANAGE_USERS, HANDLE_PURCHASING, APPROVE_REQUESTS,
+)
 
 
 def apply_list_sort(request, qs, fields, default):
@@ -47,15 +53,6 @@ def apply_list_sort(request, qs, fields, default):
     page_qs = keep.urlencode()
     keep.pop('sort', None)
     return qs, {'sort_key': key, 'sort_desc': desc, 'sort_qs': keep.urlencode(), 'page_qs': page_qs}
-
-
-def is_admin_user(user):
-    return user.is_superuser or getattr(user, 'role', '') == 'Admin'
-
-
-def can_approve(user):
-    """Who may approve anything at all. Single place to swap for configurable permissions later."""
-    return user.is_superuser or getattr(user, 'role', '') in ('Admin', 'Manager')
 
 
 def approver_problem(requester, approver):
@@ -167,19 +164,16 @@ def dashboard_view(request):
             'utilization_percent': utilization_percent,
         })
 
-    # chart_data dict formatted for safe JSON injection
-    chart_data = {
-        'labels': [item['name'] for item in warehouse_stats],
-        'capacities': [item['capacity_mt'] for item in warehouse_stats],
-        'used': [item['used_mt'] for item in warehouse_stats],
-    }
-
-    # 2. Inventory Metrics
-    raw_materials_sum = Batch.objects.filter(status='Active', material__isnull=False).aggregate(total=Sum('quantity'))['total'] or 0
+    # 2. Inventory Metrics. Material quantities are in the material's own unit
+    # (kg since migration 0050), so raw stock is converted to MT for the KPI.
+    raw_materials_mt = Batch.objects.filter(status='Active', material__isnull=False).aggregate(
+        t=Coalesce(Sum(F('quantity') * F('material__weight_mt_per_unit'), output_field=DecimalField()),
+                   Value(0, output_field=DecimalField()))
+    )['t']
     finished_goods_sum = Batch.objects.filter(status='Active', product__isnull=False).aggregate(total=Sum('quantity'))['total'] or 0
 
     inventory_metrics = {
-        'raw_materials': float(raw_materials_sum),
+        'raw_materials_mt': float(raw_materials_mt),
         'finished_goods': float(finished_goods_sum),
     }
 
@@ -189,16 +183,31 @@ def dashboard_view(request):
     else:
         global_utilization = 0.0
 
-    # 3. Recent logs (pre-fetching related warehouse models, ordered descending by timestamp)
-    recent_logs = RegistryLog.objects.select_related('warehouse').order_by('-timestamp')[:5]
+    # A healthy network-wide average can hide one site that is already full, so
+    # the headline status follows whichever is worse: the average or the worst site.
+    over_capacity_sites = [w for w in warehouse_stats if w['utilization_percent'] > 100]
+    worst_site = max(warehouse_stats, key=lambda w: w['utilization_percent'], default=None)
+    worst_pct = worst_site['utilization_percent'] if worst_site else 0.0
+    if global_utilization > 85 or worst_pct > 100:
+        capacity_status = 'crit'
+    elif global_utilization > 70 or worst_pct > 85:
+        capacity_status = 'warn'
+    else:
+        capacity_status = 'ok'
 
-    # 4. Active shipments (status is not 'Arrived', ordered by expected_eta_date).
+    # 3. Recent logs (pre-fetching related warehouse models, ordered descending by timestamp)
+    recent_logs = RegistryLog.objects.select_related('warehouse', 'material').order_by('-timestamp')[:5]
+
+    # 4. Active shipments: approved or moving, not drafts and not finished
+    # (Arrived / Completed / Cancelled), soonest ETA first.
     # The dashboard only previews the most time-sensitive handful - the full
     # queryset (everything, unbounded) lives on the Shipments list page.
     DASH_PREVIEW_LIMIT = 8
-    active_shipments_qs = Shipment.objects.exclude(status='Arrived').select_related(
+    active_shipments_qs = Shipment.objects.exclude(
+        status__in=['Draft', 'Arrived', 'Completed', 'Cancelled']
+    ).select_related(
         'origin_warehouse', 'destination_warehouse'
-    ).prefetch_related('items').order_by('expected_eta_date')
+    ).annotate(item_count=Count('items')).order_by(F('expected_eta_date').asc(nulls_last=True), 'id')
     active_shipments_total = active_shipments_qs.count()
     active_shipments = active_shipments_qs[:DASH_PREVIEW_LIMIT]
 
@@ -228,15 +237,31 @@ def dashboard_view(request):
     prev30 = today - timedelta(days=30)
     prev60 = today - timedelta(days=60)
 
-    def _reg_sum(action, start, end):
-        return float(RegistryLog.objects.filter(
+    def _reg_sum(action, start, end, mt=False):
+        """Registry quantity for `action` in [start, end). mt=True sums only
+        material movements, converted to MT."""
+        logs = RegistryLog.objects.filter(
             action_type=action, timestamp__date__gte=start, timestamp__date__lt=end
-        ).aggregate(s=Sum('quantity_changed'))['s'] or 0)
+        )
+        if mt:
+            logs = logs.filter(material__isnull=False)
+            expr = Sum(F('quantity_changed') * F('material__weight_mt_per_unit'), output_field=DecimalField())
+        else:
+            expr = Sum('quantity_changed')
+        return float(logs.aggregate(s=expr)['s'] or 0)
 
-    def _pct_delta(cur, prev):
+    def _trend(cur, prev):
+        """Period-over-period change for a KPI trend pill. A swing of 200%+
+        almost always means the prior period was tiny, so it is shown neutral
+        rather than as a big green/red headline."""
         if not prev:
-            return None
-        return (cur - prev) / prev * 100
+            return {'dir': 'none', 'pct': None, 'prev': prev}
+        pct = (cur - prev) / prev * 100
+        if abs(pct) >= 200:
+            direction = 'flat'
+        else:
+            direction = 'up' if pct >= 0 else 'down'
+        return {'dir': direction, 'pct': pct, 'prev': prev}
 
     # A. "Needs attention" counters (each links to a filtered work list)
     attention = {
@@ -258,6 +283,7 @@ def dashboard_view(request):
         'awaiting_materials': ProductionRun.objects.filter(status='Awaiting Materials').count(),
         'quarantined': Batch.objects.filter(status='Quarantined').count(),
         'pending_audits': StockAudit.objects.filter(status='Pending').count(),
+        'over_capacity': len(over_capacity_sites),
     }
     attention_total = sum(attention.values())
 
@@ -277,6 +303,14 @@ def dashboard_view(request):
         expected = float(r.expected_yield or 0)
         made = float(r.made or 0)
         pct = (made / expected * 100) if expected > 0 else 0
+        days_running = (today - r.start_time.date()).days if r.start_time else None
+        # A run stuck waiting (or paused) for a week+ is the one to chase.
+        age_level = ''
+        if r.status in ('Awaiting Materials', 'Paused') and days_running is not None:
+            if days_running >= 14:
+                age_level = 'crit'
+            elif days_running >= 7:
+                age_level = 'warn'
         run_progress.append({
             'run_number': r.run_number,
             'pk': r.pk,
@@ -289,27 +323,28 @@ def dashboard_view(request):
             'unit': 'units' if r.target_product else '',
             'pct': min(pct, 100),
             'pct_raw': pct,
-            'days_running': (today - r.start_time.date()).days if r.start_time else None,
+            'days_running': days_running,
+            'age_level': age_level,
         })
 
     # C. KPI deltas — last 30 days vs the 30 days before that
-    rm_in_cur, rm_in_prev = _reg_sum('Inbound', prev30, tomorrow), _reg_sum('Inbound', prev60, prev30)
+    rm_in_cur, rm_in_prev = _reg_sum('Inbound', prev30, tomorrow, mt=True), _reg_sum('Inbound', prev60, prev30, mt=True)
     fg_cur, fg_prev = _reg_sum('Produced', prev30, tomorrow), _reg_sum('Produced', prev60, prev30)
 
     kpi_deltas = {
-        'raw_materials': _pct_delta(rm_in_cur, rm_in_prev),
-        'finished_goods': _pct_delta(fg_cur, fg_prev),
+        'raw_materials': _trend(rm_in_cur, rm_in_prev),
+        'finished_goods': _trend(fg_cur, fg_prev),
     }
 
     # D. Real sparklines — weekly totals for the last 6 weeks, kept as (height%,
     # label, value) triples so the bars stay hoverable instead of being bare
     # shapes with no way to read an actual number off them.
-    def _weekly_heights(action, unit):
+    def _weekly_heights(action, unit, mt=False):
         weeks = []
         for i in range(6, 0, -1):
             wk_start = today - timedelta(days=i * 7)
             wk_end = today - timedelta(days=(i - 1) * 7)
-            weeks.append((wk_start, wk_end, _reg_sum(action, wk_start, wk_end)))
+            weeks.append((wk_start, wk_end, _reg_sum(action, wk_start, wk_end, mt=mt)))
         peak = max(v for _, _, v in weeks) or 1
 
         def _fmt(d):
@@ -323,7 +358,7 @@ def dashboard_view(request):
             for wk_start, wk_end, v in weeks
         ]
 
-    raw_spark = _weekly_heights('Inbound', 'MT')
+    raw_spark = _weekly_heights('Inbound', 'MT', mt=True)
     fg_spark = _weekly_heights('Produced', 'units')
 
     # E. Weekly finished-goods output trend (12 weeks) for a real line chart
@@ -341,14 +376,20 @@ def dashboard_view(request):
         'values': [float(row['qty'] or 0) for row in weekly_output_qs],
     }
 
-    # F. Material usage variance leaderboard (completed runs)
+    # F. Material usage variance leaderboard (completed runs), biggest deviation
+    # either way first. Outside ±3% is the same line that triggers a variance
+    # sign-off on run completion; outside ±10% is flagged as severe.
     material_variance = list(
         RunMaterialUsage.objects
         .filter(production_run__status='Completed')
         .values('material__name', 'material__sku')
         .annotate(avg_var=Avg('variance_pct'), runs=Count('id'))
-        .order_by('-avg_var')[:6]
+        .order_by(Abs(F('avg_var')).desc())[:6]
     )
+    for m in material_variance:
+        v = float(m['avg_var'] or 0)
+        m['level'] = 'crit' if abs(v) > 10 else 'warn' if abs(v) > 3 else 'ok'
+        m['direction'] = 'over' if v > 0 else 'under'
 
     # G. Inventory value in RM (not just tonnage)
     rm_value = Batch.objects.filter(status='Active', material__isnull=False).aggregate(
@@ -372,34 +413,45 @@ def dashboard_view(request):
     inventory_value_compact = _compact_rm(inventory_value)
 
     last_activity = RegistryLog.objects.order_by('-timestamp').values_list('timestamp', flat=True).first()
+    # Only claim "live" when the data really is fresh.
+    is_live = bool(last_activity) and timezone.now() - last_activity < timedelta(hours=1)
 
-    # 6. Sales order stats
+    # 6. Sales order pipeline: open stages only, as a bar per stage. Closed
+    # orders would dwarf the in-flight ones, so they're a single count instead.
     so_counts = SalesOrder.objects.values('status').annotate(count=Count('id'))
     counts_dict = {item['status']: item['count'] for item in so_counts}
-    
-    sales_order_stats = {
-        'Draft': counts_dict.get('Draft', 0),
-        'Pending_Approval': counts_dict.get('Pending Approval', 0),
-        'Pending_Approved': counts_dict.get('Pending', 0),
-        'In_Production': counts_dict.get('Awaiting Acknowledgement', 0) + counts_dict.get('In Production', 0),
-        'Ready_to_Ship': counts_dict.get('Ready to Ship', 0),
-        'Shipped_Delivered': counts_dict.get('Shipped', 0) + counts_dict.get('Delivered', 0),
-    }
+    so_pipeline = [
+        {'label': 'Draft', 'count': counts_dict.get('Draft', 0), 'tone': 'slate'},
+        {'label': 'Pending approval', 'count': counts_dict.get('Pending Approval', 0), 'tone': 'amber'},
+        {'label': 'Approved', 'count': counts_dict.get('Pending', 0), 'tone': 'sky'},
+        {'label': 'In production', 'count': counts_dict.get('Awaiting Acknowledgement', 0) + counts_dict.get('In Production', 0), 'tone': 'primary'},
+        {'label': 'Ready to ship', 'count': counts_dict.get('Ready to Ship', 0) + counts_dict.get('Partially Shipped', 0), 'tone': 'emerald'},
+    ]
+    so_peak = max((s['count'] for s in so_pipeline), default=0) or 1
+    for s in so_pipeline:
+        s['width'] = round(s['count'] / so_peak * 100)
+    so_open_total = sum(s['count'] for s in so_pipeline)
+    so_closed_total = counts_dict.get('Shipped', 0) + counts_dict.get('Delivered', 0)
 
     context = {
         'warehouse_stats': warehouse_stats,
-        'chart_data': chart_data,
         'inventory_metrics': inventory_metrics,
         'global_utilization': global_utilization,
         'global_utilization_bar': min(global_utilization, 100),
+        'capacity_status': capacity_status,
+        'over_capacity_sites': over_capacity_sites,
+        'worst_site': worst_site,
         'total_daily_cost': total_daily_cost,
         'recent_logs': recent_logs,
         'active_shipments': active_shipments,
         'active_shipments_total': active_shipments_total,
         'degrading_batches': degrading_batches,
         'degrading_batches_total': degrading_batches_total,
-        'sales_order_stats': sales_order_stats,
+        'so_pipeline': so_pipeline,
+        'so_open_total': so_open_total,
+        'so_closed_total': so_closed_total,
         'current_timestamp': date.today().strftime('%Y-%m-%d'),
+        'today': today,
         # analytics upgrade
         'attention': attention,
         'attention_total': attention_total,
@@ -412,6 +464,7 @@ def dashboard_view(request):
         'inventory_value': inventory_value,
         'inventory_value_compact': inventory_value_compact,
         'last_activity': last_activity,
+        'is_live': is_live,
     }
 
     return render(request, 'dashboard.html', context)
@@ -539,7 +592,21 @@ def db_test_op_view(request):
 
 
 def home_view(request):
-    return render(request, 'home.html')
+    """Public landing page. ?batch=<number> is the "Trace a batch" box: it jumps
+    to that batch's public page (the one its QR label opens), or re-renders with
+    a not-found note. Signed-in users otherwise go straight to the dashboard."""
+    trace_query = request.GET.get('batch', '').strip()[:100]
+    if trace_query:
+        batch_number = Batch.objects.filter(batch_number__iexact=trace_query).values_list('batch_number', flat=True).first()
+        if batch_number:
+            return redirect('batch_public_info', batch_number=batch_number)
+    elif request.user.is_authenticated:
+        return redirect('dashboard')
+
+    return render(request, 'home.html', {
+        'trace_query': trace_query,
+        'trace_not_found': bool(trace_query),
+    })
 
 
 @login_required
@@ -547,7 +614,7 @@ def warehouse_inventory_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'manual_receive':
-            if not request.user.can_adjust_physical_stock:
+            if not request.user.has_perm(ADJUST_PHYSICAL_STOCK):
                 messages.error(request, "Permission Denied: You cannot manually adjust stock.")
                 return redirect('warehouse_inventory')
             
@@ -648,7 +715,7 @@ status='Active').select_related('warehouse',
             'total_batches': batches.count(),
         }
 
-    can_adjust = request.user.can_adjust_physical_stock
+    can_adjust = request.user.has_perm(ADJUST_PHYSICAL_STOCK)
 
     context = {
         'warehouses': warehouses,
@@ -1618,7 +1685,7 @@ def product_list_view(request):
                 messages.error(request, f"Error adding recipe item: {e}")
 
         elif action == 'toggle_active':
-            if request.user.role in ['Admin', 'Manager']:
+            if request.user.has_perm('core.change_product'):
                 product_id = request.POST.get('product_id')
                 prod = get_object_or_404(Product, id=product_id)
                 prod.is_active = not prod.is_active
@@ -1727,7 +1794,7 @@ def material_list_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'toggle_active':
-            if request.user.role in ['Admin', 'Manager']:
+            if request.user.has_perm('core.change_material'):
                 material_id = request.POST.get('material_id')
                 mat = get_object_or_404(Material, id=material_id)
                 mat.is_active = not mat.is_active
@@ -1867,7 +1934,7 @@ def supplier_list_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'toggle_active':
-            if request.user.role in ['Admin', 'Manager']:
+            if request.user.has_perm('core.change_supplier'):
                 supplier_id = request.POST.get('supplier_id')
                 sup = get_object_or_404(Supplier, id=supplier_id)
                 sup.is_active = not sup.is_active
@@ -1932,7 +1999,7 @@ def client_list_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'toggle_active':
-            if request.user.role in ['Admin', 'Manager']:
+            if request.user.has_perm('core.change_client'):
                 client_id = request.POST.get('client_id')
                 cli = get_object_or_404(Client, id=client_id)
                 cli.is_active = not cli.is_active
@@ -2305,8 +2372,8 @@ def so_detail_view(request, pk):
                 messages.success(request, f"Removed {user_to_remove.username} from followers.")
 
         elif action == 'unallocate_so_stock':
-            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager']:
-                messages.error(request, "Only Managers can unallocate stock from an order.")
+            if not request.user.has_perm('core.delete_stockallocation'):
+                messages.error(request, "You don't have permission to unallocate stock from an order.")
                 return redirect('so_detail', pk=so.pk)
 
             alloc_id = request.POST.get('alloc_id')
@@ -2496,7 +2563,7 @@ def so_detail_view(request, pk):
         'warehouses': warehouses,
         'manufacturing_plants': manufacturing_plants,
         'so_status_choices': [c for c in SalesOrder.STATUS_CHOICES if c[0] == so.status or c[0] in SO_MANUAL_TRANSITIONS.get(so.status, [])],
-        'managers': CustomUser.objects.filter(role__in=['Admin', 'Manager']).order_by('username'),
+        'managers': approvers(),
         'all_users': CustomUser.objects.all().order_by('username'),
     }
     return render(request, 'so_detail.html', context)
@@ -2656,7 +2723,7 @@ def po_detail_view(request, pk):
         'materials': materials,
         'warehouses': warehouses,
         'po_status_choices': PurchaseOrder.STATUS_CHOICES,
-        'managers': CustomUser.objects.filter(role__in=['Admin', 'Manager']).order_by('username'),
+        'managers': approvers(),
         'all_users': CustomUser.objects.all().order_by('username'),
     }
     return render(request, 'po_detail.html', context)
@@ -2787,10 +2854,8 @@ def manufacturing_view(request):
             po_number = generate_next_code(PurchaseOrder, 'po_number', 'PO', 601, pad=3)
             
             # Try to auto-assign a purchaser
-            purchaser = CustomUser.objects.filter(roles__name__icontains='Purchasing').first()
-            if not purchaser:
-                 purchaser = CustomUser.objects.filter(role__icontains='purchas').first()
-                 
+            purchaser = users_with_perm(HANDLE_PURCHASING, include_superusers=False).order_by('id').first()
+
             with transaction.atomic():
                 po = PurchaseOrder.objects.create(
                     po_number=po_number,
@@ -2851,7 +2916,7 @@ def manufacturing_view(request):
             return redirect('readiness')
 
         elif action == 'start_run':
-            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager', 'Staff_Edit']:
+            if not request.user.has_perm('core.change_productionrun'):
                 messages.error(request, "Permission Denied: You do not have permission to start Production Runs.")
                 return redirect('readiness')
             run_id = request.POST.get('run_id')
@@ -2863,7 +2928,7 @@ def manufacturing_view(request):
                 messages.success(request, f"Production Run {run.run_number} started.")
 
         elif action == 'complete_run':
-            if not request.user.is_superuser and getattr(request.user, 'role', '') not in ['Admin', 'Manager', 'Staff_Edit']:
+            if not request.user.has_perm('core.change_productionrun'):
                 messages.error(request, "Permission Denied: You do not have permission to complete Production Runs.")
                 return redirect('readiness')
             run_id = request.POST.get('run_id')
@@ -3282,17 +3347,21 @@ def qa_dashboard_view(request):
 # --------------------------------------------------------------------------
 # APPROVALS INBOX (Action Center)
 # --------------------------------------------------------------------------
-from .decorators import role_required
+from .decorators import permission_or_redirect
 
 @login_required
-@role_required(['Admin', 'Manager'])
-
+@permission_or_redirect(APPROVE_REQUESTS)
 def approvals_inbox_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
         item_type = request.POST.get('item_type')
         item_id = request.POST.get('item_id')
         comment = request.POST.get('comment', '').strip()
+
+        # Lets a detail page reuse this handler and return the user to itself.
+        back = request.POST.get('next', '')
+        if not url_has_allowed_host_and_scheme(back, allowed_hosts={request.get_host()}):
+            back = reverse('approvals_inbox')
 
         if item_type == 'sales_order':
             so = get_object_or_404(SalesOrder, id=item_id)
@@ -3321,7 +3390,7 @@ def approvals_inbox_view(request):
             run = get_object_or_404(ProductionRun, id=item_id)
             if action in ('approve', 'reject') and not may_decide_run_approval(request.user, run):
                 messages.error(request, "Only a Manager or Admin can decide a production run that is pending approval.")
-                return redirect('approvals_inbox')
+                return redirect(back)
             if action in ('approve', 'reject'):
                 clear_approval_notifications(run.run_number)
             if action == 'approve':
@@ -3404,8 +3473,8 @@ def approvals_inbox_view(request):
                 ship.save()
                 OrderTimeline.objects.create(shipment=ship, action=f"Approval Rejected by Manager. Comment: {comment}" if comment else "Approval Rejected by Manager.", user=request.user)
                 messages.warning(request, f"Shipment {ship.tracking_number} returned to Logistics Review.")
-                
-        return redirect('approvals_inbox')
+
+        return redirect(back)
 
     pending_sos = SalesOrder.objects.filter(status='Pending Approval', assigned_to=request.user).order_by('order_date').prefetch_related('items__product')
     pending_runs = ProductionRun.objects.filter(status='Pending Approval').order_by('start_time')
@@ -4180,7 +4249,7 @@ def shipment_detail_view(request, pk):
     if shipment.direction in ('Outbound', 'Transfer') and shipment.origin_warehouse_id:
         # a shipment leaves from one place - only offer stock that's actually there
         batches = batches.filter(warehouse_id=shipment.origin_warehouse_id)
-    managers = CustomUser.objects.filter(role__in=['Admin', 'Manager'])
+    managers = approvers()
     all_users = CustomUser.objects.all().order_by('username')
     
     warehouses = Warehouse.objects.all()
@@ -4233,15 +4302,11 @@ def profile_view(request):
 
 @login_required
 def user_management_view(request):
-    is_admin = request.user.is_superuser or request.user.has_role('Admin') or request.user.role == 'Admin'
-    is_manager = request.user.has_role('Manager') or request.user.role == 'Manager'
-    
-    if not (is_admin or is_manager):
-        messages.error(request, "Permission Denied. Only Admins and Managers can manage users.")
+    if not request.user.has_perm(MANAGE_USERS):
+        messages.error(request, "Permission Denied. You don't have permission to manage users.")
         return redirect('dashboard')
 
-    
-    users = CustomUser.objects.all().prefetch_related('roles', 'allowed_locations')
+    users = CustomUser.objects.all().prefetch_related('groups', 'allowed_locations')
     
     query = request.GET.get('q', '')
     if query:
@@ -4253,7 +4318,7 @@ def user_management_view(request):
             Q(email__icontains=query)
         )
         
-    roles = Role.objects.all()
+    roles = Group.objects.order_by('name')
     warehouses = Warehouse.objects.all()
     
     if request.method == 'POST':
@@ -4278,7 +4343,7 @@ def user_management_view(request):
             
             # Roles
             role_ids = request.POST.getlist('roles')
-            user_obj.roles.set(Role.objects.filter(id__in=role_ids))
+            user_obj.groups.set(Group.objects.filter(id__in=role_ids))
             
             # Locations
             location_ids = request.POST.getlist('locations')
@@ -4548,8 +4613,13 @@ def production_run_allocate_view(request, pk):
     fefo_recommended_ids = []
     
     for req in run.target_product.recipe_items.all():
-        needed = Decimal(str(req.quantity_required)) * Decimal(str(run.expected_yield))
-        
+        # Recipes are 4dp but stock is held to 2dp, so round the requirement UP
+        # to what can actually be allocated (0.0200 x 115.01 = 2.3002 -> 2.31)
+        # rather than letting it silently truncate and under-allocate.
+        needed = (Decimal(str(req.quantity_required)) * Decimal(str(run.expected_yield))).quantize(
+            Decimal('0.01'), rounding=ROUND_CEILING
+        )
+
         # Get all active batches globally, ordered by expiry date (FEFO)
         batches = Batch.objects.filter(material=req.material, status='Active').annotate(
             avail=F('quantity') - F('allocated_quantity')
@@ -4973,12 +5043,13 @@ def production_run_detail_view(request, pk):
 
     return render(request, 'production_run_detail.html', {
         'run': run,
+        'can_decide_approval': may_decide_run_approval(request.user, run),
         'linked_shipments': linked_shipments,
         'all_shipments_arrived': all_shipments_arrived,
         'pending_shipments_count': pending_shipments_count,
         'bom_materials': bom_materials,
-        'managers': CustomUser.objects.filter(role__in=['Admin', 'Manager']),
-        'all_users': CustomUser.objects.all(),
+        'managers': approvers(),
+        'all_users': CustomUser.objects.prefetch_related('groups'),
         'timeline_events': run.timeline.all().order_by('-timestamp'),
         'allocations': run.allocations.all(),
         'material_usage_rows': material_usage_rows,

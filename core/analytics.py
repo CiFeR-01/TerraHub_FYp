@@ -896,6 +896,131 @@ def rent_history(days=180, end=None):
     }
 
 
+RESULT_WINDOW_DAYS = 7          # days averaged before and after a move
+RESULT_MIN_DAYS_AFTER = 3       # wait for this many days after the move before judging it
+
+
+def _recorded_days(warehouse_id, start, end):
+    """[(rent, used_mt) or None] for each day start..end from the rows recorded on
+    the day (never the estimated backfill). A day with no row carries the latest
+    earlier row forward, since snapshots are only written when something changes."""
+    from .models import WarehouseUtilizationSnapshot
+
+    qs = WarehouseUtilizationSnapshot.objects.filter(
+        warehouse_id=warehouse_id, daily_rent_cost__isnull=False, rent_estimated=False,
+    )
+    prior = qs.filter(snapshot_date__lt=start).order_by('-snapshot_date').first()
+    by_date = {s.snapshot_date: s for s in qs.filter(snapshot_date__gte=start, snapshot_date__lte=end)}
+    last, out = prior, []
+    for i in range((end - start).days + 1):
+        last = by_date.get(start + _dt.timedelta(days=i), last)
+        out.append((float(last.daily_rent_cost), float(last.used_mt)) if last else None)
+    return out
+
+
+def _window_avg(days):
+    """(avg rent, avg used_mt) over the known days, or None if none are known."""
+    known = [d for d in days if d]
+    if not known:
+        return None
+    return sum(d[0] for d in known) / len(known), sum(d[1] for d in known) / len(known)
+
+
+def rent_results(limit=10):
+    """DSS #11 - did the accepted Rent Opportunities moves save what they promised?
+
+    One row per accepted transfer. Once the transfer is completed, the origin's
+    average recorded daily rent for the week before is compared with the week after
+    (the destination's rent change is netted off); `promised` is the sum of the
+    estimates stored when it was accepted. A move is marked "unclear" when the
+    origin's tonnage changed by more than half the move's size for some other
+    reason, since the rent change can't then be put down to the move alone.
+    Statuses: measuring (not completed / too soon), measured, unclear, unavailable
+    (no recorded rent to compare)."""
+    from .models import OrderTimeline, RentSuggestion
+
+    today = timezone.localdate()
+    accepted = list(RentSuggestion.objects.filter(decision='Accepted').select_related(
+        'shipment', 'origin_warehouse', 'destination_warehouse'))
+    dismissed = RentSuggestion.objects.filter(decision='Dismissed').count()
+
+    groups = {}
+    for r in accepted:
+        groups.setdefault(r.shipment_id or -r.pk, []).append(r)
+
+    moves, pending, cancelled = [], 0, 0
+    for recs in groups.values():
+        first = recs[0]
+        shp = first.shipment
+        if shp is not None and shp.status == 'Cancelled':
+            cancelled += 1
+            continue
+        move = {
+            'shipment': shp,
+            'origin': first.origin_warehouse,
+            'destination': first.destination_warehouse,
+            'batches': [r.batch_number for r in recs],
+            'move_mt': sum(float(r.move_mt) for r in recs),
+            'promised_daily': sum(float(r.est_daily_saving) for r in recs),
+            'accepted_at': first.decided_at,
+            'moved_on': None, 'measured_daily': None, 'status': 'measuring', 'note': '',
+        }
+        if shp is None or shp.status != 'Completed':
+            pending += 1
+            move['note'] = 'Waiting for the transfer to complete'
+            moves.append(move)
+            continue
+
+        done = (OrderTimeline.objects.filter(shipment=shp, action__startswith='Receiving finalized')
+                .order_by('-timestamp').first())
+        moved_on = timezone.localtime(done.timestamp).date() if done else timezone.localtime(shp.updated_at).date()
+        move['moved_on'] = moved_on
+        days_after = min(RESULT_WINDOW_DAYS, (today - moved_on).days)
+        if days_after < RESULT_MIN_DAYS_AFTER or move['origin'] is None:
+            move['note'] = f'Needs {RESULT_MIN_DAYS_AFTER} days after the move'
+            moves.append(move)
+            continue
+
+        one = _dt.timedelta(days=1)
+        before_start, after_end = moved_on - _dt.timedelta(days=RESULT_WINDOW_DAYS), moved_on + _dt.timedelta(days=days_after)
+        o_before = _window_avg(_recorded_days(move['origin'].id, before_start, moved_on - one))
+        o_after = _window_avg(_recorded_days(move['origin'].id, moved_on + one, after_end))
+        if o_before is None or o_after is None:
+            move['status'], move['note'] = 'unavailable', 'No recorded rent to compare'
+            moves.append(move)
+            continue
+
+        measured = o_before[0] - o_after[0]
+        d = move['destination']
+        if d is not None:
+            d_before = _window_avg(_recorded_days(d.id, before_start, moved_on - one))
+            d_after = _window_avg(_recorded_days(d.id, moved_on + one, after_end))
+            if d_before and d_after:
+                measured -= d_after[0] - d_before[0]
+        move['measured_daily'] = round(measured, 2)
+
+        other_change = (o_before[1] - o_after[1]) - move['move_mt']
+        if abs(other_change) > 0.5 * move['move_mt']:
+            move['status'] = 'unclear'
+            move['note'] = f"Other stock changed by {abs(other_change):.0f} MT"
+        else:
+            move['status'] = 'measured'
+        moves.append(move)
+
+    moves.sort(key=lambda m: m['moved_on'] or m['accepted_at'].date(), reverse=True)
+    counted = [m for m in moves if m['status'] == 'measured']
+    return {
+        'accepted': len(groups) - cancelled,
+        'dismissed': dismissed,
+        'pending': pending,
+        'measured_count': len(counted),
+        'measured_daily_total': round(sum(m['measured_daily'] for m in counted), 2),
+        'promised_daily_total': round(sum(m['promised_daily'] for m in counted), 2),
+        'moves': moves[:limit],
+        'window_days': RESULT_WINDOW_DAYS,
+    }
+
+
 def open_batch_rent_expr():
     """ORM expression: Sum (batch tonnage x effective rate) across a
     warehouse's currently-open batches - Active OR Quarantined (same statuses as
@@ -1034,31 +1159,102 @@ def capacity_forecast():
     return rows
 
 
-_DSS_NEAR_EXPIRY_DAYS = 30  # same threshold qa_dashboard_view uses for "near expiry"
+def _daily_usage_rates(material_ids, product_ids, today):
+    """How fast stock leaves on its own, per unit per day: materials from the last
+    DEFAULT_WINDOW_DAYS of production consumption, products from the last 180
+    days of sales orders (excluding Draft/Rejected)."""
+    from .models import SalesOrderDetail
+
+    rates = {('material', mid): r for mid, r in
+             consumption_rates(material_ids, window_days=DEFAULT_WINDOW_DAYS, end=today).items()}
+    if product_ids:
+        window = 180
+        for r in (SalesOrderDetail.objects
+                  .filter(product_id__in=product_ids,
+                          sales_order__order_date__gt=today - _dt.timedelta(days=window),
+                          sales_order__order_date__lte=today)
+                  .exclude(sales_order__status__in=_TREND_EXCLUDED_SO_STATUSES)
+                  .values('product_id').annotate(q=Sum('quantity_ordered'))):
+            if r['q']:
+                rates[('product', r['product_id'])] = r['q'] / Decimal(window)
+    return rates
+
+
+def _days_batch_would_stay(batch, rates, fefo_ahead, horizon):
+    """(days, reason) this batch's free stock would sit where it is if left alone:
+    the earlier of its expiry and when it'll be used up - drawn oldest-first
+    (FEFO), so the free stock in batches ahead of it goes first - capped at
+    `horizon`. reason is 'expires', 'used up' or 'horizon'."""
+    options = [(horizon, 'horizon')]
+    if batch.days_until_expiry is not None:
+        options.append((max(batch.days_until_expiry, 0), 'expires'))
+    key = ('material', batch.material_id) if batch.material_id else ('product', batch.product_id)
+    rate = rates.get(key)
+    if rate and rate > 0 and batch.status == 'Active':
+        used_up = (fefo_ahead.get(batch.id, Decimal('0')) + batch.available_quantity) / rate
+        options.append((float(used_up), 'used up'))
+    days, reason = min(options, key=lambda o: o[0])
+    return max(float(days), 0.0), reason
+
+
+def _fefo_ahead(batches):
+    """{batch_id: free quantity in same-item Active batches that will be used before it}."""
+    from .models import Batch
+
+    ahead = {}
+    items = {(b.material_id, b.product_id) for b in batches}
+    for material_id, product_id in items:
+        running = Decimal('0')
+        qs = Batch.objects.filter(status='Active', material_id=material_id, product_id=product_id)
+        for b in qs.order_by('expiry_date', 'manufacturing_date', 'id'):
+            ahead[b.id] = running
+            running += max(b.quantity - b.allocated_quantity, Decimal('0'))
+    return ahead
+
+
+def incoming_transfer_mt():
+    """{warehouse_id: MT} of stock on internal transfers that are heading to a
+    warehouse but haven't been received yet - it isn't stored there yet, but it
+    will take up the space, so it isn't free."""
+    from .models import ShipmentItem
+
+    incoming = {}
+    items = (ShipmentItem.objects
+             .filter(shipment__direction='Transfer', shipment__destination_warehouse__isnull=False)
+             .exclude(shipment__status__in=('Completed', 'Cancelled'))
+             .select_related('shipment', 'material', 'product'))
+    for it in items:
+        unit_mt = it.material.weight_mt_per_unit if it.material else (it.product.weight_mt_per_unit if it.product else 0)
+        wid = it.shipment.destination_warehouse_id
+        incoming[wid] = incoming.get(wid, 0.0) + float(it.quantity * unit_mt)
+    return incoming
 
 
 def rent_reduction_opportunities():
     """DSS: for rented (Usage-billed) warehouses capacity_forecast() flags
     critical/watch, suggests batches to relocate into our own warehouses and
-    estimates the daily rent that would stop accruing.
+    estimates the rent that would stop accruing - per day and in total.
 
     Destinations are Internal warehouses that can store stock (location_type
     Storage or Both - a manufacturing-only plant is never suggested), each with
-    its OWN spare capacity. Candidate batches from every flagged warehouse are
-    placed highest rent rate first, each into the destination with the most spare
-    room left, and that room is used up as it's taken - so two flagged warehouses
-    can never both claim the same free space, and every suggestion names a real
-    destination that can hold it.
+    its OWN spare capacity, used up as it's taken - so two flagged warehouses can
+    never both claim the same free space.
 
-    Only counts each batch's available_weight_mt (unallocated portion) as
-    moveable - the allocated portion is already committed to an outgoing
-    SO/production run and isn't actually free to relocate.
+    Only each batch's unallocated portion counts as movable (the allocated part is
+    already committed to an outgoing SO/production run).
 
-    Expiry-aware: a batch within _DSS_NEAR_EXPIRY_DAYS of expiring is excluded
-    entirely - it's about to leave the warehouse on its own (consumed or spoiled)
-    regardless of what's recommended. Excluded counts are surfaced per warehouse
-    so this isn't a silent gap in the numbers."""
-    from .models import Warehouse, Batch
+    Total saving = daily saving x the days the batch would otherwise stay: the
+    earlier of expiry and being used up (FEFO, at the current usage/sales rate),
+    capped at dss_saving_horizon_days. Batches saving less than
+    dss_min_total_saving_rm in total are left out and counted per warehouse.
+    Free space goes first to the batches that save the most per MT.
+
+    A destination's free space is its capacity less what's stored and what's
+    already on the way there (incoming_transfer_mt), so accepting a suggestion
+    reserves its room. Batches someone dismissed stay out until their snooze
+    (RentSuggestion.snoozed_until) ends."""
+    from .models import Warehouse, Batch, RentSuggestion
+    from .settings_store import get_setting
 
     forecast_rows = {r['warehouse_id']: r for r in capacity_forecast()}
     flagged = [wid for wid, r in forecast_rows.items() if r['status'] in ('critical', 'watch')]
@@ -1066,10 +1262,11 @@ def rent_reduction_opportunities():
         return []
 
     util_by_wh = {r['warehouse_id']: r for r in warehouse_utilization()}
+    incoming = incoming_transfer_mt()
     spare_by_dest = {}
     for w in Warehouse.objects.filter(ownership_type='Internal', location_type__in=Warehouse.STORAGE_TYPES):
         u = util_by_wh.get(w.id)
-        spare = float(w.total_capacity_mt) - (u['used_mt'] if u else 0.0)
+        spare = float(w.total_capacity_mt) - (u['used_mt'] if u else 0.0) - incoming.get(w.id, 0.0)
         if spare > 0:
             spare_by_dest[w.id] = {'warehouse_id': w.id, 'name': w.name, 'spare_mt': round(spare, 3)}
     destination_options = sorted(spare_by_dest.values(), key=lambda x: -x['spare_mt'])
@@ -1077,35 +1274,57 @@ def rent_reduction_opportunities():
         return []
     remaining = {wid: d['spare_mt'] for wid, d in spare_by_dest.items()}
 
+    today = timezone.localdate()
+    horizon = int(get_setting('dss_saving_horizon_days'))
+    min_saving = float(get_setting('dss_min_total_saving_rm'))
+    snooze_days = int(get_setting('dss_dismiss_snooze_days'))
+    snoozed = set(RentSuggestion.objects.filter(
+        decision='Dismissed', snoozed_until__gte=today, batch__isnull=False
+    ).values_list('batch_id', flat=True))
+
     # Gather every movable batch across all flagged rented warehouses first ...
     origins = {}
-    pool = []
+    batches = []
     for w in Warehouse.objects.filter(id__in=flagged):
         if w.ownership_type == 'Internal' or w.rental_billing_method != 'Usage':
             continue  # nothing to save moving off a free or flat-Overall-billed warehouse
-        origins[w.id] = {'warehouse': w, 'candidates': [], 'excluded_near_expiry': 0}
+        origins[w.id] = {'warehouse': w, 'candidates': [], 'excluded_low_saving': 0, 'dismissed_hidden': 0}
         for b in (Batch.objects.filter(warehouse=w, status__in=['Active', 'Quarantined'])
                   .select_related('material', 'product')):
-            days_left = b.days_until_expiry
-            if days_left is not None and days_left <= _DSS_NEAR_EXPIRY_DAYS:
-                origins[w.id]['excluded_near_expiry'] += 1
-                continue  # will deplete/expire on its own soon - not worth relocating
-            mt = float(b.available_weight_mt)
-            if mt <= 0:
-                continue
-            # Effective rate = the batch's own locked-in rate if it has one, else this
-            # warehouse's current standing rate (same fallback as open_batch_rent_expr()).
-            rate = float(b.rental_rate_per_mt if b.rental_rate_per_mt is not None else w.rental_cost_per_mt)
-            pool.append((rate, mt, b, w.id))
+            if float(b.available_weight_mt) > 0:
+                if b.id in snoozed:
+                    origins[w.id]['dismissed_hidden'] += 1
+                    continue
+                batches.append((b, w))
 
-    # ... then place them highest rate first, so shared free space goes where it
-    # saves the most, drawing each destination's space down as it's used.
-    pool.sort(key=lambda p: (-p[0], -p[1], p[2].batch_number))
-    for rate, mt, b, origin_id in pool:
+    rates = _daily_usage_rates({b.material_id for b, _ in batches if b.material_id},
+                               {b.product_id for b, _ in batches if b.product_id}, today)
+    ahead = _fefo_ahead([b for b, _ in batches])
+
+    pool = []
+    for b, w in batches:
+        # Effective rate = the batch's own locked-in rate if it has one, else this
+        # warehouse's current standing rate (same fallback as open_batch_rent_expr()).
+        rate = float(b.rental_rate_per_mt if b.rental_rate_per_mt is not None else w.rental_cost_per_mt)
+        stay_days, stay_reason = _days_batch_would_stay(b, rates, ahead, horizon)
+        mt = float(b.available_weight_mt)
+        if mt * rate * stay_days < min_saving:
+            origins[w.id]['excluded_low_saving'] += 1
+            continue  # leaves soon / too small - not worth relocating
+        pool.append((rate * stay_days, rate, stay_days, stay_reason, mt, b, w.id))
+
+    # ... then place them best saving per MT first (free space is the limit),
+    # drawing each destination's space down as it's used.
+    pool.sort(key=lambda p: (-p[0], -p[4], p[5].batch_number))
+    for per_mt, rate, stay_days, stay_reason, mt, b, origin_id in pool:
         dest_id = max(remaining, key=lambda d: remaining[d])
         if remaining[dest_id] <= 0:
             break  # every destination is full
         take_mt = min(mt, remaining[dest_id])
+        total = take_mt * per_mt
+        if total < min_saving:
+            origins[origin_id]['excluded_low_saving'] += 1
+            continue  # only a sliver of space left for it
         remaining[dest_id] -= take_mt
         origins[origin_id]['candidates'].append({
             'batch_id': b.id,
@@ -1115,23 +1334,30 @@ def rent_reduction_opportunities():
             'move_mt': round(take_mt, 3),
             'rate_per_mt': rate,
             'daily_saving': round(take_mt * rate, 2),
+            'stay_days': round(stay_days),
+            'stay_reason': stay_reason,
+            'total_saving': round(total, 2),
             'destination_id': dest_id,
             'destination': spare_by_dest[dest_id]['name'],
         })
 
     opportunities = []
     for wid, o in origins.items():
-        if o['candidates'] or o['excluded_near_expiry']:
+        if o['candidates'] or o['excluded_low_saving'] or o['dismissed_hidden']:
             opportunities.append({
                 'warehouse_id': wid,
                 'name': o['warehouse'].name,
                 'status': forecast_rows[wid]['status'],
                 'candidate_batches': o['candidates'],
                 'total_daily_saving': round(sum(c['daily_saving'] for c in o['candidates']), 2),
+                'total_saving': round(sum(c['total_saving'] for c in o['candidates']), 2),
                 'destination_options': destination_options,
-                'excluded_near_expiry': o['excluded_near_expiry'],
+                'excluded_low_saving': o['excluded_low_saving'],
+                'dismissed_hidden': o['dismissed_hidden'],
+                'snooze_days': snooze_days,
+                'min_total_saving': min_saving,
             })
-    opportunities.sort(key=lambda o: -o['total_daily_saving'])
+    opportunities.sort(key=lambda o: -o['total_saving'])
     return opportunities
 
 

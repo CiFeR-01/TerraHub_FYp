@@ -421,7 +421,7 @@ def finalize_production_run(run, user):
     from django.utils import timezone
     from datetime import timedelta
     from django.urls import reverse
-    from .models import Batch, OrderTimeline, RegistryLog, CustomUser, Notification
+    from .models import Batch, OrderTimeline, RegistryLog, Notification
     from .settings_store import get_setting
 
     consume_materials_for_run(run, user)
@@ -463,7 +463,8 @@ def finalize_production_run(run, user):
                 action=f"Production Run {run.run_number} completed. FG batch {fg_batch.batch_number} is awaiting QA release before it can be allocated.",
                 user=user
             )
-        for reviewer in CustomUser.objects.filter(role__in=['Admin', 'Manager']):
+        from .permissions import approvers
+        for reviewer in approvers():
             Notification.objects.create(
                 user=reviewer,
                 message=f"QA release needed: batch {fg_batch.batch_number} ({run.target_product.name}) from Run {run.run_number}.",
@@ -827,6 +828,88 @@ def receive_transfer_into_destination(shipment, user):
                     + ("" if still_moving.exists() else " All stock is now together - create the logistics order to ship it in one delivery.")),
             user=user,
         )
+
+
+def create_rent_transfer(origin, destination, candidates, user):
+    """Turn Rent Opportunities suggestions into ONE Draft internal transfer from
+    `origin` to `destination` carrying the suggested batches, and record each as an
+    Accepted RentSuggestion (with the estimate, for comparing with the real
+    saving later). `candidates` are rows from analytics.rent_reduction_opportunities().
+
+    Each batch's share is converted from MT to units and capped at what's still
+    unreserved, then reserved for the transfer exactly as adding it by hand would
+    (batch.allocated_quantity + a shipment-scoped StockAllocation). Returns the
+    Shipment, or None if nothing could be moved (stock changed in the meantime)."""
+    from decimal import ROUND_DOWN
+    from .models import Batch, Shipment, ShipmentItem, StockAllocation, OrderTimeline, RentSuggestion
+
+    with transaction.atomic():
+        planned = []
+        for c in candidates:
+            batch = Batch.objects.select_for_update(of=('self',)).select_related('material', 'product').get(pk=c['batch_id'])
+            unit_mt = batch.material.weight_mt_per_unit if batch.material_id else batch.product.weight_mt_per_unit
+            if not unit_mt:
+                continue
+            qty = min(batch.available_quantity,
+                      (Decimal(str(c['move_mt'])) / unit_mt).quantize(Decimal('0.01'), rounding=ROUND_DOWN))
+            if qty > 0:
+                planned.append((batch, c, qty, qty * unit_mt))
+        if not planned:
+            return None
+
+        shipment = Shipment.objects.create(
+            tracking_number=generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4),
+            direction='Transfer', status='Draft',
+            origin_warehouse=origin, destination_warehouse=destination, last_edited_by=user,
+        )
+        total_daily = Decimal('0')
+        for batch, c, qty, moved_mt in planned:
+            ShipmentItem.objects.create(shipment=shipment, material=batch.material, product=batch.product,
+                                        batch=batch, quantity=qty)
+            batch.allocated_quantity += qty
+            batch.save(update_fields=['allocated_quantity'])
+            StockAllocation.objects.create(batch=batch, shipment=shipment, quantity=qty)
+
+            rate = Decimal(str(c['rate_per_mt']))
+            daily = (moved_mt * rate).quantize(Decimal('0.01'))
+            total_daily += daily
+            RentSuggestion.objects.create(
+                decision='Accepted', decided_by=user, batch=batch, batch_number=batch.batch_number,
+                item_name=(batch.material.name if batch.material_id else batch.product.name),
+                origin_warehouse=origin, destination_warehouse=destination, shipment=shipment,
+                move_mt=moved_mt.quantize(Decimal('0.001')), rate_per_mt=rate,
+                est_daily_saving=daily, est_total_saving=(daily * int(c['stay_days'])),
+                est_stay_days=int(c['stay_days']),
+            )
+        OrderTimeline.objects.create(
+            shipment=shipment,
+            action=(f"Drafted from a Rent Opportunities suggestion: {len(planned)} batch(es) from {origin.name} "
+                    f"to {destination.name}, estimated to save RM {total_daily}/day in rent."),
+            user=user,
+        )
+    return shipment
+
+
+def dismiss_rent_suggestions(candidates_with_origin, reason, note, user):
+    """Record each (origin_warehouse, candidate) as Dismissed with `reason`, and
+    leave those batches out of the suggestions for dss_dismiss_snooze_days."""
+    from datetime import timedelta
+    from .models import Batch, RentSuggestion
+    from .settings_store import get_setting
+
+    until = date.today() + timedelta(days=int(get_setting('dss_dismiss_snooze_days')))
+    with transaction.atomic():
+        for origin, c in candidates_with_origin:
+            RentSuggestion.objects.create(
+                decision='Dismissed', decided_by=user, batch=Batch.objects.get(pk=c['batch_id']),
+                batch_number=c['batch_number'], item_name=c['item'],
+                origin_warehouse=origin, destination_warehouse_id=c['destination_id'],
+                move_mt=Decimal(str(c['move_mt'])), rate_per_mt=Decimal(str(c['rate_per_mt'])),
+                est_daily_saving=Decimal(str(c['daily_saving'])), est_total_saving=Decimal(str(c['total_saving'])),
+                est_stay_days=int(c['stay_days']), dismiss_reason=reason, dismiss_note=note[:255],
+                snoozed_until=until,
+            )
+    return until
 
 
 def apply_so_product_shipment(so_detail, delta_qty):

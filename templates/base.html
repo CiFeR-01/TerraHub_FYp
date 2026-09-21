@@ -90,7 +90,7 @@
                     </div>
                     <div class="user-meta">
                         <span class="user-name-label">{{ user.get_full_name|default:user.username }}</span>
-                        <span class="user-role-label">{{ user.roles.all.0.name|default:user.role|default:"Staff" }}</span>
+                        <span class="user-role-label">{{ user.role_label }}</span>
                     </div>
                 </a>
                 <form action="{% url 'logout' %}" method="post" class="logout-form">
@@ -166,7 +166,7 @@
                             </ul>
                         </div>
                     </div>
-                    <span class="topbar-user">{{ user.get_full_name|default:user.username }}<span class="topbar-role">{{ user.role|default:"Staff" }}</span></span>
+                    <span class="topbar-user">{{ user.get_full_name|default:user.username }}<span class="topbar-role">{{ user.role_label }}</span></span>
                     <form action="{% url 'logout' %}" method="post" style="margin:0;">
                         {% csrf_token %}
                         <button type="submit" class="btn-logout-topbar" title="Sign out">
@@ -211,7 +211,7 @@
     </main>
     <footer class="guest-footer">
         <div class="footer-content">
-            &copy; 2026 TerraHub Inc. All rights reserved.
+            &copy; 2026 TerraHub &middot; Integrated Inventory Warehouse Management System
         </div>
     </footer>
     {% endif %}

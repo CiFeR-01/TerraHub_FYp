@@ -6,18 +6,27 @@ from .models import (
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
     Shipment, StockAudit, RegistryLog, OrderTimeline, Notification,
     Supplier, SupplierMaterial, Client, SystemSetting, WarehouseUtilizationSnapshot,
-    OpsBriefing,
+    OpsBriefing, RentSuggestion,
 )
 
 class CustomUserAdmin(UserAdmin):
     model = CustomUser
+    # Roles are the "Groups" field under Permissions; what each role may do is
+    # set on its Group (Authentication and Authorization > Groups).
     fieldsets = UserAdmin.fieldsets + (
-        ('Custom Attributes', {'fields': ('role', 'branch', 'can_adjust_physical_stock')}),
+        ('Custom Attributes', {'fields': ('branch',)}),
     )
     add_fieldsets = UserAdmin.add_fieldsets + (
-        ('Custom Attributes', {'fields': ('role', 'branch', 'can_adjust_physical_stock')}),
+        ('Role & Branch', {'fields': ('groups', 'branch')}),
     )
-    list_display = UserAdmin.list_display + ('role', 'branch', 'can_adjust_physical_stock')
+    list_display = UserAdmin.list_display + ('role_label', 'branch')
+
+    @admin.display(description='Role')
+    def role_label(self, obj):
+        return obj.role_label
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related('groups')
 
 admin.site.register(CustomUser, CustomUserAdmin)
 admin.site.register(Warehouse)
@@ -95,3 +104,12 @@ class OpsBriefingAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         # Created by generate_ops_briefing / the briefing page, never hand-typed.
         return False
+
+
+@admin.register(RentSuggestion)
+class RentSuggestionAdmin(admin.ModelAdmin):
+    list_display = ('decided_at', 'decision', 'batch_number', 'origin_warehouse', 'destination_warehouse',
+                    'move_mt', 'est_daily_saving', 'dismiss_reason', 'decided_by', 'shipment')
+    list_filter = ('decision', 'dismiss_reason', 'origin_warehouse')
+    search_fields = ('batch_number', 'item_name')
+    date_hierarchy = 'decided_at'

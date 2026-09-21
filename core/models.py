@@ -2,31 +2,40 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from datetime import date
 
-class Role(models.Model):
-    name = models.CharField(max_length=50, unique=True)
-    description = models.CharField(max_length=255, blank=True, null=True)
+class Capability(models.Model):
+    """No table - just a home for the app-wide permissions that aren't about
+    one model. Roles are Django Groups (Django admin > Groups); an Admin grants
+    these, alongside the normal per-model add/change/view/delete permissions,
+    to whichever groups should have them. Code checks the permission, never a
+    role or group name (see core/permissions.py)."""
 
-    def __str__(self):
-        return self.name
+    class Meta:
+        managed = False
+        default_permissions = ()
+        permissions = [
+            ('approve_requests', 'Can approve requests (orders, shipments, production runs)'),
+            ('override_approvals', 'Can self-approve and decide any pending approval'),
+            ('adjust_physical_stock', 'Can manually adjust physical stock'),
+            ('manage_users', 'Can manage users and their facility access'),
+            ('set_order_status', 'Can set a sales order status by hand'),
+            ('handle_purchasing', 'Receives purchase orders drafted for material shortages'),
+        ]
+
 
 class CustomUser(AbstractUser):
-    ROLE_CHOICES = (
-        ('Admin', 'Admin'),
-        ('Manager', 'Manager'),
-        ('Staff_Edit', 'Staff (Editor)'),
-        ('Staff_View', 'Staff (Viewer)'),
-    )
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='Staff_View')
     branch = models.CharField(max_length=100, default='HQ', help_text="Department / Division mapping")
-    can_adjust_physical_stock = models.BooleanField(default=False, help_text="Explicit permission to adjust warehouse stock")
 
-    roles = models.ManyToManyField(Role, blank=True, related_name='users')
     allowed_locations = models.ManyToManyField('Warehouse', blank=True, related_name='allowed_users')
     updated_by = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_users')
     updated_at = models.DateTimeField(auto_now=True)
-    
-    def has_role(self, role_name):
-        return self.roles.filter(name=role_name).exists()
+
+    @property
+    def role_label(self):
+        """The user's group names for display, e.g. "Manager" or "Sales, Logistics"."""
+        names = [g.name for g in self.groups.all()]
+        if names:
+            return ', '.join(names)
+        return 'Superuser' if self.is_superuser else 'No role'
 
     @property
     def unread_notifications_count(self):
@@ -623,6 +632,49 @@ class WarehouseUtilizationSnapshot(models.Model):
 
     def __str__(self):
         return f"{self.warehouse.name} @ {self.snapshot_date}: {self.utilization_percent}%"
+
+
+class RentSuggestion(models.Model):
+    """What someone did with a Rent Opportunities suggestion: turned it into an
+    internal transfer (Accepted) or set it aside with a reason (Dismissed). The
+    estimate at the time is stored so the result can be compared with the rent
+    actually saved afterwards. Suggestions themselves are computed live and are
+    not stored - only decisions are."""
+    DECISION_CHOICES = (('Accepted', 'Accepted'), ('Dismissed', 'Dismissed'))
+    DISMISS_REASONS = (
+        ('not_worth_it', 'Not worth the effort'),
+        ('needed_here', 'Stock is needed where it is'),
+        ('destination', "Destination isn't suitable"),
+        ('other', 'Other'),
+    )
+    decision = models.CharField(max_length=10, choices=DECISION_CHOICES, db_index=True)
+    decided_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='rent_decisions')
+    decided_at = models.DateTimeField(auto_now_add=True)
+
+    batch = models.ForeignKey('Batch', on_delete=models.SET_NULL, null=True, blank=True, related_name='rent_suggestions')
+    batch_number = models.CharField(max_length=100)
+    item_name = models.CharField(max_length=255, blank=True)
+    origin_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='rent_suggestions_from')
+    destination_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='rent_suggestions_to')
+
+    # the estimate when it was decided
+    move_mt = models.DecimalField(max_digits=14, decimal_places=3)
+    rate_per_mt = models.DecimalField(max_digits=10, decimal_places=2)
+    est_daily_saving = models.DecimalField(max_digits=14, decimal_places=2)
+    est_total_saving = models.DecimalField(max_digits=14, decimal_places=2)
+    est_stay_days = models.PositiveIntegerField(default=0)
+
+    shipment = models.ForeignKey('Shipment', on_delete=models.SET_NULL, null=True, blank=True, related_name='rent_suggestions')
+    dismiss_reason = models.CharField(max_length=20, choices=DISMISS_REASONS, blank=True)
+    dismiss_note = models.CharField(max_length=255, blank=True)
+    # a dismissed batch is left out of the suggestions until this date
+    snoozed_until = models.DateField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-decided_at']
+
+    def __str__(self):
+        return f"{self.decision}: {self.batch_number} {self.origin_warehouse} -> {self.destination_warehouse}"
 
 
 class OpsBriefing(models.Model):

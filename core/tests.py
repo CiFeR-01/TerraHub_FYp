@@ -1,6 +1,7 @@
 from django.test import TestCase, Client
 from django.urls import reverse
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from core.db_tracker import get_db_status, DB_QUERY_LOGS
 from django.db import connection
 from core.models import (
@@ -11,6 +12,14 @@ from core.models import (
 from core.utils import allocate_stock, deduct_stock_from_allocation
 
 User = get_user_model()
+
+
+def make_user(role=None, **kwargs):
+    """Create a user and put them in the `role` Group (seeded by migration 0060)."""
+    user = User.objects.create_user(**kwargs)
+    if role:
+        user.groups.add(Group.objects.get(name=role))
+    return user
 
 class DatabaseConsoleTests(TestCase):
     def setUp(self):
@@ -651,7 +660,7 @@ from core.analytics import (
     supplier_reliability, sales_order_delivery_risk,
     audit_accuracy, production_yield_variance, stockout_forecast,
     capacity_forecast, warehouse_utilization, shipment_logistics, my_open_jobs,
-    product_sales_trend, warehouse_rent_burn, rent_reduction_opportunities,
+    product_sales_trend, warehouse_rent_burn, rent_reduction_opportunities, rent_results,
 )
 from core.settings_store import get_setting
 from core.utils import apply_po_material_receipt
@@ -1761,45 +1770,78 @@ class RentReductionOpportunitiesTests(TestCase):
         self.assertEqual(rows[0]['candidate_batches'][0]['mt'], 40.0)
         self.assertEqual(rows[0]['total_daily_saving'], 200.0)  # 40 MT * 5.00, not 100 * 5.00
 
-    def test_near_expiry_batch_is_excluded_with_nothing_else(self):
-        self._flag_critical(self.rented)
-        self._batch(self.rented, 100, '5.00', expiry_days=10)  # expiring soon
-        Warehouse.objects.create(
-            name='Internal Depot Expiry', location_type='Storage', ownership_type='Internal',
-            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
-            total_capacity_mt=Decimal('500'),
+    def _depot(self, cap='500'):
+        return Warehouse.objects.create(
+            name=f'Internal Depot {cap}', location_type='Storage', ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'), total_capacity_mt=Decimal(cap),
         )
-        rows = rent_reduction_opportunities()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['candidate_batches'], [])
-        self.assertEqual(rows[0]['total_daily_saving'], 0)
-        self.assertEqual(rows[0]['excluded_near_expiry'], 1)
 
-    def test_batch_beyond_expiry_threshold_still_included(self):
-        self._flag_critical(self.rented)
-        self._batch(self.rented, 100, '5.00', expiry_days=31)  # just past the 30-day cutoff
-        Warehouse.objects.create(
-            name='Internal Depot Beyond', location_type='Storage', ownership_type='Internal',
-            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
-            total_capacity_mt=Decimal('500'),
-        )
-        rows = rent_reduction_opportunities()
-        self.assertEqual(len(rows[0]['candidate_batches']), 1)
-        self.assertEqual(rows[0]['excluded_near_expiry'], 0)
+    def _consume(self, total):
+        """Production used `total` units of the material over the last 30 days."""
+        from core.models import RegistryLog
+        row = RegistryLog.objects.create(action_type='Consumed_For_Manufacturing', item_name='Opp Sand (Run X)',
+                                         material=self.material, quantity_changed=Decimal(str(total)), warehouse=self.rented)
+        RegistryLog.objects.filter(pk=row.pk).update(timestamp=timezone.now() - timedelta(days=10))
 
-    def test_near_expiry_excluded_alongside_a_healthy_candidate(self):
+    def test_total_saving_counts_until_expiry(self):
         self._flag_critical(self.rented)
-        self._batch(self.rented, 100, '9.00', expiry_days=5)   # excluded despite the higher rate
-        self._batch(self.rented, 100, '3.00', expiry_days=200)  # the only real candidate
-        Warehouse.objects.create(
-            name='Internal Depot Mixed', location_type='Storage', ownership_type='Internal',
-            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
-            total_capacity_mt=Decimal('500'),
-        )
+        self._batch(self.rented, 100, '5.00', expiry_days=10)
+        self._depot()
+        c = rent_reduction_opportunities()[0]['candidate_batches'][0]
+        self.assertEqual((c['stay_days'], c['stay_reason'], c['total_saving']), (10, 'expires', 5000.0))  # 100 MT x 5 x 10
+
+    def test_total_saving_counts_until_used_up(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00', expiry_days=300)
+        self._consume(300)                                   # 10 MT/day -> gone in 10 days
+        self._depot()
+        c = rent_reduction_opportunities()[0]['candidate_batches'][0]
+        self.assertEqual((c['stay_days'], c['stay_reason'], c['total_saving']), (10, 'used up', 5000.0))
+
+    def test_older_stock_is_used_first(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00', expiry_days=300)
+        self._batch(self.rented, 50, '5.00', expiry_days=100)  # older - used before the 100 MT batch
+        self._consume(300)                                     # 10/day: 50 first, then 100 -> 15 days
+        self._depot()
+        cands = {c['mt']: c for c in rent_reduction_opportunities()[0]['candidate_batches']}
+        self.assertEqual((cands[50.0]['stay_days'], cands[100.0]['stay_days']), (5, 15))
+
+    def test_saving_is_capped_at_the_horizon(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00', expiry_days=1000)
+        self._depot()
+        c = rent_reduction_opportunities()[0]['candidate_batches'][0]
+        self.assertEqual((c['stay_days'], c['stay_reason']), (365, 'horizon'))
+
+    def test_moves_below_the_minimum_saving_are_left_out(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 2, '5.00', expiry_days=5)   # 2 MT x 5 x 5 days = RM50 < RM100
+        self._depot()
         rows = rent_reduction_opportunities()
-        self.assertEqual(len(rows[0]['candidate_batches']), 1)
-        self.assertEqual(rows[0]['candidate_batches'][0]['rate_per_mt'], 3.0)
-        self.assertEqual(rows[0]['excluded_near_expiry'], 1)
+        self.assertEqual((rows[0]['candidate_batches'], rows[0]['excluded_low_saving']), ([], 1))
+
+    def test_finished_goods_use_the_sales_rate(self):
+        self._flag_critical(self.rented)
+        prod = Product.objects.create(name='Opp FG', sku='PRD-OPP', unit_of_measure='kg', price_per_unit=1,
+                                      weight_mt_per_unit=Decimal('1'))
+        Batch.objects.create(batch_number='FG-OPP', product=prod, quantity=Decimal('90'), status='Active',
+                             warehouse=self.rented, manufacturing_date=date.today(),
+                             expiry_date=date.today() + timedelta(days=300), rental_rate_per_mt=Decimal('5'))
+        so = SalesOrder.objects.create(so_number='SO-OPP', client_name='C', origin_warehouse=self.rented, status='Delivered')
+        SalesOrderDetail.objects.create(sales_order=so, product=prod, quantity_ordered=Decimal('1800'))  # 10/day over 180 days
+        self._depot()
+        c = rent_reduction_opportunities()[0]['candidate_batches'][0]
+        self.assertEqual((c['stay_days'], c['stay_reason']), (9, 'used up'))
+
+    def test_space_goes_to_the_biggest_total_saving_not_the_highest_rate(self):
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '9.00', expiry_days=5)    # RM4,500 in total
+        self._batch(self.rented, 100, '3.00', expiry_days=200)  # RM60,000 in total
+        self._depot('100')                                      # room for one
+        rows = rent_reduction_opportunities()
+        self.assertEqual([c['rate_per_mt'] for c in rows[0]['candidate_batches']], [3.0])
+        self.assertEqual(rows[0]['total_saving'], 60000.0)
 
     def _internal(self, name, loc, cap):
         return Warehouse.objects.create(
@@ -2236,7 +2278,7 @@ class OpsBriefingCategoryTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='briefer', password='pw')
-        self.manager = User.objects.create_user(username='mgr', password='pw', role='Manager')
+        self.manager = make_user(username='mgr', password='pw', role='Manager')
         self.wh = Warehouse.objects.create(name='FG Store', location_type='Storage')
         self.product = Product.objects.create(
             name='Blend A', sku='PRD-A', unit_of_measure='pcs', price_per_unit=10,
@@ -2460,7 +2502,7 @@ class CategoryBriefingViewTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='viewer', password='pw')
-        self.manager = User.objects.create_user(username='mgr2', password='pw', role='Manager')
+        self.manager = make_user(username='mgr2', password='pw', role='Manager')
         self.wh = Warehouse.objects.create(name='FG Store 2', location_type='Storage')
 
     def _late_so(self, number='SO-CB-LATE'):
@@ -3066,9 +3108,9 @@ class ProcessControlTests(TestCase):
     def setUp(self):
         from core.models import PurchaseOrder
         self.PurchaseOrder = PurchaseOrder
-        self.manager = User.objects.create_user(username='mgr2', password='pw', role='Manager')
-        self.other_manager = User.objects.create_user(username='mgr3', password='pw', role='Manager')
-        self.admin = User.objects.create_user(username='adm2', password='pw', role='Admin')
+        self.manager = make_user(username='mgr2', password='pw', role='Manager')
+        self.other_manager = make_user(username='mgr3', password='pw', role='Manager')
+        self.admin = make_user(username='adm2', password='pw', role='Admin')
         self.wh = Warehouse.objects.create(name='WH PC', location_type='Storage')
         self.product = Product.objects.create(name='Prod PC', sku='PRD-PC', unit_of_measure='kg', price_per_unit=1)
 
@@ -3116,7 +3158,7 @@ class ProcessControlTests(TestCase):
         self.assertEqual(so.status, 'Draft')
 
     def test_request_must_go_to_a_manager(self):
-        staff = User.objects.create_user(username='staff2', password='pw', role='Sales')
+        staff = make_user(username='staff2', password='pw', role='Sales')
         so = self._so()
         self._as(self.manager).post(reverse('so_detail', args=[so.pk]), {'action': 'request_approval', 'manager_id': staff.id})
         so.refresh_from_db()
@@ -3207,7 +3249,7 @@ class ProcessControlTests(TestCase):
                                             expected_yield=Decimal('1'), status='Pending Approval', **kw)
 
     def test_staff_cannot_approve_production_run(self):
-        staff = User.objects.create_user(username='staff_run', password='pw', role='Manufacturing')
+        staff = make_user(username='staff_run', password='pw', role='Manufacturing')
         run = self._run()
         self._as(staff).post(reverse('approvals_inbox'), {'action': 'approve', 'item_type': 'production_run', 'item_id': run.id})
         run.refresh_from_db()
@@ -3231,7 +3273,7 @@ class OrderDisplayTests(TestCase):
     no raw template tags in the list timeline."""
 
     def setUp(self):
-        self.user = User.objects.create_user(username='disp', password='pw', role='Admin')
+        self.user = make_user(username='disp', password='pw', role='Admin')
         self.client = Client()
         self.client.force_login(self.user)
         self.wh = Warehouse.objects.create(name='WH Disp', location_type='Storage')
@@ -3302,7 +3344,7 @@ class TesterFollowUpTests(TestCase):
 
     def setUp(self):
         from core.models import Client as ClientModel
-        self.admin = User.objects.create_user(username='tfu', password='pw', role='Admin', first_name='Ada', last_name='Admin')
+        self.admin = make_user(username='tfu', password='pw', role='Admin', first_name='Ada', last_name='Admin')
         self.client = Client()
         self.client.force_login(self.admin)
         self.hub = Warehouse.objects.create(name='Hub TFU', location_type='Storage')
@@ -3318,6 +3360,24 @@ class TesterFollowUpTests(TestCase):
         self.assertEqual(resp.context['yield_logs_sum'], Decimal('400'))
         self.assertEqual(resp.context['yield_progress_pct'], 100)
         self.assertContains(resp, 'Planned Start')
+
+    def test_variance_approval_from_run_page_returns_to_run_page(self):
+        from core.models import ProductionRun
+        run = ProductionRun.objects.create(run_number='RUN-VAR', target_product=self.product, expected_yield=Decimal('400'),
+                                           actual_yield=Decimal('380'), status='Pending Approval', manufacturing_plant=self.plant)
+        url = reverse('production_run_detail', args=[run.pk])
+        resp = self.client.get(url)
+        self.assertContains(resp, 'name="next"')
+        resp = self.client.post(reverse('approvals_inbox'), {
+            'item_type': 'production_run', 'item_id': run.pk, 'action': 'reject', 'next': url,
+        })
+        self.assertRedirects(resp, url, fetch_redirect_response=False)
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'InProgress')
+
+    def test_approvals_inbox_ignores_offsite_next(self):
+        resp = self.client.post(reverse('approvals_inbox'), {'next': 'https://evil.example/'})
+        self.assertRedirects(resp, reverse('approvals_inbox'), fetch_redirect_response=False)
 
     def test_approval_notification_cleared_after_decision(self):
         from core.models import Notification
@@ -3390,8 +3450,8 @@ class UnifiedReceivingTests(TestCase):
     one-click status buttons and Submit & Approve for Admins."""
 
     def setUp(self):
-        self.admin = User.objects.create_user(username='recv_admin', password='pw', role='Admin')
-        self.manager = User.objects.create_user(username='recv_mgr', password='pw', role='Manager')
+        self.admin = make_user(username='recv_admin', password='pw', role='Admin')
+        self.manager = make_user(username='recv_mgr', password='pw', role='Manager')
         self.client = Client()
         self.client.force_login(self.admin)
         self.origin = Warehouse.objects.create(name='Recv Origin', location_type='Storage')
@@ -3490,7 +3550,7 @@ class QaHoldNewFinishedGoodsTests(TestCase):
 
     def setUp(self):
         from core.models import ProductionRun
-        self.admin = User.objects.create_user(username='qa_admin', password='pw', role='Admin')
+        self.admin = make_user(username='qa_admin', password='pw', role='Admin')
         self.client = Client()
         self.client.force_login(self.admin)
         self.plant = Warehouse.objects.create(name='QA Plant', location_type='Manufacturing')
@@ -3544,7 +3604,7 @@ class QuarantinedCapacityDisplayTests(TestCase):
     """Quarantined stock counts toward capacity and is called out on the pages."""
 
     def test_dashboard_and_facilities_show_quarantined_share(self):
-        admin = User.objects.create_user(username='cap_admin', password='pw', role='Admin', is_superuser=True)
+        admin = make_user(username='cap_admin', password='pw', role='Admin', is_superuser=True)
         c = Client()
         c.force_login(admin)
         wh = Warehouse.objects.create(name='Cap WH', location_type='Storage', total_capacity_mt=Decimal('100'))
@@ -3627,7 +3687,7 @@ class RentHistoryTests(TestCase):
         self.assertTrue(h['has_estimates'])
 
     def test_rent_page_fills_today_and_renders_chart(self):
-        admin = User.objects.create_user(username='rh_admin', password='pw', role='Admin')
+        admin = make_user(username='rh_admin', password='pw', role='Admin')
         self._batch(self.rented, 100)          # created without running on-commit callbacks
         c = Client(); c.force_login(admin)
         resp = c.get(reverse('rent_opportunities'))
@@ -3644,7 +3704,7 @@ class SplitStockDeliveryTests(TestCase):
     def setUp(self):
         from core.models import OrderTimeline, Notification
         self.OrderTimeline, self.Notification = OrderTimeline, Notification
-        self.admin = User.objects.create_user(username='split_admin', password='pw', role='Admin')
+        self.admin = make_user(username='split_admin', password='pw', role='Admin')
         self.client = Client()
         self.client.force_login(self.admin)
         self.hub = Warehouse.objects.create(name='Split Hub', location_type='Storage')
@@ -3768,3 +3828,417 @@ class SplitStockDeliveryTests(TestCase):
         self.assertEqual(self.at_alpha.allocated_quantity, Decimal('100'))
         self.assertEqual(StockAllocation.objects.get(batch=self.at_alpha).shipment, None)
         self.assertEqual(self.so.status, 'Ready to Ship')
+
+class GroupPermissionTests(TestCase):
+    """Roles are Groups: what a user may do comes only from the permissions on
+    their groups, so a brand-new group works without any code change."""
+
+    def setUp(self):
+        from django.contrib.auth.models import Permission
+        self.perm = lambda codename: Permission.objects.get(content_type__app_label='core', codename=codename)
+        self.user = make_user(username='gp_user', password='pw')
+        self.client.login(username='gp_user', password='pw')
+
+    def _give(self, *codenames):
+        group = Group.objects.create(name='Night Shift Lead')
+        group.permissions.add(*[self.perm(c) for c in codenames])
+        self.user.groups.add(group)
+
+    def test_standard_groups_are_seeded(self):
+        names = set(Group.objects.values_list('name', flat=True))
+        self.assertTrue({'Admin', 'Manager', 'Staff (Editor)', 'Staff (Viewer)', 'Sales',
+                         'Purchasing', 'Logistics', 'Manufacturing', 'Warehouse'} <= names)
+
+    def test_no_group_means_no_action_center_or_user_management(self):
+        self.assertRedirects(self.client.get(reverse('approvals_inbox')), reverse('dashboard'), fetch_redirect_response=False)
+        self.assertRedirects(self.client.get(reverse('user_management')), reverse('dashboard'), fetch_redirect_response=False)
+
+    def test_new_group_with_approve_permission_can_approve(self):
+        from core.permissions import approvers
+        self.assertNotIn(self.user, approvers())
+        self._give('approve_requests')
+        self.assertIn(self.user, approvers())
+        self.assertEqual(self.client.get(reverse('approvals_inbox')).status_code, 200)
+
+    def test_new_group_with_manage_users_can_assign_groups(self):
+        self._give('manage_users')
+        other = make_user(username='gp_other', password='pw')
+        sales = Group.objects.get(name='Sales')
+        self.client.post(reverse('user_management'), {
+            'action': 'update_user', 'user_id': other.id, 'is_active': 'on', 'roles': [sales.id],
+        })
+        self.assertEqual(list(other.groups.all()), [sales])
+
+    def test_admin_group_overrides_approvals_but_manager_does_not(self):
+        from core.permissions import is_admin_user
+        self.assertTrue(is_admin_user(make_user(username='gp_adm', password='pw', role='Admin')))
+        self.assertFalse(is_admin_user(make_user(username='gp_mgr', password='pw', role='Manager')))
+
+    def test_role_label_lists_groups(self):
+        self.assertEqual(self.user.role_label, 'No role')
+        self._give()
+        self.assertEqual(self.user.role_label, 'Night Shift Lead')
+
+
+class DashboardFiguresTests(TestCase):
+    """Executive dashboard headline figures: raw stock is shown in MT (not the
+    material's kg units), the active-shipments list excludes finished ones, and
+    one full warehouse is flagged even when the network average looks healthy."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='dash_exec', password='pw', is_superuser=True)
+        self.client.force_login(self.user)
+        self.wh = Warehouse.objects.create(name='Dash Big WH', location_type='Storage', total_capacity_mt=Decimal('1000'))
+
+    def _batch(self, number, material, qty, wh):
+        return Batch.objects.create(batch_number=number, status='Active', material=material, quantity=Decimal(qty),
+                                    warehouse=wh, manufacturing_date=date.today(),
+                                    expiry_date=date.today() + timedelta(days=200))
+
+    def test_raw_materials_kpi_is_in_mt(self):
+        kg_mat = Material.objects.create(name='Dash Urea', sku='MAT-DASH-KG', category='Raw', unit_of_measure='kg',
+                                         safe_storage_days=365, weight_mt_per_unit=Decimal('0.001'))
+        self._batch('B-DASH-KG', kg_mat, '5000', self.wh)
+        resp = self.client.get(reverse('dashboard'))
+        self.assertAlmostEqual(resp.context['inventory_metrics']['raw_materials_mt'], 5.0)
+        self.assertContains(resp, '5<span class="kpi-unit">MT</span>')
+
+    def test_active_shipments_exclude_finished(self):
+        for trk, status in (('DASH-DONE', 'Completed'), ('DASH-GONE', 'Cancelled'), ('DASH-DRAFT', 'Draft'),
+                            ('DASH-ROAD', 'Dispatched')):
+            Shipment.objects.create(tracking_number=trk, direction='Outbound', status=status)
+        resp = self.client.get(reverse('dashboard'))
+        self.assertEqual([s.tracking_number for s in resp.context['active_shipments']], ['DASH-ROAD'])
+        self.assertEqual(resp.context['active_shipments_total'], 1)
+
+    def test_single_full_warehouse_is_flagged(self):
+        small = Warehouse.objects.create(name='Dash Small WH', location_type='Storage', total_capacity_mt=Decimal('10'))
+        mt_mat = Material.objects.create(name='Dash Bulk', sku='MAT-DASH-MT', category='Raw',
+                                         safe_storage_days=365, weight_mt_per_unit=Decimal('1'))
+        self._batch('B-DASH-FULL', mt_mat, '12', small)
+        resp = self.client.get(reverse('dashboard'))
+        self.assertLess(resp.context['global_utilization'], 70)
+        self.assertEqual(resp.context['capacity_status'], 'crit')
+        self.assertEqual(resp.context['attention']['over_capacity'], 1)
+        self.assertContains(resp, 'warehouse over capacity')
+
+
+class ProductionAllocateRoundingTests(TestCase):
+    """A 4dp recipe x a fractional yield (0.0200 x 115.01 = 2.3002) must be
+    suggested as a 2dp amount stock can actually hold, rounded up (2.31), and
+    the qty inputs must step from 0 so whole numbers like 5 are accepted."""
+
+    def test_fefo_suggestion_rounds_up_to_2dp(self):
+        user = User.objects.create_user(username='alloc_round', password='pw', is_superuser=True)
+        self.client.force_login(user)
+        wh = Warehouse.objects.create(name='Round WH', location_type='Storage')
+        mat = Material.objects.create(name='Round AN', sku='MAT-RND', category='Raw', unit_of_measure='kg',
+                                      safe_storage_days=365, weight_mt_per_unit=Decimal('0.001'))
+        prod = Product.objects.create(name='Round Prod', sku='PRD-RND', unit_of_measure='kg')
+        ProductRecipe.objects.create(product=prod, material=mat, quantity_required=Decimal('0.0200'))
+        Batch.objects.create(batch_number='B-RND-1', material=mat, quantity=Decimal('171'), status='Active',
+                             warehouse=wh, manufacturing_date=date.today(),
+                             expiry_date=date.today() + timedelta(days=90))
+        run = ProductionRun.objects.create(run_number='RUN-RND', target_product=prod,
+                                           expected_yield=Decimal('115.01'), status='Pending Allocation')
+        resp = self.client.get(reverse('production_run_allocate', args=[run.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['recipe_reqs'][0]['needed'], 2.31)
+        self.assertContains(resp, 'value="2.31"')
+        self.assertContains(resp, 'min="0" step="0.01"')
+
+
+class HomeLandingTests(TestCase):
+    """Public landing page: renders for guests, sends signed-in users to the
+    dashboard, and its "Trace a batch" box jumps to the batch's public page."""
+
+    def setUp(self):
+        mat = Material.objects.create(name='Landing Mat', sku='MAT-LAND', category='Raw',
+                                      safe_storage_days=365, weight_mt_per_unit=Decimal('0.001'))
+        Batch.objects.create(batch_number='RM-LAND-1', material=mat, quantity=Decimal('10'), status='Active',
+                             manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=90))
+
+    def test_guest_sees_landing(self):
+        resp = self.client.get(reverse('home'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Every batch, in every warehouse, used before it expires.')
+        self.assertContains(resp, 'img/landing-dashboard.png')
+
+    def test_signed_in_user_goes_to_dashboard(self):
+        self.client.force_login(User.objects.create_user(username='land_user', password='pw'))
+        self.assertRedirects(self.client.get(reverse('home')), reverse('dashboard'), fetch_redirect_response=False)
+
+    def test_trace_known_batch_redirects_to_public_page(self):
+        resp = self.client.get(reverse('home'), {'batch': ' rm-land-1 '})
+        self.assertRedirects(resp, reverse('batch_public_info', args=['RM-LAND-1']))
+
+    def test_trace_unknown_batch_shows_error(self):
+        resp = self.client.get(reverse('home'), {'batch': 'NOPE-123'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'No batch found with the number')
+        self.assertContains(resp, 'value="NOPE-123"')
+
+
+class RentSuggestionDecisionTests(TestCase):
+    """DSS #10: turn Rent Opportunities suggestions into a draft transfer or dismiss
+    them with a reason; both are recorded; stock on the way reserves the destination."""
+
+    def setUp(self):
+        from core.models import RentSuggestion
+        self.RentSuggestion = RentSuggestion
+        self.admin = User.objects.create_user(username='rs_admin', password='pw', is_superuser=True)
+        self.plain = User.objects.create_user(username='rs_plain', password='pw')
+        self.client = Client()
+        self.client.force_login(self.admin)
+        self.rented = Warehouse.objects.create(
+            name='Rented RS', location_type='Storage', ownership_type='ExternalProvider',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('5.00'), total_capacity_mt=Decimal('1000'),
+        )
+        self.material = Material.objects.create(name='RS Sand', sku='MAT-RS', category='Bulk', unit_of_measure='MT',
+                                                safe_storage_days=365, weight_mt_per_unit=Decimal('1.0'))
+        for pct, ago in ((80, 6), (90, 3), (97, 0)):    # flag the rented warehouse Critical
+            WarehouseUtilizationSnapshot.objects.create(
+                warehouse=self.rented, snapshot_date=date.today() - timedelta(days=ago),
+                used_mt=Decimal(str(pct * 10)), capacity_mt=Decimal('1000'), utilization_percent=Decimal(str(pct)))
+
+    def _depot(self, name, cap):
+        return Warehouse.objects.create(name=name, location_type='Storage', ownership_type='Internal',
+                                        rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'),
+                                        total_capacity_mt=Decimal(str(cap)))
+
+    def _batch(self, qty, rate='5.00', expiry_days=10, material=None):
+        m = material or self.material
+        return Batch.objects.create(
+            batch_number=f'B-RS-{Batch.objects.count()}', material=m, quantity=Decimal(str(qty)), status='Active',
+            warehouse=self.rented, manufacturing_date=date.today(),
+            expiry_date=date.today() + timedelta(days=expiry_days), rental_rate_per_mt=Decimal(rate))
+
+    def _post(self, decision, picks, **extra):
+        data = {'decision': decision, 'pick': picks}
+        data.update(extra)
+        return self.client.post(reverse('rent_suggestion_decide'), data)
+
+    def _candidates(self):
+        return [c for o in rent_reduction_opportunities() for c in o['candidate_batches']]
+
+    def _messages(self, resp):
+        from django.contrib.messages import get_messages
+        return [m.message for m in get_messages(resp.wsgi_request)]
+
+    # --- accept
+    def test_accepting_creates_one_draft_transfer_and_reserves_the_stock(self):
+        depot = self._depot('Depot RS', 500)
+        a, b = self._batch(100), self._batch(50)
+        resp = self._post('accept', [f'{a.id}:{depot.id}', f'{b.id}:{depot.id}'])
+
+        s = Shipment.objects.get(direction='Transfer')
+        self.assertEqual((s.status, s.origin_warehouse, s.destination_warehouse), ('Draft', self.rented, depot))
+        self.assertEqual(s.items.count(), 2)
+        self.assertRedirects(resp, reverse('shipment_detail', args=[s.pk]))
+        for batch, qty in ((a, '100'), (b, '50')):
+            batch.refresh_from_db()
+            self.assertEqual(batch.allocated_quantity, Decimal(qty))
+            self.assertEqual(StockAllocation.objects.get(batch=batch).shipment, s)
+        recorded = self.RentSuggestion.objects.filter(decision='Accepted')
+        self.assertEqual(recorded.count(), 2)
+        r = recorded.get(batch=a)
+        self.assertEqual((r.move_mt, r.est_daily_saving, r.est_stay_days, r.est_total_saving, r.shipment),
+                         (Decimal('100.000'), Decimal('500.00'), 10, Decimal('5000.00'), s))
+
+    def test_accepting_reserves_room_at_the_destination(self):
+        depot = self._depot('Depot RS', 500)
+        a, b = self._batch(100), self._batch(50, expiry_days=200)
+        self.assertEqual(rent_reduction_opportunities()[0]['destination_options'][0]['spare_mt'], 500.0)
+        self._post('accept', [f'{a.id}:{depot.id}'])
+        opp = rent_reduction_opportunities()[0]
+        self.assertEqual(opp['destination_options'][0]['spare_mt'], 400.0)        # 100 MT is on its way
+        self.assertEqual([c['batch_id'] for c in opp['candidate_batches']], [b.id])   # accepted batch no longer offered
+
+    def test_partial_move_is_converted_to_units(self):
+        half = Material.objects.create(name='RS Half', sku='MAT-RSH', category='Bulk', unit_of_measure='kg',
+                                       safe_storage_days=365, weight_mt_per_unit=Decimal('0.5'))
+        depot = self._depot('Small Depot', 40)          # room for 40 MT of the 100 MT batch
+        batch = self._batch(200, material=half)         # 200 units x 0.5 = 100 MT
+        self._post('accept', [f'{batch.id}:{depot.id}'])
+        item = Shipment.objects.get(direction='Transfer').items.get()
+        self.assertEqual(item.quantity, Decimal('80.00'))   # 40 MT / 0.5
+        batch.refresh_from_db()
+        self.assertEqual(batch.allocated_quantity, Decimal('80.00'))
+
+    def test_one_transfer_per_destination(self):
+        d1, d2 = self._depot('Depot A', 100), self._depot('Depot B', 90)
+        a, b = self._batch(100, rate='9.00'), self._batch(90, rate='8.00')
+        resp = self._post('accept', [f'{a.id}:{d1.id}', f'{b.id}:{d2.id}'])
+        self.assertEqual(Shipment.objects.filter(direction='Transfer').count(), 2)
+        self.assertRedirects(resp, reverse('rent_opportunities'))
+
+    def test_stale_or_unknown_picks_are_skipped(self):
+        depot = self._depot('Depot RS', 500)
+        real = self._batch(100)
+        resp = self._post('accept', [f'{real.id}:{depot.id + 99}', '999999:1'])
+        self.assertFalse(Shipment.objects.filter(direction='Transfer').exists())
+        self.assertFalse(self.RentSuggestion.objects.exists())
+        self.assertTrue(any('changed since the page loaded' in m for m in self._messages(resp)))
+
+    def test_nothing_ticked_does_nothing(self):
+        self._depot('Depot RS', 500); self._batch(100)
+        resp = self._post('accept', [])
+        self.assertFalse(Shipment.objects.filter(direction='Transfer').exists())
+        self.assertIn('Tick at least one batch first.', self._messages(resp))
+
+    def test_needs_permission(self):
+        depot = self._depot('Depot RS', 500)
+        batch = self._batch(100)
+        self.client.force_login(self.plain)
+        resp = self._post('accept', [f'{batch.id}:{depot.id}'])
+        self.assertFalse(Shipment.objects.filter(direction='Transfer').exists())
+        self.assertIn("You don't have permission to create transfers.", self._messages(resp))
+
+    # --- dismiss
+    def test_dismissing_records_the_reason_and_hides_the_batch(self):
+        depot = self._depot('Depot RS', 500)
+        batch = self._batch(100, expiry_days=200)
+        self._post('dismiss', [f'{batch.id}:{depot.id}'], reason='needed_here', note='Needed for a rush order')
+        rec = self.RentSuggestion.objects.get()
+        self.assertEqual((rec.decision, rec.dismiss_reason, rec.dismiss_note), ('Dismissed', 'needed_here', 'Needed for a rush order'))
+        self.assertEqual(rec.snoozed_until, date.today() + timedelta(days=30))
+        opp = rent_reduction_opportunities()[0]
+        self.assertEqual((opp['candidate_batches'], opp['dismissed_hidden']), ([], 1))
+        self.assertFalse(Shipment.objects.filter(direction='Transfer').exists())
+        batch.refresh_from_db()
+        self.assertEqual(batch.allocated_quantity, Decimal('0'))     # nothing reserved
+
+    def test_dismissed_batch_comes_back_after_the_snooze(self):
+        depot = self._depot('Depot RS', 500)
+        batch = self._batch(100, expiry_days=200)
+        self._post('dismiss', [f'{batch.id}:{depot.id}'], reason='other')
+        self.RentSuggestion.objects.update(snoozed_until=date.today() - timedelta(days=1))
+        self.assertEqual([c['batch_id'] for c in self._candidates()], [batch.id])
+
+    def test_dismissing_needs_a_reason(self):
+        depot = self._depot('Depot RS', 500)
+        batch = self._batch(100)
+        self._post('dismiss', [f'{batch.id}:{depot.id}'], reason='')
+        self.assertFalse(self.RentSuggestion.objects.exists())
+
+    # --- the page
+    def test_controls_show_only_with_permission(self):
+        self._depot('Depot RS', 500); self._batch(100)
+        resp = self.client.get(reverse('rent_opportunities'))
+        self.assertContains(resp, 'Create transfer for selected')
+        self.assertContains(resp, 'name="pick"')
+        self.client.force_login(self.plain)
+        resp = self.client.get(reverse('rent_opportunities'))
+        self.assertNotContains(resp, 'Create transfer for selected')
+        self.assertNotContains(resp, 'name="pick"')
+
+
+class RentResultsTests(TestCase):
+    """DSS #11: measured vs promised saving for accepted Rent Opportunities moves."""
+
+    def setUp(self):
+        from core.models import RentSuggestion, OrderTimeline
+        self.RentSuggestion, self.OrderTimeline = RentSuggestion, OrderTimeline
+        self.today = date.today()
+        self.origin = Warehouse.objects.create(
+            name='Origin RR', location_type='Storage', ownership_type='ExternalProvider',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('5.00'), total_capacity_mt=Decimal('1000'))
+        self.depot = Warehouse.objects.create(
+            name='Depot RR', location_type='Storage', ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'), total_capacity_mt=Decimal('500'))
+
+    def _snap(self, wh, days_ago, rent, used, estimated=False):
+        WarehouseUtilizationSnapshot.objects.update_or_create(
+            warehouse=wh, snapshot_date=self.today - timedelta(days=days_ago),
+            defaults=dict(used_mt=Decimal(str(used)), capacity_mt=wh.total_capacity_mt, utilization_percent=Decimal('10'),
+                          daily_rent_cost=Decimal(str(rent)), rent_estimated=estimated))
+
+    def _move(self, moved_days_ago=10, status='Completed', promised='200.00', mt='40'):
+        s = Shipment.objects.create(tracking_number=f'T-RR-{Shipment.objects.count()}', direction='Transfer',
+                                    status=status, origin_warehouse=self.origin, destination_warehouse=self.depot)
+        if status == 'Completed':
+            t = self.OrderTimeline.objects.create(shipment=s, action='Receiving finalized. Shipment completed.')
+            self.OrderTimeline.objects.filter(pk=t.pk).update(
+                timestamp=timezone.now() - timedelta(days=moved_days_ago))
+        self.RentSuggestion.objects.create(
+            decision='Accepted', batch_number='B-RR', origin_warehouse=self.origin, destination_warehouse=self.depot,
+            move_mt=Decimal(mt), rate_per_mt=Decimal('5.00'), est_daily_saving=Decimal(promised),
+            est_total_saving=Decimal('2000.00'), est_stay_days=10, shipment=s)
+        return s
+
+    def _history(self, before=(500, 100), after=(300, 60), moved_days_ago=10):
+        # one recorded row a week+ before the move, one just after it; the rest carry forward
+        self._snap(self.origin, moved_days_ago + 8, *before)
+        self._snap(self.origin, moved_days_ago - 1, *after)
+        self._snap(self.depot, moved_days_ago + 8, 0, 0)
+
+    def test_measured_saving_matches_the_promise(self):
+        self._history()
+        self._move()
+        r = rent_results()
+        m = r['moves'][0]
+        self.assertEqual((m['status'], m['measured_daily'], m['promised_daily']), ('measured', 200.0, 200.0))
+        self.assertEqual((r['accepted'], r['pending'], r['measured_count'], r['measured_daily_total']), (1, 0, 1, 200.0))
+        self.assertEqual(m['moved_on'], self.today - timedelta(days=10))
+
+    def test_falls_short_when_rent_only_drops_a_bit(self):
+        self._history(after=(450, 60))
+        self._move()
+        m = rent_results()['moves'][0]
+        self.assertEqual((m['status'], m['measured_daily']), ('measured', 50.0))
+
+    def test_unclear_when_other_stock_also_changed(self):
+        self._history(after=(50, 10))            # 90 MT left the origin but only 40 MT was moved
+        self._move()
+        m = rent_results()['moves'][0]
+        self.assertEqual(m['status'], 'unclear')
+        self.assertEqual(rent_results()['measured_count'], 0)     # not counted in the total
+
+    def test_waits_until_the_transfer_completes(self):
+        self._move(status='Draft')
+        r = rent_results()
+        self.assertEqual((r['pending'], r['moves'][0]['status']), (1, 'measuring'))
+
+    def test_waits_a_few_days_after_the_move(self):
+        self._history(moved_days_ago=1)
+        self._move(moved_days_ago=1)
+        self.assertEqual(rent_results()['moves'][0]['status'], 'measuring')
+
+    def test_estimated_rows_are_not_used(self):
+        self._snap(self.origin, 18, 500, 100, estimated=True)
+        self._snap(self.origin, 9, 300, 60, estimated=True)
+        self._move()
+        self.assertEqual(rent_results()['moves'][0]['status'], 'unavailable')
+
+    def test_cancelled_transfers_are_left_out(self):
+        self._move(status='Cancelled')
+        r = rent_results()
+        self.assertEqual((r['accepted'], r['moves']), (0, []))
+
+    def test_one_row_per_transfer_even_with_several_batches(self):
+        self._history()
+        s = self._move(promised='120.00', mt='24')
+        self.RentSuggestion.objects.create(
+            decision='Accepted', batch_number='B-RR2', origin_warehouse=self.origin, destination_warehouse=self.depot,
+            move_mt=Decimal('16'), rate_per_mt=Decimal('5.00'), est_daily_saving=Decimal('80.00'),
+            est_total_saving=Decimal('800.00'), est_stay_days=10, shipment=s)
+        r = rent_results()
+        self.assertEqual(len(r['moves']), 1)
+        self.assertEqual((r['moves'][0]['promised_daily'], r['moves'][0]['move_mt']), (200.0, 40.0))
+
+    def test_dismissed_are_counted(self):
+        self.RentSuggestion.objects.create(
+            decision='Dismissed', batch_number='B-D', origin_warehouse=self.origin, destination_warehouse=self.depot,
+            move_mt=Decimal('10'), rate_per_mt=Decimal('5.00'), est_daily_saving=Decimal('50.00'),
+            est_total_saving=Decimal('500.00'), dismiss_reason='other')
+        self.assertEqual(rent_results()['dismissed'], 1)
+
+    def test_page_shows_the_results_section(self):
+        self._history()
+        self._move()
+        user = User.objects.create_user(username='rr_admin', password='pw', is_superuser=True)
+        self.client.force_login(user)
+        resp = self.client.get(reverse('rent_opportunities'))
+        self.assertContains(resp, 'Did the moves you accepted save what was promised?')
+        self.assertContains(resp, 'T-RR-0')
+        self.assertContains(resp, 'Measured')

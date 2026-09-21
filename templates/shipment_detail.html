@@ -614,7 +614,7 @@
                     <select name="assigned_manager_id" required class="form-select" style="width:100%; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:1.5rem;">
                         <option value="">-- Select Manager --</option>
                         {% for mgr in managers %}
-                        <option value="{{ mgr.id }}" {% if shipment.assigned_manager_id == mgr.id %}selected{% endif %}>{{ mgr.get_full_name|default:mgr.username }} ({{ mgr.role }})</option>
+                        <option value="{{ mgr.id }}" {% if shipment.assigned_manager_id == mgr.id %}selected{% endif %}>{{ mgr.get_full_name|default:mgr.username }} ({{ mgr.role_label }})</option>
                         {% endfor %}
                     </select>
                     
