@@ -1087,6 +1087,24 @@ def _fefo_ahead(batches):
     return ahead
 
 
+def incoming_transfer_mt():
+    """{warehouse_id: MT} of stock on internal transfers that are heading to a
+    warehouse but haven't been received yet - it isn't stored there yet, but it
+    will take up the space, so it isn't free."""
+    from .models import ShipmentItem
+
+    incoming = {}
+    items = (ShipmentItem.objects
+             .filter(shipment__direction='Transfer', shipment__destination_warehouse__isnull=False)
+             .exclude(shipment__status__in=('Completed', 'Cancelled'))
+             .select_related('shipment', 'material', 'product'))
+    for it in items:
+        unit_mt = it.material.weight_mt_per_unit if it.material else (it.product.weight_mt_per_unit if it.product else 0)
+        wid = it.shipment.destination_warehouse_id
+        incoming[wid] = incoming.get(wid, 0.0) + float(it.quantity * unit_mt)
+    return incoming
+
+
 def rent_reduction_opportunities():
     """DSS: for rented (Usage-billed) warehouses capacity_forecast() flags
     critical/watch, suggests batches to relocate into our own warehouses and
@@ -1104,8 +1122,13 @@ def rent_reduction_opportunities():
     earlier of expiry and being used up (FEFO, at the current usage/sales rate),
     capped at dss_saving_horizon_days. Batches saving less than
     dss_min_total_saving_rm in total are left out and counted per warehouse.
-    Free space goes first to the batches that save the most per MT."""
-    from .models import Warehouse, Batch
+    Free space goes first to the batches that save the most per MT.
+
+    A destination's free space is its capacity less what's stored and what's
+    already on the way there (incoming_transfer_mt), so accepting a suggestion
+    reserves its room. Batches someone dismissed stay out until their snooze
+    (RentSuggestion.snoozed_until) ends."""
+    from .models import Warehouse, Batch, RentSuggestion
     from .settings_store import get_setting
 
     forecast_rows = {r['warehouse_id']: r for r in capacity_forecast()}
@@ -1114,10 +1137,11 @@ def rent_reduction_opportunities():
         return []
 
     util_by_wh = {r['warehouse_id']: r for r in warehouse_utilization()}
+    incoming = incoming_transfer_mt()
     spare_by_dest = {}
     for w in Warehouse.objects.filter(ownership_type='Internal', location_type__in=Warehouse.STORAGE_TYPES):
         u = util_by_wh.get(w.id)
-        spare = float(w.total_capacity_mt) - (u['used_mt'] if u else 0.0)
+        spare = float(w.total_capacity_mt) - (u['used_mt'] if u else 0.0) - incoming.get(w.id, 0.0)
         if spare > 0:
             spare_by_dest[w.id] = {'warehouse_id': w.id, 'name': w.name, 'spare_mt': round(spare, 3)}
     destination_options = sorted(spare_by_dest.values(), key=lambda x: -x['spare_mt'])
@@ -1128,6 +1152,10 @@ def rent_reduction_opportunities():
     today = timezone.localdate()
     horizon = int(get_setting('dss_saving_horizon_days'))
     min_saving = float(get_setting('dss_min_total_saving_rm'))
+    snooze_days = int(get_setting('dss_dismiss_snooze_days'))
+    snoozed = set(RentSuggestion.objects.filter(
+        decision='Dismissed', snoozed_until__gte=today, batch__isnull=False
+    ).values_list('batch_id', flat=True))
 
     # Gather every movable batch across all flagged rented warehouses first ...
     origins = {}
@@ -1135,10 +1163,13 @@ def rent_reduction_opportunities():
     for w in Warehouse.objects.filter(id__in=flagged):
         if w.ownership_type == 'Internal' or w.rental_billing_method != 'Usage':
             continue  # nothing to save moving off a free or flat-Overall-billed warehouse
-        origins[w.id] = {'warehouse': w, 'candidates': [], 'excluded_low_saving': 0}
+        origins[w.id] = {'warehouse': w, 'candidates': [], 'excluded_low_saving': 0, 'dismissed_hidden': 0}
         for b in (Batch.objects.filter(warehouse=w, status__in=['Active', 'Quarantined'])
                   .select_related('material', 'product')):
             if float(b.available_weight_mt) > 0:
+                if b.id in snoozed:
+                    origins[w.id]['dismissed_hidden'] += 1
+                    continue
                 batches.append((b, w))
 
     rates = _daily_usage_rates({b.material_id for b, _ in batches if b.material_id},
@@ -1187,7 +1218,7 @@ def rent_reduction_opportunities():
 
     opportunities = []
     for wid, o in origins.items():
-        if o['candidates'] or o['excluded_low_saving']:
+        if o['candidates'] or o['excluded_low_saving'] or o['dismissed_hidden']:
             opportunities.append({
                 'warehouse_id': wid,
                 'name': o['warehouse'].name,
@@ -1197,6 +1228,8 @@ def rent_reduction_opportunities():
                 'total_saving': round(sum(c['total_saving'] for c in o['candidates']), 2),
                 'destination_options': destination_options,
                 'excluded_low_saving': o['excluded_low_saving'],
+                'dismissed_hidden': o['dismissed_hidden'],
+                'snooze_days': snooze_days,
                 'min_total_saving': min_saving,
             })
     opportunities.sort(key=lambda o: -o['total_saving'])

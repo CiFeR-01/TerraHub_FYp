@@ -634,6 +634,49 @@ class WarehouseUtilizationSnapshot(models.Model):
         return f"{self.warehouse.name} @ {self.snapshot_date}: {self.utilization_percent}%"
 
 
+class RentSuggestion(models.Model):
+    """What someone did with a Rent Opportunities suggestion: turned it into an
+    internal transfer (Accepted) or set it aside with a reason (Dismissed). The
+    estimate at the time is stored so the result can be compared with the rent
+    actually saved afterwards. Suggestions themselves are computed live and are
+    not stored - only decisions are."""
+    DECISION_CHOICES = (('Accepted', 'Accepted'), ('Dismissed', 'Dismissed'))
+    DISMISS_REASONS = (
+        ('not_worth_it', 'Not worth the effort'),
+        ('needed_here', 'Stock is needed where it is'),
+        ('destination', "Destination isn't suitable"),
+        ('other', 'Other'),
+    )
+    decision = models.CharField(max_length=10, choices=DECISION_CHOICES, db_index=True)
+    decided_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='rent_decisions')
+    decided_at = models.DateTimeField(auto_now_add=True)
+
+    batch = models.ForeignKey('Batch', on_delete=models.SET_NULL, null=True, blank=True, related_name='rent_suggestions')
+    batch_number = models.CharField(max_length=100)
+    item_name = models.CharField(max_length=255, blank=True)
+    origin_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='rent_suggestions_from')
+    destination_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='rent_suggestions_to')
+
+    # the estimate when it was decided
+    move_mt = models.DecimalField(max_digits=14, decimal_places=3)
+    rate_per_mt = models.DecimalField(max_digits=10, decimal_places=2)
+    est_daily_saving = models.DecimalField(max_digits=14, decimal_places=2)
+    est_total_saving = models.DecimalField(max_digits=14, decimal_places=2)
+    est_stay_days = models.PositiveIntegerField(default=0)
+
+    shipment = models.ForeignKey('Shipment', on_delete=models.SET_NULL, null=True, blank=True, related_name='rent_suggestions')
+    dismiss_reason = models.CharField(max_length=20, choices=DISMISS_REASONS, blank=True)
+    dismiss_note = models.CharField(max_length=255, blank=True)
+    # a dismissed batch is left out of the suggestions until this date
+    snoozed_until = models.DateField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-decided_at']
+
+    def __str__(self):
+        return f"{self.decision}: {self.batch_number} {self.origin_warehouse} -> {self.destination_warehouse}"
+
+
 class OpsBriefing(models.Model):
     """A stored run of the Tier 3 "AI Copilot" (core/briefing.py) - a company-wide
     category briefing or one person's checklist. See SYSTEM_DOCUMENTATION.md §8.9-§8.11."""

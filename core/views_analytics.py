@@ -14,10 +14,13 @@ from django.contrib.auth.decorators import login_required
 from django.http import Http404
 from django.shortcuts import redirect, render
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 
 from . import analytics
 from .context_processors import ANALYTICS_CATEGORIES, _perm_ok
+from .models import RentSuggestion, Warehouse
 from .settings_store import get_setting
+from .utils import create_rent_transfer, dismiss_rent_suggestions
 
 # Trailing windows offered in the UI. 0 == all time.
 WINDOW_CHOICES = (30, 90, 180, 365, 0)
@@ -337,6 +340,8 @@ def rent_opportunities_view(request):
     }
     analytics_category, analytics_tabs = _analytics_tabs(request, "rent_opportunities")
     return render(request, "analytics/rent_opportunities.html", {
+        "can_act": request.user.has_perm("core.add_shipment"),
+        "dismiss_reasons": RentSuggestion.DISMISS_REASONS,
         "rows": rows,
         "summary": summary,
         "history": history,
@@ -344,6 +349,75 @@ def rent_opportunities_view(request):
         "analytics_tabs": analytics_tabs,
         "analytics_active": "rent_opportunities",
     })
+
+
+@login_required
+@require_POST
+def rent_suggestion_decide(request):
+    """Accept (-> Draft internal transfers) or dismiss the ticked Rent Opportunities
+    suggestions. Every pick is checked against a fresh run of the DSS first, so
+    a page that's gone stale can't move stock that has changed since."""
+    if not request.user.has_perm("core.add_shipment"):
+        messages.error(request, "You don't have permission to create transfers.")
+        return redirect("rent_opportunities")
+
+    decision = request.POST.get("decision")
+    picks = set()
+    for raw in request.POST.getlist("pick"):
+        try:
+            batch_id, dest_id = raw.split(":")
+            picks.add((int(batch_id), int(dest_id)))
+        except ValueError:
+            continue
+    if not picks:
+        messages.error(request, "Tick at least one batch first.")
+        return redirect("rent_opportunities")
+
+    fresh = {}
+    for o in analytics.rent_reduction_opportunities():
+        origin = Warehouse.objects.get(pk=o["warehouse_id"])
+        for c in o["candidate_batches"]:
+            fresh[(c["batch_id"], c["destination_id"])] = (origin, c)
+    valid = [fresh[k] for k in picks if k in fresh]
+    stale = len(picks) - len(valid)
+    if stale:
+        messages.warning(request, f"{stale} suggestion{'s' if stale != 1 else ''} changed since the page loaded "
+                                  f"and {'were' if stale != 1 else 'was'} skipped. Check the refreshed list.")
+    if not valid:
+        return redirect("rent_opportunities")
+
+    if decision == "dismiss":
+        reason = request.POST.get("reason", "")
+        if reason not in dict(RentSuggestion.DISMISS_REASONS):
+            messages.error(request, "Choose a reason for dismissing.")
+            return redirect("rent_opportunities")
+        until = dismiss_rent_suggestions(valid, reason, request.POST.get("note", "").strip(), request.user)
+        messages.success(request, f"Dismissed {len(valid)} suggestion{'s' if len(valid) != 1 else ''}. "
+                                  f"They stay hidden until {until:%d %b %Y}.")
+        return redirect("rent_opportunities")
+
+    if decision != "accept":
+        messages.error(request, "Unknown action.")
+        return redirect("rent_opportunities")
+
+    # one transfer per origin -> destination pair (one truck, several batches)
+    groups = {}
+    for origin, c in valid:
+        groups.setdefault((origin.pk, c["destination_id"]), (origin, []))[1].append(c)
+    made = []
+    for (_, dest_id), (origin, cands) in groups.items():
+        shipment = create_rent_transfer(origin, Warehouse.objects.get(pk=dest_id), cands, request.user)
+        if shipment:
+            made.append(shipment)
+    if not made:
+        messages.error(request, "Nothing could be moved - the stock changed in the meantime.")
+        return redirect("rent_opportunities")
+    names = ", ".join(sh.tracking_number for sh in made)
+    messages.success(request, f"Drafted internal transfer{'s' if len(made) != 1 else ''} {names}. "
+                              "Take them through Logistics; the move is recorded so the saving can be measured.")
+    if len(made) == 1:
+        return redirect("shipment_detail", pk=made[0].pk)
+    return redirect("rent_opportunities")
 
 
 # --------------------------------------------------------------------------------

@@ -6,7 +6,7 @@ from .models import (
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
     Shipment, StockAudit, RegistryLog, OrderTimeline, Notification,
     Supplier, SupplierMaterial, Client, SystemSetting, WarehouseUtilizationSnapshot,
-    OpsBriefing,
+    OpsBriefing, RentSuggestion,
 )
 
 class CustomUserAdmin(UserAdmin):
@@ -104,3 +104,12 @@ class OpsBriefingAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         # Created by generate_ops_briefing / the briefing page, never hand-typed.
         return False
+
+
+@admin.register(RentSuggestion)
+class RentSuggestionAdmin(admin.ModelAdmin):
+    list_display = ('decided_at', 'decision', 'batch_number', 'origin_warehouse', 'destination_warehouse',
+                    'move_mt', 'est_daily_saving', 'dismiss_reason', 'decided_by', 'shipment')
+    list_filter = ('decision', 'dismiss_reason', 'origin_warehouse')
+    search_fields = ('batch_number', 'item_name')
+    date_hierarchy = 'decided_at'
