@@ -896,6 +896,131 @@ def rent_history(days=180, end=None):
     }
 
 
+RESULT_WINDOW_DAYS = 7          # days averaged before and after a move
+RESULT_MIN_DAYS_AFTER = 3       # wait for this many days after the move before judging it
+
+
+def _recorded_days(warehouse_id, start, end):
+    """[(rent, used_mt) or None] for each day start..end from the rows recorded on
+    the day (never the estimated backfill). A day with no row carries the latest
+    earlier row forward, since snapshots are only written when something changes."""
+    from .models import WarehouseUtilizationSnapshot
+
+    qs = WarehouseUtilizationSnapshot.objects.filter(
+        warehouse_id=warehouse_id, daily_rent_cost__isnull=False, rent_estimated=False,
+    )
+    prior = qs.filter(snapshot_date__lt=start).order_by('-snapshot_date').first()
+    by_date = {s.snapshot_date: s for s in qs.filter(snapshot_date__gte=start, snapshot_date__lte=end)}
+    last, out = prior, []
+    for i in range((end - start).days + 1):
+        last = by_date.get(start + _dt.timedelta(days=i), last)
+        out.append((float(last.daily_rent_cost), float(last.used_mt)) if last else None)
+    return out
+
+
+def _window_avg(days):
+    """(avg rent, avg used_mt) over the known days, or None if none are known."""
+    known = [d for d in days if d]
+    if not known:
+        return None
+    return sum(d[0] for d in known) / len(known), sum(d[1] for d in known) / len(known)
+
+
+def rent_results(limit=10):
+    """DSS #11 - did the accepted Rent Opportunities moves save what they promised?
+
+    One row per accepted transfer. Once the transfer is completed, the origin's
+    average recorded daily rent for the week before is compared with the week after
+    (the destination's rent change is netted off); `promised` is the sum of the
+    estimates stored when it was accepted. A move is marked "unclear" when the
+    origin's tonnage changed by more than half the move's size for some other
+    reason, since the rent change can't then be put down to the move alone.
+    Statuses: measuring (not completed / too soon), measured, unclear, unavailable
+    (no recorded rent to compare)."""
+    from .models import OrderTimeline, RentSuggestion
+
+    today = timezone.localdate()
+    accepted = list(RentSuggestion.objects.filter(decision='Accepted').select_related(
+        'shipment', 'origin_warehouse', 'destination_warehouse'))
+    dismissed = RentSuggestion.objects.filter(decision='Dismissed').count()
+
+    groups = {}
+    for r in accepted:
+        groups.setdefault(r.shipment_id or -r.pk, []).append(r)
+
+    moves, pending, cancelled = [], 0, 0
+    for recs in groups.values():
+        first = recs[0]
+        shp = first.shipment
+        if shp is not None and shp.status == 'Cancelled':
+            cancelled += 1
+            continue
+        move = {
+            'shipment': shp,
+            'origin': first.origin_warehouse,
+            'destination': first.destination_warehouse,
+            'batches': [r.batch_number for r in recs],
+            'move_mt': sum(float(r.move_mt) for r in recs),
+            'promised_daily': sum(float(r.est_daily_saving) for r in recs),
+            'accepted_at': first.decided_at,
+            'moved_on': None, 'measured_daily': None, 'status': 'measuring', 'note': '',
+        }
+        if shp is None or shp.status != 'Completed':
+            pending += 1
+            move['note'] = 'Waiting for the transfer to complete'
+            moves.append(move)
+            continue
+
+        done = (OrderTimeline.objects.filter(shipment=shp, action__startswith='Receiving finalized')
+                .order_by('-timestamp').first())
+        moved_on = timezone.localtime(done.timestamp).date() if done else timezone.localtime(shp.updated_at).date()
+        move['moved_on'] = moved_on
+        days_after = min(RESULT_WINDOW_DAYS, (today - moved_on).days)
+        if days_after < RESULT_MIN_DAYS_AFTER or move['origin'] is None:
+            move['note'] = f'Needs {RESULT_MIN_DAYS_AFTER} days after the move'
+            moves.append(move)
+            continue
+
+        one = _dt.timedelta(days=1)
+        before_start, after_end = moved_on - _dt.timedelta(days=RESULT_WINDOW_DAYS), moved_on + _dt.timedelta(days=days_after)
+        o_before = _window_avg(_recorded_days(move['origin'].id, before_start, moved_on - one))
+        o_after = _window_avg(_recorded_days(move['origin'].id, moved_on + one, after_end))
+        if o_before is None or o_after is None:
+            move['status'], move['note'] = 'unavailable', 'No recorded rent to compare'
+            moves.append(move)
+            continue
+
+        measured = o_before[0] - o_after[0]
+        d = move['destination']
+        if d is not None:
+            d_before = _window_avg(_recorded_days(d.id, before_start, moved_on - one))
+            d_after = _window_avg(_recorded_days(d.id, moved_on + one, after_end))
+            if d_before and d_after:
+                measured -= d_after[0] - d_before[0]
+        move['measured_daily'] = round(measured, 2)
+
+        other_change = (o_before[1] - o_after[1]) - move['move_mt']
+        if abs(other_change) > 0.5 * move['move_mt']:
+            move['status'] = 'unclear'
+            move['note'] = f"Other stock changed by {abs(other_change):.0f} MT"
+        else:
+            move['status'] = 'measured'
+        moves.append(move)
+
+    moves.sort(key=lambda m: m['moved_on'] or m['accepted_at'].date(), reverse=True)
+    counted = [m for m in moves if m['status'] == 'measured']
+    return {
+        'accepted': len(groups) - cancelled,
+        'dismissed': dismissed,
+        'pending': pending,
+        'measured_count': len(counted),
+        'measured_daily_total': round(sum(m['measured_daily'] for m in counted), 2),
+        'promised_daily_total': round(sum(m['promised_daily'] for m in counted), 2),
+        'moves': moves[:limit],
+        'window_days': RESULT_WINDOW_DAYS,
+    }
+
+
 def open_batch_rent_expr():
     """ORM expression: Sum (batch tonnage x effective rate) across a
     warehouse's currently-open batches - Active OR Quarantined (same statuses as

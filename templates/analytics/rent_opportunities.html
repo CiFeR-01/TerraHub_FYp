@@ -97,6 +97,69 @@
     {% endif %}
 </section>
 
+<section class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+    <h2 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin:0; color:var(--text-main);">Results</h2>
+    <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.9rem;">Did the moves you accepted save what was promised?</div>
+
+    {% if results.accepted or results.dismissed %}
+    <div style="font-size:0.88rem; color:var(--text-main); margin-bottom:1rem;">
+        <strong>{{ results.accepted }}</strong> move{{ results.accepted|pluralize }} accepted,
+        <strong>{{ results.dismissed }}</strong> dismissed{% if results.pending %}, <strong>{{ results.pending }}</strong> still waiting to complete{% endif %}.
+        {% if results.measured_count %}
+        Of the {{ results.measured_count }} clearly measured, rent is down
+        <strong style="color:var(--success-strong);">RM {{ results.measured_daily_total|floatformat:2 }} a day</strong>
+        against RM {{ results.promised_daily_total|floatformat:2 }} promised.
+        {% else %}
+        No move has been measured yet.
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if results.moves %}
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">
+                    <th style="padding:0.5rem 0.75rem;">Transfer</th>
+                    <th style="padding:0.5rem 0.75rem;">Route</th>
+                    <th style="padding:0.5rem 0.75rem; text-align:right;">Moved</th>
+                    <th style="padding:0.5rem 0.75rem; text-align:right;">Promised / day</th>
+                    <th style="padding:0.5rem 0.75rem; text-align:right;">Measured / day</th>
+                    <th style="padding:0.5rem 0.75rem;">Result</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in results.moves %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                    <td style="padding:0.55rem 0.75rem;">
+                        {% if m.shipment %}<a href="{% url 'shipment_detail' m.shipment.pk %}">{{ m.shipment.tracking_number }}</a>{% else %}&mdash;{% endif %}
+                        <div style="font-size:0.72rem; color:var(--text-muted);">{% if m.moved_on %}moved {{ m.moved_on|date:"j M Y" }}{% else %}accepted {{ m.accepted_at|date:"j M Y" }}{% endif %}</div>
+                    </td>
+                    <td style="padding:0.55rem 0.75rem;">{{ m.origin.name|default:"?" }} &rarr; {{ m.destination.name|default:"?" }}</td>
+                    <td style="padding:0.55rem 0.75rem; text-align:right;">{{ m.move_mt|floatformat:1 }} MT</td>
+                    <td style="padding:0.55rem 0.75rem; text-align:right;">RM {{ m.promised_daily|floatformat:2 }}</td>
+                    <td style="padding:0.55rem 0.75rem; text-align:right;">{% if m.measured_daily is not None %}RM {{ m.measured_daily|floatformat:2 }}{% else %}&mdash;{% endif %}</td>
+                    <td style="padding:0.55rem 0.75rem; font-size:0.8rem;">
+                        {% if m.status == "measured" %}<span style="color:var(--success-strong); font-weight:600;">Measured</span>
+                        {% elif m.status == "unclear" %}<span style="color:var(--warning-strong); font-weight:600;">Unclear</span>
+                        {% else %}<span style="color:var(--text-muted); font-weight:600;">{% if m.status == "unavailable" %}No data{% else %}Waiting{% endif %}</span>{% endif %}
+                        {% if m.note %}<div style="font-size:0.72rem; color:var(--text-muted);">{{ m.note }}</div>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <div style="margin-top:0.75rem; font-size:0.75rem; color:var(--text-muted);">
+        Measured = the origin&rsquo;s average recorded daily rent for the {{ results.window_days }} days before the move, minus the {{ results.window_days }} days after
+        (any rent added at the destination is netted off). Moves are marked <em>Unclear</em> when other stock at the origin also changed
+        by more than half the move&rsquo;s size. Latest {{ results.moves|length }} shown.
+    </div>
+    {% else %}
+    <div style="font-size:0.85rem; color:var(--text-muted);">No moves accepted yet. Accepted suggestions will appear here once the transfer has completed and a few days of rent have been recorded.</div>
+    {% endif %}
+</section>
+
 {% if rows %}
     {% for o in rows %}
     <div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.25rem;">

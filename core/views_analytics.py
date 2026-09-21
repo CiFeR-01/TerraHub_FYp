@@ -333,6 +333,7 @@ def rent_opportunities_view(request):
     analytics.ensure_today_snapshots()
     rows = analytics.rent_reduction_opportunities()
     history = analytics.rent_history(days=180)
+    results = analytics.rent_results()
     summary = {
         "opportunity_count": len(rows),
         "total_potential_daily_saving": sum(o["total_daily_saving"] for o in rows),
@@ -345,6 +346,7 @@ def rent_opportunities_view(request):
         "rows": rows,
         "summary": summary,
         "history": history,
+        "results": results,
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,
         "analytics_active": "rent_opportunities",

@@ -660,7 +660,7 @@ from core.analytics import (
     supplier_reliability, sales_order_delivery_risk,
     audit_accuracy, production_yield_variance, stockout_forecast,
     capacity_forecast, warehouse_utilization, shipment_logistics, my_open_jobs,
-    product_sales_trend, warehouse_rent_burn, rent_reduction_opportunities,
+    product_sales_trend, warehouse_rent_burn, rent_reduction_opportunities, rent_results,
 )
 from core.settings_store import get_setting
 from core.utils import apply_po_material_receipt
@@ -4131,3 +4131,114 @@ class RentSuggestionDecisionTests(TestCase):
         resp = self.client.get(reverse('rent_opportunities'))
         self.assertNotContains(resp, 'Create transfer for selected')
         self.assertNotContains(resp, 'name="pick"')
+
+
+class RentResultsTests(TestCase):
+    """DSS #11: measured vs promised saving for accepted Rent Opportunities moves."""
+
+    def setUp(self):
+        from core.models import RentSuggestion, OrderTimeline
+        self.RentSuggestion, self.OrderTimeline = RentSuggestion, OrderTimeline
+        self.today = date.today()
+        self.origin = Warehouse.objects.create(
+            name='Origin RR', location_type='Storage', ownership_type='ExternalProvider',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('5.00'), total_capacity_mt=Decimal('1000'))
+        self.depot = Warehouse.objects.create(
+            name='Depot RR', location_type='Storage', ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'), total_capacity_mt=Decimal('500'))
+
+    def _snap(self, wh, days_ago, rent, used, estimated=False):
+        WarehouseUtilizationSnapshot.objects.update_or_create(
+            warehouse=wh, snapshot_date=self.today - timedelta(days=days_ago),
+            defaults=dict(used_mt=Decimal(str(used)), capacity_mt=wh.total_capacity_mt, utilization_percent=Decimal('10'),
+                          daily_rent_cost=Decimal(str(rent)), rent_estimated=estimated))
+
+    def _move(self, moved_days_ago=10, status='Completed', promised='200.00', mt='40'):
+        s = Shipment.objects.create(tracking_number=f'T-RR-{Shipment.objects.count()}', direction='Transfer',
+                                    status=status, origin_warehouse=self.origin, destination_warehouse=self.depot)
+        if status == 'Completed':
+            t = self.OrderTimeline.objects.create(shipment=s, action='Receiving finalized. Shipment completed.')
+            self.OrderTimeline.objects.filter(pk=t.pk).update(
+                timestamp=timezone.now() - timedelta(days=moved_days_ago))
+        self.RentSuggestion.objects.create(
+            decision='Accepted', batch_number='B-RR', origin_warehouse=self.origin, destination_warehouse=self.depot,
+            move_mt=Decimal(mt), rate_per_mt=Decimal('5.00'), est_daily_saving=Decimal(promised),
+            est_total_saving=Decimal('2000.00'), est_stay_days=10, shipment=s)
+        return s
+
+    def _history(self, before=(500, 100), after=(300, 60), moved_days_ago=10):
+        # one recorded row a week+ before the move, one just after it; the rest carry forward
+        self._snap(self.origin, moved_days_ago + 8, *before)
+        self._snap(self.origin, moved_days_ago - 1, *after)
+        self._snap(self.depot, moved_days_ago + 8, 0, 0)
+
+    def test_measured_saving_matches_the_promise(self):
+        self._history()
+        self._move()
+        r = rent_results()
+        m = r['moves'][0]
+        self.assertEqual((m['status'], m['measured_daily'], m['promised_daily']), ('measured', 200.0, 200.0))
+        self.assertEqual((r['accepted'], r['pending'], r['measured_count'], r['measured_daily_total']), (1, 0, 1, 200.0))
+        self.assertEqual(m['moved_on'], self.today - timedelta(days=10))
+
+    def test_falls_short_when_rent_only_drops_a_bit(self):
+        self._history(after=(450, 60))
+        self._move()
+        m = rent_results()['moves'][0]
+        self.assertEqual((m['status'], m['measured_daily']), ('measured', 50.0))
+
+    def test_unclear_when_other_stock_also_changed(self):
+        self._history(after=(50, 10))            # 90 MT left the origin but only 40 MT was moved
+        self._move()
+        m = rent_results()['moves'][0]
+        self.assertEqual(m['status'], 'unclear')
+        self.assertEqual(rent_results()['measured_count'], 0)     # not counted in the total
+
+    def test_waits_until_the_transfer_completes(self):
+        self._move(status='Draft')
+        r = rent_results()
+        self.assertEqual((r['pending'], r['moves'][0]['status']), (1, 'measuring'))
+
+    def test_waits_a_few_days_after_the_move(self):
+        self._history(moved_days_ago=1)
+        self._move(moved_days_ago=1)
+        self.assertEqual(rent_results()['moves'][0]['status'], 'measuring')
+
+    def test_estimated_rows_are_not_used(self):
+        self._snap(self.origin, 18, 500, 100, estimated=True)
+        self._snap(self.origin, 9, 300, 60, estimated=True)
+        self._move()
+        self.assertEqual(rent_results()['moves'][0]['status'], 'unavailable')
+
+    def test_cancelled_transfers_are_left_out(self):
+        self._move(status='Cancelled')
+        r = rent_results()
+        self.assertEqual((r['accepted'], r['moves']), (0, []))
+
+    def test_one_row_per_transfer_even_with_several_batches(self):
+        self._history()
+        s = self._move(promised='120.00', mt='24')
+        self.RentSuggestion.objects.create(
+            decision='Accepted', batch_number='B-RR2', origin_warehouse=self.origin, destination_warehouse=self.depot,
+            move_mt=Decimal('16'), rate_per_mt=Decimal('5.00'), est_daily_saving=Decimal('80.00'),
+            est_total_saving=Decimal('800.00'), est_stay_days=10, shipment=s)
+        r = rent_results()
+        self.assertEqual(len(r['moves']), 1)
+        self.assertEqual((r['moves'][0]['promised_daily'], r['moves'][0]['move_mt']), (200.0, 40.0))
+
+    def test_dismissed_are_counted(self):
+        self.RentSuggestion.objects.create(
+            decision='Dismissed', batch_number='B-D', origin_warehouse=self.origin, destination_warehouse=self.depot,
+            move_mt=Decimal('10'), rate_per_mt=Decimal('5.00'), est_daily_saving=Decimal('50.00'),
+            est_total_saving=Decimal('500.00'), dismiss_reason='other')
+        self.assertEqual(rent_results()['dismissed'], 1)
+
+    def test_page_shows_the_results_section(self):
+        self._history()
+        self._move()
+        user = User.objects.create_user(username='rr_admin', password='pw', is_superuser=True)
+        self.client.force_login(user)
+        resp = self.client.get(reverse('rent_opportunities'))
+        self.assertContains(resp, 'Did the moves you accepted save what was promised?')
+        self.assertContains(resp, 'T-RR-0')
+        self.assertContains(resp, 'Measured')
