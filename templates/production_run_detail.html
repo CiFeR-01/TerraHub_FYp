@@ -30,9 +30,6 @@
             {{ priority }}
         </span>
         {% endif %}
-        {% if run.status == 'Pending Allocation' or run.status == 'Planned' %}
-        <a href="{% url 'production_run_allocate' run.id %}" class="btn btn-primary" style="padding:0.4rem 1rem; font-size:0.85rem;">Allocate Materials</a>
-        {% endif %}
         <span class="badge" style="font-size:0.85rem; padding:0.4rem 1rem;
             {% if run.status == 'InProgress' %}background:#dbeafe; color:#1e40af; border:1px solid #bfdbfe;
             {% elif run.status == 'Paused' %}background:#fef3c7; color:#92400e; border:1px solid #fde68a;
@@ -68,15 +65,23 @@
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Expected Yield</div>
             <div style="font-size:0.95rem; font-weight:600;">{{ run.expected_yield|floatformat:2 }} units <span style="font-size:0.78rem; color:var(--text-muted); font-weight:500;">(≈ {{ run.expected_yield|weight_display:run.target_product }})</span></div>
         </div>
-        {% if run.status in 'InProgress,Paused,Completed' %}
+        {% if run.status == 'InProgress' or run.status == 'Paused' or run.status == 'Pending Approval' or run.status == 'Completed' %}
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Progress</div>
             <div style="font-size:0.95rem; font-weight:600; margin-bottom:0.3rem;">{{ yield_logs_sum|floatformat:2 }} / {{ run.expected_yield|floatformat:2 }} units <span style="font-size:0.78rem; color:var(--text-muted); font-weight:500;">(≈ {{ yield_logs_sum|weight_display:run.target_product }} / {{ run.expected_yield|weight_display:run.target_product }})</span></div>
             <div style="width:100%; height:6px; background:#e2e8f0; border-radius:10px; overflow:hidden;">
-                <div style="height:100%; border-radius:10px; width:{{ yield_progress_pct|floatformat:0 }}%; background:{% if yield_progress_pct >= 100 %}#059669{% else %}var(--primary){% endif %};"></div>
+                <div style="height:100%; border-radius:10px; width:{{ yield_progress_pct|floatformat:0 }}%; background:{% if yield_progress_pct >= 100 %}#059669{% elif run.status == 'Completed' %}#d97706{% else %}var(--primary){% endif %};"></div>
             </div>
         </div>
         {% endif %}
+        <div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Approval</div>
+            <div style="font-size:0.95rem; font-weight:600;">
+                {% if run.approved_by %}{{ run.approved_by.get_full_name|default:run.approved_by.username }}<span style="font-size:0.78rem; color:var(--text-muted); font-weight:500;"> · {{ run.approved_at|date:"M d, H:i" }}</span>
+                {% elif run.status == 'Pending Approval' %}<span style="color:var(--warning-strong);">Awaiting approval</span>
+                {% else %}<span style="color:var(--text-muted);">—</span>{% endif %}
+            </div>
+        </div>
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Manufacturing Plant</div>
             <div style="font-size:0.95rem; font-weight:600;">{{ run.manufacturing_plant.name|default:"Not Set" }}</div>
@@ -119,7 +124,7 @@
 </div>
 
 <!-- Bill of Materials Preview -->
-{% if bom_materials %}
+{% if bom_materials and run.status != 'Completed' and run.status != 'Cancelled' %}
 <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); max-width:1200px;">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Bill of Materials</h3>
     <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
@@ -127,7 +132,8 @@
             <tr style="border-bottom:1px solid var(--border-light); text-align:left; color:var(--text-muted);">
                 <th style="padding:0.5rem 0;">Material</th>
                 <th style="padding:0.5rem 0; text-align:right;">Required</th>
-                <th style="padding:0.5rem 0; text-align:right;">Available</th>
+                <th style="padding:0.5rem 0; text-align:right;">Allocated</th>
+                <th style="padding:0.5rem 0; text-align:right;">In Hand at Plant</th>
                 <th style="padding:0.5rem 0; text-align:right;">Status</th>
             </tr>
         </thead>
@@ -136,9 +142,14 @@
             <tr style="border-bottom:1px solid var(--border-light);">
                 <td style="padding:0.6rem 0; font-weight:600;">{{ bom.material.name }}</td>
                 <td style="padding:0.6rem 0; text-align:right;">{{ bom.needed|floatformat:2 }} {{ bom.material.unit_of_measure }}</td>
-                <td style="padding:0.6rem 0; text-align:right;">{{ bom.available|floatformat:2 }} {{ bom.material.unit_of_measure }}</td>
+                <td style="padding:0.6rem 0; text-align:right;">{{ bom.allocated|floatformat:2 }} {{ bom.material.unit_of_measure }}</td>
+                <td style="padding:0.6rem 0; text-align:right;">{{ bom.ready|floatformat:2 }} {{ bom.material.unit_of_measure }}</td>
                 <td style="padding:0.6rem 0; text-align:right;">
-                    <span class="badge {% if bom.sufficient %}badge-emerald{% else %}badge-rose{% endif %}" style="font-size:0.7rem;">{% if bom.sufficient %}Sufficient{% else %}Short{% endif %}</span>
+                    {% if bom.state == 'ready' %}<span class="badge badge-emerald" style="font-size:0.7rem;">Ready</span>
+                    {% elif bom.state == 'in_transit' %}<span class="badge badge-sky" style="font-size:0.7rem;">In transit</span>
+                    {% elif bom.state == 'partial' %}<span class="badge badge-amber" style="font-size:0.7rem;">Partly allocated</span>
+                    {% elif bom.sufficient %}<span class="badge" style="font-size:0.7rem; background:#f1f5f9; color:#475569;">Not allocated</span>
+                    {% else %}<span class="badge badge-rose" style="font-size:0.7rem;">Short in stock</span>{% endif %}
                 </td>
             </tr>
             {% endfor %}
@@ -186,9 +197,20 @@
             
             {% if run.status == 'Pending Allocation' or run.status == 'Planned' or run.status == 'Awaiting Materials' %}
                 <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; padding:1.5rem; text-align:center;">
+                    {% if run.status == 'Pending Allocation' %}
+                    <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;">Materials must be allocated before production can start.</p>
+                    <a href="{% url 'production_run_allocate' run.pk %}" class="btn btn-primary" style="width:100%; justify-content:center; padding:0.75rem; font-size:1rem; text-decoration:none;">Allocate Materials</a>
+                    {% else %}
                     <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;">Ready to begin manufacturing? Review the material inbound statuses on the right before starting.</p>
-                    
-                    <form method="post" action="{% url 'production_run_detail' run.pk %}">
+                    {% if materials_short %}
+                    <p style="text-align:left; font-size:0.82rem; color:#92400e; background:#fef3c7; border:1px solid #fde68a; border-radius:6px; padding:0.6rem 0.75rem; margin-bottom:1rem;">
+                        Not fully allocated:
+                        {% for b in materials_short %}{{ b.material.name }} ({{ b.allocated|floatformat:2 }} of {{ b.needed|floatformat:2 }} {{ b.material.unit_of_measure }}){% if not forloop.last %}, {% endif %}{% endfor %}.
+                        You can start now and allocate the rest while the run is in progress.
+                    </p>
+                    {% endif %}
+
+                    <form method="post" action="{% url 'production_run_detail' run.pk %}"{% if materials_short %} onsubmit="return confirm('Some materials are not fully allocated yet. Start production anyway? You can allocate the rest later.')"{% endif %}>
                         {% csrf_token %}
                         <input type="hidden" name="action" value="start_production">
                         
@@ -208,6 +230,7 @@
                             Start Production
                         </button>
                     </form>
+                    {% endif %}
                 </div>
 
                 <details style="margin-top:1.25rem;">
@@ -271,11 +294,11 @@
                 </div>
 
                 {% if run.status == 'InProgress' %}
-                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; padding:1.5rem;">
+                <div id="finalize" style="background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; padding:1.5rem; scroll-margin-top:5rem;">
                     <h4 style="font-size:1rem; font-weight:700; color:var(--text-main); margin-bottom:1rem;">Record Material Usage &amp; Finalize</h4>
                     <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Production started at {{ run.exact_start_time|date:"M d, Y H:i" }}. Enter the actual poured quantities below to complete the run.</p>
 
-                    <form method="post" action="{% url 'production_run_detail' run.pk %}">
+                    <form method="post" action="{% url 'production_run_detail' run.pk %}" onsubmit="var q=parseFloat(this.actual_yield.value)-{{ yield_logs_sum|stringformat:'.2f' }}; return q<=0.005 || confirm('This will auto-fill '+q.toFixed(2)+' units of yield that has not been logged, and create finished stock for it. Continue?');">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="complete_production">
                         
@@ -291,11 +314,42 @@
                                 </thead>
                                 <tbody>
                                     {% for bom in bom_materials %}
-                                    <tr style="border-bottom:1px solid var(--border-light);">
-                                        <td style="padding:0.75rem; font-size:0.85rem; font-weight:600;">{{ bom.material.name }}</td>
+                                    <tr class="usage-row" style="border-bottom:1px solid var(--border-light);">
+                                        <td style="padding:0.75rem; font-size:0.85rem; font-weight:600;">{{ bom.material.name }}
+                                            <div style="font-size:0.72rem; font-weight:500; color:var(--text-muted);">{{ bom.allocated|stringformat:".2f" }} {{ bom.material.unit_of_measure }} allocated</div>
+                                        </td>
                                         <td style="padding:0.75rem; font-size:0.85rem; text-align:right; color:var(--text-muted);">{{ bom.needed|floatformat:2 }} {{ bom.material.unit_of_measure }}</td>
                                         <td style="padding:0.75rem; text-align:right;">
-                                            <input type="number" step="0.01" name="actual_qty_{{ bom.material.id }}" required class="form-input" style="width:100px; padding:0.4rem; text-align:right;" placeholder="Enter qty">
+                                            <input type="number" step="0.01" name="actual_qty_{{ bom.material.id }}" required class="form-input actual-qty-input" data-mid="{{ bom.material.id }}" data-alloc="{{ bom.allocated|stringformat:'.2f' }}" data-unit="{{ bom.material.unit_of_measure }}" style="width:100px; padding:0.4rem; text-align:right;" placeholder="Enter qty">
+                                        </td>
+                                    </tr>
+                                    <tr class="extra-row" id="extra-{{ bom.material.id }}" style="display:none; background:#fffbeb; border-bottom:1px solid var(--border-light);">
+                                        <td colspan="3" style="padding:1rem;">
+                                            <div class="extra-msg" style="font-size:0.85rem; font-weight:700; color:#92400e; margin-bottom:0.5rem;"></div>
+                                            <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.82rem; font-weight:600; color:#92400e; margin-bottom:0.75rem; cursor:pointer;">
+                                                <input type="checkbox" class="extra-confirm" name="extra_confirm_{{ bom.material.id }}" value="1" disabled>
+                                                Yes, this quantity is correct
+                                            </label>
+                                            <div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:0.5rem;">Where did the extra come from? Pick the batch(es) it was taken from, or choose "Batch not in records" and say why.</div>
+                                            <div class="src-list"></div>
+                                            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.5rem;">
+                                                <button type="button" class="add-src btn btn-secondary" style="padding:0.25rem 0.7rem; font-size:0.78rem;">+ Add another source</button>
+                                                <span class="src-total" style="font-size:0.8rem; font-weight:600;"></span>
+                                            </div>
+                                            <template class="src-template">
+                                                <div class="src" style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; margin-bottom:0.5rem;">
+                                                    <select name="extra_batch_{{ bom.material.id }}" class="form-input src-batch" style="min-width:260px; padding:0.4rem;">
+                                                        <option value="">-- Select batch --</option>
+                                                        {% for b in bom.plant_batches %}
+                                                        <option value="{{ b.id }}">{{ b.batch_number }} · {{ b.avail|stringformat:".2f" }} free · exp {{ b.expiry_date|date:"M d, Y"|default:"—" }}</option>
+                                                        {% endfor %}
+                                                        <option value="unrecorded">Batch not in records</option>
+                                                    </select>
+                                                    <input type="number" step="0.01" min="0.01" name="extra_qty_{{ bom.material.id }}" class="form-input src-qty" placeholder="Qty" style="width:100px; padding:0.4rem; text-align:right;">
+                                                    <input type="text" name="extra_reason_{{ bom.material.id }}" class="form-input src-reason" placeholder="Reason (required)" style="flex:1; min-width:180px; padding:0.4rem; display:none;">
+                                                    <button type="button" class="rm-src" title="Remove" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:1rem;">✕</button>
+                                                </div>
+                                            </template>
                                         </td>
                                     </tr>
                                     {% endfor %}
@@ -305,11 +359,13 @@
                         
                         <div style="margin-bottom:1.5rem; background:#fff; padding:1rem; border:1px solid var(--border-light); border-radius:8px;">
                             <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-main); margin-bottom:0.5rem;">Actual Yield (Finished Goods)</label>
-                            {% if yield_logs_sum %}
-                            <p style="font-size:0.78rem; color:var(--text-muted); margin-bottom:0.5rem;">Pre-filled from your logged yield entries — adjust if needed.</p>
+                            {% if yield_remaining > 0 and yield_logs_sum %}
+                            <p style="font-size:0.78rem; color:#92400e; background:#fef3c7; border:1px solid #fde68a; border-radius:6px; padding:0.5rem 0.65rem; margin-bottom:0.5rem;">
+                                {{ yield_logs_sum|floatformat:2 }} of {{ run.expected_yield|floatformat:2 }} units logged so far. Completing will auto-fill the remaining {{ yield_remaining|floatformat:2 }} units. To record less, change this figure to what was actually made (or log the yield manually above first).
+                            </p>
                             {% endif %}
                             <div style="display:flex; align-items:center; gap:0.5rem;">
-                                <input type="number" step="0.01" name="actual_yield" required class="form-input" style="flex:1; padding:0.5rem;" value="{% if yield_logs_sum %}{{ yield_logs_sum|floatformat:2 }}{% else %}{{ run.expected_yield }}{% endif %}">
+                                <input type="number" step="0.01" name="actual_yield" required class="form-input" style="flex:1; padding:0.5rem;" value="{{ run.expected_yield }}">
                                 <span style="font-size:0.85rem; color:var(--text-muted);">units</span>
                             </div>
                         </div>
@@ -347,19 +403,36 @@
             {% elif run.status == 'Pending Approval' %}
                   <div style="background:#fefce8; border:1px solid #fde047; border-radius:8px; padding:1.5rem; text-align:center;">
                       <svg width="48" height="48" fill="none" stroke="#a16207" viewBox="0 0 24 24" style="margin:0 auto 1rem;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                      <h4 style="font-size:1.1rem; font-weight:700; color:#a16207; margin-bottom:0.5rem;">Pending Variance Approval</h4>
+                      <h4 style="font-size:1.1rem; font-weight:700; color:#a16207; margin-bottom:0.5rem;">{% if run.actual_yield is not None %}Pending Variance Approval{% else %}Pending Approval{% endif %}</h4>
+                      {% if run.actual_yield is not None %}
                       <p style="font-size:0.85rem; color:#854d0e;">This run exceeded 3% material variance and is awaiting manager approval.</p>
+                      {% else %}
+                      <p style="font-size:0.85rem; color:#854d0e;">This run needs manager approval before materials can be allocated.</p>
+                      {% endif %}
+                      {% if extra_sources %}
+                      <div style="text-align:left; margin:1rem auto 0; max-width:560px; font-size:0.8rem; color:#854d0e;">
+                          <div style="font-weight:700; margin-bottom:0.25rem;">Extra material beyond the allocation</div>
+                          {% for x in extra_sources %}
+                          <div>{{ x.material.name }} · {{ x.quantity|floatformat:2 }} {{ x.material.unit_of_measure }} · {% if x.batch %}batch {{ x.batch.batch_number }}{% else %}<strong>not in records</strong>: {{ x.reason }}{% endif %}</div>
+                          {% endfor %}
+                      </div>
+                      {% endif %}
                       {% if run.assigned_to %}
                       <p style="font-size:0.85rem; color:#854d0e; margin-top:0.5rem;">Assigned to: {{ run.assigned_to.get_full_name|default:run.assigned_to.username }}</p>
                       {% endif %}
-                      {% if can_decide_approval and run.actual_yield is not None %}
+                      {% if can_decide_approval %}
                       <form method="post" action="{% url 'approvals_inbox' %}" style="display:flex; gap:0.5rem; justify-content:center; margin-top:1rem;">
                           {% csrf_token %}
                           <input type="hidden" name="item_type" value="production_run">
                           <input type="hidden" name="item_id" value="{{ run.id }}">
                           <input type="hidden" name="next" value="{{ request.path }}">
+                          {% if run.actual_yield is not None %}
                           <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject (Rework)</button>
                           <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem; background:#854d0e; border-color:#854d0e;">Approve &amp; Complete</button>
+                          {% else %}
+                          <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;" onclick="return confirm('Reject this run? It will be cancelled.')">Reject</button>
+                          <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem; background:#854d0e; border-color:#854d0e;">Approve</button>
+                          {% endif %}
                       </form>
                       {% endif %}
                   </div>
@@ -504,37 +577,118 @@
                 {% endif %}
             {% endif %}
 
-            {% if run.status != 'Completed' and allocations %}
-            <!-- Allocated Goods Panel -->
+            {% if yield_logs and run.status != 'InProgress' and run.status != 'Paused' %}
+            <!-- Yield history stays visible once the run is finished / awaiting approval -->
+            <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:1.5rem;">
+                <h4 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main);">Yield Log</h4>
+                <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
+                    <table style="width:100%; border-collapse:collapse; background:#fff;">
+                        <thead>
+                            <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                                <th style="padding:0.75rem; text-align:left;">Date</th>
+                                <th style="padding:0.75rem; text-align:right;">Quantity</th>
+                                <th style="padding:0.75rem; text-align:left;">Logged By</th>
+                                <th style="padding:0.75rem; text-align:left;">Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for y in yield_logs reversed %}
+                            <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                                <td style="padding:0.65rem 0.75rem;">{{ y.log_date|date:"M d, Y" }}</td>
+                                <td style="padding:0.65rem 0.75rem; text-align:right; font-weight:600;">+{{ y.quantity|floatformat:2 }}</td>
+                                <td style="padding:0.65rem 0.75rem;">{{ y.logged_by.get_full_name|default:y.logged_by.username|default:"—" }}</td>
+                                <td style="padding:0.65rem 0.75rem; color:var(--text-muted);">{{ y.notes|default:"—" }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if run.status == 'Completed' %}
+            <!-- Batches actually consumed -->
+            {% if consumptions or extra_sources %}
             <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
-                <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1.5rem;">Allocated Goods</h3>
+                <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1.5rem;">Materials Consumed</h3>
                 <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
                     <table style="width:100%; border-collapse:collapse; background:#fff;">
                         <thead>
                             <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
                                 <th style="padding:0.75rem; text-align:left;">Material</th>
                                 <th style="padding:0.75rem; text-align:left;">Batch</th>
+                                <th style="padding:0.75rem; text-align:left;">Location</th>
+                                <th style="padding:0.75rem; text-align:left;">Expiry</th>
+                                <th style="padding:0.75rem; text-align:right;">Used</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for c in consumptions %}
+                            <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                                <td style="padding:0.75rem; font-weight:600;">{{ c.consumed_batch.material.name }}</td>
+                                <td style="padding:0.75rem;"><a href="{% url 'batch_detail' c.consumed_batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ c.consumed_batch.batch_number }}</a></td>
+                                <td style="padding:0.75rem; color:var(--text-muted);">{{ c.consumed_batch.warehouse.name|default:"—" }}</td>
+                                <td style="padding:0.75rem; color:var(--text-muted);">{{ c.consumed_batch.expiry_date|date:"M d, Y"|default:"—" }}</td>
+                                <td style="padding:0.75rem; text-align:right;">{{ c.quantity_used|floatformat:2 }} {{ c.consumed_batch.material.unit_of_measure }}</td>
+                            </tr>
+                            {% endfor %}
+                            {% for x in extra_sources %}{% if not x.batch %}
+                            <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem; background:#fffbeb;">
+                                <td style="padding:0.75rem; font-weight:600;">{{ x.material.name }}</td>
+                                <td style="padding:0.75rem; color:#92400e; font-weight:600;">Not in records</td>
+                                <td style="padding:0.75rem; color:#92400e;" colspan="2">{{ x.reason }}{% if x.recorded_by %} <span style="color:var(--text-muted);">— {{ x.recorded_by.get_full_name|default:x.recorded_by.username }}</span>{% endif %}</td>
+                                <td style="padding:0.75rem; text-align:right;">{{ x.quantity|floatformat:2 }} {{ x.material.unit_of_measure }}</td>
+                            </tr>
+                            {% endif %}{% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
+            {% elif run.status != 'Cancelled' and run.status != 'Pending Approval' %}
+            <!-- Materials allocated to this run -->
+            <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:1.5rem;">
+                    <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin:0;">Materials Allocated</h3>
+                    <a href="{% url 'production_run_allocate' run.pk %}" class="btn btn-primary" style="padding:0.4rem 1rem; font-size:0.85rem; text-decoration:none;">+ Allocate Materials</a>
+                </div>
+                {% if allocations %}
+                <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
+                    <table style="width:100%; border-collapse:collapse; background:#fff;">
+                        <thead>
+                            <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                                <th style="padding:0.75rem; text-align:left;">Material</th>
+                                <th style="padding:0.75rem; text-align:left;">Batch</th>
+                                <th style="padding:0.75rem; text-align:left;">From</th>
+                                <th style="padding:0.75rem; text-align:left;">Expiry</th>
                                 <th style="padding:0.75rem; text-align:right;">Quantity</th>
-                                {% if run.status == 'Pending Allocation' or run.status == 'Planned' or run.status == 'Awaiting Materials' %}
+                                <th style="padding:0.75rem; text-align:left;">Transfer</th>
+                                {% if run.status == 'Planned' or run.status == 'Awaiting Materials' %}
                                 <th style="padding:0.75rem; text-align:right;">Actions</th>
                                 {% endif %}
                             </tr>
                         </thead>
                         <tbody>
                             {% for alloc in allocations %}
-                            <tr style="border-bottom:1px solid var(--border-light);">
-                                <td style="padding:0.75rem; font-size:0.85rem; font-weight:600;">{{ alloc.batch.material.name }}</td>
-                                <td style="padding:0.75rem; font-size:0.85rem; color:var(--text-muted);">{{ alloc.batch.batch_number }}</td>
-                                <td style="padding:0.75rem; font-size:0.85rem; text-align:right;">{{ alloc.quantity|floatformat:2 }}</td>
-                                {% if run.status == 'Pending Allocation' or run.status == 'Planned' or run.status == 'Awaiting Materials' %}
-                                <td style="padding:0.75rem; text-align:right;">
-                                    <form method="post" style="display:inline-flex; align-items:center; gap:0.5rem;" onsubmit="return confirm('Update allocation? This will release or reserve stock.')">
+                            <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                                <td style="padding:0.75rem; font-weight:600;">{{ alloc.batch.material.name }}</td>
+                                <td style="padding:0.75rem;"><a href="{% url 'batch_detail' alloc.batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ alloc.batch.batch_number }}</a></td>
+                                <td style="padding:0.75rem; color:var(--text-muted);">{{ alloc.batch.warehouse.name|default:"—" }}</td>
+                                <td style="padding:0.75rem; color:var(--text-muted);">{{ alloc.batch.expiry_date|date:"M d, Y"|default:"—" }}</td>
+                                <td style="padding:0.75rem; text-align:right;">{{ alloc.quantity|floatformat:2 }} {{ alloc.batch.material.unit_of_measure }}</td>
+                                <td style="padding:0.75rem; color:var(--text-muted);">
+                                    {% if alloc.shipment %}<a href="{% url 'shipment_detail' alloc.shipment.pk %}" style="color:var(--primary); text-decoration:none;">{{ alloc.shipment.tracking_number }}</a> · {{ alloc.shipment.status }}{% else %}At plant{% endif %}
+                                </td>
+                                {% if run.status == 'Planned' or run.status == 'Awaiting Materials' %}
+                                <td style="padding:0.75rem; text-align:right; white-space:nowrap;">
+                                    {% if not alloc.shipment or alloc.shipment.status == 'Draft' %}
+                                    <form method="post" action="{% url 'production_run_detail' run.pk %}" style="display:inline;" onsubmit="return confirm('Remove this line from the allocation? The stock is released{% if alloc.shipment %} and the line comes off its draft transfer{% endif %}.')">
                                         {% csrf_token %}
-                                        <input type="hidden" name="action" value="update_allocations">
+                                        <input type="hidden" name="action" value="remove_allocation">
                                         <input type="hidden" name="alloc_id" value="{{ alloc.id }}">
-                                        <input type="number" step="0.01" name="quantity" value="{{ alloc.quantity|floatformat:2 }}" style="width:70px; padding:0.25rem; font-size:0.8rem; border:1px solid var(--border-light); border-radius:4px;" required>
-                                        <button type="submit" class="btn btn-primary" style="padding:0.25rem 0.5rem; font-size:0.75rem;">Update</button>
+                                        <button type="submit" style="background:none; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:#dc2626;">Remove</button>
                                     </form>
+                                    {% else %}<span style="font-size:0.75rem; color:var(--text-muted);">In logistics</span>{% endif %}
                                 </td>
                                 {% endif %}
                             </tr>
@@ -542,6 +696,16 @@
                         </tbody>
                     </table>
                 </div>
+                {% if run.status == 'Planned' or run.status == 'Awaiting Materials' %}
+                <form method="post" action="{% url 'production_run_detail' run.pk %}" style="margin-top:0.85rem; text-align:right;" onsubmit="return confirm('Cancel this allocation? The reserved stock is released and any draft transfers are cancelled. You can then allocate again.')">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="cancel_allocation">
+                    <button type="submit" class="btn btn-secondary" style="padding:0.35rem 0.9rem; font-size:0.8rem; border-color:#dc2626; color:#dc2626;">Cancel allocation &amp; start over</button>
+                </form>
+                {% endif %}
+                {% else %}
+                <p style="font-size:0.85rem; color:var(--text-muted);">Nothing allocated yet.</p>
+                {% endif %}
             </div>
             {% endif %}
         </div>
@@ -649,4 +813,72 @@
         </div>
     </div>
 </div>
+
+{% if run.status == 'InProgress' %}
+<script>
+(function () {
+    // Extra material: anything poured beyond the allocation must be confirmed and traced.
+    function panelFor(input) { return document.getElementById('extra-' + input.getAttribute('data-mid')); }
+
+    function sources(panel) { return panel.querySelectorAll('.src'); }
+
+    function refreshTotal(panel, excess, unit) {
+        var total = 0;
+        sources(panel).forEach(function (s) { total += parseFloat(s.querySelector('.src-qty').value) || 0; });
+        var out = panel.querySelector('.src-total');
+        var ok = Math.abs(total - excess) < 0.005;
+        out.textContent = 'Accounted for ' + total.toFixed(2) + ' of ' + excess.toFixed(2) + ' ' + unit;
+        out.style.color = ok ? '#166534' : '#b91c1c';
+    }
+
+    function addSource(panel, qty) {
+        var node = panel.querySelector('.src-template').content.firstElementChild.cloneNode(true);
+        var sel = node.querySelector('.src-batch'), q = node.querySelector('.src-qty'), r = node.querySelector('.src-reason');
+        sel.required = true; q.required = true;
+        if (qty) q.value = qty;
+        sel.addEventListener('change', function () {
+            var un = sel.value === 'unrecorded';
+            r.style.display = un ? '' : 'none';
+            r.required = un;
+        });
+        node.querySelector('.rm-src').addEventListener('click', function () {
+            if (sources(panel).length > 1) { node.remove(); panel.dispatchEvent(new Event('recount')); }
+        });
+        q.addEventListener('input', function () { panel.dispatchEvent(new Event('recount')); });
+        panel.querySelector('.src-list').appendChild(node);
+    }
+
+    document.querySelectorAll('.actual-qty-input').forEach(function (input) {
+        var panel = panelFor(input);
+        var alloc = parseFloat(input.getAttribute('data-alloc')) || 0;
+        var unit = input.getAttribute('data-unit');
+        var confirmBox = panel.querySelector('.extra-confirm');
+        var excess = 0;
+
+        panel.addEventListener('recount', function () { refreshTotal(panel, excess, unit); });
+        panel.querySelector('.add-src').addEventListener('click', function () { addSource(panel); panel.dispatchEvent(new Event('recount')); });
+
+        function update() {
+            var actual = parseFloat(input.value);
+            excess = isNaN(actual) ? 0 : Math.round((actual - alloc) * 100) / 100;
+            if (excess > 0.005) {
+                panel.style.display = '';
+                confirmBox.disabled = false; confirmBox.required = true;
+                panel.querySelector('.extra-msg').textContent =
+                    excess.toFixed(2) + ' ' + unit + ' more than the ' + alloc.toFixed(2) + ' ' + unit + ' allocated. Is this correct?';
+                if (!sources(panel).length) addSource(panel, excess.toFixed(2));
+                else if (sources(panel).length === 1) sources(panel)[0].querySelector('.src-qty').value = excess.toFixed(2);
+                refreshTotal(panel, excess, unit);
+            } else {
+                panel.style.display = 'none';
+                confirmBox.checked = false; confirmBox.disabled = true; confirmBox.required = false;
+                panel.querySelector('.src-list').innerHTML = '';
+            }
+        }
+        input.addEventListener('input', update);
+        update();
+    });
+})();
+</script>
+{% endif %}
 {% endblock %}

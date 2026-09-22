@@ -2457,11 +2457,14 @@ def so_detail_view(request, pk):
     # BOM readiness and Allocation logic
     line_items_with_bom = []
     from django.db.models import Sum, F
-    from .utils import get_batch_produced_for
+    from .utils import get_batch_produced_for, so_line_commitment
 
     for item in so.items.select_related('product').all():
         allocations_qs = StockAllocation.objects.filter(sales_order=so, batch__product=item.product).select_related('batch', 'batch__produced_in', 'batch__purchase_order')
-        allocated = float(allocations_qs.aggregate(s=Sum('quantity'))['s'] or 0)
+        # Stock reserved on the order, on its logistics orders, and already shipped all count as covered
+        commit = so_line_commitment(so, item.product, item.quantity_shipped)
+        allocated = float(commit['held'])
+        in_logistics = float(commit['in_logistics'])
 
         allocation_rows = []
         for a in allocations_qs:
@@ -2485,7 +2488,7 @@ def so_detail_view(request, pk):
             status__in=['Draft', 'Cancelled', 'Rejected', 'Shipped', 'Delivered']
         ).distinct().order_by('so_number')
 
-        fulfilled = (allocated + float(item.quantity_shipped)) >= float(item.quantity_ordered)
+        fulfilled = float(commit['total']) >= float(item.quantity_ordered)
 
         global_avail = float(Batch.objects.filter(product=item.product, status='Active').annotate(avail=F('quantity')-F('allocated_quantity')).aggregate(s=Sum('avail'))['s'] or 0)
         
@@ -2501,7 +2504,7 @@ def so_detail_view(request, pk):
             if so.status in ['Draft', 'Pending Approval']:
                 deficit = float(item.quantity_ordered) - global_avail - incoming_production
             else:
-                deficit = float(item.quantity_ordered) - allocated - incoming_production
+                deficit = float(item.quantity_ordered) - float(commit['total']) - incoming_production
                 
             deficit = max(0.0, deficit)
 
@@ -2529,6 +2532,7 @@ def so_detail_view(request, pk):
             'can_make_units': can_make_units if can_make_units is not None else '∞',
             'bom_ready': all(row['sufficient'] for row in bom_rows),
             'allocated': allocated,
+            'in_logistics': in_logistics,
             'deficit': deficit,
             'fulfilled': fulfilled,
             'incoming_production': incoming_production,
@@ -2550,6 +2554,8 @@ def so_detail_view(request, pk):
 
     context = {
         'so': so,
+        # Scrapped/cancelled runs are history, not part of how this order is being fulfilled
+        'so_runs': [r for r in so.production_runs.all() if r.status != 'Cancelled'],
         'stock_split': stock_split,
         'open_stock_moves': open_stock_moves,
         'open_outbound': open_outbound,
@@ -2575,7 +2581,7 @@ def so_detail_view(request, pk):
 @login_required
 def po_detail_view(request, pk):
     po = get_object_or_404(PurchaseOrder.objects.prefetch_related('items__material', 'timeline__user', 'shipments'), pk=pk)
-    materials = Material.objects.all().order_by('name')
+    materials = Material.objects.all().order_by('id')
     warehouses = Warehouse.objects.all().order_by('name')
 
     if request.method == 'POST':
@@ -2780,13 +2786,12 @@ def manufacturing_view(request):
             run_id = request.POST.get('run_id')
             run = get_object_or_404(ProductionRun, id=run_id)
 
-            from .utils import release_production_run_allocations
-            release_production_run_allocations(run)
-
-            # Revert to Pending Allocation
-            run.status = 'Pending Allocation'
-            run.save()
-            messages.success(request, f"Allocation for Run {run.run_number} has been cancelled.")
+            from .utils import cancel_run_allocation
+            problem = cancel_run_allocation(run, request.user)
+            if problem:
+                messages.error(request, problem)
+            else:
+                messages.success(request, f"Allocation for Run {run.run_number} has been cancelled.")
             return redirect('readiness')
 
         elif action == 'draft_transfer_from_shortage':
@@ -2931,18 +2936,11 @@ def manufacturing_view(request):
             if not request.user.has_perm('core.change_productionrun'):
                 messages.error(request, "Permission Denied: You do not have permission to complete Production Runs.")
                 return redirect('readiness')
-            run_id = request.POST.get('run_id')
-            run = get_object_or_404(ProductionRun, id=run_id)
-            with transaction.atomic():
-                if run.status == 'InProgress':
-                    from decimal import Decimal
-                    actual_yield = request.POST.get('actual_yield')
-                    run.actual_yield = Decimal(actual_yield) if actual_yield else run.expected_yield
-
-                    from .utils import finalize_production_run
-                    finalize_production_run(run, request.user)
-
-                    messages.success(request, f"Production Run {run.run_number} completed. Produced {run.actual_yield} units of {run.target_product.sku}.")
+            # Completing needs the material quantities, extra-material sources and variance
+            # checks, which live on the run page. Never finish a run from the list.
+            run = get_object_or_404(ProductionRun, id=request.POST.get('run_id'))
+            messages.info(request, f"Enter the material usage and yield for {run.run_number} to complete it.")
+            return redirect(reverse('production_run_detail', args=[run.pk]) + '#finalize')
 
         return redirect('readiness')
 
@@ -3032,7 +3030,8 @@ def manufacturing_view(request):
             # directly to the SO, and by yield already expected from a run in flight.
             # Producing against the full ordered quantity here would double-count
             # whatever's already been allocated (or is already being made).
-            allocated = float(StockAllocation.objects.filter(sales_order=so, batch__product=item.product).aggregate(s=Sum('quantity'))['s'] or 0)
+            from .utils import so_line_commitment
+            allocated = float(so_line_commitment(so, item.product, item.quantity_shipped)['total'])
             incoming_production = float(ProductionRun.objects.filter(
                 sales_order=so, target_product=item.product, status__in=['Pending Approval', 'Planned', 'InProgress']
             ).aggregate(s=Sum('expected_yield'))['s'] or 0)
@@ -3397,6 +3396,7 @@ def approvals_inbox_view(request):
                 if run.actual_yield is not None:
                     # Variance Approval
                     from .utils import finalize_production_run
+                    run.supervisor_signoff = request.user
                     fg_batch = finalize_production_run(run, request.user)
                     OrderTimeline.objects.create(
                         production_run=run,
@@ -3429,7 +3429,7 @@ def approvals_inbox_view(request):
                     messages.warning(request, f"Production Run {run.run_number} variance rejected. Returned to In Progress.")
                 else:
                     from .utils import release_production_run_allocations
-                    release_production_run_allocations(run)
+                    release_production_run_allocations(run, request.user)
                     run.status = 'Cancelled'
                     run.save()
                     messages.warning(request, f"Production Run {run.run_number} rejected.")
@@ -3876,14 +3876,26 @@ def shipment_detail_view(request, pk):
                 
                 if shipment.sales_order:
                     so = shipment.sales_order
-                    so.status = 'Pending'
-                    so.save()
+                    # An order that has already shipped keeps its status; scrapping a
+                    # stray shipment must not send it back to Pending.
+                    if so.status not in ('Partially Shipped', 'Shipped', 'Delivered'):
+                        so.status = 'Pending'
+                        so.save()
                     
+                # A transfer a production run raised that never went for approval is deleted, not
+                # left behind as Cancelled; the Registry Ledger keeps the trace.
+                if shipment.is_auto_generated and shipment.linked_production_run and shipment.status == 'Draft':
+                    from .utils import delete_draft_transfer
+                    run_pk = shipment.linked_production_run.pk
+                    tracking = delete_draft_transfer(shipment, request.user, note="Scrapped before approval.")
+                    messages.success(request, f"Draft transfer {tracking} scrapped and deleted. A trace is kept in the Registry Ledger.")
+                    return redirect('production_run_detail', pk=run_pk)
+
                 shipment.status = 'Cancelled'
                 shipment.linked_production_run = None
                 shipment.sales_order = None
                 shipment.save()
-                
+
             messages.success(request, "Shipment scrapped. Cargo locks released and linked orders updated.")
 
         elif action == 'skip_approval':
@@ -4392,14 +4404,17 @@ def so_allocate_view(request, pk):
     so = get_object_or_404(SalesOrder, pk=pk)
 
     def still_needed(item):
-        allocated = StockAllocation.objects.filter(
-            sales_order=so, batch__product=item.product
-        ).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
-        return max(Decimal(str(item.quantity_ordered)) - allocated - Decimal(str(item.quantity_shipped)), Decimal('0'))
+        from .utils import so_line_commitment
+        covered = so_line_commitment(so, item.product, item.quantity_shipped)['total']
+        return max(Decimal(str(item.quantity_ordered)) - covered, Decimal('0'))
 
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'allocate_manual':
+            if so.status in ('Shipped', 'Delivered'):
+                # Allocation rewrites the order's status; a stale page must not do that to a finished order
+                messages.error(request, f"{so.so_number} is already {so.status}. Nothing more can be allocated.")
+                return redirect('so_detail', pk=so.pk)
             override_reason = request.POST.get('override_reason', '').strip()
 
             # Validate everything before writing anything
@@ -4607,18 +4622,34 @@ def production_run_allocate_view(request, pk):
     from decimal import Decimal
     
     run = get_object_or_404(ProductionRun, pk=pk)
-    
+    if run.status not in ('Pending Allocation', 'Planned', 'Awaiting Materials', 'InProgress', 'Paused'):
+        messages.error(request, f"Materials can't be allocated to a run that is {run.get_status_display()}.")
+        return redirect('production_run_detail', pk=pk)
+    # Once production is under way more than the recipe needs can be reserved (with a reason);
+    # before that the requirement is a hard cap.
+    extra_allowed = run.status in ('InProgress', 'Paused')
+
+    # Anything already allocated (and any transfers raised for it) stays as it is;
+    # a further allocation is added on top, so suggestions only cover what's still short.
+    existing_allocations = list(run.allocations.select_related('batch__material', 'batch__warehouse', 'shipment'))
+    existing_by_material = {}
+    for a in existing_allocations:
+        existing_by_material[a.batch.material_id] = existing_by_material.get(a.batch.material_id, Decimal('0')) + a.quantity
+    existing_shipments = run.linked_shipments.all()
+
     # Calculate FEFO recommendations
     recipe_reqs = []
     fefo_recommended_ids = []
-    
+
     for req in run.target_product.recipe_items.all():
         # Recipes are 4dp but stock is held to 2dp, so round the requirement UP
         # to what can actually be allocated (0.0200 x 115.01 = 2.3002 -> 2.31)
         # rather than letting it silently truncate and under-allocate.
-        needed = (Decimal(str(req.quantity_required)) * Decimal(str(run.expected_yield))).quantize(
+        required_total = (Decimal(str(req.quantity_required)) * Decimal(str(run.expected_yield))).quantize(
             Decimal('0.01'), rounding=ROUND_CEILING
         )
+        already = existing_by_material.get(req.material_id, Decimal('0'))
+        needed = max(required_total - already, Decimal('0'))
 
         # Get all active batches globally, ordered by expiry date (FEFO)
         batches = Batch.objects.filter(material=req.material, status='Active').annotate(
@@ -4648,19 +4679,25 @@ def production_run_allocate_view(request, pk):
         recipe_reqs.append({
             'material': req.material,
             'needed': float(needed),
+            'required_total': float(required_total),
+            'already': float(already),
             'batch_list': batch_list,
         })
-        
+
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'allocate_run':
-            wh_id = request.POST.get('warehouse_id')
-            if not wh_id:
-                messages.error(request, "Please select a destination manufacturing facility.")
-                return redirect('production_run_allocate', pk=pk)
-                
-            destination_warehouse = get_object_or_404(Warehouse, id=wh_id)
-            run.manufacturing_plant = destination_warehouse
+            # No acknowledgement is needed for topping up: what's already allocated is netted off
+            # the requirement below, and going over what's still needed is refused.
+            # The run's plant is set when it's created; only ask if it somehow has none.
+            destination_warehouse = run.manufacturing_plant
+            if not destination_warehouse:
+                wh_id = request.POST.get('warehouse_id')
+                if not wh_id:
+                    messages.error(request, "Please select the manufacturing facility for this run.")
+                    return redirect('production_run_allocate', pk=pk)
+                destination_warehouse = get_object_or_404(Warehouse, id=wh_id)
+                run.manufacturing_plant = destination_warehouse
             
             override_reason = request.POST.get('override_reason', '').strip()
             
@@ -4680,6 +4717,53 @@ def production_run_allocate_view(request, pk):
                     except (ValueError, TypeError):
                         pass
                         
+            # Re-check the numbers the page showed live: only batches offered for this run's
+            # materials, no more than a batch has free, no material over-allocated, and any
+            # shortfall must have been acknowledged.
+            batch_info = {}
+            for rr in recipe_reqs:
+                for b in rr['batch_list']:
+                    batch_info[b['obj'].id] = (rr['material'], Decimal(str(b['avail'])))
+            # FEFO only recommends batches for what is still needed, so a material that needs nothing
+            # more (an extra top-up while running) has no recommendation to deviate from; the extra
+            # reason covers that case.
+            still_needed_by_material = {rr['material'].id: Decimal(str(rr['needed'])) for rr in recipe_reqs}
+            is_overridden = any(
+                bid not in fefo_recommended_ids
+                and bid in batch_info
+                and still_needed_by_material.get(batch_info[bid][0].id, Decimal('0')) > Decimal('0.005')
+                for bid in selected_allocations
+            )
+            selected_by_material = {}
+            for batch_id, qty in selected_allocations.items():
+                if batch_id not in batch_info:
+                    messages.error(request, "One of the selected batches isn't available for this run any more. Please review and try again.")
+                    return redirect('production_run_allocate', pk=pk)
+                material, avail = batch_info[batch_id]
+                if qty > avail:
+                    messages.error(request, f"Cannot allocate {qty} {material.unit_of_measure} of {material.name} from one batch; only {avail.quantize(Decimal('0.01'))} is free.")
+                    return redirect('production_run_allocate', pk=pk)
+                selected_by_material[material.id] = selected_by_material.get(material.id, Decimal('0')) + qty
+            shortages = []
+            extras = []   # (material, quantity beyond the recipe requirement)
+            for rr in recipe_reqs:
+                still_needed = Decimal(str(rr['needed']))
+                picked = selected_by_material.get(rr['material'].id, Decimal('0'))
+                if picked > still_needed + Decimal('0.005'):
+                    if not extra_allowed:
+                        messages.error(request, f"{rr['material'].name}: allocating {picked} is more than the {still_needed.quantize(Decimal('0.01'))} still needed.")
+                        return redirect('production_run_allocate', pk=pk)
+                    extras.append((rr['material'], (picked - still_needed).quantize(Decimal('0.01'))))
+                if still_needed - picked > Decimal('0.005'):
+                    shortages.append(f"{rr['material'].name} short by {(still_needed - picked).quantize(Decimal('0.01'))} {rr['material'].unit_of_measure}")
+            extra_reason = request.POST.get('extra_reason', '').strip()
+            if extras and not extra_reason:
+                messages.error(request, "Give a reason for allocating more than the recipe needs: " + ", ".join(f"{m.name} +{q}" for m, q in extras) + ".")
+                return redirect('production_run_allocate', pk=pk)
+            if shortages and not request.POST.get('allocate_short'):
+                messages.error(request, "Not enough is allocated: " + "; ".join(shortages) + ". Tick 'allocate anyway' to continue with a shortfall.")
+                return redirect('production_run_allocate', pk=pk)
+
             if is_overridden and not override_reason:
                 messages.error(request, "You selected non-FEFO recommended batches. Please provide an override reason.")
                 return redirect('production_run_allocate', pk=pk)
@@ -4700,8 +4784,18 @@ def production_run_allocate_view(request, pk):
                     warehouse_groups[wh_key].append({'batch': batch, 'qty': qty})
 
                 # Auto-generate Shipments split by origin, then lock stock against each shipment
+                transfer_count = 0
                 for origin_wh_id, items in warehouse_groups.items():
                     origin_warehouse = Warehouse.objects.get(id=origin_wh_id) if origin_wh_id else None
+
+                    if origin_wh_id == destination_warehouse.id:
+                        # Already at the plant: reserve it, no transfer needed
+                        for item in items:
+                            item['batch'].allocated_quantity += item['qty']
+                            item['batch'].save(update_fields=['allocated_quantity'])
+                            StockAllocation.objects.create(batch=item['batch'], production_run=run, quantity=item['qty'])
+                        continue
+                    transfer_count += 1
 
                     # Generate unique tracking number
                     tracking = f"SHP-AUTO-{str(uuid.uuid4())[:8].upper()}"
@@ -4733,10 +4827,30 @@ def production_run_allocate_view(request, pk):
 
                         StockAllocation.objects.create(batch=batch, production_run=run, shipment=shipment, quantity=qty)
 
-                run.status = 'Awaiting Materials' # Move to a state where it waits for shipments
+                if shortages:
+                    OrderTimeline.objects.create(
+                        production_run=run,
+                        action="Allocated with a shortfall: " + "; ".join(shortages) + ".",
+                        user=request.user)
+                for material, qty in extras:
+                    OrderTimeline.objects.create(
+                        production_run=run,
+                        action=f"Extra material allocated during production: {qty} {material.unit_of_measure} of {material.name} beyond the recipe requirement. Reason: {extra_reason}",
+                        user=request.user)
+
+                # A run already under way keeps its status: later top-ups must not send it back
+                # to Planned / Awaiting Materials. Otherwise wait for shipments only if any transfers were needed.
+                if run.status not in ('InProgress', 'Paused'):
+                    run.status = 'Awaiting Materials' if transfer_count else 'Planned'
                 run.save()
-                
-            messages.success(request, f"Materials allocated. Auto-generated {len(warehouse_groups)} draft logistics shipment(s).")
+
+            under_way = run.status in ('InProgress', 'Paused')
+            if transfer_count:
+                messages.success(request, f"Materials allocated. Auto-generated {transfer_count} draft logistics shipment(s).")
+            elif under_way:
+                messages.success(request, "Materials allocated from stock already at the plant.")
+            else:
+                messages.success(request, "Materials allocated from stock already at the plant. Ready to start.")
             return redirect('production_run_detail', pk=run.pk) # Redirect to the new dedicated detail page
             
     warehouses = Warehouse.objects.all()
@@ -4744,8 +4858,72 @@ def production_run_allocate_view(request, pk):
     return render(request, 'production_allocate.html', {
         'run': run,
         'recipe_reqs': recipe_reqs,
-        'warehouses': warehouses
+        'warehouses': warehouses,
+        'existing_allocations': existing_allocations,
+        'existing_shipments': existing_shipments,
+        'extra_allowed': extra_allowed,
     })
+
+def parse_extra_material_sources(request, bom_materials, allocated_by_material):
+    """Validates the 'extra material' section of the run-completion form. For every
+    material poured beyond its allocation the user must confirm the figure and account
+    for the whole excess, split across plant batches and/or 'batch not in records' rows
+    (which need a reason). Returns (sources, error) - error is a message or None."""
+    from decimal import Decimal, InvalidOperation
+    cent = Decimal('0.01')
+    sources = []
+    for bom in bom_materials:
+        mat = bom['material']
+        raw = request.POST.get(f'actual_qty_{mat.id}')
+        if not raw:
+            continue
+        try:
+            actual = Decimal(raw)
+        except InvalidOperation:
+            return [], f"Enter a valid quantity for {mat.name}."
+        allocated = Decimal(str(allocated_by_material.get(mat.id, 0)))
+        excess = (actual - allocated).quantize(cent)
+        if excess <= 0:
+            continue
+
+        unit = mat.unit_of_measure
+        if not request.POST.get(f'extra_confirm_{mat.id}'):
+            return [], f"{mat.name}: {excess} {unit} more than allocated was entered. Please confirm that figure is correct."
+
+        batch_ids = request.POST.getlist(f'extra_batch_{mat.id}')
+        qtys = request.POST.getlist(f'extra_qty_{mat.id}')
+        reasons = request.POST.getlist(f'extra_reason_{mat.id}')
+        by_id = {b.id: b for b in bom['plant_batches']}
+        used_per_batch, total = {}, Decimal('0')
+        for i, choice in enumerate(batch_ids):
+            qty_raw = (qtys[i] if i < len(qtys) else '').strip()
+            if not choice and not qty_raw:
+                continue
+            try:
+                qty = Decimal(qty_raw)
+            except InvalidOperation:
+                return [], f"{mat.name}: enter a quantity for each source row."
+            if qty <= 0:
+                return [], f"{mat.name}: source quantities must be greater than zero."
+            if choice == 'unrecorded':
+                reason = (reasons[i] if i < len(reasons) else '').strip()
+                if not reason:
+                    return [], f"{mat.name}: a reason is required for material from a batch not in records."
+                sources.append({'material': mat, 'batch': None, 'qty': qty, 'reason': reason})
+            else:
+                try:
+                    batch = by_id[int(choice)]
+                except (ValueError, KeyError):
+                    return [], f"{mat.name}: choose a batch (or 'Batch not in records') for each source row."
+                used_per_batch[batch.id] = used_per_batch.get(batch.id, Decimal('0')) + qty
+                if used_per_batch[batch.id] > Decimal(str(batch.avail)):
+                    return [], f"{mat.name}: batch {batch.batch_number} only has {Decimal(str(batch.avail)).quantize(cent)} {unit} free."
+                sources.append({'material': mat, 'batch': batch, 'qty': qty, 'reason': ''})
+            total += qty
+        if abs(total - excess) > Decimal('0.005'):
+            return [], f"{mat.name}: the sources add up to {total} {unit} but {excess} {unit} more than allocated was entered."
+    return sources, None
+
 
 @login_required
 def production_run_detail_view(request, pk):
@@ -4763,17 +4941,48 @@ def production_run_detail_view(request, pk):
             pending_shipments_count += 1
             
     # Calculate BOM for usage form and the pre-start preview
+    # "Ready" = allocated stock that is physically at the plant: no transfer needed, or its
+    # transfer has arrived. The rest is allocated but still on its way.
+    allocated_by_material, ready_by_material = {}, {}
+    for a in run.allocations.select_related('batch', 'shipment'):
+        mid = a.batch.material_id
+        qty = float(a.quantity)
+        allocated_by_material[mid] = allocated_by_material.get(mid, 0) + qty
+        if a.shipment is None or a.shipment.status in ('Arrived', 'Completed'):
+            ready_by_material[mid] = ready_by_material.get(mid, 0) + qty
+
     bom_materials = []
     for req in run.target_product.recipe_items.all():
         needed = float(req.quantity_required) * float(run.expected_yield)
         avail = float(Batch.objects.filter(material=req.material, status='Active').annotate(
             avail=F('quantity') - F('allocated_quantity')
         ).aggregate(s=Sum('avail'))['s'] or 0)
+        allocated = allocated_by_material.get(req.material_id, 0)
+        ready = ready_by_material.get(req.material_id, 0)
+        if ready >= needed - 0.005:
+            state = 'ready'
+        elif allocated >= needed - 0.005:
+            state = 'in_transit'
+        elif allocated > 0:
+            state = 'partial'
+        else:
+            state = 'none'
+        # Unreserved stock at the run's plant: what extra material can be traced to
+        plant_batches = []
+        if run.manufacturing_plant_id:
+            plant_batches = list(Batch.objects.filter(
+                material=req.material, status='Active', warehouse_id=run.manufacturing_plant_id,
+            ).annotate(avail=F('quantity') - F('allocated_quantity')).filter(avail__gt=0).order_by(
+                F('expiry_date').asc(nulls_last=True), 'manufacturing_date'))
         bom_materials.append({
             'material': req.material,
             'needed': needed,
             'available': avail,
             'sufficient': avail >= needed,
+            'allocated': allocated,
+            'ready': ready,
+            'state': state,
+            'plant_batches': plant_batches,
         })
             
     if request.method == 'POST':
@@ -4788,6 +4997,13 @@ def production_run_detail_view(request, pk):
             return redirect('production_run_detail', pk=pk)
             
         elif action == 'start_production':
+            if run.status == 'Pending Allocation':
+                messages.error(request, "Allocate materials before starting production.")
+                return redirect('production_run_detail', pk=pk)
+            if run.status not in ('Planned', 'Awaiting Materials'):
+                # A stale page or replayed form must not restart a paused, running or finished run
+                messages.error(request, f"This run is {run.get_status_display()} and can't be started.")
+                return redirect('production_run_detail', pk=pk)
             override_remark = request.POST.get('override_remark', '').strip()
             if not all_shipments_arrived and not override_remark:
                 messages.error(request, "Cannot start production: some shipments have not arrived. An override remark is required.")
@@ -4812,7 +5028,7 @@ def production_run_detail_view(request, pk):
                 return redirect('production_run_detail', pk=pk)
 
             from .utils import release_production_run_allocations
-            release_production_run_allocations(run)
+            release_production_run_allocations(run, request.user)
             run.status = 'Cancelled'
             run.save()
             OrderTimeline.objects.create(production_run=run, action=f"Run scrapped before starting. Reason: {reason}", user=request.user)
@@ -4865,9 +5081,33 @@ def production_run_detail_view(request, pk):
             return redirect('production_run_detail', pk=pk)
 
         elif action == 'complete_production':
+            if run.status != 'InProgress':
+                messages.error(request, "Only a run that's In Progress can be completed.")
+                return redirect('production_run_detail', pk=pk)
+
+            # Anything poured beyond what was allocated must be confirmed and traced to a
+            # batch (or to stock that isn't in the records, with a reason) before we go on.
+            extra_sources, extra_error = parse_extra_material_sources(request, bom_materials, allocated_by_material)
+            if extra_error:
+                messages.error(request, extra_error)
+                return redirect('production_run_detail', pk=pk)
+
             # 1. Process Material Usage and Variances
             has_high_variance = False
             with transaction.atomic():
+                # Whatever final yield is submitted beyond what's been logged is filled in
+                # as a yield-log entry, so the log and progress bar reconcile with the run.
+                fg_raw = request.POST.get('actual_yield')
+                if fg_raw:
+                    from .models import ProductionRunYieldLog
+                    logged = run.yield_logs.aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+                    shortfall = Decimal(fg_raw) - logged
+                    if shortfall > 0:
+                        ProductionRunYieldLog.objects.create(
+                            production_run=run, quantity=shortfall, log_date=timezone.now().date(),
+                            logged_by=request.user, notes="Auto-filled on completion",
+                        )
+                        OrderTimeline.objects.create(production_run=run, action=f"Auto-filled {shortfall} units of yield on completion.", user=request.user)
                 for bom in bom_materials:
                     mat_id = bom['material'].id
                     actual = request.POST.get(f'actual_qty_{mat_id}')
@@ -4885,6 +5125,22 @@ def production_run_detail_view(request, pk):
                         if usage.variance_pct > Decimal('3.0') or usage.variance_pct < Decimal('-3.0'):
                             has_high_variance = True
                             
+                # Record where the extra material came from (replaces any earlier submission
+                # for this run, e.g. after a rejected variance approval).
+                from .models import RunExtraMaterial
+                run.extra_sources.all().delete()
+                for src in extra_sources:
+                    RunExtraMaterial.objects.create(
+                        production_run=run, material=src['material'], batch=src['batch'],
+                        quantity=src['qty'], reason=src['reason'], recorded_by=request.user,
+                    )
+                    unit = src['material'].unit_of_measure
+                    if src['batch']:
+                        note = f"Extra {src['qty']} {unit} of {src['material'].name} taken from batch {src['batch'].batch_number}."
+                    else:
+                        note = f"Extra {src['qty']} {unit} of {src['material'].name} used from a batch not in records. Reason: {src['reason']}"
+                    OrderTimeline.objects.create(production_run=run, action=note, user=request.user)
+
                 # 2. Check for supervisor sign-off if variance > 3%
                 if has_high_variance:
                     approver_id = request.POST.get('approver_id')
@@ -4961,51 +5217,29 @@ def production_run_detail_view(request, pk):
                     messages.success(request, f"Removed {user_obj.get_full_name() or user_obj.username} from followers.")
             return redirect('production_run_detail', pk=pk)
             
-        elif action == 'update_allocations':
-            from decimal import Decimal
-            alloc_id = request.POST.get('alloc_id')
-            new_qty = request.POST.get('quantity')
-            if alloc_id and new_qty is not None:
-                try:
-                    alloc = get_object_or_404(StockAllocation, id=alloc_id, production_run=run)
+        elif action == 'remove_allocation':
+            # Allocation is add-only apart from this: a single line can come off before the run starts,
+            # provided its transfer is still a Draft.
+            from .utils import remove_run_allocation
+            alloc = StockAllocation.objects.filter(id=request.POST.get('alloc_id'), production_run=run).select_related('batch__material', 'shipment').first()
+            if not alloc:
+                messages.error(request, "That allocation line no longer exists.")
+            else:
+                problem = remove_run_allocation(run, alloc, request.user)
+                if problem:
+                    messages.error(request, problem)
+                else:
+                    messages.success(request, "Allocation line removed.")
+            return redirect('production_run_detail', pk=pk)
 
-                    if alloc.shipment and alloc.shipment.status != 'Draft':
-                        messages.error(request, f"This allocation is already in shipment {alloc.shipment.tracking_number} ({alloc.shipment.status}). Edit or cancel the shipment instead.")
-                        return redirect('production_run_detail', pk=pk)
-
-                    qty_dec = Decimal(new_qty)
-                    if qty_dec < 0:
-                        qty_dec = Decimal('0.0')
-
-                    diff = alloc.quantity - qty_dec
-                    batch = alloc.batch
-                    shipment = alloc.shipment
-
-                    if qty_dec == 0:
-                        alloc.delete()
-                    else:
-                        alloc.quantity = qty_dec
-                        alloc.save()
-
-                    if shipment:
-                        ship_item = ShipmentItem.objects.filter(shipment=shipment, batch=batch).first()
-                        if ship_item:
-                            if qty_dec == 0:
-                                ship_item.delete()
-                            else:
-                                ship_item.quantity = qty_dec
-                                ship_item.save(update_fields=['quantity'])
-
-                    if diff != 0:
-                        batch.allocated_quantity -= diff
-                        if batch.allocated_quantity < 0:
-                            batch.allocated_quantity = 0
-                        batch.save()
-
-                    OrderTimeline.objects.create(production_run=run, action=f"Updated allocation for {batch.batch_number} to {qty_dec}.", user=request.user)
-                    messages.success(request, f"Allocation updated to {qty_dec}.")
-                except Exception as e:
-                    messages.error(request, f"Error updating allocation: {str(e)}")
+        elif action == 'cancel_allocation':
+            # To redo an allocation before the run starts. Only additions are allowed otherwise.
+            from .utils import cancel_run_allocation
+            problem = cancel_run_allocation(run, request.user)
+            if problem:
+                messages.error(request, problem)
+            else:
+                messages.success(request, f"Allocation for {run.run_number} cancelled. Allocate again to continue.")
             return redirect('production_run_detail', pk=pk)
             
     material_usage_rows = []
@@ -5015,8 +5249,11 @@ def production_run_detail_view(request, pk):
             consumed_batch__material=usage.material
         ).select_related('consumed_batch')
         row_cost = sum((c.quantity_used * c.consumed_batch.material.cost_per_unit for c in consumptions), Decimal('0'))
+        # Extra material from a batch that isn't in the records is costed at the standard rate
+        unrecorded = list(run.extra_sources.filter(material=usage.material, batch__isnull=True))
+        row_cost += sum((u.quantity * usage.material.cost_per_unit for u in unrecorded), Decimal('0'))
         total_material_cost += row_cost
-        material_usage_rows.append({'usage': usage, 'consumptions': consumptions, 'cost': row_cost})
+        material_usage_rows.append({'usage': usage, 'consumptions': consumptions, 'cost': row_cost, 'unrecorded': unrecorded})
 
     yield_efficiency = None
     if run.actual_yield is not None and run.expected_yield:
@@ -5030,6 +5267,7 @@ def production_run_detail_view(request, pk):
     yield_progress_pct = None
     if run.expected_yield:
         yield_progress_pct = min(100, float((yield_logs_sum / Decimal(str(run.expected_yield))) * 100))
+    yield_remaining = max(Decimal(str(run.expected_yield or 0)) - yield_logs_sum, Decimal('0'))
 
     priority = None
     if run.sales_order and run.sales_order.fulfillment_deadline and run.status not in ['Completed', 'Cancelled']:
@@ -5041,8 +5279,11 @@ def production_run_detail_view(request, pk):
         else:
             priority = 'On Track'
 
+    materials_short = [b for b in bom_materials if b['allocated'] < b['needed'] - 0.005]
+
     return render(request, 'production_run_detail.html', {
         'run': run,
+        'materials_short': materials_short,
         'can_decide_approval': may_decide_run_approval(request.user, run),
         'linked_shipments': linked_shipments,
         'all_shipments_arrived': all_shipments_arrived,
@@ -5051,7 +5292,9 @@ def production_run_detail_view(request, pk):
         'managers': approvers(),
         'all_users': CustomUser.objects.prefetch_related('groups'),
         'timeline_events': run.timeline.all().order_by('-timestamp'),
-        'allocations': run.allocations.all(),
+        'allocations': run.allocations.select_related('batch__material', 'batch__warehouse', 'shipment'),
+        'consumptions': run.consumptions.select_related('consumed_batch__material', 'consumed_batch__warehouse'),
+        'extra_sources': run.extra_sources.select_related('material', 'batch', 'recorded_by'),
         'material_usage_rows': material_usage_rows,
         'total_material_cost': total_material_cost,
         'produced_batches': run.produced_batches.all(),
@@ -5059,6 +5302,7 @@ def production_run_detail_view(request, pk):
         'yield_logs': yield_logs,
         'yield_logs_sum': yield_logs_sum,
         'yield_progress_pct': yield_progress_pct,
+        'yield_remaining': yield_remaining,
         'priority': priority,
     })
 

@@ -223,7 +223,7 @@
                         {% else %}<span style="color:var(--text-muted); font-size:0.78rem;">-</span>{% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem;">{{ run.manufacturing_plant.name|default:"Site Alpha" }}</td>
-                    <td style="padding:0.85rem 1rem;">{{ run.supervisor.username|default:"System" }}</td>
+                    <td style="padding:0.85rem 1rem;">{{ run.supervisor.username|default:"System" }}{% if run.approved_by %}<div style="font-size:0.72rem; color:var(--text-muted);">Approved by {{ run.approved_by.username }}</div>{% endif %}</td>
                     <td style="padding:0.85rem 1rem;">
                         <span class="badge" style="
                             {% if run.status == 'Pending Approval' %}background:#fef3c7;color:#b45309;
@@ -248,12 +248,7 @@
                         {% elif run.status == 'Planned' or run.status == 'Pending Allocation' %}
                         <a href="{% url 'production_run_allocate' run.id %}" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem; border-color:var(--primary); color:var(--primary); text-decoration:none;">Allocate Materials</a>
                         {% elif run.status == 'InProgress' %}
-                        <form method="post" style="display:inline;">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="complete_run">
-                            <input type="hidden" name="run_id" value="{{ run.id }}">
-                            <button type="submit" class="btn btn-primary" style="padding:0.3rem 0.6rem; font-size:0.78rem; background:#059669;">Complete &amp; Yield</button>
-                        </form>
+                        <a href="{% url 'production_run_detail' run.pk %}#finalize" class="btn btn-primary" style="padding:0.3rem 0.6rem; font-size:0.78rem; background:#059669; text-decoration:none;">Complete &amp; Yield</a>
                         {% else %}
                         <span style="font-size:0.78rem; color:var(--text-muted);">-</span>
                         {% endif %}

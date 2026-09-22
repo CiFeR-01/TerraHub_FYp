@@ -48,6 +48,13 @@
             <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.4rem;">poor &middot; {{ summary.watch_count }} watch</span>
         </div>
     </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Unrecorded Usage ({{ unrecorded.recent_days }} days)</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value" style="color:{% if unrecorded.events_recent %}#b45309{% else %}var(--text-main){% endif %};">{{ unrecorded.events_recent }}</span>
+            <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.4rem;">across {{ unrecorded.materials_recent }} material{{ unrecorded.materials_recent|pluralize }}</span>
+        </div>
+    </div>
 </section>
 
 {% for section in sections %}
@@ -98,6 +105,59 @@
     </div>
 </div>
 {% endfor %}
+
+<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:700; margin:0 0 0.35rem;">Unrecorded material usage</h3>
+    <p style="color:var(--text-muted); font-size:0.82rem; margin:0 0 1rem; max-width:80ch;">
+        Extra material poured into a run from a batch that isn't in the records. Nothing is deducted from stock for it,
+        so a high share means inventory and the shop floor are drifting apart. Highest share first.
+    </p>
+    <div class="table-responsive">
+        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th data-sort="text" style="padding:0.6rem 1rem;">Material</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Last {{ unrecorded.recent_days }} days</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Last {{ unrecorded.window_days }} days</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Share of usage</th>
+                    <th data-sort="text" style="padding:0.6rem 1rem;">Top reasons</th>
+                    <th data-sort="text" style="padding:0.6rem 1rem;">Entered by</th>
+                    <th style="padding:0.6rem 1rem;">Runs</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in unrecorded.rows %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem; vertical-align:top;">
+                    <td style="padding:0.6rem 1rem; font-weight:700; color:var(--primary);">{{ r.name }}<div style="font-size:0.72rem; font-weight:500; color:var(--text-muted);">{{ r.sku }}</div></td>
+                    <td style="padding:0.6rem 1rem; text-align:right;" data-sort-value="{{ r.qty_recent|floatformat:2 }}">
+                        {% if r.events_recent %}{{ r.qty_recent|floatformat:2 }} {{ r.unit }}<div style="font-size:0.72rem; color:var(--text-muted);">{{ r.events_recent }} event{{ r.events_recent|pluralize }}</div>{% else %}&mdash;{% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right;" data-sort-value="{{ r.qty_window|floatformat:2 }}">
+                        {{ r.qty_window|floatformat:2 }} {{ r.unit }}<div style="font-size:0.72rem; color:var(--text-muted);">{{ r.events_window }} event{{ r.events_window|pluralize }}</div>
+                    </td>
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; color:{% if r.share_pct and r.share_pct > 5 %}#dc2626{% elif r.share_pct and r.share_pct > 2 %}#b45309{% endif %};" data-sort-value="{% if r.share_pct is not None %}{{ r.share_pct|floatformat:2 }}{% endif %}">
+                        {% if r.share_pct is not None %}{{ r.share_pct|floatformat:1 }}%{% else %}&mdash;{% endif %}
+                    </td>
+                    <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.top_reasons %}{{ r.top_reasons.0.0 }}{% endif %}">
+                        {% for reason, n in r.top_reasons %}<div>{{ reason }}{% if n > 1 %} <span style="color:var(--text-muted);">&times;{{ n }}</span>{% endif %}</div>{% empty %}&mdash;{% endfor %}
+                    </td>
+                    <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.top_people %}{{ r.top_people.0.0 }}{% endif %}">
+                        {% for person, n in r.top_people %}<div>{{ person }} <span style="color:var(--text-muted);">&times;{{ n }}</span></div>{% endfor %}
+                    </td>
+                    <td style="padding:0.6rem 1rem;">
+                        {% for run in r.runs %}<a href="{% url 'production_run_detail' run.pk %}" style="color:var(--primary); text-decoration:none; display:block; font-size:0.8rem;">{{ run.number }}</a>{% endfor %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7" style="padding:1.5rem 1rem; text-align:center; color:var(--text-muted);">No unrecorded material usage in the last {{ unrecorded.window_days }} days.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p style="color:var(--text-muted); font-size:0.75rem; margin:0.75rem 0 0; max-width:80ch;">
+        <em>Share of usage</em> is the quantity entered as not-in-records &divide; everything poured for that material in runs completed over the last {{ unrecorded.window_days }} days.
+    </p>
+</div>
 
 <p style="color:var(--text-muted); font-size:0.75rem; margin-top:0.5rem; max-width:74ch;">
     <em>Yield vs plan</em> is actual yield &divide; expected yield. <em>Yield variance</em>

@@ -119,6 +119,39 @@ def allocate_stock(order_type, order, material_or_product, required_qty, warehou
             
     return total_allocated
 
+def so_line_commitment(so, product, quantity_shipped=None):
+    """How much of `product` a sales order has already covered, split by where the stock is:
+
+      held          reserved directly on the order (still to be put on a logistics order)
+      in_logistics  on the order's outbound logistics orders that haven't been credited as shipped yet.
+                    Creating a logistics order moves the reservation onto the shipment, so this stock
+                    no longer belongs to the order itself - but it is still the order's.
+      shipped       already credited to the order (SalesOrderDetail.quantity_shipped)
+      total         all three: what the order no longer needs found or made.
+
+    Shipments already credited to the order are left out of in_logistics because their cargo is
+    in `shipped` - counting both would count it twice. Cancelled shipments hold nothing, and a
+    stock move (consolidation) keeps the order's own reservation, so it is not counted here."""
+    from django.db.models import Sum
+    from .models import StockAllocation
+
+    held = StockAllocation.objects.filter(
+        sales_order=so, batch__product=product,
+    ).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+    in_logistics = StockAllocation.objects.filter(
+        sales_order__isnull=True, shipment__sales_order=so, shipment__direction='Outbound',
+        shipment__credited_to_so=False, batch__product=product,
+    ).exclude(shipment__status='Cancelled').aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+    if quantity_shipped is None:
+        quantity_shipped = sum(
+            (i.quantity_shipped or Decimal('0') for i in so.items.all() if i.product_id == product.id),
+            Decimal('0'),
+        )
+    held, in_logistics, shipped = Decimal(str(held)), Decimal(str(in_logistics)), Decimal(str(quantity_shipped or 0))
+    return {'held': held, 'in_logistics': in_logistics, 'shipped': shipped,
+            'total': held + in_logistics + shipped}
+
+
 def create_shortage_production_runs(so, plant, user):
     """Creates a 'Pending Approval' Production Run for each SO line item not
     yet covered by StockAllocations. Returns True if any run was created."""
@@ -130,15 +163,17 @@ def create_shortage_production_runs(so, plant, user):
     created_any = False
     for item in so.items.all():
         qty_needed = Decimal(str(item.quantity_ordered))
-        prev_allocated = StockAllocation.objects.filter(
-            sales_order=so, batch__product=item.product
-        ).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
-        unfulfilled = qty_needed - Decimal(str(prev_allocated))
+        unfulfilled = qty_needed - so_line_commitment(so, item.product, item.quantity_shipped)['total']
 
         if unfulfilled > 0:
             pr = ProductionRun.objects.filter(sales_order=so, target_product=item.product).exclude(status='Cancelled').first()
             if not pr:
-                run_number = f"PR-{so.so_number}-{item.product.sku}"
+                # A cancelled run from an earlier attempt still holds the plain name, so take the next free suffix
+                base_number = f"PR-{so.so_number}-{item.product.sku}"
+                run_number, attempt = base_number, 1
+                while ProductionRun.objects.filter(run_number=run_number).exists():
+                    attempt += 1
+                    run_number = f"{base_number}-{attempt}"
                 pr_new = ProductionRun.objects.create(
                     run_number=run_number,
                     target_product=item.product,
@@ -156,9 +191,56 @@ def create_shortage_production_runs(so, plant, user):
     return created_any
 
 
-def release_production_run_allocations(run):
-    """Releases every StockAllocation held by a run back to stock, and cancels
-    any auto-generated Draft transfer shipments left over from allocating it."""
+def delete_draft_transfer(shipment, user=None, note=""):
+    """Deletes a transfer that a production run raised and that never went for approval,
+    instead of leaving a Cancelled shell behind. The trace is the Registry Ledger: one
+    'Draft Transfer Deleted' row per line (material, quantity, where it was to come from)
+    plus a note on the run's timeline. No stock moves here - callers release the
+    allocations. Returns the tracking number."""
+    from .models import RegistryLog, OrderTimeline
+
+    tracking = shipment.tracking_number
+    run = shipment.linked_production_run
+    route = f"{shipment.origin_warehouse.name if shipment.origin_warehouse else '?'} -> {shipment.destination_warehouse.name if shipment.destination_warehouse else '?'}"
+    suffix = f" ({run.run_number})" if run else ""
+    tail = f" {note}" if note else ""
+    lines = list(shipment.items.select_related('material', 'batch', 'batch__material'))
+
+    with transaction.atomic():
+        for it in lines:
+            material = it.material or (it.batch.material if it.batch else None)
+            name = material.name if material else (it.product.name if it.product else 'Item')
+            batch_part = f" (Batch {it.batch.batch_number})" if it.batch else ""
+            RegistryLog.objects.create(
+                action_type='Draft_Transfer_Deleted',
+                item_name=f"{name}{batch_part} - draft transfer {tracking} deleted{suffix}, {route}.{tail}",
+                material=material,
+                quantity_changed=it.quantity,
+                warehouse=shipment.origin_warehouse,
+                user=user,
+            )
+        if not lines:
+            RegistryLog.objects.create(
+                action_type='Draft_Transfer_Deleted',
+                item_name=f"Draft transfer {tracking} deleted{suffix}, {route}, no lines.{tail}",
+                quantity_changed=Decimal('0'),
+                warehouse=shipment.origin_warehouse,
+                user=user,
+            )
+        if run:
+            OrderTimeline.objects.create(
+                production_run=run,
+                action=f"Draft transfer {tracking} deleted before approval (see the Registry Ledger).",
+                user=user,
+            )
+        shipment.delete()
+    return tracking
+
+
+def release_production_run_allocations(run, user=None):
+    """Releases every StockAllocation held by a run back to stock, and deletes
+    any auto-generated Draft transfer shipments left over from allocating it
+    (a trace of each stays in the Registry Ledger)."""
     from .models import StockAllocation, Shipment
 
     allocs = StockAllocation.objects.filter(production_run=run)
@@ -170,9 +252,74 @@ def release_production_run_allocations(run):
         batch.save(update_fields=['allocated_quantity'])
         alloc.delete()
 
-    Shipment.objects.filter(
+    for draft in Shipment.objects.filter(
         linked_production_run=run, is_auto_generated=True, status='Draft'
-    ).update(status='Cancelled')
+    ).select_related('origin_warehouse', 'destination_warehouse', 'linked_production_run'):
+        delete_draft_transfer(draft, user, note="Allocation released.")
+
+
+def cancel_run_allocation(run, user=None):
+    """Undoes a run's allocation so it can be redone from scratch: releases the stock and
+    cancels its Draft auto-transfers, and puts the run back to Pending Allocation.
+    Refused (returns a message) once production has started, or once a transfer has left
+    Draft - those are Logistics' to cancel or receive, and changing their lines from here
+    would leave the shipment out of step. Returns None on success."""
+    from .models import OrderTimeline
+
+    if run.status not in ('Pending Allocation', 'Planned', 'Awaiting Materials'):
+        return f"Allocation can only be cancelled before production starts (this run is {run.get_status_display()})."
+    under_way = list(run.linked_shipments.exclude(status__in=['Draft', 'Cancelled']))
+    if under_way:
+        numbers = ", ".join(s.tracking_number for s in under_way)
+        return f"Transfers for this run are already under way ({numbers}). Cancel or receive them in Logistics first."
+
+    release_production_run_allocations(run, user)
+    run.status = 'Pending Allocation'
+    run.save()
+    OrderTimeline.objects.create(production_run=run, action="Allocation cancelled. Materials released; allocate again to continue.", user=user)
+    return None
+
+
+def remove_run_allocation(run, alloc, user=None):
+    """Takes one allocation line off a run that hasn't started, leaving its others alone.
+    The stock goes back to the batch and the line comes off its Draft transfer (the transfer
+    is cancelled if that was its last line). Refused once production has started or when the
+    line's transfer has left Draft - those belong to Logistics. Returns None on success,
+    otherwise a message."""
+    from .models import OrderTimeline, ShipmentItem
+
+    if run.status not in ('Planned', 'Awaiting Materials'):
+        return f"An allocation can only be removed before production starts (this run is {run.get_status_display()})."
+    shipment = alloc.shipment
+    if shipment and shipment.status != 'Draft':
+        return f"This line is on transfer {shipment.tracking_number} ({shipment.status}). Cancel or receive that transfer in Logistics instead."
+
+    batch, qty = alloc.batch, alloc.quantity
+    with transaction.atomic():
+        batch.allocated_quantity = max(batch.allocated_quantity - qty, Decimal('0'))
+        batch.save(update_fields=['allocated_quantity'])
+        alloc.delete()
+        if shipment:
+            if shipment.items.exclude(batch=batch).exists():
+                ShipmentItem.objects.filter(shipment=shipment, batch=batch).delete()
+            else:
+                # That was the transfer's last line: delete the transfer, leaving its ledger trace
+                delete_draft_transfer(shipment, user, note="Its last line was removed.")
+
+        # Waiting on transfers only while some allocated stock is still on its way
+        remaining = run.allocations.all()
+        if not remaining.exists():
+            run.status = 'Pending Allocation'
+        elif remaining.filter(shipment__isnull=False).exclude(shipment__status__in=['Arrived', 'Completed']).exists():
+            run.status = 'Awaiting Materials'
+        else:
+            run.status = 'Planned'
+        run.save()
+        OrderTimeline.objects.create(
+            production_run=run,
+            action=f"Removed {qty} from batch {batch.batch_number} from the allocation.",
+            user=user)
+    return None
 
 
 def sync_production_run_yield(so, product, unfulfilled, user):
@@ -190,7 +337,7 @@ def sync_production_run_yield(so, product, unfulfilled, user):
     unfulfilled = Decimal(str(unfulfilled))
     if unfulfilled <= 0:
         old_yield = run.expected_yield
-        release_production_run_allocations(run)
+        release_production_run_allocations(run, user)
         run.status = 'Cancelled'
         run.save(update_fields=['status'])
         OrderTimeline.objects.create(
@@ -225,7 +372,7 @@ def handle_so_item_removed(so, product, user):
             user=user
         )
     else:
-        release_production_run_allocations(run)
+        release_production_run_allocations(run, user)
         run.status = 'Cancelled'
         run.save(update_fields=['status'])
         OrderTimeline.objects.create(
@@ -360,7 +507,28 @@ def consume_materials_for_run(run, user):
             batch.save(update_fields=['quantity', 'allocated_quantity', 'status', 'closed_date'])
             alloc.delete()
 
-        if remaining > 0 and run.manufacturing_plant:
+        # Material poured beyond the allocation: the user said where it came from.
+        extras = list(run.extra_sources.filter(material=material))
+        unrecorded_total = Decimal('0')
+        for ex in extras:
+            if ex.batch_id is None:
+                # Stock the system never held: note the usage, deduct nothing
+                unrecorded_total += ex.quantity
+                remaining -= ex.quantity
+                continue
+            batch = Batch.objects.get(id=ex.batch_id)
+            free = max(batch.quantity - batch.allocated_quantity, Decimal('0'))
+            take = min(ex.quantity, free)
+            if take > 0:
+                batch.quantity -= take
+                _close_batch_if_depleted(batch)
+                batch.save(update_fields=['quantity', 'status', 'closed_date'])
+                ProductionConsumption.objects.create(production_run=run, consumed_batch=batch, quantity_used=take)
+                remaining -= take
+
+        # No sources recorded (e.g. submitted before extra-material tracing existed):
+        # fall back to the plant's earliest-expiring stock.
+        if remaining > 0 and not extras and run.manufacturing_plant:
             extra_batches = Batch.objects.filter(
                 material=material, status='Active', warehouse=run.manufacturing_plant
             ).annotate(avail=F('quantity') - F('allocated_quantity')).filter(avail__gt=0).order_by(
@@ -378,7 +546,7 @@ def consume_materials_for_run(run, user):
                 ProductionConsumption.objects.create(production_run=run, consumed_batch=batch, quantity_used=take)
                 remaining -= take
 
-        consumed = actual_used - remaining
+        consumed = actual_used - remaining - unrecorded_total   # stock actually deducted
         if consumed > 0:
             RegistryLog.objects.create(
                 action_type='Consumed_For_Manufacturing',
@@ -402,7 +570,10 @@ def approve_production_run(run, user):
     """Approves a 'Pending Approval' run, clearing it for material allocation
     via the FEFO allocation screen."""
     from .models import OrderTimeline
+    from django.utils import timezone
     run.status = 'Pending Allocation'
+    run.approved_by = user
+    run.approved_at = timezone.now()
     run.save()
     OrderTimeline.objects.create(
         production_run=run,
@@ -489,10 +660,7 @@ def allocate_finished_batch_to_order(run, fg_batch, user, event):
     item = so.items.filter(product=run.target_product).first()
 
     if item:
-        already_allocated = StockAllocation.objects.filter(
-            sales_order=so, batch__product=item.product
-        ).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
-        outstanding = Decimal(str(item.quantity_ordered)) - Decimal(str(already_allocated)) - Decimal(str(item.quantity_shipped))
+        outstanding = Decimal(str(item.quantity_ordered)) - so_line_commitment(so, item.product, item.quantity_shipped)['total']
 
         if outstanding > 0:
             take = min(fg_batch.quantity - fg_batch.allocated_quantity, outstanding)
@@ -508,10 +676,7 @@ def allocate_finished_batch_to_order(run, fg_batch, user, event):
 
     fully_covered = True
     for it in so.items.all():
-        alloc_sum = StockAllocation.objects.filter(
-            sales_order=so, batch__product=it.product
-        ).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
-        if Decimal(str(alloc_sum)) + Decimal(str(it.quantity_shipped)) < Decimal(str(it.quantity_ordered)):
+        if so_line_commitment(so, it.product, it.quantity_shipped)['total'] < Decimal(str(it.quantity_ordered)):
             fully_covered = False
             break
 
@@ -632,8 +797,7 @@ def _resync_so_fulfillment_status(so, user):
 
     fully_covered = True
     for it in so.items.all():
-        alloc_sum = StockAllocation.objects.filter(sales_order=so, batch__product=it.product).aggregate(s=Sum('quantity'))['s'] or Decimal('0')
-        if Decimal(str(alloc_sum)) + Decimal(str(it.quantity_shipped)) < Decimal(str(it.quantity_ordered)):
+        if so_line_commitment(so, it.product, it.quantity_shipped)['total'] < Decimal(str(it.quantity_ordered)):
             fully_covered = False
             break
 

@@ -29,135 +29,203 @@
 </div>
 {% endif %}
 
-<div class="animate-fade-in-up" style="display:grid; grid-template-columns:1fr 1fr; gap:2rem; max-width:1200px;">
-    <!-- Left Column: Location Selection & Confirmation -->
-    <div>
+<div class="animate-fade-in-up" style="max-width:1000px;">
+    <form id="allocate_form" method="post" action="{% url 'production_run_allocate' run.pk %}" data-plant-id="{{ run.manufacturing_plant_id|default_if_none:'' }}" data-plant-name="{{ run.manufacturing_plant.name }}" data-extra-allowed="{% if extra_allowed %}1{% endif %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="allocate_run">
+
         <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
-            <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1.25rem;">Select Manufacturing Facility</h3>
-            <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Choose the facility where this production run will take place. The system will automatically allocate materials from this facility based on FIFO.</p>
-            
-            <div style="margin-bottom:2rem;">
-                <h4 style="font-size:0.9rem; font-weight:700; color:var(--text-main); margin-bottom:0.75rem;">Global Material Availability (FEFO Recommended)</h4>
-                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; padding:1rem; font-size:0.85rem;">
-                    <form id="allocate_form" method="post" action="{% url 'production_run_allocate' run.pk %}">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="allocate_run">
-                        
-                        {% for req in recipe_reqs %}
-                        <div style="margin-bottom:1.5rem;">
-                            <div style="display:flex; justify-content:space-between; font-weight:600; margin-bottom:0.5rem; border-bottom:1px solid #e2e8f0; padding-bottom:0.25rem;">
-                                <span style="font-size:1rem; color:var(--primary);">{{ req.material.name }}</span>
-                                <span style="color:var(--text-muted);">Required: {{ req.needed|floatformat:2 }} {{ req.material.unit_of_measure }}</span>
-                            </div>
-                            
-                            {% if req.batch_list %}
-                                <table style="width:100%; border-collapse:collapse; margin-bottom:0.5rem;">
-                                    <thead>
-                                        <tr>
-                                            <th style="text-align:left; padding:0.25rem 0.5rem; color:var(--text-muted);">Batch</th>
-                                            <th style="text-align:left; padding:0.25rem 0.5rem; color:var(--text-muted);">Expiry</th>
-                                            <th style="text-align:left; padding:0.25rem 0.5rem; color:var(--text-muted);">Location</th>
-                                            <th style="text-align:right; padding:0.25rem 0.5rem; color:var(--text-muted);">Avail</th>
-                                            <th style="text-align:right; padding:0.25rem 0.5rem; color:var(--text-muted);">Allocate</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                    {% for b in req.batch_list %}
-                                        <tr style="border-bottom:1px solid #f1f5f9;">
-                                            <td style="padding:0.5rem;">
-                                                {{ b.obj.batch_number }}
-                                                {% if b.is_fefo %}
-                                                <span class="badge" style="background:#dcfce7; color:#166534; font-size:0.65rem; margin-left:0.5rem;">FEFO Recommended</span>
-                                                {% endif %}
-                                            </td>
-                                            <td style="padding:0.5rem;">{{ b.obj.expiry_date }}</td>
-                                            <td style="padding:0.5rem;">{{ b.obj.warehouse.name|default:"Unknown" }}</td>
-                                            <td style="padding:0.5rem; text-align:right;">{{ b.avail|floatformat:2 }}</td>
-                                            <td style="padding:0.5rem; text-align:right;">
-                                                <input type="number" min="0" step="0.01" max="{{ b.avail }}" name="batch_qty_{{ b.obj.id }}" value="{% if b.is_fefo %}{{ b.suggested_qty }}{% endif %}" class="form-input" style="width:80px; padding:0.25rem; text-align:right;">
-                                            </td>
-                                        </tr>
-                                    {% endfor %}
-                                    </tbody>
-                                </table>
-                            {% else %}
-                                <div style="color:#dc2626; font-size:0.78rem;">No stock available globally.</div>
-                            {% endif %}
-                        </div>
-                        {% endfor %}
-                        
-                        <div style="margin-bottom:2rem; background:#fff7ed; padding:1rem; border:1px solid #fed7aa; border-radius:8px;">
-                            <label style="display:block; font-size:0.85rem; font-weight:700; color:#9a3412; margin-bottom:0.5rem; text-transform:uppercase;">Non-FEFO Override Reason (Required if changing amounts)</label>
-                            <input type="text" name="override_reason" class="form-input" placeholder="e.g. Batch XYZ is closer to the door..." style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid #fdba74; font-size:0.95rem;">
-                        </div>
+            <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:0.75rem;">Allocate Materials</h3>
+            <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Materials are suggested from every warehouse by earliest expiry (FEFO). Stock held elsewhere is moved to the manufacturing facility by an auto-generated transfer; stock already there is simply reserved.</p>
+
+            <div style="margin-bottom:1.5rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase;">Manufacturing Facility</label>
+                {% if run.manufacturing_plant %}
+                <div style="padding:0.75rem; border-radius:8px; border:1px solid var(--border-light); background:#f8fafc; font-size:0.95rem; font-weight:600;">{{ run.manufacturing_plant.name }}</div>
+                <p style="font-size:0.78rem; color:var(--text-muted); margin-top:0.4rem;">Materials are brought here, and the finished goods will be stored here.</p>
+                {% else %}
+                <select name="warehouse_id" required class="form-select" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
+                    <option value="">-- Select a facility --</option>
+                    {% for w in warehouses %}
+                    <option value="{{ w.id }}">{{ w.name }}</option>
+                    {% endfor %}
+                </select>
+                {% endif %}
+            </div>
+
+            {% if existing_allocations %}
+            <div style="margin-bottom:1.5rem; background:#f0f9ff; padding:1rem; border:1px solid #bae6fd; border-radius:8px;">
+                <p style="font-size:0.85rem; font-weight:700; color:#075985; margin-bottom:0.5rem;">Already allocated to this run</p>
+                <ul style="font-size:0.8rem; color:#075985; margin:0 0 0.75rem 1.1rem; padding:0;">
+                    {% for a in existing_allocations %}
+                    <li>{{ a.batch.material.name }} · {{ a.batch.batch_number }} · {{ a.quantity|floatformat:2 }} {{ a.batch.material.unit_of_measure }}{% if a.shipment %} · transfer {{ a.shipment.tracking_number }} ({{ a.shipment.status }}){% else %} · at plant{% endif %}</li>
+                    {% endfor %}
+                </ul>
+                <p style="font-size:0.8rem; color:#075985; margin:0;">These stay in place, along with any logistics transfers already raised. What you allocate here is added to them, and the quantities below only cover what is still needed.</p>
+            </div>
+            {% endif %}
+
+            {% if extra_allowed %}
+            <div style="margin-bottom:1.5rem; background:#fffbeb; padding:0.85rem 1rem; border:1px solid #fde68a; border-radius:8px; font-size:0.82rem; color:#92400e;">
+                Production is under way, so you can allocate <strong>more than the recipe needs</strong>. Anything over the requirement needs a reason, which is kept on the run. Stock at another warehouse gets a draft transfer as usual.
+            </div>
+            {% endif %}
+
+            <h4 style="font-size:0.9rem; font-weight:700; color:var(--text-main); margin-bottom:0.75rem;">Global Material Availability (FEFO Recommended)</h4>
+            <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; padding:1rem; font-size:0.85rem; margin-bottom:1.5rem;">
+                {% for req in recipe_reqs %}
+                <div class="mat-block" data-needed="{{ req.needed|stringformat:'.2f' }}" data-unit="{{ req.material.unit_of_measure }}" style="margin-bottom:1.5rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:baseline; gap:1rem; flex-wrap:wrap; font-weight:600; margin-bottom:0.5rem; border-bottom:1px solid #e2e8f0; padding-bottom:0.25rem;">
+                        <span style="font-size:1rem; color:var(--primary);">{{ req.material.name }}</span>
+                        <span style="color:var(--text-muted);">Required: {{ req.required_total|floatformat:2 }} {{ req.material.unit_of_measure }}{% if req.already %} · Allocated: {{ req.already|floatformat:2 }} · Still needed: {{ req.needed|floatformat:2 }}{% endif %}</span>
+                        <span class="mat-status" style="font-weight:700;"></span>
+                    </div>
+
+                    {% if req.batch_list %}
+                        <table style="width:100%; border-collapse:collapse; margin-bottom:0.5rem;">
+                            <thead>
+                                <tr>
+                                    <th style="text-align:left; padding:0.25rem 0.5rem; color:var(--text-muted);">Batch</th>
+                                    <th style="text-align:left; padding:0.25rem 0.5rem; color:var(--text-muted);">Expiry</th>
+                                    <th style="text-align:left; padding:0.25rem 0.5rem; color:var(--text-muted);">Location</th>
+                                    <th style="text-align:right; padding:0.25rem 0.5rem; color:var(--text-muted);">Avail</th>
+                                    <th style="text-align:right; padding:0.25rem 0.5rem; color:var(--text-muted);">Allocate</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            {% for b in req.batch_list %}
+                                <tr style="border-bottom:1px solid #f1f5f9;">
+                                    <td style="padding:0.5rem;">
+                                        {{ b.obj.batch_number }}
+                                        {% if b.is_fefo %}
+                                        <span class="badge" style="background:#dcfce7; color:#166534; font-size:0.65rem; margin-left:0.5rem;">FEFO Recommended</span>
+                                        {% endif %}
+                                    </td>
+                                    <td style="padding:0.5rem;">{{ b.obj.expiry_date }}</td>
+                                    <td style="padding:0.5rem;">{{ b.obj.warehouse.name|default:"Unknown" }}</td>
+                                    <td style="padding:0.5rem; text-align:right;">{{ b.avail|floatformat:2 }}</td>
+                                    <td style="padding:0.5rem; text-align:right;">
+                                        <input type="number" min="0" step="0.01" max="{{ b.avail }}" name="batch_qty_{{ b.obj.id }}" value="{% if b.is_fefo %}{{ b.suggested_qty }}{% endif %}" class="form-input alloc-input" data-wh-id="{{ b.obj.warehouse_id|default_if_none:'' }}" data-wh-name="{{ b.obj.warehouse.name|default:'Unknown' }}" style="width:80px; padding:0.25rem; text-align:right;">
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    {% else %}
+                        <div style="color:#dc2626; font-size:0.78rem;">No stock available globally.</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+
+                <div style="background:#fff7ed; padding:1rem; border:1px solid #fed7aa; border-radius:8px;">
+                    <label style="display:block; font-size:0.85rem; font-weight:700; color:#9a3412; margin-bottom:0.5rem; text-transform:uppercase;">Non-FEFO Override Reason (Required if changing amounts)</label>
+                    <input type="text" name="override_reason" class="form-input" placeholder="e.g. Batch XYZ is closer to the door..." style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid #fdba74; font-size:0.95rem;">
                 </div>
             </div>
-            
-                <div style="margin-bottom:2rem;">
-                    <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase;">Destination Facility</label>
-                    <select name="warehouse_id" required class="form-select" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
-                        <option value="">-- Select a facility --</option>
-                        {% for w in warehouses %}
-                        {% if w.can_manufacture %}
-                        <option value="{{ w.id }}" selected>{{ w.name }} ({{ w.get_ownership_type_display|default:w.ownership_type }})</option>
-                        {% endif %}
-                        {% endfor %}
-                        <optgroup label="Other Locations">
-                        {% for w in warehouses %}
-                        {% if not w.can_manufacture %}
-                        <option value="{{ w.id }}">{{ w.name }} ({{ w.get_ownership_type_display|default:w.ownership_type }})</option>
-                        {% endif %}
-                        {% endfor %}
-                        </optgroup>
-                    </select>
-                </div>
-                
-                <div style="display:flex; justify-content:flex-end; gap:1rem;">
-                    <a href="{% url 'readiness' %}" class="btn btn-secondary">Cancel</a>
-                    <button type="submit" class="btn btn-primary">Confirm &amp; Allocate</button>
-                </div>
-            </form>
-        </div>
-    </div>
 
-    <!-- Right Column: Info Panel -->
-    <div>
-        <div style="background:#f8fafc; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem;">
-            <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:0.5rem;">Auto-Logistics Split</h3>
-            <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.25rem;">The system will automatically generate transfer shipments if materials are located in different warehouses than the destination facility.</p>
+            <!-- Live summary of what confirming will do -->
+            <div style="border:1px solid var(--border-light); border-radius:8px; padding:1rem; background:#fff; margin-bottom:1rem;">
+                <div id="alloc-summary" style="font-size:0.9rem; font-weight:600; color:var(--text-main);"></div>
+                <div id="extra-reason-box" style="display:none; margin-top:0.75rem;">
+                    <label style="display:block; font-size:0.85rem; font-weight:700; color:#92400e; margin-bottom:0.35rem;">Reason for the extra material (required)</label>
+                    <input type="text" name="extra_reason" class="form-input" placeholder="e.g. Batch running heavier than the recipe, top-up for second mix" style="width:100%; padding:0.6rem; border:1px solid #fde68a; border-radius:8px;">
+                </div>
+                <label id="short-ack" style="display:none; align-items:flex-start; gap:0.5rem; margin-top:0.75rem; font-size:0.85rem; font-weight:600; color:#9a3412; cursor:pointer;">
+                    <input type="checkbox" name="allocate_short" value="1" style="margin-top:0.2rem;">
+                    <span>Some materials are not fully covered. Allocate anyway with the shortfall.</span>
+                </label>
+            </div>
 
-            
-            <table class="modern-table" style="width:100%; border-collapse:collapse; background:#fff; border-radius:8px; overflow:hidden; border:1px solid var(--border-light);">
-                <thead>
-                    <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
-                        <th style="padding:0.75rem 1rem; text-align:left;">Material</th>
-                        <th style="padding:0.75rem 1rem; text-align:right;">Needed</th>
-                        <th style="padding:0.75rem 1rem; text-align:right;">Total Available</th>
-                        <th style="padding:0.75rem 1rem; text-align:right;">Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for req in recipe_reqs %}
-                    <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
-                        <td style="padding:0.75rem 1rem; font-weight:600;">{{ req.material.name }}</td>
-                        <td style="padding:0.75rem 1rem; text-align:right;">{{ req.needed|floatformat:2 }} {{ req.material.unit_of_measure }}</td>
-                        <td style="padding:0.75rem 1rem; text-align:right;">
-                            {% with total_avail=0 %}
-                            {% for b in req.batch_list %}
-                                <!-- Calculate total avail on the fly since we don't have it at the top level anymore -->
-                            {% endfor %}
-                            -
-                            {% endwith %}
-                        </td>
-                        <td style="padding:0.75rem 1rem; text-align:right;">
-                            <!-- We can omit this column or calculate shortage in the view if needed -->
-                            <span style="color:var(--success-strong); font-weight:700;">OK</span>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            <div style="display:flex; justify-content:flex-end; gap:1rem;">
+                <a href="{% url 'readiness' %}" class="btn btn-secondary">Cancel</a>
+                <button type="submit" id="alloc-submit" class="btn btn-primary">Confirm &amp; Allocate</button>
+            </div>
         </div>
-    </div>
+    </form>
 </div>
+
+<script>
+(function () {
+    // Live preview: totals what's typed, per material and per source warehouse. No server calls -
+    // the server re-checks the same numbers when the form is submitted.
+    var form = document.getElementById('allocate_form');
+    var plantSel = form.querySelector('select[name="warehouse_id"]');
+    var summary = document.getElementById('alloc-summary');
+    var ack = document.getElementById('short-ack');
+    var ackBox = ack.querySelector('input');
+    var submit = document.getElementById('alloc-submit');
+    var extraAllowed = !!form.getAttribute('data-extra-allowed');
+    var reasonBox = document.getElementById('extra-reason-box');
+    var reasonInput = reasonBox.querySelector('input');
+    var EPS = 0.005, GREEN = '#166534', RED = '#b91c1c', AMBER = '#b45309';
+
+    function plant() {
+        if (plantSel) return { id: plantSel.value, name: plantSel.selectedIndex >= 0 ? plantSel.options[plantSel.selectedIndex].text : '' };
+        return { id: form.getAttribute('data-plant-id'), name: form.getAttribute('data-plant-name') };
+    }
+    function fmt(n) { return n.toFixed(2); }
+
+    function update() {
+        var p = plant();
+        var covered = 0, total = 0, anyOver = false, anyExtra = false, anyQty = false, shortNames = [];
+        var origins = {};
+
+        form.querySelectorAll('.mat-block').forEach(function (block) {
+            var needed = parseFloat(block.getAttribute('data-needed')) || 0;
+            var unit = block.getAttribute('data-unit');
+            var status = block.querySelector('.mat-status');
+            var picked = 0;
+            block.querySelectorAll('.alloc-input').forEach(function (inp) {
+                var q = parseFloat(inp.value) || 0;
+                if (q <= 0) return;
+                picked += q; anyQty = true;
+                var wid = inp.getAttribute('data-wh-id') || '';
+                if (!p.id || wid !== String(p.id)) {
+                    var o = origins[wid] || (origins[wid] = { name: inp.getAttribute('data-wh-name'), qty: 0 });
+                    o.qty += q;
+                }
+            });
+            total++;
+            var diff = needed - picked, head = 'Selected ' + fmt(picked) + ' of ' + fmt(needed) + ' ' + unit + ' · ';
+            if (needed <= EPS && picked <= EPS) { status.textContent = 'Fully allocated'; status.style.color = GREEN; covered++; }
+            else if (Math.abs(diff) <= EPS) { status.textContent = head + 'Covered'; status.style.color = GREEN; covered++; }
+            else if (diff > 0) { status.textContent = head + 'Short by ' + fmt(diff); status.style.color = RED; shortNames.push(block.querySelector('span').textContent); }
+            else if (extraAllowed) {
+                status.textContent = (needed <= EPS ? 'Extra +' : head + 'Extra +') + fmt(-diff); status.style.color = AMBER; anyExtra = true; covered++;
+            }
+            else { status.textContent = head + 'Over by ' + fmt(-diff); status.style.color = RED; anyOver = true; }
+        });
+
+        var originList = Object.keys(origins).map(function (k) { return origins[k]; });
+        var parts = [covered + ' of ' + total + ' material' + (total === 1 ? '' : 's') + ' covered'];
+        if (!anyQty) parts.push('nothing selected yet');
+        else if (originList.length) {
+            parts.push(originList.length + ' transfer' + (originList.length === 1 ? '' : 's') + ' from ' +
+                originList.map(function (o) { return o.name + ' (' + fmt(o.qty) + ')'; }).join(', '));
+            parts.push(extraAllowed ? 'the run keeps running' : 'run will wait for them to arrive');
+        } else {
+            parts.push('all stock is already at the plant, no transfers');
+            if (!extraAllowed) parts.push('run will be ready to start');
+        }
+        if (anyOver) parts.push('reduce the quantities marked Over');
+        summary.textContent = parts.join(' · ');
+        summary.style.color = anyOver ? RED : 'inherit';
+
+        reasonBox.style.display = anyExtra ? 'block' : 'none';
+        reasonInput.required = anyExtra;
+        if (anyExtra) parts.push('extra material needs a reason');
+        summary.textContent = parts.join(' · ');
+
+        var isShort = shortNames.length > 0 && !anyOver;
+        ack.style.display = isShort ? 'flex' : 'none';
+        ackBox.required = isShort;
+        if (!isShort) ackBox.checked = false;
+        submit.disabled = anyOver;
+    }
+
+    form.addEventListener('input', update);
+    form.addEventListener('change', update);
+    update();
+})();
+</script>
 {% endblock %}

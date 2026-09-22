@@ -409,6 +409,19 @@ rating               = good   if yield_variance_pct >= -2 and material_overuse_p
 
 Sorted `(rating rank, yield_variance_pct, -material_overuse_pct, name)`.
 
+**Unrecorded material usage** — `unrecorded_material_usage(recent_days=7, window_days=28)`, shown as a
+section and a KPI tile on the same page. When a run is completed with more of a material poured than was
+allocated, the shortfall is traced to a batch or entered as *batch not in records* with a mandatory reason
+(`RunExtraMaterial`, `batch` NULL). Nothing is deducted from stock for the latter. Per material:
+
+```
+events / qty   = RunExtraMaterial rows with batch NULL, created within recent_days / window_days
+share_pct      = qty (window) / Σ RunMaterialUsage.actual_qty of runs Completed within the window * 100  (cap 100)
+top_reasons    = the 3 most common reasons (case / spacing merged);  top_people = the 2 people entering most
+```
+
+Sorted highest share first (unknown share last), then window quantity, then name.
+
 ### 8.7. Stockout & reorder forecast  *(Phase 2a — implemented)*
 
 `stockout_forecast(window_days=30)` → `views_analytics.forecast_view` →

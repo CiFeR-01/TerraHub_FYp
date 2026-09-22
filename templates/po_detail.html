@@ -223,7 +223,7 @@
                     </td>
                     <td style="padding:0.85rem 1rem;">{% if row.item.unit_price %}RM {{ row.item.unit_price|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem;">{% if row.item.negotiated_rental_rate_per_mt %}RM {{ row.item.negotiated_rental_rate_per_mt|floatformat:2 }}{% else %}<span style="color:var(--text-muted); font-size:0.78rem;">warehouse rate</span>{% endif %}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:600;">{% if row.subtotal > 0 %}RM {{ row.subtotal|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600; white-space:nowrap;">{% if row.subtotal > 0 %}RM {{ row.subtotal|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
                         <!-- Receive form -->
                         <button onclick="(function(){var el=document.getElementById('recv-{{ row.item.id }}');el.style.display=el.style.display==='none'?'block':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--text-muted); margin-right:0.3rem;">📥 Receive</button>
@@ -252,9 +252,9 @@
                 {% endfor %}
             </tbody>
             <tfoot>
-                <tr style="border-top:2px solid var(--border-light); font-weight:700; font-size:0.9rem;">
-                    <td colspan="7" style="padding:0.85rem 1rem; text-align:right; color:var(--text-muted);">Total Order Value:</td>
-                    <td style="padding:0.85rem 1rem; color:var(--primary); font-size:1rem;">RM {{ po_total|floatformat:2 }}</td>
+                <tr style="border-top:2px solid var(--border-light);">
+                    <td colspan="8" style="padding:0.85rem 1rem; text-align:right; font-size:0.78rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Order Total</td>
+                    <td style="padding:0.85rem 1rem; font-size:1.05rem; font-weight:700; color:var(--primary); white-space:nowrap;">RM {{ po_total|floatformat:2 }}</td>
                     <td></td>
                 </tr>
             </tfoot>
