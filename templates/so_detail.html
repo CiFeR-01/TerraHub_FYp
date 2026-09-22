@@ -203,7 +203,7 @@
 
     {% if line_items %}
     <div class="table-responsive" style="overflow-x: auto; width: 100%;">
-        <table style="width:100%; border-collapse:collapse;">
+        <table class="sortable" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">
                     <th style="padding:0.6rem 1rem;">#</th>
@@ -261,7 +261,7 @@
                 <tr id="batches-{{ row.item.id }}" style="display:none; background:#f8fafc;">
                     <td colspan="12" style="padding:0.75rem 1.5rem 1rem 2rem;">
                         <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">Allocated Batches — {{ row.item.product.name }}</div>
-                        <table style="width:100%; border-collapse:collapse; font-size:0.82rem; max-width:1000px;">
+                        <table class="sortable" style="width:100%; border-collapse:collapse; font-size:0.82rem; max-width:1000px;">
                             <tr style="color:var(--text-muted); font-weight:600; border-bottom:1px solid var(--border-light);">
                                 <td style="padding:0.3rem 0.75rem;">Batch</td>
                                 <td style="padding:0.3rem 0.75rem;">Quantity</td>
@@ -318,7 +318,7 @@
                     <td colspan="12" style="padding:0.75rem 1.5rem 1rem 2rem;">
                         <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">BOM — {{ row.item.product.name }}</div>
                         {% if row.bom_rows %}
-                        <table style="width:100%; border-collapse:collapse; font-size:0.82rem; max-width:700px;">
+                        <table class="sortable" style="width:100%; border-collapse:collapse; font-size:0.82rem; max-width:700px;">
                             <tr style="color:var(--text-muted); font-weight:600; border-bottom:1px solid var(--border-light);">
                                 <td style="padding:0.3rem 0.75rem;">Material</td>
                                 <td style="padding:0.3rem 0.75rem;">Needed for Order</td>

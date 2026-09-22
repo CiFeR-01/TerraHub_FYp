@@ -1001,7 +1001,7 @@ def stock_audit_view(request):
 
         return redirect('stock_audit')
 
-    audits = StockAudit.objects.select_related('batch', 'auditor').order_by('-audit_date')
+    audits = StockAudit.objects.select_related('batch', 'auditor').order_by('-id')
     active_batches = Batch.objects.filter(status='Active').select_related('material', 'product', 'warehouse')
     
     pending_count = audits.filter(status='Pending').count()
@@ -1748,27 +1748,45 @@ def product_detail_view(request, pk):
             'produced_for': get_batch_produced_for(b),
         })
 
-    # Manufacturing History
-    production_runs = ProductionRun.objects.filter(target_product=product).select_related('supervisor', 'sales_order').order_by('-id')[:10]
-    
-    # Sales Orders containing this product for the Chart
-    sales_details = SalesOrderDetail.objects.filter(product=product).select_related('sales_order')
-    
-    # Aggregate sales by month for the chart
-    sales_data = []
-    for sd in sales_details:
-        if sd.sales_order.order_date:
-            sales_data.append({
-                'date': sd.sales_order.order_date.strftime('%Y-%m'),
-                'quantity': float(sd.quantity_ordered)
-            })
-    sales_by_month = {}
-    for item in sales_data:
-        m = item['date']
-        sales_by_month[m] = sales_by_month.get(m, 0) + item['quantity']
-        
-    chart_labels = sorted(sales_by_month.keys())
-    chart_sales_data = [sales_by_month[lbl] for lbl in chart_labels]
+    # Headline figures. Active stock only, as on the list pages; quarantined FG (QA hold) shown apart.
+    allocated_stock = sum((b.allocated_quantity for b in active_batches), Decimal('0'))
+    quarantined_stock = Batch.objects.filter(product=product, status='Quarantined').aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+
+    # Manufacturing History (cancelled runs are noise, as on the order pages)
+    runs_qs = ProductionRun.objects.filter(target_product=product).exclude(status='Cancelled')
+    production_runs = runs_qs.select_related('supervisor', 'sales_order').order_by('-id')[:10]
+    open_runs = runs_qs.exclude(status='Completed').count()
+
+    # Sales vs production per local month, over the same window and rules as
+    # Analytics -> Demand (product_sales_trend skips Draft/Rejected orders).
+    from . import analytics
+    today = timezone.localdate()
+    chart_labels = analytics._trailing_month_keys(today, analytics.TREND_WINDOW_MONTHS)
+    trend = next((r for r in analytics.product_sales_trend(end=today) if r['product_id'] == product.id), None)
+    chart_sales_data = trend['monthly_qty'] if trend else [0] * len(chart_labels)
+    if trend:
+        trend = {**trend, 'label': trend['status'].replace('_', ' ').capitalize()}
+
+    first_month = date(*(int(p) for p in chart_labels[0].split('-')), 1)
+    produced_by_month = {k: 0.0 for k in chart_labels}
+    for end_time, yielded in runs_qs.filter(status='Completed', actual_yield__isnull=False, exact_end_time__date__gte=first_month - timedelta(days=1)).values_list('exact_end_time', 'actual_yield'):
+        if end_time is None:
+            continue
+        key = timezone.localtime(end_time).strftime('%Y-%m')
+        if key in produced_by_month:
+            produced_by_month[key] += float(yielded)
+    chart_produced_data = [round(produced_by_month[k], 2) for k in chart_labels]
+
+    # Recipe cost & margin. quantity_required is per unit made (allocation multiplies it
+    # by the run's expected yield); material cost is per the material's own unit.
+    recipe_rows = []
+    unit_cost = Decimal('0')
+    for item in product.recipe_items.all():
+        line_cost = item.quantity_required * item.material.cost_per_unit
+        unit_cost += line_cost
+        recipe_rows.append({'item': item, 'line_cost': line_cost})
+    margin = product.price_per_unit - unit_cost
+    margin_pct = (margin / product.price_per_unit * 100) if product.price_per_unit > 0 else None
 
     context = {
         'product': product,
@@ -1778,9 +1796,20 @@ def product_detail_view(request, pk):
         'batch_rows': batch_rows,
         'total_stock': total_stock,
         'stock_weight_display': stock_weight_display,
+        'stock_value': total_stock * product.price_per_unit,
+        'allocated_stock': allocated_stock,
+        'available_stock': total_stock - allocated_stock,
+        'quarantined_stock': quarantined_stock,
+        'open_runs': open_runs,
         'production_runs': production_runs,
         'chart_labels': chart_labels,
         'chart_sales_data': chart_sales_data,
+        'chart_produced_data': chart_produced_data,
+        'sales_trend': trend,
+        'recipe_rows': recipe_rows,
+        'unit_cost': unit_cost,
+        'margin': margin,
+        'margin_pct': margin_pct,
         'uom_choices': Product.UNIT_CHOICES,
     }
     return render(request, 'product_detail.html', context)
@@ -1844,56 +1873,64 @@ def material_list_view(request):
     return render(request, 'material_list.html', context)
 
 
+def _apply_material_update(request, material):
+    """Validates the material edit form in request.POST and saves it, queuing a
+    success/error message. Shared by the edit view and the details page. The
+    "Updated Material '<name>'" log text is parsed by analytics.resolve_material_from_label."""
+    name = request.POST.get('name', '').strip()
+    sku = request.POST.get('sku', '').strip().upper()
+    category = request.POST.get('category', '').strip()
+    uom = request.POST.get('unit_of_measure', 'MT')
+
+    try:
+        safe_days = int(request.POST.get('safe_storage_days', 90))
+        weight = float(request.POST.get('weight_mt_per_unit', 1.0))
+        cost = float(request.POST.get('cost_per_unit', 0.0))
+
+        if not name:
+            messages.error(request, "Material name is required.")
+            return False
+
+        if not sku:
+            sku = material.sku
+
+        # Check SKU uniqueness against other materials
+        if Material.objects.filter(sku=sku).exclude(pk=material.pk).exists():
+            messages.error(request, f"SKU '{sku}' is already assigned to another material.")
+            return False
+
+        material.name = name
+        material.sku = sku
+        material.category = category or material.category
+        material.unit_of_measure = uom
+        material.safe_storage_days = safe_days
+        material.weight_mt_per_unit = weight
+        material.cost_per_unit = cost
+        material.save()
+
+        RegistryLog.objects.create(
+            action_type='Adjusted',
+            item_name=f"Updated Material '{material.name}' (SKU: {material.sku})",
+            material=material,
+            quantity_changed=0,
+            warehouse=None,
+            user=request.user if request.user.is_authenticated else None
+        )
+
+        messages.success(request, f"Material '{material.name}' (SKU: {material.sku}) updated successfully.")
+        return True
+    except Exception as e:
+        messages.error(request, f"Error updating material: {e}")
+        return False
+
+
 @login_required
 def material_edit_view(request, pk):
     """View to edit an existing raw material record."""
     material = get_object_or_404(Material, pk=pk)
 
     if request.method == 'POST':
-        name = request.POST.get('name', '').strip()
-        sku = request.POST.get('sku', '').strip().upper()
-        category = request.POST.get('category', '').strip()
-        uom = request.POST.get('unit_of_measure', 'MT')
-        
-        try:
-            safe_days = int(request.POST.get('safe_storage_days', 90))
-            weight = float(request.POST.get('weight_mt_per_unit', 1.0))
-            cost = float(request.POST.get('cost_per_unit', 0.0))
-
-            if not name:
-                messages.error(request, "Material name is required.")
-                return redirect('material_list')
-
-            if not sku:
-                sku = material.sku
-
-            # Check SKU uniqueness against other materials
-            if Material.objects.filter(sku=sku).exclude(pk=material.pk).exists():
-                messages.error(request, f"SKU '{sku}' is already assigned to another material.")
-                return redirect('material_list')
-
-            material.name = name
-            material.sku = sku
-            material.category = category or material.category
-            material.unit_of_measure = uom
-            material.safe_storage_days = safe_days
-            material.weight_mt_per_unit = weight
-            material.cost_per_unit = cost
-            material.save()
-
-            RegistryLog.objects.create(
-                action_type='Adjusted',
-                item_name=f"Updated Material '{material.name}' (SKU: {material.sku})",
-                material=material,
-                quantity_changed=0,
-                warehouse=None,
-                user=request.user if request.user.is_authenticated else None
-            )
-
-            messages.success(request, f"Material '{material.name}' (SKU: {material.sku}) updated successfully.")
-        except Exception as e:
-            messages.error(request, f"Error updating material: {e}")
-
+        _apply_material_update(request, material)
         return redirect('material_list')
 
     # GET request - AJAX returns JSON data for modal; standard request renders form page
@@ -1924,6 +1961,121 @@ def material_edit_view(request, pk):
     return render(request, 'material_form.html', {
         'material': material, 'edit_mode': True, 'material_batch_rows': material_batch_rows,
     })
+
+
+# RegistryLog action -> stock direction shown on the material page ('' = no stock movement).
+_MOVEMENT_SIGN = {
+    'Inbound': '+', 'Produced': '+',
+    'Outbound': '-', 'Consumed_For_Manufacturing': '-', 'Spoiled_Disposal': '-',
+}
+
+
+@login_required
+def material_detail_view(request, pk):
+    """Everything about one raw material: editable core info, stock and batches,
+    cover/reorder forecast, where it is used, who supplies it and how it is consumed.
+    Consumption and forecast figures come from core.analytics so they match the
+    Analytics pages."""
+    from . import analytics
+    from .models import RunExtraMaterial
+    from .utils import get_batch_reservations
+
+    material = get_object_or_404(Material, pk=pk)
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if not request.user.has_perm('core.change_material'):
+            messages.error(request, "Permission denied. Only Managers and Admins can change materials.")
+        elif action == 'update_material':
+            _apply_material_update(request, material)
+        elif action == 'toggle_active':
+            material.is_active = not material.is_active
+            material.save()
+            messages.success(request, f"Material {material.sku} is now {'Active' if material.is_active else 'Deactivated'}.")
+        return redirect('material_detail', pk=pk)
+
+    today = timezone.localdate()
+
+    # --- Stock & batches (Active only, as everywhere else; Quarantined shown apart)
+    active_batches = list(
+        Batch.objects.filter(material=material, status='Active')
+        .select_related('warehouse', 'purchase_order').order_by('expiry_date')
+    )
+    total_qty = sum((b.quantity for b in active_batches), Decimal('0'))
+    allocated_qty = sum((b.allocated_quantity for b in active_batches), Decimal('0'))
+    quarantined_qty = Batch.objects.filter(material=material, status='Quarantined').aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+
+    batch_rows = []
+    warehouse_totals = {}
+    for b in active_batches:
+        days_left = (b.expiry_date - today).days if b.expiry_date else None
+        batch_rows.append({
+            'batch': b,
+            'available': b.quantity - b.allocated_quantity,
+            'reservations': get_batch_reservations(b),
+            'days_left': days_left,
+        })
+        wh_name = b.warehouse.name if b.warehouse else (b.location or 'Unassigned')
+        w = warehouse_totals.setdefault(wh_name, {'name': wh_name, 'quantity': Decimal('0'), 'allocated': Decimal('0'), 'batches': 0})
+        w['quantity'] += b.quantity
+        w['allocated'] += b.allocated_quantity
+        w['batches'] += 1
+    warehouse_rows = sorted(warehouse_totals.values(), key=lambda w: -w['quantity'])
+
+    # --- Cover / reorder forecast (None for deactivated materials)
+    forecast = next((r for r in analytics.stockout_forecast() if r['material_id'] == material.id), None)
+
+    # --- Consumption: last 6 local months of Consumed_For_Manufacturing, the same ledger the forecast uses
+    month_keys = analytics._trailing_month_keys(today, 6)
+    first_month = date(*(int(p) for p in month_keys[0].split('-')), 1)
+    by_month = {k: Decimal('0') for k in month_keys}
+    consumption_logs = material.registry_logs.filter(
+        action_type=analytics.CONSUMPTION_ACTION, timestamp__date__gte=first_month,
+    ).values_list('timestamp', 'quantity_changed')
+    for ts, qty in consumption_logs:
+        key = timezone.localtime(ts).strftime('%Y-%m')
+        if key in by_month:
+            by_month[key] += qty
+    chart_labels = month_keys
+    chart_consumption = [float(by_month[k]) for k in month_keys]
+
+    # --- Where it is used / who supplies it / purchasing
+    recipe_uses = [
+        {'recipe': r, 'line_cost': r.quantity_required * material.cost_per_unit}
+        for r in ProductRecipe.objects.filter(material=material).select_related('product').order_by('product__name')
+    ]
+    supplier_rows = SupplierMaterial.objects.filter(material=material).select_related('supplier').order_by('supplier__name')
+    po_lines = (PurchaseOrderDetail.objects.filter(material=material)
+                .select_related('purchase_order').order_by('-purchase_order__id')[:10])
+
+    movements = material.registry_logs.select_related('warehouse', 'user').order_by('-timestamp')[:15]
+    movement_rows = [{'log': m, 'sign': _MOVEMENT_SIGN.get(m.action_type, '')} for m in movements]
+
+    # Poured into runs from stock the system doesn't hold - nothing was deducted for these
+    off_book_usage = (RunExtraMaterial.objects.filter(material=material, batch__isnull=True)
+                      .select_related('production_run').order_by('-created_at')[:10])
+
+    context = {
+        'material': material,
+        'uom_choices': Material.UNIT_CHOICES,
+        'total_qty': total_qty,
+        'stock_display': format_stock_display(total_qty, material),
+        'allocated_qty': allocated_qty,
+        'available_qty': total_qty - allocated_qty,
+        'quarantined_qty': quarantined_qty,
+        'stock_value': total_qty * material.cost_per_unit,
+        'batch_rows': batch_rows,
+        'warehouse_rows': warehouse_rows,
+        'forecast': forecast,
+        'chart_labels': chart_labels,
+        'chart_consumption': chart_consumption,
+        'recipe_uses': recipe_uses,
+        'supplier_rows': supplier_rows,
+        'po_lines': po_lines,
+        'movement_rows': movement_rows,
+        'off_book_usage': off_book_usage,
+    }
+    return render(request, 'material_detail.html', context)
 
 
 # --------------------------------------------------------------------------

@@ -37,6 +37,7 @@ urlpatterns = [
     path('catalog/products/import/', views.import_products, name='import_products'),
     path('catalog/products/sales-trend/', views_analytics.product_sales_trend_view, name='product_sales_trend'),
     path('catalog/materials/', views.material_list_view, name='material_list'),
+    path('catalog/materials/<int:pk>/', views.material_detail_view, name='material_detail'),
     path('catalog/materials/<int:pk>/edit/', views.material_edit_view, name='material_edit'),
     path('catalog/materials/export/', views.export_materials_csv, name='export_materials_csv'),
     path('catalog/materials/template/', views.export_material_template, name='export_material_template'),

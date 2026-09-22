@@ -24,7 +24,10 @@
     </div>
 </header>
 
-{% include "partials/_insight_link.html" with link_url='capacity_forecast' link_label='Inventory capacity' %}
+<div style="display:flex; flex-wrap:wrap; gap:0.75rem; margin:-0.35rem 0 1.15rem;">
+    {% include "partials/_insight_link.html" with link_url='capacity_forecast' link_label='Inventory capacity' %}
+    {% include "partials/_insight_link.html" with link_url='rent_opportunities' link_label='Rent reduction opportunities' %}
+</div>
 
 <!-- Summary KPIs -->
 <section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay: 0.05s;">
@@ -66,7 +69,8 @@
 
 <!-- Facility Cards Grid -->
 {% if facility_list %}
-<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 1.5rem; margin-top: 0.5rem;" class="animate-fade-in-up" >
+{% include "partials/_table_search.html" with target='#facilityGrid' items='.pane-card' placeholder='Search facilities by name...' %}
+<div id="facilityGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 1.5rem; margin-top: 0.5rem;" class="animate-fade-in-up" >
 
     {% for f in facility_list %}
     <div class="pane-card" style="animation-delay: {{ forloop.counter0 }}00ms; position: relative; overflow: hidden;">

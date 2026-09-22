@@ -91,7 +91,26 @@
     }
     .badge-success { background: #d1fae5; color: #065f46; }
     .badge-warning { background: #fef3c7; color: #92400e; }
-    
+    .badge-neutral { background: #e2e8f0; color: #334155; }
+
+    .kpi-strip {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 1rem;
+        margin-top: 1.25rem;
+    }
+    .kpi-card {
+        background: #fff;
+        border: 1px solid var(--border-light);
+        border-radius: 12px;
+        padding: 0.9rem 1.1rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .kpi-label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+    .kpi-value { font-family: 'Outfit', sans-serif; font-size: 1.35rem; font-weight: 700; color: var(--text-main); margin-top: 0.15rem; }
+    .kpi-sub { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.1rem; }
+    @media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } }
+
     /* Toggle switch for charts */
     .chart-toggle {
         display: flex;
@@ -155,6 +174,45 @@
 </div>
 {% endif %}
 
+<!-- KPI strip -->
+<div class="kpi-strip animate-fade-in-up" style="animation-delay: 0.03s;">
+    <div class="kpi-card">
+        <div class="kpi-label">Stock value</div>
+        <div class="kpi-value">RM{{ stock_value|floatformat:2 }}</div>
+        <div class="kpi-sub">@ RM{{ product.price_per_unit|floatformat:2 }} / unit</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-label">Reserved</div>
+        <div class="kpi-value">{{ allocated_stock|floatformat:2 }}</div>
+        <div class="kpi-sub">units held for orders</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-label">Available</div>
+        <div class="kpi-value" style="color: {% if available_stock > 0 %}var(--success-strong){% else %}var(--text-muted){% endif %};">{{ available_stock|floatformat:2 }}</div>
+        <div class="kpi-sub">units free to allocate</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-label">Quarantined</div>
+        <div class="kpi-value">{{ quarantined_stock|floatformat:2 }}</div>
+        <div class="kpi-sub">units awaiting QA, not counted above</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-label">Open runs</div>
+        <div class="kpi-value">{{ open_runs }}</div>
+        <div class="kpi-sub">production runs in progress</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-label">Unit margin</div>
+        {% if recipe_rows and product.price_per_unit > 0 %}
+        <div class="kpi-value" style="color: {% if margin >= 0 %}var(--success-strong){% else %}#dc2626{% endif %};">RM{{ margin|floatformat:2 }}</div>
+        <div class="kpi-sub">{{ margin_pct|floatformat:1 }}% &middot; recipe cost RM{{ unit_cost|floatformat:2 }}</div>
+        {% else %}
+        <div class="kpi-value">&mdash;</div>
+        <div class="kpi-sub">{% if not recipe_rows %}No recipe defined{% else %}No price set{% endif %}</div>
+        {% endif %}
+    </div>
+</div>
+
 <div class="detail-grid animate-fade-in-up" style="animation-delay: 0.05s;">
     
     <!-- Top Left: Core Details (Editable) -->
@@ -202,17 +260,18 @@
     <!-- Top Right: Charts (Sales & Stock Over Time) -->
     <div class="detail-card">
         <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-light); padding-bottom: 0.5rem; margin-bottom: 1rem;">
-            <h3 class="section-title" style="border: none; margin: 0; padding: 0;">Analytics</h3>
-            <div class="chart-toggle">
-                <button type="button" id="btn-sales-chart" class="active" onclick="showChart('sales')">Sales Trend</button>
-                <button type="button" id="btn-stock-chart" onclick="showChart('stock')">Stock Trend (Coming Soon)</button>
-            </div>
+            <h3 class="section-title" style="border: none; margin: 0; padding: 0;">Production vs Sales</h3>
+            {% if sales_trend %}
+            <span class="badge {% if sales_trend.status == 'declining' %}badge-warning{% elif sales_trend.status == 'rising' %}badge-success{% else %}badge-neutral{% endif %}" title="Recent months vs earlier months (Analytics &rarr; Demand)">
+                {{ sales_trend.label }}{% if sales_trend.pct_change is not None %} {{ sales_trend.pct_change|floatformat:1 }}%{% endif %}
+            </span>
+            {% endif %}
         </div>
-        <div id="sales-chart-container" style="flex-grow: 1; min-height: 250px; position: relative;">
+        <div style="flex-grow: 1; min-height: 250px; position: relative;">
             <canvas id="salesChart"></canvas>
         </div>
-        <div id="stock-chart-container" style="display: none; flex-grow: 1; min-height: 250px; text-align: center; color: var(--text-muted); padding-top: 3rem;">
-            <em>Historical stock tracking is currently under development.</em>
+        <div style="font-size: 0.78rem; color: var(--text-muted);">
+            Last 6 months. Sold = units on orders placed that month (drafts and rejected orders excluded); Produced = yield of runs completed that month.
         </div>
     </div>
     
@@ -261,8 +320,8 @@
         <div class="table-container" style="max-height: 200px;">
             {% for run in production_runs %}
             <div class="list-item">
-                <span><strong>{{ run.run_number }}</strong> ({{ run.get_status_display }})</span>
-                <span>Yield: {{ run.expected_yield|floatformat:2 }}</span>
+                <span><a href="{% url 'production_run_detail' run.pk %}" style="color:#38bdf8; font-weight:700; text-decoration:none;">{{ run.run_number }}</a> ({{ run.get_status_display }})</span>
+                <span>{% if run.status == 'Completed' and run.actual_yield is not None %}Yield: {{ run.actual_yield|floatformat:2 }} <span style="color:#94a3b8;">of {{ run.expected_yield|floatformat:2 }}</span>{% else %}Expected: {{ run.expected_yield|floatformat:2 }}{% endif %}</span>
             </div>
             {% empty %}
             <div class="list-item" style="color:#64748b;">No manufacturing history.</div>
@@ -279,29 +338,45 @@
             </button>
         </div>
         <div class="table-container" style="max-height: 400px;">
-            <table style="width:100%; border-collapse:collapse; font-size:0.85rem; color: #f8fafc;">
+            <table class="sortable" style="width:100%; border-collapse:collapse; font-size:0.85rem; color: #f8fafc;">
                 <thead>
                     <tr style="background:#0f172a; text-align:left; color:#94a3b8;">
                         <th style="padding:0.5rem;">Material</th>
                         <th style="padding:0.5rem;">Required Qty</th>
-                        <th style="padding:0.5rem; text-align:right;">Cost</th>
+                        <th style="padding:0.5rem; text-align:right;">Cost / Material Unit</th>
+                        <th style="padding:0.5rem; text-align:right;">Line Cost</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for item in product.recipe_items.all %}
+                    {% for row in recipe_rows %}
                     <tr style="border-bottom: 1px solid #334155;">
-                        <td style="padding:0.5rem;"><strong>{{ item.material.sku }}</strong> — {{ item.material.name }}</td>
-                        <td style="padding:0.5rem;">{{ item.quantity_required|qty_display }} {{ item.material.unit_of_measure }}</td>
-                        <td style="padding:0.5rem; text-align:right; color:#4ade80;">
-                            {{ item.material.cost_per_unit|floatformat:2 }} / {{ item.material.unit_of_measure }}
+                        <td style="padding:0.5rem;"><a href="{% url 'material_detail' row.item.material.id %}" style="color:#38bdf8; font-weight:700; text-decoration:none;">{{ row.item.material.sku }}</a> — {{ row.item.material.name }}</td>
+                        <td style="padding:0.5rem;">{{ row.item.quantity_required|qty_display }} {{ row.item.material.unit_of_measure }}</td>
+                        <td style="padding:0.5rem; text-align:right; color:#94a3b8;">
+                            {{ row.item.material.cost_per_unit|floatformat:2 }} / {{ row.item.material.unit_of_measure }}
                         </td>
+                        <td style="padding:0.5rem; text-align:right; color:#4ade80;">{{ row.line_cost|floatformat:2 }}</td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="3" style="padding:1.5rem; text-align:center; color:#64748b;">No recipe defined for this product.</td>
+                        <td colspan="4" style="padding:1.5rem; text-align:center; color:#64748b;">No recipe defined for this product.</td>
                     </tr>
                     {% endfor %}
                 </tbody>
+                {% if recipe_rows %}
+                <tfoot>
+                    <tr style="border-top: 2px solid #334155;">
+                        <td colspan="3" style="padding:0.5rem; font-weight:700;">Recipe cost per unit made</td>
+                        <td style="padding:0.5rem; text-align:right; font-weight:700; color:#4ade80;">RM{{ unit_cost|floatformat:2 }}</td>
+                    </tr>
+                    {% if product.price_per_unit > 0 %}
+                    <tr>
+                        <td colspan="3" style="padding:0.5rem; color:#94a3b8;">Selling price RM{{ product.price_per_unit|floatformat:2 }} &rarr; margin</td>
+                        <td style="padding:0.5rem; text-align:right; font-weight:700; color:{% if margin >= 0 %}#4ade80{% else %}#f87171{% endif %};">RM{{ margin|floatformat:2 }} ({{ margin_pct|floatformat:1 }}%)</td>
+                    </tr>
+                    {% endif %}
+                </tfoot>
+                {% endif %}
             </table>
         </div>
     </div>
@@ -313,49 +388,43 @@
     let salesChart;
     const chartLabels = {{ chart_labels|safe }};
     const chartSalesData = {{ chart_sales_data|safe }};
+    const chartProducedData = {{ chart_produced_data|safe }};
 
     function initCharts() {
         const ctx = document.getElementById('salesChart').getContext('2d');
         salesChart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: chartLabels.length > 0 ? chartLabels : ['No Data'],
+                labels: chartLabels,
                 datasets: [{
-                    label: 'Units Sold (Sales Orders)',
-                    data: chartSalesData.length > 0 ? chartSalesData : [0],
+                    label: 'Units sold (orders)',
+                    data: chartSalesData,
                     borderColor: '#3b82f6',
                     backgroundColor: 'rgba(59, 130, 246, 0.1)',
                     borderWidth: 2,
                     tension: 0.3,
                     fill: true
+                }, {
+                    label: 'Units produced (completed runs)',
+                    data: chartProducedData,
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.3,
+                    fill: false
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: { display: false }
+                    legend: { display: true, position: 'bottom' }
                 },
                 scales: {
                     y: { beginAtZero: true }
                 }
             }
         });
-    }
-
-    function showChart(type) {
-        document.getElementById('btn-sales-chart').classList.remove('active');
-        document.getElementById('btn-stock-chart').classList.remove('active');
-        document.getElementById('sales-chart-container').style.display = 'none';
-        document.getElementById('stock-chart-container').style.display = 'none';
-
-        if (type === 'sales') {
-            document.getElementById('btn-sales-chart').classList.add('active');
-            document.getElementById('sales-chart-container').style.display = 'block';
-        } else {
-            document.getElementById('btn-stock-chart').classList.add('active');
-            document.getElementById('stock-chart-container').style.display = 'block';
-        }
     }
 
     document.addEventListener('DOMContentLoaded', () => {

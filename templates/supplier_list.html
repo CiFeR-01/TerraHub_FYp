@@ -34,8 +34,9 @@
 {% endif %}
 
 <div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+    {% include "partials/_table_search.html" with target='#suppliersTable' placeholder='Search suppliers by name, contact...' %}
     <div class="table-responsive">
-        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+        <table id="suppliersTable" class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
                     <th style="padding:0.75rem 1rem;">Supplier Name</th>

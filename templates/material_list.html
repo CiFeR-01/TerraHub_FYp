@@ -43,8 +43,9 @@
 {% endif %}
 
 <div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+    {% include "partials/_table_search.html" with target='#materialsTable' placeholder='Search materials by SKU, name, category...' %}
     <div class="table-responsive">
-        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+        <table id="materialsTable" class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
                     <th style="padding:0.75rem 1rem;">SKU</th>
@@ -62,7 +63,7 @@
                 {% for item in material_data %}
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">
-                        {{ item.material.sku }}
+                        <a href="{% url 'material_detail' item.material.id %}" style="color:var(--primary); text-decoration:none;">{{ item.material.sku }}</a>
                         {% if not item.material.is_active %}
                         <span style="display:inline-block; font-size:0.65rem; background:#fee2e2; color:#ef4444; padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">Deactivated</span>
                         {% endif %}
@@ -89,13 +90,6 @@
                                     {% if item.material.is_active %}Archive{% else %}Restore{% endif %}
                                 </button>
                             </form>
-                            <button class="btn btn-secondary" onclick="openEditMaterialModal({{ item.material.id }}, '{{ item.material.name|escapejs }}', '{{ item.material.sku|escapejs }}', '{{ item.material.category|escapejs }}', '{{ item.material.unit_of_measure|escapejs }}', {{ item.material.safe_storage_days }}, {{ item.material.weight_mt_per_unit }}, {{ item.material.cost_per_unit }})" style="padding:0.35rem 0.65rem; font-size:0.775rem;">
-                                ✏️ Edit
-                            </button>
-                            {% else %}
-                            <button class="btn btn-secondary" disabled style="padding:0.35rem 0.65rem; font-size:0.775rem; opacity:0.5; cursor:not-allowed;" title="Only Managers can edit">
-                                ✏️ Edit
-                            </button>
                             {% endif %}
                         </div>
                     </td>
@@ -168,63 +162,6 @@
             <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('material-modal').style.display='none'">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save Material</button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<!-- Modal: Edit Material -->
-<div id="edit-material-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:12px; width:100%; max-width:520px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
-            <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;" id="edit_modal_title">Edit Raw Material</h3>
-            <button onclick="document.getElementById('edit-material-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
-        </div>
-        <form id="edit-material-form" method="post">
-            {% csrf_token %}
-            <div style="margin-bottom:0.85rem;">
-                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Material Name</label>
-                <input type="text" id="edit_mat_name" name="name" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-            </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:0.85rem;">
-                <div>
-                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">SKU</label>
-                    <input type="text" id="edit_mat_sku" name="sku" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-                </div>
-                <div>
-                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Category</label>
-                    <input type="text" id="edit_mat_category" name="category" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-                </div>
-            </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:0.85rem;">
-                <div>
-                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Unit of Measure</label>
-                    <select id="edit_mat_uom" name="unit_of_measure" class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-                        <option value="MT">Metric Ton (MT)</option>
-                        <option value="kg">Kilograms (kg)</option>
-                        <option value="L">Litres (L)</option>
-                        <option value="g">Grams (g)</option>
-                        <option value="pcs">Pieces (pcs)</option>
-                    </select>
-                </div>
-                <div>
-                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Safe Storage Days</label>
-                    <input type="number" id="edit_mat_days" name="safe_storage_days" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-                </div>
-            </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:1.25rem;">
-                <div>
-                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">MT Weight / Unit</label>
-                    <input type="number" step="0.0001" id="edit_mat_weight" name="weight_mt_per_unit" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-                </div>
-                <div>
-                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Cost / Unit (RM)</label>
-                    <input type="number" step="0.01" id="edit_mat_cost" name="cost_per_unit" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-                </div>
-            </div>
-            <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
-                <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-material-modal').style.display='none'">Cancel</button>
-                <button type="submit" class="btn btn-primary">Save Material Changes</button>
             </div>
         </form>
     </div>
@@ -311,22 +248,6 @@ function toggleMaterialSkuAuto() {
         input.style.background = '#ffffff';
         input.focus();
     }
-}
-
-function openEditMaterialModal(id, name, sku, category, uom, days, weight, cost) {
-    document.getElementById('edit_modal_title').innerText = "Edit Raw Material: " + name;
-    document.getElementById('edit_mat_name').value = name;
-    document.getElementById('edit_mat_sku').value = sku;
-    document.getElementById('edit_mat_category').value = category;
-    document.getElementById('edit_mat_uom').value = uom;
-    document.getElementById('edit_mat_days').value = days;
-    document.getElementById('edit_mat_weight').value = weight;
-    document.getElementById('edit_mat_cost').value = cost;
-
-    var form = document.getElementById('edit-material-form');
-    form.action = "/catalog/materials/" + id + "/edit/";
-
-    document.getElementById('edit-material-modal').style.display = 'flex';
 }
 
 function runMaterialDryRun() {

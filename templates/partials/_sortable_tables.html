@@ -1,7 +1,8 @@
 {% comment %}
-Click-to-sort for data tables. Add class "sortable" to a <table>; the script
-does the rest:
+Click-to-sort and instant-filter for data tables/lists. Self-initialising,
+idempotent, no dependencies. Included once from base.html.
 
+SORT: add class "sortable" to a <table>; the script does the rest:
   * every column is sortable except ones whose header is "Action(s)" /
     "QA Actions" or contains "Timeline";
   * column type (number / date / text) is auto-detected from the cells;
@@ -10,7 +11,19 @@ does the rest:
   * blank / "—" cells always sort last;
   * an empty-state colspan row is left in place.
 
-Self-initialising, idempotent, no dependencies. Included once from base.html.
+FILTER: give an <input> a data-filter-target="#idOfList" pointing at the
+<table> (or any container) to filter as the person types. No page reload,
+no server round-trip - for a table already backed by a server-side ?q=
+search (po_list, so_list, ...) don't add another one of these on top.
+  * default item selector is "tbody tr" for a <table>, else every direct
+    child; override with data-filter-items="<css selector>" (e.g. a class on
+    each card in a non-table list, see warehouse_list.html);
+  * a row/item already hidden by a colspan empty-state is left alone and
+    never counted as a match;
+  * a row/item may set data-search-value="..." to filter on something other
+    than its own visible text (e.g. to fold in a badge's title attribute);
+  * shows a small "No matching rows" line when the query matches nothing,
+    removed again as soon as it does.
 {% endcomment %}
 <script>
 (function () {
@@ -139,6 +152,74 @@ Self-initialising, idempotent, no dependencies. Included once from base.html.
     }
 
     function init() { document.querySelectorAll('table.sortable').forEach(initTable); }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+
+(function () {
+    if (window.__filterListsInit) return;
+    window.__filterListsInit = true;
+
+    function itemText(el) {
+        var v = el.getAttribute('data-search-value');
+        return (v !== null ? v : el.textContent).toLowerCase();
+    }
+
+    function initInput(input) {
+        var target = document.querySelector(input.getAttribute('data-filter-target'));
+        if (!target) return;
+        var isTable = target.tagName === 'TABLE';
+        var itemSel = input.getAttribute('data-filter-items') || (isTable ? 'tbody tr' : ':scope > *');
+        var appendTo = isTable ? (target.tBodies[0] || target) : target;
+        var emptyNote = null;
+
+        function items() {
+            return Array.prototype.slice.call(target.querySelectorAll(itemSel)).filter(function (el) {
+                return !el.querySelector('td[colspan]');
+            });
+        }
+
+        function ensureEmptyNote(colCount) {
+            if (emptyNote) return emptyNote;
+            if (isTable) {
+                emptyNote = document.createElement('tr');
+                var td = document.createElement('td');
+                td.colSpan = colCount || 1;
+                td.style.cssText = 'padding:1.5rem; text-align:center; color:var(--text-muted);';
+                td.textContent = 'No matching rows.';
+                emptyNote.appendChild(td);
+            } else {
+                emptyNote = document.createElement('div');
+                emptyNote.style.cssText = 'padding:1.5rem; text-align:center; color:var(--text-muted); grid-column:1/-1;';
+                emptyNote.textContent = 'No matches.';
+            }
+            emptyNote.className = 'filter-empty-note';
+            emptyNote.style.display = 'none';
+            appendTo.appendChild(emptyNote);
+            return emptyNote;
+        }
+
+        function apply() {
+            var q = input.value.trim().toLowerCase();
+            var rows = items();
+            var visible = 0;
+            rows.forEach(function (el) {
+                var match = !q || itemText(el).indexOf(q) !== -1;
+                el.style.display = match ? '' : 'none';
+                if (match) visible++;
+            });
+            var headCells = isTable && target.tHead && target.tHead.rows[0] ? target.tHead.rows[0].cells.length : 1;
+            var note = ensureEmptyNote(headCells);
+            note.style.display = (q && visible === 0) ? '' : 'none';
+        }
+
+        input.addEventListener('input', apply);
+    }
+
+    function init() { document.querySelectorAll('input[data-filter-target]').forEach(initInput); }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {

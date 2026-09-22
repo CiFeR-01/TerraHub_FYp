@@ -127,7 +127,7 @@
 {% if bom_materials and run.status != 'Completed' and run.status != 'Cancelled' %}
 <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); max-width:1200px;">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Bill of Materials</h3>
-    <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+    <table class="sortable" style="width:100%; border-collapse:collapse; font-size:0.85rem;">
         <thead>
             <tr style="border-bottom:1px solid var(--border-light); text-align:left; color:var(--text-muted);">
                 <th style="padding:0.5rem 0;">Material</th>
@@ -181,9 +181,9 @@
 {% endif %}
 
 <div class="animate-fade-in-up" style="display:grid; grid-template-columns:2fr 1fr; gap:2rem; max-width:1200px;">
-    
+
     <!-- Left Column: Operations & Execution -->
-    <div>
+    <div style="min-width: 0;">
         <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-bottom:2rem;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
                 <h3 style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:700;">Execution Engine</h3>
@@ -304,7 +304,7 @@
                         
                         <!-- Material Usage form -->
                         <div style="margin-bottom:1.5rem; border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
-                            <table style="width:100%; border-collapse:collapse; background:#fff;">
+                            <table class="sortable" style="width:100%; border-collapse:collapse; background:#fff;">
                                 <thead>
                                     <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
                                         <th style="padding:0.75rem; text-align:left;">Material</th>
@@ -452,7 +452,7 @@
                     </div>
 
                     <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden; margin-bottom:1.5rem;">
-                        <table style="width:100%; border-collapse:collapse; background:#fff;">
+                        <table class="sortable" style="width:100%; border-collapse:collapse; background:#fff;">
                             <thead>
                                 <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
                                     <th style="padding:0.75rem; text-align:left;">Material</th>
@@ -485,7 +485,7 @@
                                 <tr id="consumed-{{ row.usage.id }}" style="display:none; background:#f8fafc;">
                                     <td colspan="6" style="padding:0.75rem 1.5rem 1rem 2rem;">
                                         <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">Batches Consumed — {{ row.usage.material.name }}</div>
-                                        <table style="width:100%; border-collapse:collapse; font-size:0.82rem; max-width:700px;">
+                                        <table class="sortable" style="width:100%; border-collapse:collapse; font-size:0.82rem; max-width:700px;">
                                             <tr style="color:var(--text-muted); font-weight:600; border-bottom:1px solid var(--border-light);">
                                                 <td style="padding:0.3rem 0.75rem;">Batch</td>
                                                 <td style="padding:0.3rem 0.75rem;">Quantity Used</td>
@@ -540,7 +540,7 @@
                 <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:1.5rem;">
                     <h4 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main);">Finished Goods Batch</h4>
                     <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
-                        <table style="width:100%; border-collapse:collapse; background:#fff;">
+                        <table class="sortable" style="width:100%; border-collapse:collapse; background:#fff;">
                             <thead>
                                 <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
                                     <th style="padding:0.75rem; text-align:left;">Batch</th>
@@ -582,7 +582,7 @@
             <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:1.5rem;">
                 <h4 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main);">Yield Log</h4>
                 <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
-                    <table style="width:100%; border-collapse:collapse; background:#fff;">
+                    <table class="sortable" style="width:100%; border-collapse:collapse; background:#fff;">
                         <thead>
                             <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
                                 <th style="padding:0.75rem; text-align:left;">Date</th>
@@ -612,7 +612,7 @@
             <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
                 <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1.5rem;">Materials Consumed</h3>
                 <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
-                    <table style="width:100%; border-collapse:collapse; background:#fff;">
+                    <table class="sortable" style="width:100%; border-collapse:collapse; background:#fff;">
                         <thead>
                             <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
                                 <th style="padding:0.75rem; text-align:left;">Material</th>
@@ -654,7 +654,7 @@
                 </div>
                 {% if allocations %}
                 <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
-                    <table style="width:100%; border-collapse:collapse; background:#fff;">
+                    <table class="sortable" style="width:100%; border-collapse:collapse; background:#fff;">
                         <thead>
                             <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
                                 <th style="padding:0.75rem; text-align:left;">Material</th>
