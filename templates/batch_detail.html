@@ -31,7 +31,7 @@
 
 <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; margin-top: 1.5rem;" class="animate-fade-in-up">
     <!-- Left Column: Core Details & Ledger -->
-    <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+    <div style="display: flex; flex-direction: column; gap: 1.5rem; min-width: 0;">
         
         <!-- Core Info -->
         <div class="pane-card">
@@ -104,7 +104,7 @@
             <h3 style="margin-bottom: 1rem;">🔖 Reservations</h3>
             {% if reservations %}
             <div class="data-table-container">
-                <table class="custom-table">
+                <table class="custom-table sortable">
                     <thead>
                         <tr>
                             <th>Type</th>
@@ -144,7 +144,7 @@
             
             {% if logs %}
             <div class="data-table-container">
-                <table class="custom-table">
+                <table class="custom-table sortable">
                     <thead>
                         <tr>
                             <th>Date / Time</th>

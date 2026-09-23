@@ -1,0 +1,459 @@
+{% extends "base.html" %}
+{% load quantity_extras %}
+
+{% block title %}{{ material.sku }} - Material Details - TerraHub{% endblock %}
+
+{% block extra_css %}
+<style>
+    .detail-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+        margin-top: 1.5rem;
+        align-items: start;
+    }
+    @media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } }
+
+    .kpi-strip {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 1rem;
+        margin-top: 1.25rem;
+    }
+    .kpi-card {
+        background: #fff;
+        border: 1px solid var(--border-light);
+        border-radius: 12px;
+        padding: 0.9rem 1.1rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .kpi-label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+    .kpi-value { font-family: 'Outfit', sans-serif; font-size: 1.35rem; font-weight: 700; color: var(--text-main); margin-top: 0.15rem; }
+    .kpi-sub { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.1rem; }
+
+    .detail-card {
+        background: #fff;
+        border-radius: 12px;
+        border: 1px solid var(--border-light);
+        padding: 1.5rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        min-height: 0;
+        min-width: 0;
+    }
+    .dark-panel {
+        background: #0f172a;
+        color: #f8fafc;
+        border: 1px solid #1e293b;
+        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3);
+    }
+    .section-title {
+        font-family: 'Outfit', sans-serif;
+        font-size: 1.15rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+        border-bottom: 1px solid var(--border-light);
+        padding-bottom: 0.5rem;
+    }
+    .dark-panel .section-title { border-bottom-color: #334155; }
+
+    .form-group-inline { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem; }
+    .form-group-inline label { min-width: 150px; font-size: 0.875rem; font-weight: 600; color: var(--text-main); }
+
+    .table-container {
+        border: 1px solid #334155;
+        border-radius: 6px;
+        padding: 0.5rem;
+        background: #1e293b;
+        overflow-y: auto;
+    }
+    .list-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.4rem 0.5rem;
+        border-bottom: 1px solid #334155;
+        font-size: 0.85rem;
+    }
+    .list-item:last-child { border-bottom: none; }
+
+    .mini-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .mini-table th { text-align: left; color: var(--text-muted); font-weight: 600; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border-light); }
+    .mini-table td { padding: 0.5rem; border-bottom: 1px solid var(--border-light); }
+    .mini-table tr:last-child td { border-bottom: none; }
+    .mini-table .num { text-align: right; }
+    .table-scroll { overflow-x: auto; }
+    .movements-scroll { max-height: 320px; overflow-y: auto; }
+    .movements-scroll thead th { position: sticky; top: 0; background: #fff; z-index: 1; }
+
+    .badge { padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: 600; font-size: 0.75rem; }
+    .badge-success { background: #d1fae5; color: #065f46; }
+    .badge-warning { background: #fef3c7; color: #92400e; }
+    .badge-danger { background: #fee2e2; color: #991b1b; }
+    .badge-neutral { background: #e2e8f0; color: #334155; }
+    .empty-note { color: var(--text-muted); text-align: center; padding: 1.25rem 0.5rem; font-size: 0.85rem; }
+    .dark-panel .empty-note { color: #64748b; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; flex-wrap: wrap; gap: 1rem;">
+        <div>
+            <nav class="breadcrumb-nav">
+                <a href="{% url 'dashboard' %}">Dashboard</a>
+                <span class="separator">/</span>
+                <a href="{% url 'material_list' %}">Materials Hub</a>
+                <span class="separator">/</span>
+                <span class="current-page">{{ material.sku }}</span>
+            </nav>
+            <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+                [{{ material.sku }}] {{ material.name }}
+                {% if not material.is_active %}
+                <span class="badge badge-danger" style="vertical-align: middle; margin-left: 0.5rem;">Deactivated</span>
+                {% endif %}
+            </h1>
+            <div style="margin-top: 0.35rem;"><span class="badge badge-neutral">{{ material.category }}</span></div>
+        </div>
+        <div style="text-align: right;">
+            <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary);">
+                Total Stock: {{ stock_display }}
+            </div>
+            <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.15rem;">
+                {{ total_qty|floatformat:2 }} {{ material.unit_of_measure }} &times; {{ material.weight_mt_per_unit }} MT/unit
+            </div>
+            {% if perms.core.change_material %}
+            <form method="post" style="margin-top: 0.5rem;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="toggle_active">
+                <button type="submit" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;">
+                    {% if material.is_active %}Archive material{% else %}Restore material{% endif %}
+                </button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+</header>
+
+{% if messages %}
+<div style="margin-top:1rem;">
+    {% for message in messages %}
+    <div class="badge {% if message.tags == 'error' %}badge-rose{% elif message.tags == 'success' %}badge-emerald{% else %}badge-sky{% endif %}" style="padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; display: block; font-weight: 600;">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- KPI strip -->
+<div class="kpi-strip animate-fade-in-up" style="animation-delay: 0.03s;">
+    <div class="kpi-card">
+        <div class="kpi-label">Stock value</div>
+        <div class="kpi-value">RM{{ stock_value|floatformat:2 }}</div>
+        <div class="kpi-sub">@ RM{{ material.cost_per_unit|floatformat:2 }} / {{ material.unit_of_measure }}</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-label">Reserved</div>
+        <div class="kpi-value">{{ allocated_qty|floatformat:2 }}</div>
+        <div class="kpi-sub">{{ material.unit_of_measure }} held for orders/runs</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-label">Available</div>
+        <div class="kpi-value" style="color: {% if available_qty > 0 %}var(--success-strong){% else %}var(--text-muted){% endif %};">{{ available_qty|floatformat:2 }}</div>
+        <div class="kpi-sub">{{ material.unit_of_measure }} free to allocate</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-label">Quarantined</div>
+        <div class="kpi-value">{{ quarantined_qty|floatformat:2 }}</div>
+        <div class="kpi-sub">{{ material.unit_of_measure }} not counted above</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-label">Stock cover</div>
+        {% if forecast %}
+            {% if forecast.days_cover is not None %}
+            <div class="kpi-value">{{ forecast.days_cover|floatformat:0 }} days</div>
+            <div class="kpi-sub">
+                {% if forecast.status == 'critical' %}<span class="badge badge-danger">Critical</span>
+                {% elif forecast.status == 'reorder_now' %}<span class="badge badge-danger">Reorder now</span>
+                {% elif forecast.status == 'watch' %}<span class="badge badge-warning">Watch</span>
+                {% else %}<span class="badge badge-success">OK</span>{% endif %}
+                out {{ forecast.stockout_date|date:"d M Y" }}
+            </div>
+            {% else %}
+            <div class="kpi-value">&mdash;</div>
+            <div class="kpi-sub">{% if forecast.status == 'no_usage' %}No recent usage{% else %}Not running out{% endif %}</div>
+            {% endif %}
+        {% else %}
+        <div class="kpi-value">&mdash;</div>
+        <div class="kpi-sub">Not forecast (deactivated)</div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="detail-grid animate-fade-in-up" style="animation-delay: 0.05s;">
+
+    <!-- Core details (editable) -->
+    <div class="detail-card">
+        <h3 class="section-title">Core Information</h3>
+        <form method="POST" action="{% url 'material_detail' material.id %}" style="display: flex; flex-direction: column; flex-grow: 1;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="update_material">
+            <div class="form-group-inline">
+                <label>Material Name</label>
+                <input type="text" name="name" value="{{ material.name }}" class="form-input" required style="width: 100%;">
+            </div>
+            <div class="form-group-inline">
+                <label>SKU</label>
+                <input type="text" name="sku" value="{{ material.sku }}" class="form-input" required style="width: 100%;">
+            </div>
+            <div class="form-group-inline">
+                <label>Category</label>
+                <input type="text" name="category" value="{{ material.category }}" class="form-input" required style="width: 100%;">
+            </div>
+            <div class="form-group-inline">
+                <label>Unit of Measure</label>
+                <select name="unit_of_measure" class="form-input" required style="width: 100%;">
+                    {% for val, display in uom_choices %}
+                    <option value="{{ val }}" {% if material.unit_of_measure == val %}selected{% endif %}>{{ display }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group-inline">
+                <label>Safe Storage (days)</label>
+                <input type="number" name="safe_storage_days" value="{{ material.safe_storage_days }}" class="form-input" required style="width: 100%;">
+            </div>
+            <div class="form-group-inline">
+                <label>Weight (MT) per Unit</label>
+                <input type="number" step="0.0001" name="weight_mt_per_unit" value="{{ material.weight_mt_per_unit|floatformat:4 }}" class="form-input" required style="width: 100%;">
+            </div>
+            <div class="form-group-inline">
+                <label>Cost / Unit (RM)</label>
+                <input type="number" step="0.01" name="cost_per_unit" value="{{ material.cost_per_unit|floatformat:2 }}" class="form-input" required style="width: 100%;">
+            </div>
+            <div style="text-align: right; margin-top: auto;">
+                {% if perms.core.change_material %}
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+                {% else %}
+                <button type="button" class="btn btn-primary" disabled style="opacity:0.5; cursor:not-allowed;" title="Only Managers can edit">Save Changes</button>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+
+    <!-- Consumption chart + cover forecast -->
+    <div class="detail-card">
+        <h3 class="section-title">Consumption (last 6 months)</h3>
+        <div style="position: relative; min-height: 230px; flex-grow: 1;">
+            <canvas id="consumptionChart"></canvas>
+        </div>
+        {% if forecast %}
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; font-size: 0.82rem; border-top: 1px solid var(--border-light); padding-top: 0.75rem;">
+            <div><div class="kpi-label">Burn rate (30d)</div><strong>{{ forecast.daily_rate|floatformat:2 }}</strong> {{ material.unit_of_measure }}/day</div>
+            <div><div class="kpi-label">Lead time</div><strong>{{ forecast.lead_time_days }}</strong> days{% if forecast.lead_time_estimated %} <span style="color:var(--text-muted);">(default)</span>{% endif %}</div>
+            <div><div class="kpi-label">Reorder by</div>{% if forecast.reorder_by_date %}<strong>{{ forecast.reorder_by_date|date:"d M Y" }}</strong>{% else %}&mdash;{% endif %}</div>
+            <div>
+                <div class="kpi-label">On order</div>
+                <strong>{{ forecast.on_order|floatformat:2 }}</strong> {{ material.unit_of_measure }}
+                {% if forecast.next_po_number %}<div style="color:var(--text-muted);">next {{ forecast.next_po_number }}{% if forecast.next_po_date %}, {{ forecast.next_po_date|date:"d M" }}{% endif %}</div>{% endif %}
+            </div>
+        </div>
+        <a href="{% url 'forecast' %}" style="font-size: 0.8rem; color: var(--primary); text-decoration: none;">Open the stockout &amp; reorder forecast &rarr;</a>
+        {% endif %}
+    </div>
+
+    <!-- Batches -->
+    <div class="detail-card dark-panel">
+        <h3 class="section-title">Active Batches (Inventory)</h3>
+        <div class="table-container" style="max-height: 360px;">
+            {% for row in batch_rows %}
+            <div class="list-item" style="flex-direction: column; align-items: stretch; gap: 0.35rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap: 0.5rem; flex-wrap: wrap;">
+                    <span>
+                        <a href="{% url 'batch_detail' row.batch.batch_number %}" style="color: #38bdf8; font-weight: 700; text-decoration: none;">{{ row.batch.batch_number }}</a>
+                        <span style="color:#94a3b8; font-size:0.85em;"> @ {{ row.batch.warehouse.name|default:row.batch.location|default:"Unassigned" }}</span>
+                    </span>
+                    <span>
+                        <strong>{{ row.batch.quantity|floatformat:2 }} {{ material.unit_of_measure }}</strong>
+                        {% if row.days_left is not None %}
+                        <span class="badge {% if row.days_left < 0 %}badge-danger{% elif row.days_left < 30 %}badge-warning{% else %}badge-success{% endif %}" style="margin-left: 0.5rem;">
+                            {% if row.days_left < 0 %}Expired{% else %}Exp in {{ row.days_left }}d{% endif %}
+                        </span>
+                        {% endif %}
+                    </span>
+                </div>
+                <div style="font-size:0.8em; color:#94a3b8;">
+                    Allocated: {{ row.batch.allocated_quantity|floatformat:2 }} &middot; Available: {{ row.available|floatformat:2 }}
+                    {% if row.batch.purchase_order %}
+                    &middot; <a href="{% url 'po_detail' row.batch.purchase_order.pk %}" style="color:#94a3b8;">via {{ row.batch.purchase_order.po_number }}</a>
+                    {% endif %}
+                </div>
+                {% if row.reservations %}
+                <div style="display:flex; flex-wrap:wrap; gap:0.4rem; font-size:0.8em;">
+                    {% for res in row.reservations %}
+                    <a href="{{ res.url }}" style="color:#38bdf8; text-decoration:none; background:rgba(56,189,248,0.1); padding:0.15rem 0.5rem; border-radius:4px;">{{ res.quantity|floatformat:2 }} &rarr; {{ res.label }}</a>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div style="font-size:0.8em; color:#4ade80;">Fully available &mdash; not reserved</div>
+                {% endif %}
+            </div>
+            {% empty %}
+            <div class="empty-note">No active batches of this material.</div>
+            {% endfor %}
+        </div>
+
+        <h3 class="section-title">Stock by Warehouse</h3>
+        <div class="table-container" style="max-height: 200px;">
+            {% for w in warehouse_rows %}
+            <div class="list-item">
+                <span><strong>{{ w.name }}</strong> <span style="color:#94a3b8;">({{ w.batches }} batch{{ w.batches|pluralize:"es" }})</span></span>
+                <span>{{ w.quantity|floatformat:2 }} {{ material.unit_of_measure }} <span style="color:#94a3b8;">/ {{ w.allocated|floatformat:2 }} reserved</span></span>
+            </div>
+            {% empty %}
+            <div class="empty-note">Not held in any warehouse.</div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Used in recipes + suppliers -->
+    <div class="detail-card">
+        <h3 class="section-title">Used in Recipes</h3>
+        <div class="table-scroll">
+            <table class="mini-table sortable">
+                <thead><tr><th>Product</th><th class="num">Per unit made</th><th class="num">Line cost (RM)</th></tr></thead>
+                <tbody>
+                    {% for use in recipe_uses %}
+                    <tr>
+                        <td><a href="{% url 'product_detail' use.recipe.product.id %}" style="color: var(--primary); font-weight: 600; text-decoration: none;">{{ use.recipe.product.sku }}</a> &mdash; {{ use.recipe.product.name }}
+                            {% if not use.recipe.product.is_active %}<span class="badge badge-danger" style="margin-left:0.3rem;">Deactivated</span>{% endif %}</td>
+                        <td class="num">{{ use.recipe.quantity_required|qty_display }} {{ material.unit_of_measure }}</td>
+                        <td class="num">{{ use.line_cost|floatformat:2 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="3" class="empty-note">Not part of any product recipe.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <h3 class="section-title" style="margin-top: 0.5rem;">Suppliers</h3>
+        <div class="table-scroll">
+            <table class="mini-table sortable">
+                <thead><tr><th>Supplier</th><th class="num">Unit price (RM)</th><th class="num">Lead time</th></tr></thead>
+                <tbody>
+                    {% for s in supplier_rows %}
+                    <tr>
+                        <td>{{ s.supplier.name }}{% if not s.supplier.is_active %} <span class="badge badge-danger">Inactive</span>{% endif %}</td>
+                        <td class="num">{% if s.unit_price is not None %}{{ s.unit_price|floatformat:2 }}{% else %}&mdash;{% endif %}</td>
+                        <td class="num">{% if s.lead_time_days is not None %}{{ s.lead_time_days }} days{% else %}&mdash;{% endif %}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="3" class="empty-note">No supplier linked to this material.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Purchase orders -->
+    <div class="detail-card">
+        <h3 class="section-title">Recent Purchase Orders</h3>
+        <div class="table-scroll">
+            <table class="mini-table sortable">
+                <thead><tr><th>PO</th><th>Supplier</th><th>Status</th><th class="num">Ordered</th><th class="num">Received</th></tr></thead>
+                <tbody>
+                    {% for line in po_lines %}
+                    <tr>
+                        <td><a href="{% url 'po_detail' line.purchase_order.pk %}" style="color: var(--primary); font-weight: 600; text-decoration: none;">{{ line.purchase_order.po_number }}</a></td>
+                        <td>{{ line.purchase_order.supplier_name }}</td>
+                        <td><span class="badge badge-neutral">{{ line.purchase_order.get_status_display }}</span></td>
+                        <td class="num">{{ line.quantity_ordered|floatformat:2 }}</td>
+                        <td class="num">{{ line.quantity_received|floatformat:2 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="5" class="empty-note">No purchase orders for this material yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Movements -->
+    <div class="detail-card">
+        <h3 class="section-title">Recent Stock Movements</h3>
+        <div class="table-scroll movements-scroll">
+            <table class="mini-table sortable">
+                <thead><tr><th>When</th><th>Action</th><th class="num">Qty</th><th>Warehouse</th><th>By</th></tr></thead>
+                <tbody>
+                    {% for m in movement_rows %}
+                    <tr>
+                        <td style="white-space: nowrap;">{{ m.log.timestamp|date:"d M Y H:i" }}</td>
+                        <td>{{ m.log.get_action_type_display }}<div style="font-size:0.75rem; color:var(--text-muted);">{{ m.log.item_name }}</div></td>
+                        <td class="num" style="white-space: nowrap; font-weight: 600; color: {% if m.sign == '+' %}var(--success-strong){% elif m.sign == '-' %}#dc2626{% else %}var(--text-muted){% endif %};">{% if m.log.quantity_changed %}{{ m.sign }}{{ m.log.quantity_changed|floatformat:2 }}{% else %}&mdash;{% endif %}</td>
+                        <td>{{ m.log.warehouse.name|default:"—" }}</td>
+                        <td>{{ m.log.user.get_username|default:"—" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="5" class="empty-note">No stock movements recorded.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {% if off_book_usage %}
+    <!-- Off-books usage -->
+    <div class="detail-card">
+        <h3 class="section-title">Used From Unrecorded Stock</h3>
+        <p style="font-size: 0.82rem; color: var(--text-muted); margin: 0;">
+            Poured into production runs beyond what was allocated, from stock the system never held. Nothing was deducted from inventory for these.
+        </p>
+        <div class="table-scroll">
+            <table class="mini-table sortable">
+                <thead><tr><th>Run</th><th class="num">Qty</th><th>Reason</th><th>When</th></tr></thead>
+                <tbody>
+                    {% for e in off_book_usage %}
+                    <tr>
+                        <td><a href="{% url 'production_run_detail' e.production_run.pk %}" style="color: var(--primary); font-weight: 600; text-decoration: none;">{{ e.production_run.run_number }}</a></td>
+                        <td class="num">{{ e.quantity|floatformat:2 }} {{ material.unit_of_measure }}</td>
+                        <td>{{ e.reason|default:"—" }}</td>
+                        <td style="white-space: nowrap;">{{ e.created_at|date:"d M Y" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const labels = {{ chart_labels|safe }};
+        const data = {{ chart_consumption|safe }};
+        new Chart(document.getElementById('consumptionChart').getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Consumed for manufacturing ({{ material.unit_of_measure|escapejs }})',
+                    data: data,
+                    backgroundColor: 'rgba(59, 130, 246, 0.6)',
+                    borderColor: '#3b82f6',
+                    borderWidth: 1,
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+    });
+</script>
+{% endblock %}

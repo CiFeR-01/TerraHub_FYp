@@ -53,8 +53,9 @@
 <!-- Section 1: Near Expiry Risk Table -->
 <div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
     <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; color:var(--warning-strong); margin-bottom:1rem;">⚠️ Degrading &amp; Near-Expiry Batches</h3>
+    {% include "partials/_table_search.html" with target='#nearExpiryTable' placeholder='Search batch #, item, warehouse...' %}
     <div class="table-responsive">
-        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+        <table id="nearExpiryTable" class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
                     <th style="padding:0.75rem 1rem;">Batch Number</th>
@@ -117,8 +118,9 @@
 <!-- Section 2: Quarantined Batches -->
 <div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.15s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
     <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; color:#dc2626; margin-bottom:1rem;">🛑 Quarantined Inventory</h3>
+    {% include "partials/_table_search.html" with target='#quarantinedTable' placeholder='Search batch #, item, location...' %}
     <div class="table-responsive">
-        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+        <table id="quarantinedTable" class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
                     <th style="padding:0.75rem 1rem;">Batch Number</th>

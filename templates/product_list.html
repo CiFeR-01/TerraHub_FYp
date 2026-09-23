@@ -50,8 +50,9 @@
 {% endif %}
 
 <div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+    {% include "partials/_table_search.html" with target='#productsTable' placeholder='Search products by SKU, name, description...' %}
     <div class="table-responsive">
-        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+        <table id="productsTable" class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
                     <th style="padding:0.75rem 1rem;">SKU</th>
@@ -70,7 +71,7 @@
                 {% with prod=item.product %}
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">
-                        {{ prod.sku }}
+                        <a href="{% url 'product_detail' prod.id %}" style="color:var(--primary); text-decoration:none;">{{ prod.sku }}</a>
                         {% if not prod.is_active %}
                         <span style="display:inline-block; font-size:0.65rem; background:#fee2e2; color:#ef4444; padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">Deactivated</span>
                         {% endif %}
@@ -102,9 +103,6 @@
                                 </button>
                             </form>
                             {% endif %}
-                            <a href="{% url 'product_detail' prod.id %}" class="btn btn-secondary" style="padding:0.35rem 0.65rem; font-size:0.775rem; text-decoration:none;">
-                                👁 View Details
-                            </a>
                         </div>
                     </td>
                 </tr>

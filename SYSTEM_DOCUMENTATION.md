@@ -68,7 +68,7 @@ D:\TerraHub
     ├── home.html / login.html       # Public entry points
     ├── dashboard.html / profile.html / system.html / user_management.html
     ├── product_list.html / product_detail.html
-    ├── material_list.html / material_form.html
+    ├── material_list.html / material_detail.html / material_form.html
     ├── warehouse_list.html / warehouse_form.html / warehouse_inventory.html
     ├── batch_detail.html / batch_public_info.html / batch_print_label.html
     ├── stock_audit.html / registry_ledger.html
@@ -107,7 +107,7 @@ D:\TerraHub
 | `/warehouse/stock-audit/` | `stock_audit` | `stock_audit_view` | Stock audit workflow |
 | `/warehouse/registry/` | `registry` | `registry_ledger_view` | Registry/audit ledger |
 | `/catalog/products/` | `product_list` | `product_list_view` | Product catalog |
-| `/catalog/products/<pk>/` | `product_detail` | `product_detail_view` | Product detail |
+| `/catalog/products/<pk>/` | `product_detail` | `product_detail_view` | Product detail — stock KPIs, recipe cost & margin, production-vs-sales chart (sales series = `analytics.product_sales_trend`, §8.12) |
 | `/catalog/products/export/` | `export_products_csv` | `export_products_csv` | Export products (CSV) |
 | `/catalog/products/template/` | `export_product_template` | `export_product_template` | Product import template |
 | `/catalog/products/import/` | `import_products` | `import_products` | Bulk import products |
@@ -115,6 +115,7 @@ D:\TerraHub
 | `/catalog/products/<id>/recipe/get/` | `get_product_recipe_api` | `get_product_recipe_api` | Fetch product recipe (JSON) |
 | `/catalog/products/recipe/save/` | `save_product_recipe_api` | `save_product_recipe_api` | Save product recipe (JSON) |
 | `/catalog/materials/` | `material_list` | `material_list_view` | Material catalog |
+| `/catalog/materials/<pk>/` | `material_detail` | `material_detail_view` | Material detail — editable info, batches, stock by warehouse, cover/reorder forecast (`analytics.stockout_forecast`, §8.7), consumption chart (RegistryLog `Consumed_For_Manufacturing`, §8.1–8.2), recipes, suppliers, POs, movements, unrecorded run usage. Edit/archive need `core.change_material` |
 | `/catalog/materials/<pk>/edit/` | `material_edit` | `material_edit_view` | Edit material |
 | `/catalog/materials/export/` | `export_materials_csv` | `export_materials_csv` | Export materials (CSV) |
 | `/catalog/materials/template/` | `export_material_template` | `export_material_template` | Material import template |

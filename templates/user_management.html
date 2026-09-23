@@ -47,14 +47,14 @@
     </div>
 
     <div class="table-responsive">
-        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.78rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em;">
-                    <th style="padding:0.75rem 1rem;">User</th>
+                    {% include "partials/_sort_th.html" with key="username" label="User" %}
                     <th style="padding:0.75rem 1rem;">Roles</th>
                     <th style="padding:0.75rem 1rem;">Locations Allowed</th>
-                    <th style="padding:0.75rem 1rem;">Status</th>
-                    <th style="padding:0.75rem 1rem;">Last Updated</th>
+                    {% include "partials/_sort_th.html" with key="status" label="Status" %}
+                    {% include "partials/_sort_th.html" with key="updated_at" label="Last Updated" %}
                     <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
                 </tr>
             </thead>
@@ -102,6 +102,7 @@
             </tbody>
         </table>
     </div>
+    {% include "partials/_pagination.html" with page_obj=users page_qs=page_qs page_size=page_size noun='users' %}
 </section>
 
 <!-- Edit User Modal -->

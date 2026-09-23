@@ -1,0 +1,14 @@
+{% comment %}
+Instant, client-side search box wired to partials/_sortable_tables.html's filter script -
+no page reload, no server round-trip. For a table that already does its filtering via a
+server-side ?q= (po_list, so_list, registry_ledger, user_management, forecast) don't add
+this on top of it.
+
+Usage: {% include "partials/_table_search.html" with target='#productsTable' placeholder='Search products...' %}
+Pass `items` too when `target` isn't a <table> (a CSS selector for each item - see warehouse_list.html).
+{% endcomment %}
+<div class="animate-fade-in-up" style="margin-bottom:1rem; max-width:320px;">
+    <input type="text" class="form-input" data-filter-target="{{ target }}" {% if items %}data-filter-items="{{ items }}"{% endif %}
+           placeholder="{{ placeholder|default:'Search...' }}"
+           style="width:100%; padding:0.55rem 0.8rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.875rem;">
+</div>

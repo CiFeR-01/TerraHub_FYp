@@ -73,7 +73,7 @@
         <div class="kpi-item-card">
             <span class="kpi-label">Active Batches</span>
             <div class="kpi-value-row">
-                <span class="kpi-value">{% if selected_warehouse %}{{ batches|length }}{% else %}{{ global_kpis.total_batches }}{% endif %}</span>
+                <span class="kpi-value">{{ total_batches }}</span>
                 <span class="badge badge-emerald">In Stock</span>
             </div>
         </div>
@@ -106,21 +106,27 @@
             </a>
             {% endif %}
         </div>
-        <div style="margin-bottom: 1rem;">
-            <input type="text" id="batchSearch" placeholder="Search by Batch Number, SKU, or Item Name..." style="width: 100%; max-width: 400px; padding: 0.65rem 1rem; border-radius: 8px; border: 1px solid var(--border-light); font-size: 0.95rem; background: #f8fafc;" onkeyup="filterTable()">
-        </div>
-        
+        <form method="get" style="display:flex; gap:0.5rem; margin-bottom: 1rem;">
+            {% if selected_warehouse %}<input type="hidden" name="warehouse_id" value="{{ selected_warehouse.id }}">{% endif %}
+            {% if selected_material %}<input type="hidden" name="material_id" value="{{ selected_material.id }}">{% endif %}
+            <input type="text" name="q" value="{{ search_query }}" placeholder="Search by Batch Number, SKU, or Item Name..." style="width: 100%; max-width: 400px; padding: 0.65rem 1rem; border-radius: 8px; border: 1px solid var(--border-light); font-size: 0.95rem; background: #f8fafc;">
+            <button type="submit" class="btn btn-secondary" style="padding: 0.5rem 1rem;">Search</button>
+            {% if search_query %}
+            <a href="?{% if selected_warehouse %}warehouse_id={{ selected_warehouse.id }}{% endif %}{% if selected_material %}&material_id={{ selected_material.id }}{% endif %}" class="btn btn-secondary" style="padding:0.5rem; display:flex; align-items:center; text-decoration:none;" title="Clear Search">&times;</a>
+            {% endif %}
+        </form>
+
         <div class="data-table-container">
-            <table class="custom-table sortable" id="batchTable">
+            <table class="custom-table" id="batchTable">
                 <thead>
                     <tr>
-                        {% if not selected_warehouse %}<th>Facility</th>{% endif %}
-                        <th>Zone/Aisle</th>
-                        <th>Batch Number</th>
+                        {% if not selected_warehouse %}{% include "partials/_sort_th.html" with key="warehouse" label="Facility" %}{% endif %}
+                        {% include "partials/_sort_th.html" with key="location" label="Zone/Aisle" %}
+                        {% include "partials/_sort_th.html" with key="batch_number" label="Batch Number" %}
                         <th>Item Type</th>
                         <th>Item Details</th>
                         <th style="text-align: right;">Current Qty</th>
-                        <th>Expiry Date</th>
+                        {% include "partials/_sort_th.html" with key="expiry_date" label="Expiry Date" %}
                         <th>Days Remaining</th>
                         {% if can_adjust %}<th style="text-align: right;">Action</th>{% endif %}
                     </tr>
@@ -189,6 +195,7 @@
                 </tbody>
             </table>
         </div>
+        {% include "partials/_pagination.html" with page_obj=batches page_qs=page_qs page_size=page_size noun='batches' %}
     </div>
     {% else %}
     <div class="pane-card animate-fade-in-up" style="text-align: center; padding: 3rem; animation-delay: 0.15s;">
@@ -200,23 +207,6 @@
     </div>
     {% endif %}
 
-<script>
-function filterTable() {
-    let input = document.getElementById("batchSearch");
-    let filter = input.value.toUpperCase();
-    let table = document.getElementById("batchTableBody");
-    let tr = table.getElementsByClassName("batch-row");
-    
-    for (let i = 0; i < tr.length; i++) {
-        let textContent = tr[i].textContent || tr[i].innerText;
-        if (textContent.toUpperCase().indexOf(filter) > -1) {
-            tr[i].style.display = "";
-        } else {
-            tr[i].style.display = "none";
-        }
-    }
-}
-</script>
 {% if can_adjust %}
 <!-- Manual Stock Entry Modal -->
 <div id="manual-stock-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.4); backdrop-filter:blur(4px); z-index:9999; align-items:center; justify-content:center;">
