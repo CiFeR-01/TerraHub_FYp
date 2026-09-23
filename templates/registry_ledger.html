@@ -68,15 +68,15 @@
     </form>
 
     <div class="table-responsive">
-        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
-                    <th style="padding:0.75rem 1rem;">Timestamp</th>
-                    <th style="padding:0.75rem 1rem;">Action Type</th>
-                    <th style="padding:0.75rem 1rem;">Item Name / Batch</th>
-                    <th style="padding:0.75rem 1rem;">Quantity Changed</th>
-                    <th style="padding:0.75rem 1rem;">Warehouse Facility</th>
-                    <th style="padding:0.75rem 1rem;">Executed By</th>
+                    {% include "partials/_sort_th.html" with key="timestamp" label="Timestamp" %}
+                    {% include "partials/_sort_th.html" with key="action_type" label="Action Type" %}
+                    {% include "partials/_sort_th.html" with key="item_name" label="Item Name / Batch" %}
+                    {% include "partials/_sort_th.html" with key="quantity_changed" label="Quantity Changed" %}
+                    {% include "partials/_sort_th.html" with key="warehouse" label="Warehouse Facility" %}
+                    {% include "partials/_sort_th.html" with key="user" label="Executed By" %}
                 </tr>
             </thead>
             <tbody>
@@ -117,5 +117,6 @@
             </tbody>
         </table>
     </div>
+    {% include "partials/_pagination.html" with page_obj=logs page_qs=page_qs page_size=page_size noun='log entries' %}
 </div>
 {% endblock %}

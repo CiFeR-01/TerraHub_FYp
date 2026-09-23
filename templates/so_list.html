@@ -110,24 +110,7 @@
             </tbody>
         </table>
     </div>
-    {% if sales_orders.paginator.num_pages > 1 %}
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem; padding:0 0.5rem; font-size:0.85rem; color:var(--text-muted);">
-        <div>Showing {{ sales_orders.start_index }} to {{ sales_orders.end_index }} of {{ sales_orders.paginator.count }} orders</div>
-        <div style="display:flex; gap:0.5rem; align-items:center;">
-            {% if sales_orders.has_previous %}
-            <a href="?{% if page_qs %}{{ page_qs }}&{% endif %}page={{ sales_orders.previous_page_number }}" class="btn btn-secondary" style="padding:0.2rem 0.5rem;">Prev</a>
-            {% else %}
-            <span class="btn btn-secondary" style="padding:0.2rem 0.5rem; opacity:0.5; cursor:not-allowed;">Prev</span>
-            {% endif %}
-            <span>Page {{ sales_orders.number }} of {{ sales_orders.paginator.num_pages }}</span>
-            {% if sales_orders.has_next %}
-            <a href="?{% if page_qs %}{{ page_qs }}&{% endif %}page={{ sales_orders.next_page_number }}" class="btn btn-secondary" style="padding:0.2rem 0.5rem;">Next</a>
-            {% else %}
-            <span class="btn btn-secondary" style="padding:0.2rem 0.5rem; opacity:0.5; cursor:not-allowed;">Next</span>
-            {% endif %}
-        </div>
-    </div>
-    {% endif %}
+    {% include "partials/_pagination.html" with page_obj=sales_orders page_qs=page_qs page_size=page_size noun='orders' %}
 </div>
 
 <!-- Modal: New SO -->

@@ -1,0 +1,45 @@
+{% comment %}
+Prev/Next + rows-per-page footer for a paginated list (see get_page_size() /
+apply_list_sort() in core/views.py - they're what a view calls to build the
+values this partial needs).
+
+Usage: {% include "partials/_pagination.html" with page_obj=suppliers page_qs=page_qs page_size=page_size noun='suppliers' %}
+
+  page_obj   - the Page instance from Paginator(...).get_page(...)
+  page_qs    - querystring to keep across Prev/Next links, everything except
+               `page` (apply_list_sort's page_qs already does this)
+  page_size  - the resolved int from get_page_size(), so the current choice
+               shows as selected
+  noun       - optional plural noun for "Showing X-Y of Z <noun>" (defaults
+               to "results")
+{% endcomment %}
+{% if page_obj.paginator.count %}
+<div style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem; padding:0 0.5rem; font-size:0.85rem; color:var(--text-muted); flex-wrap:wrap; gap:0.75rem;">
+    <div style="display:flex; align-items:center; gap:1.25rem; flex-wrap:wrap;">
+        <span>Showing {{ page_obj.start_index }}&ndash;{{ page_obj.end_index }} of {{ page_obj.paginator.count }} {{ noun|default:"results" }}</span>
+        <label style="display:flex; align-items:center; gap:0.35rem;">
+            Rows per page
+            <select onchange="var u=new URL(window.location); u.searchParams.set('page_size', this.value); u.searchParams.delete('page'); window.location=u;" class="form-select" style="padding:0.2rem 0.4rem; border-radius:4px; border:1px solid var(--border-light); font-size:0.8rem;">
+                <option value="25" {% if page_size == 25 %}selected{% endif %}>25</option>
+                <option value="50" {% if page_size == 50 %}selected{% endif %}>50</option>
+                <option value="100" {% if page_size == 100 %}selected{% endif %}>100</option>
+            </select>
+        </label>
+    </div>
+    {% if page_obj.paginator.num_pages > 1 %}
+    <div style="display:flex; gap:0.5rem; align-items:center;">
+        {% if page_obj.has_previous %}
+        <a href="?{% if page_qs %}{{ page_qs }}&{% endif %}page={{ page_obj.previous_page_number }}" class="btn btn-secondary" style="padding:0.2rem 0.5rem;">Prev</a>
+        {% else %}
+        <span class="btn btn-secondary" style="padding:0.2rem 0.5rem; opacity:0.5; cursor:not-allowed;">Prev</span>
+        {% endif %}
+        <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}
+        <a href="?{% if page_qs %}{{ page_qs }}&{% endif %}page={{ page_obj.next_page_number }}" class="btn btn-secondary" style="padding:0.2rem 0.5rem;">Next</a>
+        {% else %}
+        <span class="btn btn-secondary" style="padding:0.2rem 0.5rem; opacity:0.5; cursor:not-allowed;">Next</span>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endif %}

@@ -15,6 +15,13 @@
         </h1>
     </div>
     <div class="header-action-tray" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+        <form method="get" style="display:flex; gap:0.5rem; margin:0;">
+            <input type="text" name="q" value="{{ search_query }}" placeholder="Search suppliers by name, contact..." class="form-input" style="padding:0.5rem 0.75rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem; min-width:220px;">
+            <button type="submit" class="btn btn-secondary" style="padding:0.5rem 1rem; font-size:0.85rem;">Search</button>
+            {% if search_query %}
+            <a href="{% url 'supplier_list' %}" class="btn btn-secondary" style="padding:0.5rem; font-size:1rem; text-decoration:none; display:flex; align-items:center; justify-content:center; line-height:1;" title="Clear Search">&times;</a>
+            {% endif %}
+        </form>
         <button class="btn btn-primary" onclick="document.getElementById('supplier-modal').style.display='flex'" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
             ✚ Add Supplier
         </button>
@@ -34,16 +41,15 @@
 {% endif %}
 
 <div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
-    {% include "partials/_table_search.html" with target='#suppliersTable' placeholder='Search suppliers by name, contact...' %}
     <div class="table-responsive">
-        <table id="suppliersTable" class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
-                    <th style="padding:0.75rem 1rem;">Supplier Name</th>
-                    <th style="padding:0.75rem 1rem;">Contact Person</th>
-                    <th style="padding:0.75rem 1rem;">Email</th>
-                    <th style="padding:0.75rem 1rem;">Phone</th>
-                    <th style="padding:0.75rem 1rem;">Address</th>
+                    {% include "partials/_sort_th.html" with key="name" label="Supplier Name" %}
+                    {% include "partials/_sort_th.html" with key="contact_person" label="Contact Person" %}
+                    {% include "partials/_sort_th.html" with key="email" label="Email" %}
+                    {% include "partials/_sort_th.html" with key="phone" label="Phone" %}
+                    {% include "partials/_sort_th.html" with key="address" label="Address" %}
                     <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
                 </tr>
             </thead>
@@ -90,6 +96,7 @@
             </tbody>
         </table>
     </div>
+    {% include "partials/_pagination.html" with page_obj=suppliers page_qs=page_qs page_size=page_size noun='suppliers' %}
 </div>
 
 <!-- Modal: New Supplier -->

@@ -5375,3 +5375,255 @@ class ProductDetailPageTests(TestCase):
 
     def test_bom_links_each_material_to_its_page(self):
         self.assertContains(self.client.get(self.url), reverse('material_detail', args=[self.m1.pk]))
+
+
+# ----------------------------------------------------------------------------
+# Phase 1 server-side pagination (Registry Ledger, Warehouse Inventory,
+# Purchase Orders, Shipments, Suppliers, Clients, User Management)
+# ----------------------------------------------------------------------------
+class SupplierListPaginationTests(TestCase):
+    def setUp(self):
+        make_user(username='supmgr', password='pw', role='Manager')
+        self.client.login(username='supmgr', password='pw')
+        from core.models import Supplier
+        for i in range(30):
+            Supplier.objects.create(name=f'Supplier {i:02d}', contact_person=f'Contact {i:02d}')
+
+    def test_list_is_paginated_and_page_size_is_adjustable(self):
+        resp = self.client.get(reverse('supplier_list'))
+        self.assertEqual(len(resp.context['suppliers'].object_list), 25)
+        self.assertContains(resp, 'Page 1 of 2')
+        resp = self.client.get(reverse('supplier_list'), {'page_size': 50})
+        self.assertEqual(len(resp.context['suppliers'].object_list), 30)
+        self.assertNotContains(resp, 'Page 1 of 2')
+
+    def test_sort_and_search_apply_across_all_pages(self):
+        resp = self.client.get(reverse('supplier_list'), {'sort': '-name'})
+        self.assertEqual(resp.context['suppliers'][0].name, 'Supplier 29')
+        resp = self.client.get(reverse('supplier_list'), {'q': 'Supplier 07'})
+        self.assertEqual(resp.context['suppliers'].paginator.count, 1)
+
+
+class ClientListPaginationTests(TestCase):
+    def setUp(self):
+        make_user(username='climgr', password='pw', role='Manager')
+        self.client.login(username='climgr', password='pw')
+        from core.models import Client as ClientModel
+        for i in range(30):
+            ClientModel.objects.create(name=f'Client {i:02d}', contact_person=f'Contact {i:02d}')
+
+    def test_list_is_paginated(self):
+        resp = self.client.get(reverse('client_list'))
+        self.assertEqual(len(resp.context['clients'].object_list), 25)
+        self.assertContains(resp, 'Page 1 of 2')
+
+    def test_sort_and_search_apply_across_all_pages(self):
+        resp = self.client.get(reverse('client_list'), {'sort': '-name'})
+        self.assertEqual(resp.context['clients'][0].name, 'Client 29')
+        resp = self.client.get(reverse('client_list'), {'q': 'Client 07'})
+        self.assertEqual(resp.context['clients'].paginator.count, 1)
+
+
+class PurchaseOrderListPaginationTests(TestCase):
+    def setUp(self):
+        make_user(username='pomgr', password='pw', role='Manager')
+        self.client.login(username='pomgr', password='pw')
+        from core.models import PurchaseOrder
+        self.wh = Warehouse.objects.create(name='Plant A', location_type='Manufacturing')
+        for i in range(30):
+            PurchaseOrder.objects.create(po_number=f'PO-PG-{i:02d}', supplier_name='ChemCo', target_warehouse=self.wh)
+
+    def test_list_is_paginated_and_sort_applies_across_pages(self):
+        resp = self.client.get(reverse('po_list'))
+        self.assertEqual(len(resp.context['purchase_orders'].object_list), 25)
+        self.assertContains(resp, 'Page 1 of 2')
+        resp = self.client.get(reverse('po_list'), {'sort': '-po_number', 'page': 2})
+        self.assertEqual(resp.context['purchase_orders'][0].po_number, 'PO-PG-04')
+
+
+class ShipmentsPaginationTests(TestCase):
+    def setUp(self):
+        make_user(username='shipmgr', password='pw', role='Manager')
+        self.client.login(username='shipmgr', password='pw')
+        self.wh = Warehouse.objects.create(name='Plant A', location_type='Manufacturing')
+        for i in range(30):
+            Shipment.objects.create(tracking_number=f'TRK-{i:02d}', direction='Inbound', status='Preparing', origin_warehouse=self.wh)
+
+    def test_list_is_paginated_sortable_and_searchable(self):
+        resp = self.client.get(reverse('shipments'))
+        self.assertEqual(len(resp.context['shipments'].object_list), 25)
+        self.assertContains(resp, 'Page 1 of 2')
+        resp = self.client.get(reverse('shipments'), {'q': 'TRK-07'})
+        self.assertEqual(resp.context['shipments'].paginator.count, 1)
+        resp = self.client.get(reverse('shipments'), {'sort': 'tracking_number'})
+        self.assertEqual(resp.context['shipments'][0].tracking_number, 'TRK-00')
+
+
+class RegistryLedgerPaginationTests(TestCase):
+    def setUp(self):
+        make_user(username='ledgermgr', password='pw', role='Manager')
+        self.client.login(username='ledgermgr', password='pw')
+        self.wh = Warehouse.objects.create(name='Plant A', location_type='Manufacturing')
+        for i in range(30):
+            RegistryLog.objects.create(action_type='Inbound', item_name=f'Item {i:02d}',
+                                       quantity_changed=Decimal('10'), warehouse=self.wh)
+
+    def test_list_is_paginated_and_sort_applies_across_pages(self):
+        resp = self.client.get(reverse('registry'))
+        self.assertEqual(len(resp.context['logs'].object_list), 25)
+        self.assertContains(resp, 'Page 1 of 2')
+        resp = self.client.get(reverse('registry'), {'sort': 'item_name', 'page': 2})
+        self.assertEqual(resp.context['logs'][0].item_name, 'Item 25')
+
+
+class WarehouseInventoryPaginationTests(TestCase):
+    def setUp(self):
+        make_user(username='invmgr', password='pw', role='Manager')
+        self.client.login(username='invmgr', password='pw')
+        self.wh = Warehouse.objects.create(name='Plant A', location_type='Manufacturing')
+        self.mat = Material.objects.create(name='Resin', sku='MAT-R', category='Chem', unit_of_measure='kg', safe_storage_days=90)
+        for i in range(30):
+            Batch.objects.create(batch_number=f'B-{i:03d}', material=self.mat, quantity=Decimal('10'),
+                                 warehouse=self.wh, status='Active', manufacturing_date='2026-01-01', expiry_date='2027-01-01')
+
+    def test_list_is_paginated_and_kpi_shows_the_true_total_not_the_page_length(self):
+        resp = self.client.get(reverse('warehouse_inventory'))
+        self.assertEqual(len(resp.context['batches'].object_list), 25)
+        self.assertContains(resp, 'Page 1 of 2')
+        self.assertEqual(resp.context['total_batches'], 30)
+        self.assertContains(resp, '>30<')   # the Active Batches KPI, not the page length (25)
+
+    def test_search_narrows_the_kpi_total_too(self):
+        resp = self.client.get(reverse('warehouse_inventory'), {'q': 'B-007'})
+        self.assertEqual(resp.context['total_batches'], 1)
+
+    def test_sort_applies_across_all_pages(self):
+        resp = self.client.get(reverse('warehouse_inventory'), {'sort': '-batch_number', 'page': 2})
+        self.assertEqual(resp.context['batches'][0].batch_number, 'B-004')
+
+
+class UserManagementPaginationTests(TestCase):
+    def setUp(self):
+        make_user(username='sysadmin', password='pw', role='Admin')
+        self.client.login(username='sysadmin', password='pw')
+        for i in range(30):
+            User.objects.create_user(username=f'staffuser{i:02d}', password='pw')
+
+    def test_list_is_paginated_and_sort_applies_across_pages(self):
+        resp = self.client.get(reverse('user_management'))
+        self.assertEqual(len(resp.context['users'].object_list), 25)
+        self.assertContains(resp, 'Page 1 of 2')
+        resp = self.client.get(reverse('user_management'), {'sort': '-username', 'page': 2})
+        # 31 users total (30 + sysadmin); descending username, page 2 starts at the 26th
+        usernames_desc = sorted([u.username for u in User.objects.all()], reverse=True)
+        self.assertEqual(resp.context['users'][0].username, usernames_desc[25])
+
+
+# ----------------------------------------------------------------------------
+# N+1 query fixes: product_list / material_list / qa_dashboard now use one
+# aggregate (or targeted) query instead of one query per row, so the query
+# count must stay flat as the row count grows - that's the actual thing worth
+# testing here, not just "the page still renders".
+# ----------------------------------------------------------------------------
+class ProductMaterialQADashboardQueryCountTests(TestCase):
+    def setUp(self):
+        make_user(username='qcountmgr', password='pw', role='Manager')
+        self.client.login(username='qcountmgr', password='pw')
+        self.wh = Warehouse.objects.create(name='Plant A', location_type='Manufacturing')
+
+    def _query_count(self, url):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        return len(ctx.captured_queries)
+
+    def test_product_list_query_count_does_not_grow_with_row_count(self):
+        for i in range(2):
+            Product.objects.create(name=f'Product {i}', sku=f'PRD-{i}', price_per_unit=Decimal('10'))
+        small = self._query_count(reverse('product_list'))
+        for i in range(2, 30):
+            Product.objects.create(name=f'Product {i}', sku=f'PRD-{i}', price_per_unit=Decimal('10'))
+        large = self._query_count(reverse('product_list'))
+        self.assertEqual(small, large, "product_list's query count should be flat, not one-per-product")
+
+    def test_product_list_stock_totals_are_still_correct(self):
+        p1 = Product.objects.create(name='P1', sku='PRD-Q1', price_per_unit=Decimal('10'))
+        p2 = Product.objects.create(name='P2', sku='PRD-Q2', price_per_unit=Decimal('10'))
+        Batch.objects.create(batch_number='PQ-1', product=p1, quantity=Decimal('40'), status='Active',
+                             warehouse=self.wh, manufacturing_date='2026-01-01', expiry_date='2027-01-01')
+        Batch.objects.create(batch_number='PQ-2', product=p1, quantity=Decimal('5'), status='Quarantined',
+                             warehouse=self.wh, manufacturing_date='2026-01-01', expiry_date='2027-01-01')
+        Batch.objects.create(batch_number='PQ-3', product=p2, quantity=Decimal('7'), status='Active',
+                             warehouse=self.wh, manufacturing_date='2026-01-01', expiry_date='2027-01-01')
+        resp = self.client.get(reverse('product_list'))
+        by_sku = {row['product'].sku: row for row in resp.context['product_data']}
+        self.assertEqual(by_sku['PRD-Q1']['product'].active_stock, Decimal('40'))   # Quarantined batch excluded
+        self.assertEqual(by_sku['PRD-Q2']['product'].active_stock, Decimal('7'))
+
+    def test_material_list_query_count_does_not_grow_with_row_count(self):
+        for i in range(2):
+            Material.objects.create(name=f'Material {i}', sku=f'MAT-{i}', category='Chem', unit_of_measure='kg', safe_storage_days=90)
+        small = self._query_count(reverse('material_list'))
+        for i in range(2, 30):
+            Material.objects.create(name=f'Material {i}', sku=f'MAT-{i}', category='Chem', unit_of_measure='kg', safe_storage_days=90)
+        large = self._query_count(reverse('material_list'))
+        self.assertEqual(small, large, "material_list's query count should be flat, not one-per-material")
+
+    def test_material_list_stock_totals_are_still_correct(self):
+        m1 = Material.objects.create(name='M1', sku='MAT-Q1', category='Chem', unit_of_measure='kg',
+                                     safe_storage_days=90, cost_per_unit=Decimal('2.00'))
+        Batch.objects.create(batch_number='MQ-1', material=m1, quantity=Decimal('15'), status='Active',
+                             warehouse=self.wh, manufacturing_date='2026-01-01', expiry_date='2027-01-01')
+        Batch.objects.create(batch_number='MQ-2', material=m1, quantity=Decimal('9'), status='Depleted',
+                             warehouse=self.wh, manufacturing_date='2026-01-01', expiry_date='2027-01-01')
+        resp = self.client.get(reverse('material_list'))
+        row = next(r for r in resp.context['material_data'] if r['material'].sku == 'MAT-Q1')
+        self.assertEqual(row['current_stock'], 15.0)   # Depleted batch excluded
+        self.assertEqual(row['total_value'], 30.0)
+
+    def test_qa_dashboard_query_count_does_not_grow_with_row_count(self):
+        mat = Material.objects.create(name='Resin', sku='MAT-QA', category='Chem', unit_of_measure='kg', safe_storage_days=90)
+        for i in range(2):
+            Batch.objects.create(batch_number=f'QA-{i}', material=mat, quantity=Decimal('10'), status='Active',
+                                 warehouse=self.wh, manufacturing_date='2026-01-01', expiry_date='2099-01-01')
+        small = self._query_count(reverse('qa_dashboard'))
+        for i in range(2, 60):
+            Batch.objects.create(batch_number=f'QA-{i}', material=mat, quantity=Decimal('10'), status='Active',
+                                 warehouse=self.wh, manufacturing_date='2026-01-01', expiry_date='2099-01-01')
+        large = self._query_count(reverse('qa_dashboard'))
+        self.assertEqual(small, large, "qa_dashboard's query count should be flat, not scale with total batch count")
+
+    def test_qa_dashboard_excludes_depleted_batches_even_when_near_expiry(self):
+        # This used to be a live bug: a Depleted batch with a soon expiry date leaked
+        # into the Near-Expiry table even though it has zero stock and needs no QA action.
+        mat = Material.objects.create(name='Resin', sku='MAT-DEP', category='Chem', unit_of_measure='kg', safe_storage_days=90)
+        today = timezone.localdate()
+        Batch.objects.create(batch_number='DEP-SOON', material=mat, quantity=Decimal('0'), status='Depleted',
+                             warehouse=self.wh, manufacturing_date='2026-01-01', expiry_date=today + timedelta(days=5))
+        Batch.objects.create(batch_number='ACT-SOON', material=mat, quantity=Decimal('10'), status='Active',
+                             warehouse=self.wh, manufacturing_date='2026-01-01', expiry_date=today + timedelta(days=5))
+        resp = self.client.get(reverse('qa_dashboard'))
+        numbers = {b.batch_number for b in resp.context['near_expiry']}
+        self.assertIn('ACT-SOON', numbers)
+        self.assertNotIn('DEP-SOON', numbers)
+
+    def test_qa_dashboard_buckets_and_kpi_counts_are_still_correct(self):
+        mat = Material.objects.create(name='Resin', sku='MAT-BKT', category='Chem', unit_of_measure='kg', safe_storage_days=90)
+        today = timezone.localdate()
+        Batch.objects.create(batch_number='BKT-NEAR', material=mat, quantity=Decimal('10'), status='Active',
+                             warehouse=self.wh, manufacturing_date='2026-01-01', expiry_date=today + timedelta(days=10))
+        Batch.objects.create(batch_number='BKT-FAR', material=mat, quantity=Decimal('10'), status='Active',
+                             warehouse=self.wh, manufacturing_date='2026-01-01', expiry_date=today + timedelta(days=200))
+        Batch.objects.create(batch_number='BKT-QTN', material=mat, quantity=Decimal('10'), status='Quarantined',
+                             warehouse=self.wh, manufacturing_date='2026-01-01', expiry_date=today + timedelta(days=200))
+        Batch.objects.create(batch_number='BKT-SPL', material=mat, quantity=Decimal('10'), status='Spoiled',
+                             warehouse=self.wh, manufacturing_date='2026-01-01', expiry_date=today + timedelta(days=200))
+        resp = self.client.get(reverse('qa_dashboard'))
+        near_numbers = {b.batch_number for b in resp.context['near_expiry']}
+        self.assertEqual(near_numbers, {'BKT-NEAR'})
+        self.assertEqual(resp.context['near_expiry'][0].days_remaining, 10)
+        self.assertEqual(len(resp.context['quarantined']), 1)
+        self.assertEqual(len(resp.context['spoiled']), 1)
+        self.assertContains(resp, '10 Days')

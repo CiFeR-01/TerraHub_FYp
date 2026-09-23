@@ -55,6 +55,24 @@ def apply_list_sort(request, qs, fields, default):
     return qs, {'sort_key': key, 'sort_desc': desc, 'sort_qs': keep.urlencode(), 'page_qs': page_qs}
 
 
+# Rows-per-page choices offered by partials/_pagination.html's selector.
+PAGE_SIZE_CHOICES = (25, 50, 100)
+
+
+def get_page_size(request, default=25, max_size=500):
+    """Resolves ?page_size= for a paginated list view. Falls back to `default` on
+    anything missing or invalid, and caps it so a hand-edited URL can't force one
+    request to pull the whole table."""
+    raw = request.GET.get('page_size', default)
+    try:
+        size = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if size <= 0:
+        return default
+    return min(size, max_size)
+
+
 def approver_problem(requester, approver):
     """Why `approver` can't take an approval request from `requester`, or None.
     Only Admins may send a request to themselves."""
@@ -706,16 +724,46 @@ status='Active').select_related('warehouse',
     if selected_material:
         batches = batches.filter(material=selected_material)
 
+    search_query = request.GET.get('q', '').strip()
+    if search_query:
+        batches = batches.filter(
+            Q(batch_number__icontains=search_query)
+            | Q(material__sku__icontains=search_query) | Q(material__name__icontains=search_query)
+            | Q(product__sku__icontains=search_query) | Q(product__name__icontains=search_query)
+            | Q(location__icontains=search_query)
+        )
+
+    # Count once, after every filter but before pagination slices the queryset - this
+    # is "how many batches match what's on screen", used for both the Active Batches
+    # KPI (either branch) and the pagination footer's "Showing X of Y".
+    total_batches = batches.count()
+
     if not selected_warehouse:
         from django.db.models import Sum
         total_cap = Warehouse.objects.aggregate(t=Sum('total_capacity_mt'))['t'] or 0
         global_kpis = {
             'total_warehouses': warehouses.count(),
             'total_capacity': total_cap,
-            'total_batches': batches.count(),
+            'total_batches': total_batches,
         }
 
     can_adjust = request.user.has_perm(ADJUST_PHYSICAL_STOCK)
+
+    # days_until_expiry (the "Days Remaining" column) is a Python property, not a DB
+    # column - expiry_date is its DB-level equivalent for sorting purposes.
+    sort_fields = {
+        'location': 'location',
+        'batch_number': 'batch_number',
+        'quantity': 'quantity',
+        'expiry_date': 'expiry_date',
+        'manufacturing_date': 'manufacturing_date',
+    }
+    if not selected_warehouse:
+        sort_fields['warehouse'] = 'warehouse__name'
+    default_sort = 'location' if selected_warehouse else '-manufacturing_date'
+    batches, sort_ctx = apply_list_sort(request, batches, sort_fields, default=default_sort)
+    page_size = get_page_size(request)
+    batches = Paginator(batches, page_size).get_page(request.GET.get('page'))
 
     context = {
         'warehouses': warehouses,
@@ -724,8 +772,12 @@ status='Active').select_related('warehouse',
         'selected_warehouse': selected_warehouse,
         'selected_material': selected_material,
         'batches': batches,
+        'total_batches': total_batches,
         'global_kpis': global_kpis,
         'can_adjust': can_adjust,
+        'search_query': search_query,
+        'page_size': page_size,
+        **sort_ctx,
     }
     return render(request, 'warehouse_inventory.html', context)
 
@@ -1030,6 +1082,17 @@ def registry_ledger_view(request):
     if search_query:
         logs = logs.filter(Q(item_name__icontains=search_query) | Q(warehouse__name__icontains=search_query))
 
+    logs, sort_ctx = apply_list_sort(request, logs, {
+        'timestamp': 'timestamp',
+        'action_type': 'action_type',
+        'item_name': 'item_name',
+        'quantity_changed': 'quantity_changed',
+        'warehouse': 'warehouse__name',
+        'user': 'user__username',
+    }, default='-timestamp')
+    page_size = get_page_size(request)
+    logs = Paginator(logs, page_size).get_page(request.GET.get('page'))
+
     stats = {
         'inbound': RegistryLog.objects.filter(action_type='Inbound').aggregate(s=Coalesce(Sum('quantity_changed'), Value(0, output_field=DecimalField())))['s'],
         'outbound': RegistryLog.objects.filter(action_type='Outbound').aggregate(s=Coalesce(Sum('quantity_changed'), Value(0, output_field=DecimalField())))['s'],
@@ -1044,6 +1107,8 @@ def registry_ledger_view(request):
         'search_query': search_query,
         'stats': stats,
         'action_choices': RegistryLog.ACTION_CHOICES,
+        'page_size': page_size,
+        **sort_ctx,
     }
     return render(request, 'registry_ledger.html', context)
 
@@ -1696,12 +1761,16 @@ def product_list_view(request):
 
         return redirect('product_list')
 
-    products = Product.objects.prefetch_related('recipe_items__material').order_by('name')
+    # One aggregate query for every product's active stock, instead of one query per
+    # product in a loop - keeps this page's query count flat as the catalog grows.
+    products = Product.objects.prefetch_related('recipe_items__material').annotate(
+        active_stock=Sum('batch__quantity', filter=Q(batch__status='Active'))
+    ).order_by('name')
     materials = Material.objects.all().order_by('name')
 
     product_data = []
     for p in products:
-        stock = Batch.objects.filter(product=p, status='Active').aggregate(s=Sum('quantity'))['s'] or 0
+        stock = p.active_stock or 0
         product_data.append({'product': p, 'stock_display': format_stock_display(stock, p)})
 
     context = {
@@ -1853,12 +1922,16 @@ def material_list_view(request):
             messages.error(request, f"Error registering material: {e}")
         return redirect('material_list')
 
-    materials = Material.objects.all().order_by('name')
+    # One aggregate query for every material's active stock, instead of one query
+    # per material in a loop - keeps this page's query count flat as the material
+    # list grows.
+    materials = Material.objects.annotate(
+        active_stock=Sum('batch__quantity', filter=Q(batch__status='Active'))
+    ).order_by('name')
 
-    # Calculate stock totals per material
     material_data = []
     for m in materials:
-        total_qty = Batch.objects.filter(material=m, status='Active').aggregate(s=Sum('quantity'))['s'] or 0
+        total_qty = m.active_stock or 0
         material_data.append({
             'material': m,
             'current_stock': float(total_qty),
@@ -2113,8 +2186,25 @@ def supplier_list_view(request):
             messages.error(request, f"Error registering supplier: {e}")
         return redirect('supplier_list')
 
+    search_query = request.GET.get('q', '').strip()
     suppliers = Supplier.objects.all().order_by('name')
-    context = {'suppliers': suppliers}
+    if search_query:
+        suppliers = suppliers.filter(
+            Q(name__icontains=search_query) | Q(contact_person__icontains=search_query)
+            | Q(email__icontains=search_query) | Q(phone__icontains=search_query)
+        )
+
+    suppliers, sort_ctx = apply_list_sort(request, suppliers, {
+        'name': 'name',
+        'contact_person': 'contact_person',
+        'email': 'email',
+        'phone': 'phone',
+        'address': 'address',
+    }, default='name')
+    page_size = get_page_size(request)
+    suppliers = Paginator(suppliers, page_size).get_page(request.GET.get('page'))
+
+    context = {'suppliers': suppliers, 'search_query': search_query, 'page_size': page_size, **sort_ctx}
     return render(request, 'supplier_list.html', context)
 
 
@@ -2178,8 +2268,25 @@ def client_list_view(request):
             messages.error(request, f"Error registering client: {e}")
         return redirect('client_list')
 
+    search_query = request.GET.get('q', '').strip()
     clients = Client.objects.all().order_by('name')
-    context = {'clients': clients}
+    if search_query:
+        clients = clients.filter(
+            Q(name__icontains=search_query) | Q(contact_person__icontains=search_query)
+            | Q(email__icontains=search_query) | Q(phone__icontains=search_query)
+        )
+
+    clients, sort_ctx = apply_list_sort(request, clients, {
+        'name': 'name',
+        'contact_person': 'contact_person',
+        'email': 'email',
+        'phone': 'phone',
+        'delivery_address': 'delivery_address',
+    }, default='name')
+    page_size = get_page_size(request)
+    clients = Paginator(clients, page_size).get_page(request.GET.get('page'))
+
+    context = {'clients': clients, 'search_query': search_query, 'page_size': page_size, **sort_ctx}
     return render(request, 'client_list.html', context)
 
 
@@ -2282,7 +2389,8 @@ def sales_order_list_view(request):
         'order_date': 'order_date',
         'status': status_rank,
     }, default='-order_date')
-    sales_orders = Paginator(sales_orders, 25).get_page(request.GET.get('page'))
+    page_size = get_page_size(request)
+    sales_orders = Paginator(sales_orders, page_size).get_page(request.GET.get('page'))
 
     warehouses = Warehouse.objects.all().order_by('name')
     clients = Client.objects.filter(is_active=True).order_by('name')
@@ -2295,6 +2403,7 @@ def sales_order_list_view(request):
         'clients': clients,
         'so_status_choices': SalesOrder.STATUS_CHOICES,
         'next_so_number': generate_next_code(SalesOrder, 'so_number', 'SO', 1001),
+        'page_size': page_size,
         **sort_ctx,
     }
     return render(request, 'so_list.html', context)
@@ -2353,6 +2462,16 @@ def purchase_order_list_view(request):
     if status_filter:
         purchase_orders = purchase_orders.filter(status=status_filter)
 
+    purchase_orders, sort_ctx = apply_list_sort(request, purchase_orders, {
+        'po_number': 'po_number',
+        'supplier_name': 'supplier_name',
+        'target_warehouse': 'target_warehouse__name',
+        'order_date': 'order_date',
+        'status': 'status',
+    }, default='-order_date')
+    page_size = get_page_size(request)
+    purchase_orders = Paginator(purchase_orders, page_size).get_page(request.GET.get('page'))
+
     warehouses = Warehouse.objects.all().order_by('name')
     suppliers = Supplier.objects.filter(is_active=True).order_by('name')
 
@@ -2364,6 +2483,8 @@ def purchase_order_list_view(request):
         'suppliers': suppliers,
         'po_status_choices': PurchaseOrder.STATUS_CHOICES,
         'next_po_number': generate_next_code(PurchaseOrder, 'po_number', 'PO', 5001),
+        'page_size': page_size,
+        **sort_ctx,
     }
     return render(request, 'po_list.html', context)
 
@@ -3351,6 +3472,7 @@ def shipments_view(request):
 
     status_filter = request.GET.get('status')
     direction_filter = request.GET.get('direction')
+    search_query = request.GET.get('q', '').strip()
 
     shipments = Shipment.objects.select_related(
         'origin_warehouse', 'destination_warehouse', 'purchase_order', 'sales_order'
@@ -3360,6 +3482,21 @@ def shipments_view(request):
         shipments = shipments.filter(status=status_filter)
     if direction_filter:
         shipments = shipments.filter(direction=direction_filter)
+    if search_query:
+        shipments = shipments.filter(
+            Q(tracking_number__icontains=search_query)
+            | Q(origin_warehouse__name__icontains=search_query)
+            | Q(destination_warehouse__name__icontains=search_query)
+        )
+
+    shipments, sort_ctx = apply_list_sort(request, shipments, {
+        'tracking_number': 'tracking_number',
+        'direction': 'direction',
+        'status': 'status',
+        'id': 'id',
+    }, default='-id')
+    page_size = get_page_size(request)
+    shipments = Paginator(shipments, page_size).get_page(request.GET.get('page'))
 
     warehouses = Warehouse.objects.all().order_by('name')
     materials = Material.objects.all().order_by('name')
@@ -3398,6 +3535,9 @@ def shipments_view(request):
         'initial_status_choices': initial_status_choices,
         'direction_choices': Shipment.DIRECTION_CHOICES,
         'next_tracking_number': generate_next_code(Shipment, 'tracking_number', 'TRK', 101, pad=4),
+        'search_query': search_query,
+        'page_size': page_size,
+        **sort_ctx,
     }
     return render(request, 'shipments.html', context)
 
@@ -3465,32 +3605,28 @@ def qa_dashboard_view(request):
 
         return redirect('qa_dashboard')
 
-    today = date.today()
-    batches = Batch.objects.select_related('material', 'product').order_by('expiry_date')
-    
-    near_expiry = []
-    quarantined = []
-    spoiled = []
-    healthy = []
+    # Three targeted queries instead of pulling every batch this system has ever
+    # recorded (including Depleted ones - which used to leak into "near expiry" if
+    # their old expiry date happened to be soon) into Python to sort by hand. Only
+    # near_expiry needs days_remaining; "healthy" batches were computed but never
+    # shown on this page, so they're not fetched at all any more.
+    today = timezone.localdate()
+    near_expiry_cutoff = today + timedelta(days=30)
 
-    for b in batches:
-        days_left = (b.expiry_date - today).days if b.expiry_date else 999
-        b.days_remaining = days_left
-        
-        if b.status == 'Quarantined':
-            quarantined.append(b)
-        elif b.status == 'Spoiled':
-            spoiled.append(b)
-        elif days_left <= 30:
-            near_expiry.append(b)
-        else:
-            healthy.append(b)
+    near_expiry = list(
+        Batch.objects.filter(status='Active', expiry_date__isnull=False, expiry_date__lte=near_expiry_cutoff)
+        .select_related('material', 'product', 'warehouse').order_by('expiry_date')
+    )
+    for b in near_expiry:
+        b.days_remaining = (b.expiry_date - today).days
+
+    quarantined = Batch.objects.filter(status='Quarantined').select_related('material', 'product', 'warehouse').order_by('expiry_date')
+    spoiled = Batch.objects.filter(status='Spoiled')
 
     context = {
         'near_expiry': near_expiry,
         'quarantined': quarantined,
         'spoiled': spoiled,
-        'healthy': healthy,
     }
     return render(request, 'qa_dashboard.html', context)
 
@@ -4482,9 +4618,17 @@ def user_management_view(request):
             Q(email__icontains=query)
         )
         
+    users, sort_ctx = apply_list_sort(request, users, {
+        'username': 'username',
+        'status': 'is_active',
+        'updated_at': 'updated_at',
+    }, default='username')
+    page_size = get_page_size(request)
+    users = Paginator(users, page_size).get_page(request.GET.get('page'))
+
     roles = Group.objects.order_by('name')
     warehouses = Warehouse.objects.all()
-    
+
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'add_location':
@@ -4522,7 +4666,9 @@ def user_management_view(request):
         'users': users,
         'roles': roles,
         'warehouses': warehouses,
-        'query': query
+        'query': query,
+        'page_size': page_size,
+        **sort_ctx,
     }
     return render(request, 'user_management.html', context)
 

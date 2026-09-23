@@ -67,9 +67,10 @@
 
 <!-- Table Container -->
 <div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
-    <form method="get" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
-        <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700;">Freight Tracking Logs</h3>
-        <div style="display:flex; gap:0.75rem;">
+    <form method="get" style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:0.75rem; margin-bottom:1.25rem;">
+        <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; margin:0;">Freight Tracking Logs</h3>
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+            <input type="text" name="q" value="{{ search_query }}" placeholder="Search tracking #, warehouse..." class="form-input" style="padding:0.45rem 0.75rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem; min-width:220px;">
             <select name="direction" onchange="this.form.submit()" class="form-select" style="padding:0.45rem 0.75rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
                 <option value="">All Directions</option>
                 {% for code, label in direction_choices %}
@@ -82,15 +83,15 @@
                 <option value="{{ code }}" {% if request.GET.status == code %}selected{% endif %}>{{ label }}</option>
                 {% endfor %}
             </select>
+            <button type="submit" class="btn btn-secondary" style="padding:0.45rem 1rem; font-size:0.85rem;">Search</button>
         </div>
     </form>
 
-    {% include "partials/_table_search.html" with target='#shipmentsTable' placeholder='Search shipments by tracking #, warehouse...' %}
     <div class="table-responsive">
-        <table id="shipmentsTable" class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
-                    <th style="padding:0.75rem 1rem;">Tracking #</th>
+                    {% include "partials/_sort_th.html" with key="tracking_number" label="Tracking #" %}
                     <th style="padding:0.75rem 1.5rem; text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Direction & Status</th>
                     <th style="padding:0.75rem 1.5rem; text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Items</th>
                     <th style="padding:0.75rem 1.5rem; text-align:right; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Actions</th>
@@ -116,6 +117,7 @@
             </tbody>
         </table>
     </div>
+    {% include "partials/_pagination.html" with page_obj=shipments page_qs=page_qs page_size=page_size noun='shipments' %}
 </div>
 
 <!-- Modal: New Shipment -->
