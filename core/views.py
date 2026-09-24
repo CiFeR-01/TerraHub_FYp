@@ -10,6 +10,7 @@ from django.db import transaction
 from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q, Avg
 from django.db.models.functions import Abs, Coalesce, TruncWeek
 from django.core.paginator import Paginator
+from django.core.exceptions import ValidationError
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import csv
@@ -25,6 +26,7 @@ from .models import (
     StockAllocation, Supplier, SupplierMaterial, Client
 )
 from .utils import generate_next_code, format_stock_display
+from .validators import normalise_phone, normalise_phone_or_email, validate_email_address, validation_messages
 from .permissions import (
     is_admin_user, can_approve, approvers, users_with_perm,
     ADJUST_PHYSICAL_STOCK, MANAGE_USERS, HANDLE_PURCHASING, APPROVE_REQUESTS,
@@ -2174,14 +2176,18 @@ def supplier_list_view(request):
             if not name:
                 messages.error(request, "Supplier name is required.")
                 return redirect('supplier_list')
-            Supplier.objects.create(
+            supplier = Supplier(
                 name=name,
                 contact_person=request.POST.get('contact_person', '').strip(),
                 email=request.POST.get('email', '').strip(),
-                phone=request.POST.get('phone', '').strip(),
+                phone=normalise_phone(request.POST.get('phone'), request.POST.get('phone_country')),
                 address=request.POST.get('address', '').strip(),
             )
+            supplier.full_clean()
+            supplier.save()
             messages.success(request, f"Supplier '{name}' registered.")
+        except ValidationError as e:
+            messages.error(request, f"Supplier not saved. {validation_messages(e)}")
         except Exception as e:
             messages.error(request, f"Error registering supplier: {e}")
         return redirect('supplier_list')
@@ -2222,11 +2228,14 @@ def supplier_edit_view(request, pk):
             supplier.name = name
             supplier.contact_person = request.POST.get('contact_person', '').strip()
             supplier.email = request.POST.get('email', '').strip()
-            supplier.phone = request.POST.get('phone', '').strip()
+            supplier.phone = normalise_phone(request.POST.get('phone'), request.POST.get('phone_country'))
             supplier.address = request.POST.get('address', '').strip()
+            supplier.full_clean()
             supplier.save()
 
             messages.success(request, f"Supplier '{supplier.name}' updated successfully.")
+        except ValidationError as e:
+            messages.error(request, f"Supplier not updated. {validation_messages(e)}")
         except Exception as e:
             messages.error(request, f"Error updating supplier: {e}")
 
@@ -2256,14 +2265,18 @@ def client_list_view(request):
             if not name:
                 messages.error(request, "Client name is required.")
                 return redirect('client_list')
-            Client.objects.create(
+            client = Client(
                 name=name,
                 contact_person=request.POST.get('contact_person', '').strip(),
                 email=request.POST.get('email', '').strip(),
-                phone=request.POST.get('phone', '').strip(),
+                phone=normalise_phone(request.POST.get('phone'), request.POST.get('phone_country')),
                 delivery_address=request.POST.get('delivery_address', '').strip(),
             )
+            client.full_clean()
+            client.save()
             messages.success(request, f"Client '{name}' registered.")
+        except ValidationError as e:
+            messages.error(request, f"Client not saved. {validation_messages(e)}")
         except Exception as e:
             messages.error(request, f"Error registering client: {e}")
         return redirect('client_list')
@@ -2304,11 +2317,14 @@ def client_edit_view(request, pk):
             client.name = name
             client.contact_person = request.POST.get('contact_person', '').strip()
             client.email = request.POST.get('email', '').strip()
-            client.phone = request.POST.get('phone', '').strip()
+            client.phone = normalise_phone(request.POST.get('phone'), request.POST.get('phone_country'))
             client.delivery_address = request.POST.get('delivery_address', '').strip()
+            client.full_clean()
             client.save()
 
             messages.success(request, f"Client '{client.name}' updated successfully.")
+        except ValidationError as e:
+            messages.error(request, f"Client not updated. {validation_messages(e)}")
         except Exception as e:
             messages.error(request, f"Error updating client: {e}")
 
@@ -3416,7 +3432,7 @@ def shipments_view(request):
                 client_address_val = None
                 if so and so.client:
                     client_contact_name_val = so.client.contact_person or None
-                    client_contact_phone_val = so.client.phone or None
+                    client_contact_phone_val = so.client.phone or so.client.email or None
                     client_address_val = so.client.delivery_address or None
 
                 # Outbound/Transfer shipments move our own stock, so they always start as
@@ -4054,6 +4070,13 @@ def shipment_detail_view(request, pk):
             external_tracking_id = request.POST.get('external_tracking_id')
             departure_datetime = request.POST.get('departure_datetime')
 
+            if client_contact_phone is not None:
+                try:
+                    client_contact_phone = normalise_phone_or_email(client_contact_phone)
+                except ValidationError as e:
+                    messages.error(request, f"Shipment info not saved. Client contact: {validation_messages(e)}")
+                    return redirect('shipment_detail', pk=shipment.pk)
+
             core_changed = False
 
             # Check string fields
@@ -4593,7 +4616,13 @@ def profile_view(request):
         user = request.user
         user.first_name = request.POST.get('first_name', user.first_name)
         user.last_name = request.POST.get('last_name', user.last_name)
-        user.email = request.POST.get('email', user.email)
+        email = request.POST.get('email', user.email).strip()
+        try:
+            validate_email_address(email)
+        except ValidationError as e:
+            messages.error(request, validation_messages(e))
+            return redirect('profile')
+        user.email = email
         user.save()
         messages.success(request, "Profile updated successfully.")
         return redirect('profile')
@@ -4871,7 +4900,7 @@ def so_create_shipment_view(request, pk):
                     origin_warehouse_id=wh_id or (so.origin_warehouse_id if so.origin_warehouse else None),
                     last_edited_by=request.user,
                     client_contact_name=(so.client.contact_person or None) if so.client else None,
-                    client_contact_phone=(so.client.phone or None) if so.client else None,
+                    client_contact_phone=(so.client.phone or so.client.email or None) if so.client else None,
                     client_address=(so.client.delivery_address or None) if so.client else None,
                 )
                 OrderTimeline.objects.create(shipment=shipment, action=f"Drafted from {so.so_number}.", user=request.user)

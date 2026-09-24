@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}Shipment Details - TerraHub{% endblock %}
 
@@ -183,8 +184,8 @@
         </div>
 
         <div>
-            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Contact Phone</label>
-            <input type="text" name="client_contact_phone" value="{{ shipment.client_contact_phone|default:'' }}" placeholder="Phone/Email" class="form-input" style="width:100%; padding:0.4rem;">
+            <label style="display:block; font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Contact Phone / Email</label>
+            <input type="text" name="client_contact_phone" data-phone-or-email maxlength="100" value="{{ shipment.client_contact_phone|default:'' }}" placeholder="012-345 6789 or name@company.com" class="form-input" style="width:100%; padding:0.4rem;">
         </div>
         
         <div>
@@ -235,7 +236,7 @@
             <div style="font-size:0.95rem; font-weight:600;">{{ shipment.client_contact_name|default:"—" }}</div>
         </div>
         <div>
-            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Contact Phone</div>
+            <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Client Contact Phone / Email</div>
             <div style="font-size:0.95rem; font-weight:600;">{{ shipment.client_contact_phone|default:"—" }}</div>
         </div>
         <div>
@@ -845,4 +846,10 @@
         selProd.addEventListener('change', filterBatches);
     }
 </script>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/vendor/libphonenumber-max.js' %}"></script>
+<script src="{% static 'js/vendor/phone-examples.js' %}"></script>
+<script src="{% static 'js/contact-validation.js' %}"></script>
 {% endblock %}

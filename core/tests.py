@@ -4042,7 +4042,7 @@ class TesterFollowUpTests(TestCase):
         self.hub = Warehouse.objects.create(name='Hub TFU', location_type='Storage')
         self.plant = Warehouse.objects.create(name='Plant TFU', location_type='Manufacturing')
         self.product = Product.objects.create(name='Prod TFU', sku='PRD-TFU', unit_of_measure='kg', price_per_unit=1)
-        self.customer = ClientModel.objects.create(name='AgriCore', contact_person='Siti', phone='012-345', delivery_address='Lot 5, Klang')
+        self.customer = ClientModel.objects.create(name='AgriCore', contact_person='Siti', phone='012-345 6789', delivery_address='Lot 5, Klang')
 
     def test_completed_run_progress_uses_actual_yield(self):
         from core.models import ProductionRun
@@ -4093,7 +4093,7 @@ class TesterFollowUpTests(TestCase):
         self.client.post(reverse('so_create_shipment', args=[so.pk]))
 
         s = Shipment.objects.get(sales_order=so)
-        self.assertEqual((s.client_contact_name, s.client_contact_phone, s.client_address), ('Siti', '012-345', 'Lot 5, Klang'))
+        self.assertEqual((s.client_contact_name, s.client_contact_phone, s.client_address), ('Siti', '012-345 6789', 'Lot 5, Klang'))
         self.assertEqual(s.last_edited_by, self.admin)
         self.assertTrue(OrderTimeline.objects.filter(shipment=s, action='Drafted from SO-TFU2.').exists())
         resp = self.client.get(reverse('shipment_detail', args=[s.pk]))
@@ -5627,3 +5627,121 @@ class ProductMaterialQADashboardQueryCountTests(TestCase):
         self.assertEqual(len(resp.context['quarantined']), 1)
         self.assertEqual(len(resp.context['spoiled']), 1)
         self.assertContains(resp, '10 Days')
+
+
+class ContactValidationTests(TestCase):
+    """Phone numbers are checked against their country's rules (Malaysia by
+    default, any country via the dropdown or a +code); emails need a real
+    domain. Enforced on client/supplier add+edit, the shipment contact and the
+    profile email."""
+
+    def setUp(self):
+        self.admin = make_user(username='cv', password='pw', role='Admin')
+        self.client = Client()
+        self.client.force_login(self.admin)
+
+    def test_normalise_phone_valid_numbers(self):
+        from core.validators import normalise_phone
+        cases = [
+            ('012-345 6789', 'MY', '012-345 6789'),
+            ('0123456789', 'MY', '012-345 6789'),
+            ('011-2345 6789', 'MY', '011-2345 6789'),
+            ('03-7956 1234', 'MY', '03-7956 1234'),
+            ('04-226 1234', 'MY', '04-226 1234'),
+            ('088-212 345', 'MY', '088-212 345'),
+            ('+60 12-345 6789', 'MY', '012-345 6789'),
+            ('+65 9123 4567', 'MY', '+65 9123 4567'),
+            ('+86 138 0013 8000', 'MY', '+86 138 0013 8000'),
+            ('9123 4567', 'SG', '+65 9123 4567'),
+            ('', 'MY', ''),
+        ]
+        for raw, region, expected in cases:
+            with self.subTest(raw=raw, region=region):
+                self.assertEqual(normalise_phone(raw, region), expected)
+
+    def test_normalise_phone_rejects_bad_numbers(self):
+        from django.core.exceptions import ValidationError
+        from core.validators import normalise_phone
+        for raw, region in [('12345', 'MY'), ('012-345', 'MY'), ('012-345 67890 12', 'MY'),
+                            ('call me', 'MY'), ('9123 456', 'SG'), ('+65 1234', 'MY')]:
+            with self.subTest(raw=raw, region=region):
+                with self.assertRaises(ValidationError):
+                    normalise_phone(raw, region)
+
+    def test_phone_or_email(self):
+        from django.core.exceptions import ValidationError
+        from core.validators import validate_phone_or_email, normalise_phone_or_email
+        self.assertEqual(normalise_phone_or_email('siti@agricore.com.my'), 'siti@agricore.com.my')
+        self.assertEqual(normalise_phone_or_email('0123456789'), '012-345 6789')
+        validate_phone_or_email('')
+        for bad in ('siti@agricore', 'not a contact', '123'):
+            with self.subTest(bad=bad), self.assertRaises(ValidationError):
+                validate_phone_or_email(bad)
+
+    def test_client_add_rejects_bad_phone_and_email(self):
+        from core.models import Client as ClientModel
+        resp = self.client.post(reverse('client_list'), {'name': 'Bad Phone Co', 'phone': '12345', 'phone_country': 'MY'}, follow=True)
+        self.assertFalse(ClientModel.objects.filter(name='Bad Phone Co').exists())
+        self.assertContains(resp, 'not a valid Malaysia phone number')
+        self.client.post(reverse('client_list'), {'name': 'Bad Mail Co', 'email': 'sales@badmail'})
+        self.assertFalse(ClientModel.objects.filter(name='Bad Mail Co').exists())
+
+    def test_client_add_saves_normalised_phone(self):
+        from core.models import Client as ClientModel
+        self.client.post(reverse('client_list'), {'name': 'Local Co', 'phone': '0123456789', 'phone_country': 'MY', 'email': 'a@local.com.my'})
+        self.client.post(reverse('client_list'), {'name': 'SG Co', 'phone': '9123 4567', 'phone_country': 'SG'})
+        self.assertEqual(ClientModel.objects.get(name='Local Co').phone, '012-345 6789')
+        self.assertEqual(ClientModel.objects.get(name='SG Co').phone, '+65 9123 4567')
+
+    def test_client_edit_rejects_bad_phone(self):
+        from core.models import Client as ClientModel
+        c = ClientModel.objects.create(name='Edit Co', phone='012-345 6789')
+        self.client.post(reverse('client_edit', args=[c.pk]), {'name': 'Edit Co', 'phone': '999', 'phone_country': 'MY'})
+        c.refresh_from_db()
+        self.assertEqual(c.phone, '012-345 6789')
+
+    def test_supplier_add_and_edit(self):
+        self.client.post(reverse('supplier_list'), {'name': 'Bad Sup', 'phone': '0000', 'phone_country': 'MY'})
+        self.assertFalse(Supplier.objects.filter(name='Bad Sup').exists())
+        self.client.post(reverse('supplier_list'), {'name': 'CN Sup', 'phone': '138 0013 8000', 'phone_country': 'CN', 'email': 'sales@cnsup.cn'})
+        sup = Supplier.objects.get(name='CN Sup')
+        self.assertEqual(sup.phone, '+86 138 0013 8000')
+        self.client.post(reverse('supplier_edit', args=[sup.pk]), {'name': 'CN Sup', 'phone': '+86 138 0013 8000', 'phone_country': 'MY', 'email': 'nope@'})
+        sup.refresh_from_db()
+        self.assertEqual(sup.email, 'sales@cnsup.cn')
+
+    def test_shipment_contact_accepts_phone_or_email_only(self):
+        from core.models import Shipment
+        s = Shipment.objects.create(tracking_number='SHP-CV1', direction='Outbound', status='Draft')
+        url = reverse('shipment_detail', args=[s.pk])
+        self.client.post(url, {'action': 'update_route', 'client_contact_phone': 'call the office'})
+        s.refresh_from_db()
+        self.assertIsNone(s.client_contact_phone)
+        self.client.post(url, {'action': 'update_route', 'client_contact_phone': 'ops@agricore.com.my'})
+        s.refresh_from_db()
+        self.assertEqual(s.client_contact_phone, 'ops@agricore.com.my')
+        self.client.post(url, {'action': 'update_route', 'client_contact_phone': '0123456789'})
+        s.refresh_from_db()
+        self.assertEqual(s.client_contact_phone, '012-345 6789')
+
+    def test_shipment_from_so_falls_back_to_client_email(self):
+        from core.models import Client as ClientModel, Shipment
+        hub = Warehouse.objects.create(name='Hub CV', location_type='Storage')
+        product = Product.objects.create(name='Prod CV', sku='PRD-CV', unit_of_measure='kg', price_per_unit=1)
+        customer = ClientModel.objects.create(name='NoPhone Co', contact_person='Aina', email='aina@nophone.com.my', delivery_address='Lot 1')
+        batch = Batch.objects.create(batch_number='FG-CV', status='Active', product=product, quantity=Decimal('5'),
+                                     allocated_quantity=Decimal('5'), manufacturing_date=date.today(),
+                                     expiry_date=date.today() + timedelta(days=100), warehouse=hub)
+        so = SalesOrder.objects.create(so_number='SO-CV', client_name='NoPhone Co', client=customer,
+                                       origin_warehouse=hub, status='Ready to Ship')
+        StockAllocation.objects.create(batch=batch, sales_order=so, quantity=Decimal('5'))
+        self.client.post(reverse('so_create_shipment', args=[so.pk]))
+        self.assertEqual(Shipment.objects.get(sales_order=so).client_contact_phone, 'aina@nophone.com.my')
+
+    def test_profile_rejects_bad_email(self):
+        self.client.post(reverse('profile'), {'first_name': 'A', 'last_name': 'B', 'email': 'me@nowhere'})
+        self.admin.refresh_from_db()
+        self.assertNotEqual(self.admin.email, 'me@nowhere')
+        self.client.post(reverse('profile'), {'first_name': 'A', 'last_name': 'B', 'email': 'me@terrahub.com.my'})
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.email, 'me@terrahub.com.my')
