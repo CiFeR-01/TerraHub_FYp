@@ -215,6 +215,26 @@
         </div>
     </footer>
     {% endif %}
+    {% if user.is_authenticated %}
+    <div class="session-timeout-overlay" id="session-timeout-modal" hidden
+        data-timeout="{{ session_idle_timeout }}" data-warning="{{ session_idle_warning }}"
+        data-keepalive-url="{% url 'session_keepalive' %}" data-logout-url="{% url 'logout' %}"
+        data-login-url="{% url 'login' %}">
+        <div class="session-timeout-dialog" role="alertdialog" aria-modal="true"
+            aria-labelledby="session-timeout-title" aria-describedby="session-timeout-desc">
+            <h2 id="session-timeout-title" class="session-timeout-title">Still there?</h2>
+            <p id="session-timeout-desc" class="session-timeout-text">
+                You've been inactive for a while. For security, you'll be signed out in
+                <strong id="session-timeout-countdown" class="session-timeout-countdown">2:00</strong>.
+            </p>
+            <div class="session-timeout-actions">
+                <button type="button" class="btn btn-secondary" id="session-timeout-logout">Sign out now</button>
+                <button type="button" class="btn btn-primary" id="session-timeout-stay">Stay signed in</button>
+            </div>
+        </div>
+    </div>
+    <script src="{% static 'js/session-timeout.js' %}"></script>
+    {% endif %}
     {% block extra_js %}{% endblock %}
     {% include "partials/_sortable_tables.html" %}
     <script>

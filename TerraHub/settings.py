@@ -75,6 +75,7 @@ TEMPLATES = [
                 'django.contrib.messages.context_processors.messages',
                 'core.context_processors.approvals_count',
                 'core.context_processors.sidebar_nav',
+                'core.context_processors.session_timeout',
             ],
         },
     },
@@ -158,3 +159,12 @@ AUTH_USER_MODEL = 'core.CustomUser'
 LOGIN_REDIRECT_URL = 'dashboard'
 LOGIN_URL = 'login'
 LOGOUT_REDIRECT_URL = 'home'
+
+# Idle timeout: a session ends after this long with no requests. Every request
+# resets the clock, and static/js/session-timeout.js pings session_keepalive
+# while the user is typing or clicking, so only a truly idle tab is signed out.
+SESSION_IDLE_TIMEOUT = int(os.getenv('SESSION_IDLE_TIMEOUT_MINUTES', '30')) * 60
+SESSION_IDLE_WARNING = 120  # seconds of warning popup before sign-out
+SESSION_COOKIE_AGE = SESSION_IDLE_TIMEOUT
+SESSION_SAVE_EVERY_REQUEST = True
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True

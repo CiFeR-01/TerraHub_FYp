@@ -589,6 +589,19 @@ def system_settings_view(request):
 from django.http import JsonResponse
 import datetime
 
+def session_keepalive_view(request):
+    """
+    Pinged by static/js/session-timeout.js while the user is active, or when
+    they press "Stay signed in". SESSION_SAVE_EVERY_REQUEST does the actual
+    refresh; this just reports back. Returns 401 rather than redirecting to
+    the login page so the script can tell the session has already gone.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+    if not request.user.is_authenticated:
+        return JsonResponse({'authenticated': False}, status=401)
+    return JsonResponse({'authenticated': True, 'expires_in': request.session.get_expiry_age()})
+
 @login_required
 def db_logs_api_view(request):
     from .db_tracker import DB_QUERY_LOGS, get_db_status

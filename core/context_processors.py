@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.utils.safestring import mark_safe
 
 from .permissions import can_approve, pending_actions, MANAGE_USERS
@@ -200,3 +201,12 @@ def sidebar_nav(request):
         group['active'] = group_active
 
     return {'nav_groups': groups}
+
+
+def session_timeout(request):
+    """Idle-timeout figures for the sign-out warning in base.html."""
+    return {
+        'session_idle_timeout': settings.SESSION_IDLE_TIMEOUT,
+        'session_idle_warning': settings.SESSION_IDLE_WARNING,
+        'session_idle_timeout_minutes': settings.SESSION_IDLE_TIMEOUT // 60,
+    }
