@@ -351,6 +351,15 @@ class PurchaseOrder(models.Model):
     updated_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_pos')
     updated_at = models.DateTimeField(auto_now=True)
 
+    @property
+    def total_value(self):
+        """Sum of quantity x unit price over lines that have a price (RM)."""
+        from decimal import Decimal
+        return sum(
+            (i.quantity_ordered * i.unit_price for i in self.items.all() if i.unit_price is not None),
+            Decimal('0'),
+        )
+
     def __str__(self):
         return f"PO {self.po_number} - {self.supplier_name}"
 

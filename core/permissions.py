@@ -44,3 +44,24 @@ def users_with_perm(perm, include_superusers=True):
 def approvers():
     """Users who can be sent an approval request, for the approver dropdowns."""
     return users_with_perm(APPROVE_REQUESTS).prefetch_related('groups').order_by('username')
+
+
+def pending_actions(user):
+    """The work items waiting on `user` in the Action Center, keyed by section.
+    Both the page and the sidebar badge count from here so they always agree."""
+    from .models import SalesOrder, PurchaseOrder, ProductionRun, Shipment
+
+    runs = ProductionRun.objects.filter(status='Pending Approval')
+    if not is_admin_user(user):
+        # Mirrors may_decide_run_approval: unassigned runs are open to any
+        # approver, a named approver's runs are theirs alone.
+        runs = runs.filter(Q(assigned_to__isnull=True) | Q(assigned_to=user))
+    return {
+        'pending_sos': SalesOrder.objects.filter(status='Pending Approval', assigned_to=user)
+            .prefetch_related('items').order_by('order_date'),
+        'pending_runs': runs.select_related('target_product').order_by('start_time'),
+        'pending_pos': PurchaseOrder.objects.filter(status='Pending Approval', assigned_to=user)
+            .select_related('supplier', 'linked_production_run').prefetch_related('items').order_by('order_date'),
+        'pending_shipment_approvals': Shipment.objects.filter(status='Pending Approval', assigned_to=user).order_by('-id'),
+        'pending_shipments': Shipment.objects.filter(status='Discrepant', assigned_manager=user).order_by('-id'),
+    }

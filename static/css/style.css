@@ -2728,3 +2728,17 @@ button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
     .micro-progress-bar,
     .kpi-meter > span { transition: none; }
 }
+
+/* Action Center: tasks (wide) beside notifications; stacks on narrow screens. */
+.action-center-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+    align-items: start;
+}
+@media (max-width: 900px) {
+    .action-center-grid { grid-template-columns: 1fr; }
+    .action-center-grid form { flex-wrap: wrap; }
+    .action-center-grid form .form-input { flex-basis: 100%; }
+}

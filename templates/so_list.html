@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load quantity_extras %}
 
 {% block title %}Order Management - TerraHub{% endblock %}
 
@@ -23,7 +24,7 @@
                 <option value="{{ code }}" {% if status_filter == code %}selected{% endif %}>{{ label }}</option>
                 {% endfor %}
             </select>
-            <input type="text" name="q" value="{{ search_query }}" placeholder="Search orders, clients, suppliers..."
+            <input type="text" name="q" value="{{ search_query }}" placeholder="Search SO #, client, product..."
                 style="padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.85rem; min-width:250px;">
             <button type="submit" class="btn btn-secondary"
                 style="padding: 0.5rem 1rem; font-size: 0.85rem;">Search</button>
@@ -69,7 +70,7 @@
                     {% include "partials/_sort_th.html" with key="order_date" label="Order Date" %}
                     <th style="padding:0.75rem 1rem;">Items</th>
                     {% include "partials/_sort_th.html" with key="status" label="Status" %}
-                    <th style="padding:0.75rem 1rem;">Timeline &amp; Logs</th>
+                    <th style="padding:0.75rem 1rem;">Products</th>
                 </tr>
             </thead>
             <tbody>
@@ -94,11 +95,14 @@
                         {% else %}<span class="badge badge-rose">{{ so.status }}</span>{% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem;">
-                        {% for event in so.timeline.all|slice:":2" %}
-                        <div style="font-size:0.75rem; color:var(--text-muted);">• {{ event.action }} ({{ event.timestamp|date:"m/d H:i" }})</div>
+                        {% for line in so.items.all|slice:":3" %}
+                        <div style="font-size:0.78rem; color:var(--text-main); white-space:nowrap;">{{ line.product.name }} <span style="color:var(--text-muted);">&middot; {{ line.quantity_ordered|qty_display:2 }} {{ line.product.unit_of_measure }}</span></div>
                         {% empty %}
-                        <span style="font-size:0.78rem; color:var(--text-muted);">No timeline logs</span>
+                        <span style="font-size:0.78rem; color:var(--text-muted);">No products added yet</span>
                         {% endfor %}
+                        {% if so.items.all|length > 3 %}
+                        <div style="font-size:0.72rem; color:var(--text-muted);">+{{ so.items.all|length|add:"-3" }} more</div>
+                        {% endif %}
                     </td>
                 </tr>
                 {% empty %}

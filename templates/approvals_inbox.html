@@ -27,15 +27,33 @@
 </div>
 {% endif %}
 
-<div style="display:grid; grid-template-columns: 2fr 1fr; gap:1.5rem; margin-bottom:2rem;" class="animate-fade-in-up">
+<div class="stats-grid animate-fade-in-up" style="margin-bottom:1.5rem;">
+    <div class="stat-card">
+        <span class="stat-label">Waiting on you</span>
+        <span class="stat-value">{{ pending_count }}</span>
+        <span class="stat-desc">Approvals and escalations assigned to you</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">Approved this week</span>
+        <span class="stat-value">{{ approved_this_week }}</span>
+        <span class="stat-desc">Decisions you made since Monday</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">Rejected this week</span>
+        <span class="stat-value">{{ rejected_this_week }}</span>
+        <span class="stat-desc">Sent back or cancelled since Monday</span>
+    </div>
+</div>
+
+<div class="action-center-grid animate-fade-in-up">
     <!-- Tasks Section -->
     <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
         <div style="display:flex; gap:1.5rem; margin-bottom:1.5rem; border-bottom:1px solid var(--border-light);">
-            <button id="btn-tasks" onclick="switchTab('tasks')" style="background:none; border:none; border-bottom:2px solid var(--primary); padding-bottom:0.75rem; font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; color:var(--primary); cursor:pointer;">Assigned Tasks & Approvals</button>
-            <button id="btn-following" onclick="switchTab('following')" style="background:none; border:none; padding-bottom:0.75rem; font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:600; color:var(--text-muted); cursor:pointer;">Following</button>
+            <button type="button" id="btn-tasks" onclick="switchTab('tasks')" style="background:none; border:none; padding-bottom:0.75rem; font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; cursor:pointer;">Assigned Tasks & Approvals</button>
+            <button type="button" id="btn-following" onclick="switchTab('following')" style="background:none; border:none; padding-bottom:0.75rem; font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:600; cursor:pointer;">Following</button>
         </div>
-        
-        <div id="tasks-tab" style="display:block;">
+
+        <div id="tasks-tab">
         <div style="display:flex; flex-direction:column; gap:1rem;">
             <!-- Sales Orders -->
             {% for so in pending_sos %}
@@ -66,9 +84,10 @@
             </div>
             {% endfor %}
 
-            <!-- Production Runs (Variance Approvals) -->
+            <!-- Production Runs: variance sign-off (run finished) or pre-production approval -->
             {% for run in pending_runs %}
-            <div style="background:#fefce8; border:1px solid #fde047; border-radius:10px; padding:1.25rem; margin-bottom:1rem;">
+            {% if run.actual_yield is not None %}
+            <div style="background:#fefce8; border:1px solid #fde047; border-radius:10px; padding:1.25rem;">
                 <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
                     <div>
                         <div style="font-size:0.75rem; font-weight:700; color:#a16207; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Variance Approval</div>
@@ -77,19 +96,43 @@
                     </div>
                     <span class="badge badge-amber" style="background:#fde047; color:#854d0e;">Pending Approval</span>
                 </div>
-                
+
+                {% if run.signoff_reason %}
                 <div style="background:#fff; border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">
                     <strong>Variance Remark:</strong> "{{ run.signoff_reason }}"
                 </div>
-                
+                {% endif %}
+
                 <form method="post" style="display:flex; gap:0.5rem; align-items:center;">
                     {% csrf_token %}
                     <input type="hidden" name="item_type" value="production_run">
                     <input type="hidden" name="item_id" value="{{ run.id }}">
-                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject (Rework)</button>
+                    <input type="text" name="comment" placeholder="Add comment..." class="form-input" style="flex:1; padding:0.4rem 0.6rem; font-size:0.85rem; border-radius:6px; border:1px solid var(--border-light);">
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;" title="Returns the run to In Progress for rework">Reject (Rework)</button>
                     <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem; background:#854d0e; border-color:#854d0e;">Approve & Complete</button>
                 </form>
             </div>
+            {% else %}
+            <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
+                <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
+                    <div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Production Approval</div>
+                        <a href="{% url 'production_run_detail' run.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ run.run_number }}</a>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Product: {{ run.target_product.name }} &middot; Planned: {{ run.expected_yield }} units (≈ {{ run.expected_yield|weight_display:run.target_product }})</div>
+                    </div>
+                    <span class="badge badge-amber">Pending Approval</span>
+                </div>
+
+                <form method="post" style="display:flex; gap:0.5rem; align-items:center;">
+                    {% csrf_token %}
+                    <input type="hidden" name="item_type" value="production_run">
+                    <input type="hidden" name="item_id" value="{{ run.id }}">
+                    <input type="text" name="comment" placeholder="Add comment..." class="form-input" style="flex:1; padding:0.4rem 0.6rem; font-size:0.85rem; border-radius:6px; border:1px solid var(--border-light);">
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;" onclick="return confirm('Rejecting cancels {{ run.run_number }} and releases any allocated stock. Continue?');">Reject &amp; Cancel Run</button>
+                    <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem;">Approve</button>
+                </form>
+            </div>
+            {% endif %}
             {% endfor %}
 
             <!-- Discrepancy Approvals -->
@@ -143,28 +186,22 @@
             <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
                 <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
                     <div>
-                        <div style="font-size:0.75rem; font-weight:700; color:var(--success-strong); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Purchase Order Approval / Action</div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--success-strong); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Purchase Order Approval</div>
                         <a href="{% url 'po_detail' po.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ po.po_number }}</a>
-                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Supplier: {{ po.supplier }} &middot; Cost: ${{ po.total_cost|floatformat:2 }}</div>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Supplier: {{ po.supplier_name|default:po.supplier|default:"-" }} &middot; Order value: RM {{ po.total_value|floatformat:2 }}</div>
                         {% if po.linked_production_run %}
                         <div style="font-size:0.75rem; color:var(--primary); margin-top:0.25rem; font-weight:600;">Drafted for Run: {{ po.linked_production_run.run_number }}</div>
                         {% endif %}
                     </div>
-                    <span class="badge badge-amber">{{ po.status }}</span>
+                    <span class="badge badge-amber">Pending Approval</span>
                 </div>
-                
+
                 {% if po.approval_remarks %}
                 <div style="background:#fff; border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">
                     "{{ po.approval_remarks }}"
                 </div>
                 {% endif %}
-                
-                {% if po.status == 'Draft' %}
-                <!-- It's assigned to a purchaser to fill out -->
-                <div style="display:flex; gap:0.5rem;">
-                    <a href="{% url 'po_detail' po.pk %}" class="btn btn-primary" style="padding:0.4rem 1rem;">Open PO to Complete</a>
-                </div>
-                {% else %}
+
                 <form method="post" style="display:flex; gap:0.5rem; align-items:center;">
                     {% csrf_token %}
                     <input type="hidden" name="item_type" value="purchase_order">
@@ -173,11 +210,10 @@
                     <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject</button>
                     <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem;">Approve</button>
                 </form>
-                {% endif %}
             </div>
             {% endfor %}
-            
-            {% if not pending_sos and not pending_pos %}
+
+            {% if not pending_count %}
             <div style="text-align:center; padding:3rem 1rem; color:var(--text-muted);">
                 <div style="font-size:2rem; margin-bottom:0.5rem;">&#127881;</div>
                 <div style="font-weight:600; font-size:1rem;">You're all caught up!</div>
@@ -187,7 +223,7 @@
         </div>
         </div>
 
-        <div id="following-tab" style="display:none;">
+        <div id="following-tab">
             <div style="display:grid; gap:1rem;">
                 {% if not followed_sos and not followed_pos and not followed_runs and not followed_shipments %}
                 <div style="text-align:center; padding:3rem 1rem; color:var(--text-muted);">
@@ -305,9 +341,9 @@
                 {% elif item.type == 'production_run' %}
                 <div style="font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">Production Run: <a href="{% url 'production_run_detail' item.obj.pk %}" style="color:var(--primary); text-decoration:none;">{{ item.obj.run_number }}</a></div>
                 {% endif %}
-                <div style="display:flex; justify-content:space-between;">
-                    <span style="color:var(--text-muted); font-size:0.8rem;">Status: {{ item.status }}</span>
-                    <span style="color:var(--text-muted); font-size:0.75rem;">{{ item.timestamp|date:"M d, Y" }}</span>
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
+                    <span style="font-size:0.8rem;"><span class="badge {% if item.decision == 'Rejected' %}badge-rose{% else %}badge-emerald{% endif %}">You {{ item.decision|lower }}</span> <span style="color:var(--text-muted);">&middot; now {{ item.status }}</span></span>
+                    <span style="color:var(--text-muted); font-size:0.75rem; white-space:nowrap;">{{ item.timestamp|date:"M d, Y" }}</span>
                 </div>
             </div>
             {% empty %}
@@ -319,7 +355,7 @@
         {% if history_page.has_other_pages %}
         <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border-light); padding-top:0.75rem; font-size:0.85rem;">
             {% if history_page.has_previous %}
-            <a href="?page={{ history_page.previous_page_number }}" style="color:var(--primary); text-decoration:none; font-weight:600;">&larr; Prev</a>
+            <a data-keep-tab href="?page={{ history_page.previous_page_number }}&tab={{ active_tab }}" style="color:var(--primary); text-decoration:none; font-weight:600;">&larr; Prev</a>
             {% else %}
             <span style="color:var(--text-muted); opacity:0.5;">&larr; Prev</span>
             {% endif %}
@@ -327,7 +363,7 @@
             <span style="color:var(--text-muted); font-weight:600;">Page {{ history_page.number }} of {{ history_page.paginator.num_pages }}</span>
             
             {% if history_page.has_next %}
-            <a href="?page={{ history_page.next_page_number }}" style="color:var(--primary); text-decoration:none; font-weight:600;">Next &rarr;</a>
+            <a data-keep-tab href="?page={{ history_page.next_page_number }}&tab={{ active_tab }}" style="color:var(--primary); text-decoration:none; font-weight:600;">Next &rarr;</a>
             {% else %}
             <span style="color:var(--text-muted); opacity:0.5;">Next &rarr;</span>
             {% endif %}
@@ -338,16 +374,24 @@
 
 <script>
 function switchTab(tabId) {
-    document.getElementById('tasks-tab').style.display = 'none';
-    document.getElementById('following-tab').style.display = 'none';
-    document.getElementById('btn-tasks').style.borderBottom = 'none';
-    document.getElementById('btn-tasks').style.color = 'var(--text-muted)';
-    document.getElementById('btn-following').style.borderBottom = 'none';
-    document.getElementById('btn-following').style.color = 'var(--text-muted)';
-    
-    document.getElementById(tabId + '-tab').style.display = 'block';
-    document.getElementById('btn-' + tabId).style.borderBottom = '2px solid var(--primary)';
-    document.getElementById('btn-' + tabId).style.color = 'var(--primary)';
+    ['tasks', 'following'].forEach(function (id) {
+        var on = id === tabId;
+        document.getElementById(id + '-tab').style.display = on ? 'block' : 'none';
+        var btn = document.getElementById('btn-' + id);
+        btn.style.borderBottom = on ? '2px solid var(--primary)' : 'none';
+        btn.style.color = on ? 'var(--primary)' : 'var(--text-muted)';
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    // Keep the tab in the URL so reloads and history paging land back on it.
+    var url = new URL(window.location.href);
+    url.searchParams.set('tab', tabId);
+    history.replaceState(null, '', url);
+    document.querySelectorAll('a[data-keep-tab]').forEach(function (a) {
+        var link = new URL(a.href);
+        link.searchParams.set('tab', tabId);
+        a.href = link;
+    });
 }
+switchTab('{{ active_tab }}');
 </script>
 {% endblock %}
