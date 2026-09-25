@@ -1,29 +1,15 @@
 from django.utils.safestring import mark_safe
 
-from .models import SalesOrder, PurchaseOrder, ProductionRun
-from .permissions import can_approve, MANAGE_USERS
+from .permissions import can_approve, pending_actions, MANAGE_USERS
 
 def approvals_count(request):
     """
-    Context processor to make the total number of pending approvals
-    available in all templates for the Action Center badge.
+    The number of items waiting on the user in the Action Center, for its
+    sidebar badge. Counts from the same querysets the page lists.
     """
-    # Only calculate for users who can approve things
-    if request.user.is_authenticated:
-        if can_approve(request.user):
-            # For Sales Orders, we assume 'Draft' needs approval to move to 'Pending' (Approved)
-            so_count = SalesOrder.objects.filter(status='Draft').count()
-
-            # For Production Runs, 'Pending Approval' needs to move to 'Planned'
-            run_count = ProductionRun.objects.filter(status='Pending Approval').count()
-
-            # For Purchase Orders, 'Pending' needs to be approved to move to 'Sent' or similar
-            # Wait, let's just use 'Pending' for POs
-            po_count = PurchaseOrder.objects.filter(status='Pending').count()
-
-            total_approvals = so_count + run_count + po_count
-            return {'pending_approvals_total': total_approvals}
-
+    if request.user.is_authenticated and can_approve(request.user):
+        total = sum(qs.count() for qs in pending_actions(request.user).values())
+        return {'pending_approvals_total': total}
     return {'pending_approvals_total': 0}
 
 

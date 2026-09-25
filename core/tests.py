@@ -3960,6 +3960,103 @@ class ProcessControlTests(TestCase):
         self.assertEqual(run.status, 'Pending Approval')
 
 
+class ActionCenterTests(TestCase):
+    """The Action Center page, its sidebar badge and its history/notifications."""
+
+    def setUp(self):
+        self.manager = make_user(username='ac_mgr', password='pw', role='Manager')
+        self.other_manager = make_user(username='ac_mgr2', password='pw', role='Manager')
+        self.sales = make_user(username='ac_sales', password='pw', role='Sales')
+        self.wh = Warehouse.objects.create(name='WH AC', location_type='Storage')
+        self.product = Product.objects.create(name='Prod AC', sku='PRD-AC', unit_of_measure='kg', price_per_unit=1)
+
+    def _as(self, user):
+        c = Client()
+        c.force_login(user)
+        return c
+
+    def _so(self, status='Pending Approval', **kw):
+        so = SalesOrder.objects.create(so_number=f'SO-AC-{SalesOrder.objects.count()}', client_name='Acme',
+                                       origin_warehouse=self.wh, status=status, **kw)
+        SalesOrderDetail.objects.create(sales_order=so, product=self.product, quantity_ordered=Decimal('10'))
+        return so
+
+    def _run(self, **kw):
+        from core.models import ProductionRun
+        return ProductionRun.objects.create(run_number=f'RUN-AC-{ProductionRun.objects.count()}', target_product=self.product,
+                                            expected_yield=Decimal('1'), status='Pending Approval', **kw)
+
+    def test_badge_matches_page_and_ignores_unrelated_items(self):
+        from core.models import PurchaseOrder
+        self._so(assigned_to=self.manager)
+        self._so(assigned_to=self.other_manager)   # someone else's
+        self._so(status='Draft')                    # not pending
+        PurchaseOrder.objects.create(po_number='PO-AC-1', status='Pending', target_warehouse=self.wh)  # already approved
+        self._run()                                 # unassigned: open to any approver
+        self._run(assigned_to=self.other_manager)   # named approver is someone else
+        resp = self._as(self.manager).get(reverse('approvals_inbox'))
+        self.assertEqual(resp.context['pending_count'], 2)
+        self.assertEqual(resp.context['pending_approvals_total'], 2)
+        self.assertEqual(len(resp.context['pending_runs']), 1)
+
+    def test_empty_state_hidden_when_only_a_run_is_pending(self):
+        self._run()
+        resp = self._as(self.manager).get(reverse('approvals_inbox'))
+        self.assertNotContains(resp, "You're all caught up")
+        self.assertContains(resp, 'Production Approval')
+        self.assertNotContains(resp, 'Approve &amp; Complete')
+
+    def test_pre_production_reject_cancels_and_is_in_history(self):
+        from core.models import OrderTimeline, Notification
+        run = self._run(created_by=self.sales)
+        c = self._as(self.manager)
+        c.post(reverse('approvals_inbox'), {'action': 'reject', 'item_type': 'production_run', 'item_id': run.id, 'comment': 'Not now'})
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'Cancelled')
+        self.assertTrue(OrderTimeline.objects.filter(production_run=run, action__contains='Not now').exists())
+        self.assertTrue(Notification.objects.filter(user=self.sales, message__contains=run.run_number).exists())
+        resp = c.get(reverse('approvals_inbox'))
+        self.assertEqual([h['decision'] for h in resp.context['history_page']], ['Rejected'])
+        self.assertEqual(resp.context['rejected_this_week'], 1)
+
+    def test_history_ignores_approval_requests(self):
+        so = self._so(status='Draft')
+        c = self._as(self.manager)
+        c.post(reverse('so_detail', args=[so.pk]), {'action': 'request_approval', 'manager_id': self.other_manager.id})
+        resp = c.get(reverse('approvals_inbox'))
+        self.assertEqual(len(resp.context['history_page']), 0)
+
+    def test_requester_is_notified_of_decision(self):
+        from core.models import Notification
+        so = self._so(status='Draft')
+        self._as(self.sales).post(reverse('so_detail', args=[so.pk]), {'action': 'request_approval', 'manager_id': self.manager.id})
+        self._as(self.manager).post(reverse('approvals_inbox'), {'action': 'approve', 'item_type': 'sales_order', 'item_id': so.id})
+        self.assertTrue(Notification.objects.filter(user=self.sales, message__startswith='Approved:', message__contains=so.so_number).exists())
+
+    def test_refusal_returns_to_next(self):
+        so = self._so(assigned_to=self.manager)
+        nxt = reverse('so_detail', args=[so.pk])
+        resp = self._as(self.other_manager).post(reverse('approvals_inbox'), {
+            'action': 'approve', 'item_type': 'sales_order', 'item_id': so.id, 'next': nxt})
+        self.assertRedirects(resp, nxt, fetch_redirect_response=False)
+
+    def test_adding_a_follower_notifies_them_but_not_yourself(self):
+        from core.models import Notification
+        run = self._run()
+        so = self._so()
+        c = self._as(self.manager)
+        c.post(reverse('production_run_detail', args=[run.pk]), {'action': 'add_follower', 'user_id': self.sales.id})
+        c.post(reverse('so_detail', args=[so.pk]), {'action': 'add_follower', 'user_id': self.sales.id})
+        c.post(reverse('so_detail', args=[so.pk]), {'action': 'add_follower', 'user_id': self.sales.id})  # already following
+        c.post(reverse('production_run_detail', args=[run.pk]), {'action': 'add_follower', 'user_id': self.manager.id})
+        self.assertEqual(Notification.objects.filter(user=self.sales, message__contains='added you as a follower').count(), 2)
+        self.assertFalse(Notification.objects.filter(user=self.manager, message__contains='added you as a follower').exists())
+
+    def test_unknown_action_is_rejected(self):
+        resp = self._as(self.manager).post(reverse('approvals_inbox'), {'action': 'delete', 'item_type': 'sales_order', 'item_id': 1})
+        self.assertRedirects(resp, reverse('approvals_inbox'), fetch_redirect_response=False)
+
+
 class OrderDisplayTests(TestCase):
     """Group 3: SO subtotal/total, RM order value, full status filter, pagination,
     no raw template tags in the list timeline."""
@@ -4042,7 +4139,7 @@ class TesterFollowUpTests(TestCase):
         self.hub = Warehouse.objects.create(name='Hub TFU', location_type='Storage')
         self.plant = Warehouse.objects.create(name='Plant TFU', location_type='Manufacturing')
         self.product = Product.objects.create(name='Prod TFU', sku='PRD-TFU', unit_of_measure='kg', price_per_unit=1)
-        self.customer = ClientModel.objects.create(name='AgriCore', contact_person='Siti', phone='012-345', delivery_address='Lot 5, Klang')
+        self.customer = ClientModel.objects.create(name='AgriCore', contact_person='Siti', phone='012-345 6789', delivery_address='Lot 5, Klang')
 
     def test_completed_run_progress_uses_actual_yield(self):
         from core.models import ProductionRun
@@ -4093,7 +4190,7 @@ class TesterFollowUpTests(TestCase):
         self.client.post(reverse('so_create_shipment', args=[so.pk]))
 
         s = Shipment.objects.get(sales_order=so)
-        self.assertEqual((s.client_contact_name, s.client_contact_phone, s.client_address), ('Siti', '012-345', 'Lot 5, Klang'))
+        self.assertEqual((s.client_contact_name, s.client_contact_phone, s.client_address), ('Siti', '012-345 6789', 'Lot 5, Klang'))
         self.assertEqual(s.last_edited_by, self.admin)
         self.assertTrue(OrderTimeline.objects.filter(shipment=s, action='Drafted from SO-TFU2.').exists())
         resp = self.client.get(reverse('shipment_detail', args=[s.pk]))
@@ -5627,3 +5724,165 @@ class ProductMaterialQADashboardQueryCountTests(TestCase):
         self.assertEqual(len(resp.context['quarantined']), 1)
         self.assertEqual(len(resp.context['spoiled']), 1)
         self.assertContains(resp, '10 Days')
+
+
+class ContactValidationTests(TestCase):
+    """Phone numbers are checked against their country's rules (Malaysia by
+    default, any country via the dropdown or a +code); emails need a real
+    domain. Enforced on client/supplier add+edit, the shipment contact and the
+    profile email."""
+
+    def setUp(self):
+        self.admin = make_user(username='cv', password='pw', role='Admin')
+        self.client = Client()
+        self.client.force_login(self.admin)
+
+    def test_normalise_phone_valid_numbers(self):
+        from core.validators import normalise_phone
+        cases = [
+            ('012-345 6789', 'MY', '012-345 6789'),
+            ('0123456789', 'MY', '012-345 6789'),
+            ('011-2345 6789', 'MY', '011-2345 6789'),
+            ('03-7956 1234', 'MY', '03-7956 1234'),
+            ('04-226 1234', 'MY', '04-226 1234'),
+            ('088-212 345', 'MY', '088-212 345'),
+            ('+60 12-345 6789', 'MY', '012-345 6789'),
+            ('+65 9123 4567', 'MY', '+65 9123 4567'),
+            ('+86 138 0013 8000', 'MY', '+86 138 0013 8000'),
+            ('9123 4567', 'SG', '+65 9123 4567'),
+            ('', 'MY', ''),
+        ]
+        for raw, region, expected in cases:
+            with self.subTest(raw=raw, region=region):
+                self.assertEqual(normalise_phone(raw, region), expected)
+
+    def test_normalise_phone_rejects_bad_numbers(self):
+        from django.core.exceptions import ValidationError
+        from core.validators import normalise_phone
+        for raw, region in [('12345', 'MY'), ('012-345', 'MY'), ('012-345 67890 12', 'MY'),
+                            ('call me', 'MY'), ('9123 456', 'SG'), ('+65 1234', 'MY')]:
+            with self.subTest(raw=raw, region=region):
+                with self.assertRaises(ValidationError):
+                    normalise_phone(raw, region)
+
+    def test_phone_or_email(self):
+        from django.core.exceptions import ValidationError
+        from core.validators import validate_phone_or_email, normalise_phone_or_email
+        self.assertEqual(normalise_phone_or_email('siti@agricore.com.my'), 'siti@agricore.com.my')
+        self.assertEqual(normalise_phone_or_email('0123456789'), '012-345 6789')
+        validate_phone_or_email('')
+        for bad in ('siti@agricore', 'not a contact', '123'):
+            with self.subTest(bad=bad), self.assertRaises(ValidationError):
+                validate_phone_or_email(bad)
+
+    def test_client_add_rejects_bad_phone_and_email(self):
+        from core.models import Client as ClientModel
+        resp = self.client.post(reverse('client_list'), {'name': 'Bad Phone Co', 'phone': '12345', 'phone_country': 'MY'}, follow=True)
+        self.assertFalse(ClientModel.objects.filter(name='Bad Phone Co').exists())
+        self.assertContains(resp, 'not a valid Malaysia phone number')
+        self.client.post(reverse('client_list'), {'name': 'Bad Mail Co', 'email': 'sales@badmail'})
+        self.assertFalse(ClientModel.objects.filter(name='Bad Mail Co').exists())
+
+    def test_client_add_saves_normalised_phone(self):
+        from core.models import Client as ClientModel
+        self.client.post(reverse('client_list'), {'name': 'Local Co', 'phone': '0123456789', 'phone_country': 'MY', 'email': 'a@local.com.my'})
+        self.client.post(reverse('client_list'), {'name': 'SG Co', 'phone': '9123 4567', 'phone_country': 'SG'})
+        self.assertEqual(ClientModel.objects.get(name='Local Co').phone, '012-345 6789')
+        self.assertEqual(ClientModel.objects.get(name='SG Co').phone, '+65 9123 4567')
+
+    def test_client_edit_rejects_bad_phone(self):
+        from core.models import Client as ClientModel
+        c = ClientModel.objects.create(name='Edit Co', phone='012-345 6789')
+        self.client.post(reverse('client_edit', args=[c.pk]), {'name': 'Edit Co', 'phone': '999', 'phone_country': 'MY'})
+        c.refresh_from_db()
+        self.assertEqual(c.phone, '012-345 6789')
+
+    def test_supplier_add_and_edit(self):
+        self.client.post(reverse('supplier_list'), {'name': 'Bad Sup', 'phone': '0000', 'phone_country': 'MY'})
+        self.assertFalse(Supplier.objects.filter(name='Bad Sup').exists())
+        self.client.post(reverse('supplier_list'), {'name': 'CN Sup', 'phone': '138 0013 8000', 'phone_country': 'CN', 'email': 'sales@cnsup.cn'})
+        sup = Supplier.objects.get(name='CN Sup')
+        self.assertEqual(sup.phone, '+86 138 0013 8000')
+        self.client.post(reverse('supplier_edit', args=[sup.pk]), {'name': 'CN Sup', 'phone': '+86 138 0013 8000', 'phone_country': 'MY', 'email': 'nope@'})
+        sup.refresh_from_db()
+        self.assertEqual(sup.email, 'sales@cnsup.cn')
+
+    def test_shipment_contact_accepts_phone_or_email_only(self):
+        from core.models import Shipment
+        s = Shipment.objects.create(tracking_number='SHP-CV1', direction='Outbound', status='Draft')
+        url = reverse('shipment_detail', args=[s.pk])
+        self.client.post(url, {'action': 'update_route', 'client_contact_phone': 'call the office'})
+        s.refresh_from_db()
+        self.assertIsNone(s.client_contact_phone)
+        self.client.post(url, {'action': 'update_route', 'client_contact_phone': 'ops@agricore.com.my'})
+        s.refresh_from_db()
+        self.assertEqual(s.client_contact_phone, 'ops@agricore.com.my')
+        self.client.post(url, {'action': 'update_route', 'client_contact_phone': '0123456789'})
+        s.refresh_from_db()
+        self.assertEqual(s.client_contact_phone, '012-345 6789')
+
+    def test_shipment_from_so_falls_back_to_client_email(self):
+        from core.models import Client as ClientModel, Shipment
+        hub = Warehouse.objects.create(name='Hub CV', location_type='Storage')
+        product = Product.objects.create(name='Prod CV', sku='PRD-CV', unit_of_measure='kg', price_per_unit=1)
+        customer = ClientModel.objects.create(name='NoPhone Co', contact_person='Aina', email='aina@nophone.com.my', delivery_address='Lot 1')
+        batch = Batch.objects.create(batch_number='FG-CV', status='Active', product=product, quantity=Decimal('5'),
+                                     allocated_quantity=Decimal('5'), manufacturing_date=date.today(),
+                                     expiry_date=date.today() + timedelta(days=100), warehouse=hub)
+        so = SalesOrder.objects.create(so_number='SO-CV', client_name='NoPhone Co', client=customer,
+                                       origin_warehouse=hub, status='Ready to Ship')
+        StockAllocation.objects.create(batch=batch, sales_order=so, quantity=Decimal('5'))
+        self.client.post(reverse('so_create_shipment', args=[so.pk]))
+        self.assertEqual(Shipment.objects.get(sales_order=so).client_contact_phone, 'aina@nophone.com.my')
+
+    def test_profile_rejects_bad_email(self):
+        self.client.post(reverse('profile'), {'first_name': 'A', 'last_name': 'B', 'email': 'me@nowhere'})
+        self.admin.refresh_from_db()
+        self.assertNotEqual(self.admin.email, 'me@nowhere')
+        self.client.post(reverse('profile'), {'first_name': 'A', 'last_name': 'B', 'email': 'me@terrahub.com.my'})
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.email, 'me@terrahub.com.my')
+
+
+class OrderListShowsItemsTests(TestCase):
+    """PO/SO list pages show what is on each order (not timeline snippets) and search reaches it."""
+    def setUp(self):
+        from core.models import PurchaseOrder, PurchaseOrderDetail, SalesOrderDetail
+        make_user(username='itemsmgr', password='pw', role='Manager')
+        self.client.login(username='itemsmgr', password='pw')
+        self.wh = Warehouse.objects.create(name='Plant A', location_type='Manufacturing')
+        self.resin = Material.objects.create(name='Resin Alpha', sku='MAT-RA', category='C', unit_of_measure='kg', safe_storage_days=9)
+        self.dye = Material.objects.create(name='Dye Beta', sku='MAT-DB', category='C', unit_of_measure='L', safe_storage_days=9)
+        self.paint = Product.objects.create(name='Wall Paint', sku='PRD-WP', price_per_unit=Decimal('5'))
+        self.po1 = PurchaseOrder.objects.create(po_number='PO-ITM-1', supplier_name='S', target_warehouse=self.wh)
+        self.po2 = PurchaseOrder.objects.create(po_number='PO-ITM-2', supplier_name='S', target_warehouse=self.wh)
+        PurchaseOrderDetail.objects.create(purchase_order=self.po1, material=self.resin, quantity_ordered=Decimal('250'))
+        PurchaseOrderDetail.objects.create(purchase_order=self.po2, material=self.dye, quantity_ordered=Decimal('40'))
+        self.so1 = SalesOrder.objects.create(so_number='SO-ITM-1', client_name='C', origin_warehouse=self.wh)
+        self.so2 = SalesOrder.objects.create(so_number='SO-ITM-2', client_name='C', origin_warehouse=self.wh)
+        SalesOrderDetail.objects.create(sales_order=self.so1, product=self.paint, quantity_ordered=Decimal('30'))
+
+    def test_po_list_shows_materials_with_quantities_and_search_matches_them(self):
+        resp = self.client.get(reverse('po_list'))
+        self.assertContains(resp, 'Resin Alpha')
+        self.assertContains(resp, '250 kg')
+        self.assertNotContains(resp, 'No timeline logs')
+        resp = self.client.get(reverse('po_list'), {'q': 'Dye Beta'})
+        self.assertEqual([p.po_number for p in resp.context['purchase_orders']], ['PO-ITM-2'])
+        resp = self.client.get(reverse('po_list'), {'q': 'MAT-RA'})
+        self.assertEqual([p.po_number for p in resp.context['purchase_orders']], ['PO-ITM-1'])
+
+    def test_so_list_shows_products_and_search_matches_them(self):
+        resp = self.client.get(reverse('so_list'))
+        self.assertContains(resp, 'Wall Paint')
+        self.assertContains(resp, 'No products added yet')     # SO-ITM-2 has no lines
+        resp = self.client.get(reverse('so_list'), {'q': 'wall paint'})
+        self.assertEqual([s.so_number for s in resp.context['sales_orders']], ['SO-ITM-1'])
+
+    def test_more_than_three_lines_collapse_to_a_count(self):
+        from core.models import PurchaseOrderDetail
+        for i in range(4):
+            m = Material.objects.create(name=f'Extra {i}', sku=f'MAT-X{i}', category='C', unit_of_measure='kg', safe_storage_days=9)
+            PurchaseOrderDetail.objects.create(purchase_order=self.po1, material=m, quantity_ordered=Decimal('1'))
+        resp = self.client.get(reverse('po_list'))
+        self.assertContains(resp, '+2 more')      # 5 lines, 3 shown

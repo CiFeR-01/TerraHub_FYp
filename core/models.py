@@ -2,6 +2,8 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from datetime import date
 
+from .validators import validate_phone, validate_phone_or_email
+
 class Capability(models.Model):
     """No table - just a home for the app-wide permissions that aren't about
     one model. Roles are Django Groups (Django admin > Groups); an Admin grants
@@ -123,7 +125,7 @@ class Supplier(models.Model):
     name = models.CharField(max_length=255)
     contact_person = models.CharField(max_length=255, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
-    phone = models.CharField(max_length=50, blank=True, null=True)
+    phone = models.CharField(max_length=50, blank=True, null=True, validators=[validate_phone])
     address = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
     materials_supplied = models.ManyToManyField(Material, through='SupplierMaterial', related_name='suppliers', blank=True)
@@ -148,7 +150,7 @@ class Client(models.Model):
     name = models.CharField(max_length=255)
     contact_person = models.CharField(max_length=255, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
-    phone = models.CharField(max_length=50, blank=True, null=True)
+    phone = models.CharField(max_length=50, blank=True, null=True, validators=[validate_phone])
     delivery_address = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -349,6 +351,15 @@ class PurchaseOrder(models.Model):
     updated_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_pos')
     updated_at = models.DateTimeField(auto_now=True)
 
+    @property
+    def total_value(self):
+        """Sum of quantity x unit price over lines that have a price (RM)."""
+        from decimal import Decimal
+        return sum(
+            (i.quantity_ordered * i.unit_price for i in self.items.all() if i.unit_price is not None),
+            Decimal('0'),
+        )
+
     def __str__(self):
         return f"PO {self.po_number} - {self.supplier_name}"
 
@@ -465,7 +476,7 @@ class Shipment(models.Model):
     # Logistics Tracking Details
     client_address = models.TextField(null=True, blank=True, help_text="Destination address for outbound shipments")
     client_contact_name = models.CharField(max_length=255, null=True, blank=True, help_text="Contact person's name")
-    client_contact_phone = models.CharField(max_length=100, null=True, blank=True, help_text="Contact phone or email")
+    client_contact_phone = models.CharField(max_length=100, null=True, blank=True, validators=[validate_phone_or_email], help_text="Contact phone or email")
     external_tracking_id = models.CharField(max_length=255, null=True, blank=True, help_text="Real logistics company tracking ID")
     departure_datetime = models.DateTimeField(null=True, blank=True)
     

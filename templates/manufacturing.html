@@ -26,7 +26,7 @@
             </select>
         </form>
         <div class="header-action-tray">
-            <button id="open-run-modal-btn" class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+            <button type="button" class="btn btn-primary js-open-run-modal" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
                 &#10010; Schedule Production Run
             </button>
         </div>
@@ -193,7 +193,7 @@
 <div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:2rem;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700;">Production Runs Ledger</h3>
-        <button id="open-run-modal-btn" class="btn btn-primary" style="padding:0.4rem 1rem; font-size:0.85rem;">+ New Production Run</button>
+        <button type="button" class="btn btn-primary js-open-run-modal" style="padding:0.4rem 1rem; font-size:0.85rem;">+ New Production Run</button>
     </div>
     <div class="table-responsive">
         <table class="data-table" style="width:100%; border-collapse:collapse;">
@@ -465,7 +465,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-document.getElementById('open-run-modal-btn').addEventListener('click', function() {
+// Two buttons open this (page header + ledger header).
+document.querySelectorAll('.js-open-run-modal').forEach(function(btn) { btn.addEventListener('click', function() {
     document.getElementById('modal-so-id').value = '';
     document.getElementById('modal-so-display').style.display = 'none';
     document.getElementById('modal-run-num').value = "{{ next_run_number }}";
@@ -475,7 +476,7 @@ document.getElementById('open-run-modal-btn').addEventListener('click', function
     document.getElementById('modal-run-num').style.background = '#f8fafc';
     document.getElementById('run-modal').style.display = 'flex';
     resetYieldMode();
-});
+}); });
 
 var YIELD_MT_FACTORS = { MT: 1, kg: 0.001, g: 0.000001 };
 

@@ -1361,6 +1361,18 @@ button.nav-btn:focus-visible {
     box-shadow: 0 0 10px rgba(0, 242, 254, 0.15);
 }
 
+/* Live contact checks (static/js/contact-validation.js). !important because the
+   list-page modals set their borders inline. */
+.form-input.is-valid { border-color: var(--success) !important; }
+.form-input.is-invalid { border-color: var(--danger) !important; }
+.form-input.is-invalid:focus { box-shadow: 0 0 0 3px var(--danger-bg); }
+.field-hint { color: var(--danger-strong); font-size: 0.78rem; margin-top: 0.3rem; line-height: 1.35; }
+.field-hint:empty { display: none; }
+.phone-field { display: flex; gap: 0.4rem; }
+.phone-field select { flex: 0 0 7.5rem; min-width: 0; padding: 0.55rem 0.4rem; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.85rem; background: var(--bg-surface); color: var(--text-main); }
+.phone-field input { flex: 1 1 auto; min-width: 0; }
+button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
+
 .form-errors {
     background: rgba(239, 68, 68, 0.1);
     border: 1px solid rgba(239, 68, 68, 0.2);
@@ -2715,4 +2727,18 @@ button.nav-btn:focus-visible {
     .attn-chip:hover { transform: none; }
     .micro-progress-bar,
     .kpi-meter > span { transition: none; }
+}
+
+/* Action Center: tasks (wide) beside notifications; stacks on narrow screens. */
+.action-center-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+    align-items: start;
+}
+@media (max-width: 900px) {
+    .action-center-grid { grid-template-columns: 1fr; }
+    .action-center-grid form { flex-wrap: wrap; }
+    .action-center-grid form .form-input { flex-basis: 100%; }
 }

@@ -10,6 +10,7 @@ from django.db import transaction
 from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q, Avg
 from django.db.models.functions import Abs, Coalesce, TruncWeek
 from django.core.paginator import Paginator
+from django.core.exceptions import ValidationError
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import csv
@@ -25,8 +26,10 @@ from .models import (
     StockAllocation, Supplier, SupplierMaterial, Client
 )
 from .utils import generate_next_code, format_stock_display
+from .validators import normalise_phone, normalise_phone_or_email, validate_email_address, validation_messages
+from .decorators import permission_or_redirect
 from .permissions import (
-    is_admin_user, can_approve, approvers, users_with_perm,
+    is_admin_user, can_approve, approvers, users_with_perm, pending_actions,
     ADJUST_PHYSICAL_STOCK, MANAGE_USERS, HANDLE_PURCHASING, APPROVE_REQUESTS,
 )
 
@@ -90,7 +93,20 @@ def clear_approval_notifications(reference):
     Notification.objects.filter(is_read=False, message__contains=reference).filter(
         Q(message__icontains='requires your approval') | Q(message__icontains='approval required')
         | Q(message__icontains='pending variance approval') | Q(message__icontains='QA release needed')
+        | Q(message__icontains='Force Close requested')
     ).update(is_read=True)
+
+
+def notify_added_follower(adder, follower, label, link):
+    """Let someone know they were added as a follower of `label` (e.g. "Production
+    Run RUN-001"). Adding yourself needs no notification."""
+    if follower == adder:
+        return
+    Notification.objects.create(
+        user=follower,
+        message=f"{adder.get_full_name() or adder.username} added you as a follower to {label}.",
+        link=link,
+    )
 
 
 def self_approval_note(requester, approver):
@@ -2174,14 +2190,18 @@ def supplier_list_view(request):
             if not name:
                 messages.error(request, "Supplier name is required.")
                 return redirect('supplier_list')
-            Supplier.objects.create(
+            supplier = Supplier(
                 name=name,
                 contact_person=request.POST.get('contact_person', '').strip(),
                 email=request.POST.get('email', '').strip(),
-                phone=request.POST.get('phone', '').strip(),
+                phone=normalise_phone(request.POST.get('phone'), request.POST.get('phone_country')),
                 address=request.POST.get('address', '').strip(),
             )
+            supplier.full_clean()
+            supplier.save()
             messages.success(request, f"Supplier '{name}' registered.")
+        except ValidationError as e:
+            messages.error(request, f"Supplier not saved. {validation_messages(e)}")
         except Exception as e:
             messages.error(request, f"Error registering supplier: {e}")
         return redirect('supplier_list')
@@ -2222,11 +2242,14 @@ def supplier_edit_view(request, pk):
             supplier.name = name
             supplier.contact_person = request.POST.get('contact_person', '').strip()
             supplier.email = request.POST.get('email', '').strip()
-            supplier.phone = request.POST.get('phone', '').strip()
+            supplier.phone = normalise_phone(request.POST.get('phone'), request.POST.get('phone_country'))
             supplier.address = request.POST.get('address', '').strip()
+            supplier.full_clean()
             supplier.save()
 
             messages.success(request, f"Supplier '{supplier.name}' updated successfully.")
+        except ValidationError as e:
+            messages.error(request, f"Supplier not updated. {validation_messages(e)}")
         except Exception as e:
             messages.error(request, f"Error updating supplier: {e}")
 
@@ -2256,14 +2279,18 @@ def client_list_view(request):
             if not name:
                 messages.error(request, "Client name is required.")
                 return redirect('client_list')
-            Client.objects.create(
+            client = Client(
                 name=name,
                 contact_person=request.POST.get('contact_person', '').strip(),
                 email=request.POST.get('email', '').strip(),
-                phone=request.POST.get('phone', '').strip(),
+                phone=normalise_phone(request.POST.get('phone'), request.POST.get('phone_country')),
                 delivery_address=request.POST.get('delivery_address', '').strip(),
             )
+            client.full_clean()
+            client.save()
             messages.success(request, f"Client '{name}' registered.")
+        except ValidationError as e:
+            messages.error(request, f"Client not saved. {validation_messages(e)}")
         except Exception as e:
             messages.error(request, f"Error registering client: {e}")
         return redirect('client_list')
@@ -2304,11 +2331,14 @@ def client_edit_view(request, pk):
             client.name = name
             client.contact_person = request.POST.get('contact_person', '').strip()
             client.email = request.POST.get('email', '').strip()
-            client.phone = request.POST.get('phone', '').strip()
+            client.phone = normalise_phone(request.POST.get('phone'), request.POST.get('phone_country'))
             client.delivery_address = request.POST.get('delivery_address', '').strip()
+            client.full_clean()
             client.save()
 
             messages.success(request, f"Client '{client.name}' updated successfully.")
+        except ValidationError as e:
+            messages.error(request, f"Client not updated. {validation_messages(e)}")
         except Exception as e:
             messages.error(request, f"Error updating client: {e}")
 
@@ -2367,11 +2397,15 @@ def sales_order_list_view(request):
     search_query = request.GET.get('q', '').strip()
     status_filter = request.GET.get('status', '').strip()
     
-    sales_orders = SalesOrder.objects.select_related('origin_warehouse', 'created_by', 'approved_by').prefetch_related('items__product', 'timeline')
+    sales_orders = SalesOrder.objects.select_related('origin_warehouse', 'created_by', 'approved_by').prefetch_related('items__product')
     
     if search_query:
+        # also matches the products on the order, since the list shows them
         sales_orders = sales_orders.filter(
             Q(so_number__icontains=search_query) | Q(client_name__icontains=search_query)
+            | Q(pk__in=SalesOrderDetail.objects.filter(
+                Q(product__name__icontains=search_query) | Q(product__sku__icontains=search_query)
+            ).values('sales_order_id'))
         )
         
     if status_filter:
@@ -2452,11 +2486,15 @@ def purchase_order_list_view(request):
     search_query = request.GET.get('q', '').strip()
     status_filter = request.GET.get('status', '').strip()
     
-    purchase_orders = PurchaseOrder.objects.select_related('target_warehouse', 'created_by', 'approved_by').prefetch_related('items__material', 'timeline').order_by('-order_date')
+    purchase_orders = PurchaseOrder.objects.select_related('target_warehouse', 'created_by', 'approved_by').prefetch_related('items__material').order_by('-order_date')
     
     if search_query:
         purchase_orders = purchase_orders.filter(
             Q(po_number__icontains=search_query) | Q(supplier_name__icontains=search_query)
+            # also matches the materials on the order, since the list shows them
+            | Q(pk__in=PurchaseOrderDetail.objects.filter(
+                Q(material__name__icontains=search_query) | Q(material__sku__icontains=search_query)
+            ).values('purchase_order_id'))
         )
         
     if status_filter:
@@ -2632,7 +2670,9 @@ def so_detail_view(request, pk):
             user_id = request.POST.get('user_id')
             user_to_add = CustomUser.objects.filter(id=user_id).first()
             if user_to_add:
-                so.followers.add(user_to_add)
+                if not so.followers.filter(pk=user_to_add.pk).exists():
+                    so.followers.add(user_to_add)
+                    notify_added_follower(request.user, user_to_add, f"Sales Order {so.so_number}", reverse('so_detail', args=[so.pk]))
                 messages.success(request, f"Added {user_to_add.username} as a follower.")
             else:
                 messages.error(request, "User not found.")
@@ -2969,7 +3009,9 @@ def po_detail_view(request, pk):
             user_id = request.POST.get('user_id')
             user_to_add = CustomUser.objects.filter(id=user_id).first()
             if user_to_add:
-                po.followers.add(user_to_add)
+                if not po.followers.filter(pk=user_to_add.pk).exists():
+                    po.followers.add(user_to_add)
+                    notify_added_follower(request.user, user_to_add, f"Purchase Order {po.po_number}", reverse('po_detail', args=[po.pk]))
                 messages.success(request, f"Added {user_to_add.username} as a follower.")
             else:
                 messages.error(request, "User not found.")
@@ -3416,7 +3458,7 @@ def shipments_view(request):
                 client_address_val = None
                 if so and so.client:
                     client_contact_name_val = so.client.contact_person or None
-                    client_contact_phone_val = so.client.phone or None
+                    client_contact_phone_val = so.client.phone or so.client.email or None
                     client_address_val = so.client.delivery_address or None
 
                 # Outbound/Transfer shipments move our own stock, so they always start as
@@ -3634,7 +3676,36 @@ def qa_dashboard_view(request):
 # --------------------------------------------------------------------------
 # APPROVALS INBOX (Action Center)
 # --------------------------------------------------------------------------
-from .decorators import permission_or_redirect
+# Timeline phrases that record an approval decision (from this inbox and from the
+# shipment detail page), used for the history list and the weekly counts.
+APPROVED_ACTION_Q = (Q(action__icontains='Approved by Manager')
+                     | Q(action__icontains='approved. Ready for material allocation'))
+REJECTED_ACTION_Q = Q(action__icontains='Approval Rejected')
+# How many recent decision rows the history list looks through.
+HISTORY_SCAN_LIMIT = 500
+
+
+def _with_comment(text, comment):
+    return f"{text} Comment: {comment}" if comment else text
+
+
+def notify_approval_requester(decider, reference, link, approved, comment='', **timeline_fk):
+    """Tell whoever asked for the approval how it went. The requester is the user on
+    the latest "Approval Requested ..." (SO/PO) or "Submitted to ..." (shipment)
+    timeline entry; nothing is sent when they decided it themselves."""
+    request_entry = OrderTimeline.objects.filter(**timeline_fk).filter(
+        Q(action__startswith='Approval Requested') | Q(action__startswith='Submitted to')
+    ).order_by('-timestamp').first()
+    requester = request_entry.user if request_entry else None
+    if requester is None or requester == decider:
+        return
+    verdict = 'Approved' if approved else 'Rejected'
+    Notification.objects.create(
+        user=requester,
+        message=_with_comment(f"{verdict}: {reference} was {verdict.lower()} by {decider.get_full_name() or decider.username}.", comment),
+        link=link,
+    )
+
 
 @login_required
 @permission_or_redirect(APPROVE_REQUESTS)
@@ -3649,182 +3720,181 @@ def approvals_inbox_view(request):
         back = request.POST.get('next', '')
         if not url_has_allowed_host_and_scheme(back, allowed_hosts={request.get_host()}):
             back = reverse('approvals_inbox')
+        refused = "Only the assigned approver (or an Admin) can decide this, and only while it's pending approval."
+
+        if action not in ('approve', 'reject') or item_type not in ('sales_order', 'production_run', 'purchase_order', 'shipment'):
+            messages.error(request, "Unrecognised approval request.")
+            return redirect(back)
 
         if item_type == 'sales_order':
             so = get_object_or_404(SalesOrder, id=item_id)
-            if action in ('approve', 'reject') and not may_decide_approval(request.user, so):
-                messages.error(request, "Only the assigned approver (or an Admin) can decide this, and only while it's pending approval.")
-                return redirect('approvals_inbox')
-            if action in ('approve', 'reject'):
-                clear_approval_notifications(so.so_number)
+            if not may_decide_approval(request.user, so):
+                messages.error(request, refused)
+                return redirect(back)
+            clear_approval_notifications(so.so_number)
             if action == 'approve':
-                old_status = so.status
                 so.status = 'Pending'
                 so.approved_by = request.user
                 so.save()
-                OrderTimeline.objects.create(sales_order=so, action=f"Approved by Manager. Comment: {comment}" if comment else "Approved by Manager.", user=request.user)
-                
+                OrderTimeline.objects.create(sales_order=so, action=_with_comment("Approved by Manager.", comment), user=request.user)
                 messages.success(request, f"Sales Order {so.so_number} approved.")
-            elif action == 'reject':
+            else:
                 so.status = 'Draft'
                 so.assigned_to = None
                 so.approval_remarks = ''
                 so.save()
-                OrderTimeline.objects.create(sales_order=so, action=f"Approval Rejected by Manager. Comment: {comment}" if comment else "Approval Rejected by Manager.", user=request.user)
+                OrderTimeline.objects.create(sales_order=so, action=_with_comment("Approval Rejected by Manager.", comment), user=request.user)
                 messages.warning(request, f"Sales Order {so.so_number} returned to Draft.")
+            notify_approval_requester(request.user, f"Sales Order {so.so_number}", reverse('so_detail', args=[so.pk]),
+                                      action == 'approve', comment, sales_order=so)
 
         elif item_type == 'production_run':
             run = get_object_or_404(ProductionRun, id=item_id)
-            if action in ('approve', 'reject') and not may_decide_run_approval(request.user, run):
+            if not may_decide_run_approval(request.user, run):
                 messages.error(request, "Only a Manager or Admin can decide a production run that is pending approval.")
                 return redirect(back)
-            if action in ('approve', 'reject'):
-                clear_approval_notifications(run.run_number)
-            if action == 'approve':
-                if run.actual_yield is not None:
-                    # Variance Approval
+            clear_approval_notifications(run.run_number)
+            run_link = reverse('production_run_detail', args=[run.pk])
+            if run.actual_yield is not None:
+                # Variance sign-off on a finished run: the supervisor and followers hear back.
+                to_notify = ([run.supervisor] if run.supervisor else []) + list(run.followers.all())
+                if action == 'approve':
                     from .utils import finalize_production_run
                     run.supervisor_signoff = request.user
                     fg_batch = finalize_production_run(run, request.user)
                     OrderTimeline.objects.create(
                         production_run=run,
-                        action=f"Variance Approved by Manager." + (f" FG Batch {fg_batch.batch_number} created." if fg_batch else ""),
+                        action=_with_comment("Variance Approved by Manager." + (f" FG Batch {fg_batch.batch_number} created." if fg_batch else ""), comment),
                         user=request.user
                     )
-
-                    # Notify followers
-                    if run.supervisor:
-                        Notification.objects.create(user=run.supervisor, message=f"Approved: Variance approved for {run.run_number}.", link=f"/operations/manufacture/run/{run.id}/")
-                    for f in run.followers.all():
-                        Notification.objects.create(user=f, message=f"Approved: Variance approved for {run.run_number}.", link=f"/operations/manufacture/run/{run.id}/")
-                    
+                    note = f"Approved: Variance approved for {run.run_number}."
                     messages.success(request, f"Production Run {run.run_number} variance approved and completed.")
                 else:
-                    # Pre-production Approval — clears the run for material allocation via
-                    # the FEFO allocation screen, which handles both local and cross-warehouse
-                    # sourcing (a local-only availability check here would block runs that
-                    # genuinely need a transfer from another warehouse).
-                    from .utils import approve_production_run
-                    approve_production_run(run, request.user)
-                    messages.success(request, f"Production Run {run.run_number} approved. Please allocate materials to begin.")
-            elif action == 'reject':
-                if run.actual_yield is not None:
                     run.status = 'InProgress'
                     run.save()
-                    OrderTimeline.objects.create(production_run=run, action=f"Variance Approval Rejected.", user=request.user)
-                    if run.supervisor:
-                        Notification.objects.create(user=run.supervisor, message=f"Rejected: Variance rejected for {run.run_number}. Rework required.", link=f"/operations/manufacture/run/{run.id}/")
+                    OrderTimeline.objects.create(production_run=run, action=_with_comment("Variance Approval Rejected.", comment), user=request.user)
+                    note = f"Rejected: Variance rejected for {run.run_number}. Rework required."
                     messages.warning(request, f"Production Run {run.run_number} variance rejected. Returned to In Progress.")
+                for user in dict.fromkeys(to_notify):
+                    Notification.objects.create(user=user, message=_with_comment(note, comment), link=run_link)
+            else:
+                # Pre-production approval - clears the run for material allocation via
+                # the FEFO allocation screen, which handles both local and cross-warehouse
+                # sourcing (a local-only availability check here would block runs that
+                # genuinely need a transfer from another warehouse).
+                if action == 'approve':
+                    from .utils import approve_production_run
+                    approve_production_run(run, request.user)
+                    if comment:
+                        OrderTimeline.objects.create(production_run=run, action=f"Approval comment: {comment}", user=request.user)
+                    note = f"Approved: Production Run {run.run_number} is cleared for material allocation."
+                    messages.success(request, f"Production Run {run.run_number} approved. Please allocate materials to begin.")
                 else:
                     from .utils import release_production_run_allocations
                     release_production_run_allocations(run, request.user)
                     run.status = 'Cancelled'
                     run.save()
-                    messages.warning(request, f"Production Run {run.run_number} rejected.")
-                
+                    OrderTimeline.objects.create(production_run=run, action=_with_comment("Production Approval Rejected - run cancelled.", comment), user=request.user)
+                    note = f"Rejected: Production Run {run.run_number} was not approved and has been cancelled."
+                    messages.warning(request, f"Production Run {run.run_number} rejected and cancelled.")
+                if run.created_by and run.created_by != request.user:
+                    Notification.objects.create(user=run.created_by, message=_with_comment(note, comment), link=run_link)
+
         elif item_type == 'purchase_order':
             po = get_object_or_404(PurchaseOrder, id=item_id)
-            if action in ('approve', 'reject') and not may_decide_approval(request.user, po):
-                messages.error(request, "Only the assigned approver (or an Admin) can decide this, and only while it's pending approval.")
-                return redirect('approvals_inbox')
-            if action in ('approve', 'reject'):
-                clear_approval_notifications(po.po_number)
+            if not may_decide_approval(request.user, po):
+                messages.error(request, refused)
+                return redirect(back)
+            clear_approval_notifications(po.po_number)
             if action == 'approve':
                 po.status = 'Pending'
                 po.approved_by = request.user
                 po.save()
-                OrderTimeline.objects.create(purchase_order=po, action=f"Approved by Manager. Comment: {comment}" if comment else "Approved by Manager.", user=request.user)
+                OrderTimeline.objects.create(purchase_order=po, action=_with_comment("Approved by Manager.", comment), user=request.user)
                 messages.success(request, f"Purchase Order {po.po_number} approved.")
-            elif action == 'reject':
+            else:
                 po.status = 'Draft'
                 po.assigned_to = None
                 po.approval_remarks = ''
                 po.save()
-                OrderTimeline.objects.create(purchase_order=po, action=f"Approval Rejected by Manager. Comment: {comment}" if comment else "Approval Rejected by Manager.", user=request.user)
+                OrderTimeline.objects.create(purchase_order=po, action=_with_comment("Approval Rejected by Manager.", comment), user=request.user)
                 messages.warning(request, f"Purchase Order {po.po_number} returned to Draft.")
+            notify_approval_requester(request.user, f"Purchase Order {po.po_number}", reverse('po_detail', args=[po.pk]),
+                                      action == 'approve', comment, purchase_order=po)
 
-        elif item_type == 'shipment':
+        else:  # shipment
             ship = get_object_or_404(Shipment, id=item_id)
-            if action in ('approve', 'reject') and not may_decide_approval(request.user, ship):
-                messages.error(request, "Only the assigned approver (or an Admin) can decide this, and only while it's pending approval.")
-                return redirect('approvals_inbox')
-            if action in ('approve', 'reject'):
-                clear_approval_notifications(ship.tracking_number)
+            if not may_decide_approval(request.user, ship):
+                messages.error(request, refused)
+                return redirect(back)
+            clear_approval_notifications(ship.tracking_number)
             if action == 'approve':
                 ship.status = 'Preparing'
                 ship.save()
-                OrderTimeline.objects.create(shipment=ship, action=f"Approved by Manager. Comment: {comment}" if comment else "Approved by Manager.", user=request.user)
+                OrderTimeline.objects.create(shipment=ship, action=_with_comment("Approved by Manager.", comment), user=request.user)
                 messages.success(request, f"Shipment {ship.tracking_number} approved.")
-            elif action == 'reject':
+            else:
                 ship.status = 'Logistics Review'
                 ship.assigned_to = None
                 ship.save()
-                OrderTimeline.objects.create(shipment=ship, action=f"Approval Rejected by Manager. Comment: {comment}" if comment else "Approval Rejected by Manager.", user=request.user)
+                OrderTimeline.objects.create(shipment=ship, action=_with_comment("Approval Rejected by Manager.", comment), user=request.user)
                 messages.warning(request, f"Shipment {ship.tracking_number} returned to Logistics Review.")
+            notify_approval_requester(request.user, f"Shipment {ship.tracking_number}", reverse('shipment_detail', args=[ship.pk]),
+                                      action == 'approve', comment, shipment=ship)
 
         return redirect(back)
 
-    pending_sos = SalesOrder.objects.filter(status='Pending Approval', assigned_to=request.user).order_by('order_date').prefetch_related('items__product')
-    pending_runs = ProductionRun.objects.filter(status='Pending Approval').order_by('start_time')
-    pending_pos = PurchaseOrder.objects.filter(status='Pending Approval', assigned_to=request.user).order_by('order_date').prefetch_related('items__material')
-    pending_shipment_approvals = Shipment.objects.filter(status='Pending Approval', assigned_to=request.user).order_by('-id')
-    pending_shipments = Shipment.objects.filter(status='Discrepant', assigned_manager=request.user).order_by('-id')
-    
-    # Notifications
+    # Same source as the sidebar badge (core/context_processors.py), so they agree.
+    pending = {key: list(qs) for key, qs in pending_actions(request.user).items()}
+    pending_count = sum(len(items) for items in pending.values())
+
     notifications = Notification.objects.filter(user=request.user, is_read=False).order_by('-created_at')
-    
-    # History - Unified
-    timelines = OrderTimeline.objects.filter(user=request.user, action__icontains='Approv').order_by('-timestamp')
+
+    # History: one row per item, showing this user's latest decision on it.
+    decisions = (
+        OrderTimeline.objects.filter(user=request.user).filter(APPROVED_ACTION_Q | REJECTED_ACTION_Q)
+        .select_related('sales_order', 'purchase_order', 'shipment', 'production_run')
+        .order_by('-timestamp')[:HISTORY_SCAN_LIMIT]
+    )
     seen = set()
     unified_history = []
-    for t in timelines:
-        item = None
-        if t.sales_order and f"so_{t.sales_order.id}" not in seen:
-            item = {'type': 'so', 'obj': t.sales_order, 'timestamp': t.timestamp, 'status': t.sales_order.status}
-            seen.add(f"so_{t.sales_order.id}")
-        elif t.purchase_order and f"po_{t.purchase_order.id}" not in seen:
-            item = {'type': 'po', 'obj': t.purchase_order, 'timestamp': t.timestamp, 'status': t.purchase_order.status}
-            seen.add(f"po_{t.purchase_order.id}")
-        elif t.shipment and f"ship_{t.shipment.id}" not in seen:
-            item = {'type': 'shipment', 'obj': t.shipment, 'timestamp': t.timestamp, 'status': t.shipment.get_status_display()}
-            seen.add(f"ship_{t.shipment.id}")
-        elif t.production_run and f"run_{t.production_run.id}" not in seen:
-            item = {'type': 'production_run', 'obj': t.production_run, 'timestamp': t.timestamp, 'status': t.production_run.status}
-            seen.add(f"run_{t.production_run.id}")
-            
-        if item:
-            unified_history.append(item)
-            
-    paginator = Paginator(unified_history, 10)
-    page_number = request.GET.get('page')
-    history_page = paginator.get_page(page_number)
+    for t in decisions:
+        for kind, obj in (('so', t.sales_order), ('po', t.purchase_order),
+                          ('shipment', t.shipment), ('production_run', t.production_run)):
+            if obj is not None:
+                break
+        else:
+            continue
+        if (kind, obj.pk) in seen:
+            continue
+        seen.add((kind, obj.pk))
+        unified_history.append({
+            'type': kind, 'obj': obj, 'timestamp': t.timestamp,
+            'decision': 'Rejected' if 'rejected' in t.action.lower() else 'Approved',
+            'status': obj.get_status_display(),
+        })
 
-    followed_sos = request.user.followed_sos.all().order_by('-order_date')
-    followed_pos = request.user.followed_pos.all().order_by('-order_date')
-    followed_runs = request.user.following_runs.all().order_by('-id')
-    followed_shipments = request.user.followed_shipments.all().order_by('-id')
+    history_page = Paginator(unified_history, 10).get_page(request.GET.get('page'))
 
-    # Analytics
-    pending_count = pending_sos.count() + pending_pos.count() + pending_runs.count() + pending_shipments.count() + pending_shipment_approvals.count()
-    start_of_week = date.today() - timedelta(days=date.today().weekday())
-    approved_this_week = OrderTimeline.objects.filter(user=request.user, action__icontains='Approved by Manager', timestamp__gte=start_of_week).count()
-    rejected_this_week = OrderTimeline.objects.filter(user=request.user, action__icontains='Approval Rejected', timestamp__gte=start_of_week).count()
+    today = timezone.localdate()
+    this_week = OrderTimeline.objects.filter(user=request.user, timestamp__date__gte=today - timedelta(days=today.weekday()))
+
+    active_tab = request.GET.get('tab')
+    if active_tab not in ('tasks', 'following'):
+        active_tab = 'tasks'
 
     context = {
-        'pending_sos': pending_sos,
-        'pending_runs': pending_runs,
-        'pending_pos': pending_pos,
-        'pending_shipment_approvals': pending_shipment_approvals,
-        'pending_shipments': pending_shipments,
+        **pending,
         'notifications': notifications,
         'history_page': history_page,
-        'followed_sos': followed_sos,
-        'followed_pos': followed_pos,
-        'followed_runs': followed_runs,
-        'followed_shipments': followed_shipments,
+        'followed_sos': request.user.followed_sos.all().order_by('-order_date'),
+        'followed_pos': request.user.followed_pos.select_related('supplier', 'assigned_to').order_by('-order_date'),
+        'followed_runs': request.user.following_runs.select_related('target_product').order_by('-id'),
+        'followed_shipments': request.user.followed_shipments.all().order_by('-id'),
         'pending_count': pending_count,
-        'approved_this_week': approved_this_week,
-        'rejected_this_week': rejected_this_week,
+        'approved_this_week': this_week.filter(APPROVED_ACTION_Q).count(),
+        'rejected_this_week': this_week.filter(REJECTED_ACTION_Q).count(),
+        'active_tab': active_tab,
     }
     return render(request, 'approvals_inbox.html', context)
 
@@ -4054,6 +4124,13 @@ def shipment_detail_view(request, pk):
             external_tracking_id = request.POST.get('external_tracking_id')
             departure_datetime = request.POST.get('departure_datetime')
 
+            if client_contact_phone is not None:
+                try:
+                    client_contact_phone = normalise_phone_or_email(client_contact_phone)
+                except ValidationError as e:
+                    messages.error(request, f"Shipment info not saved. Client contact: {validation_messages(e)}")
+                    return redirect('shipment_detail', pk=shipment.pk)
+
             core_changed = False
 
             # Check string fields
@@ -4223,7 +4300,6 @@ def shipment_detail_view(request, pk):
                     shipment.save()
                     OrderTimeline.objects.create(shipment=shipment, action=f"Submitted to {approver.get_full_name() or approver.username} for approval{self_approval_note(request.user, approver)}.", user=request.user)
                     
-                    from django.urls import reverse
                     link = reverse('approvals_inbox')
                     Notification.objects.create(
                         user=approver,
@@ -4368,11 +4444,12 @@ def shipment_detail_view(request, pk):
             Notification.objects.create(
                 user=mgr,
                 message=f"Force Close requested on Discrepant Shipment {shipment.tracking_number}.",
-                link=f"/operations/shipments/{shipment.id}/"
+                link=reverse('shipment_detail', args=[shipment.pk])
             )
             messages.success(request, f"Force Close escalation sent to {mgr.get_full_name() or mgr.username}.")
             
         elif action == 'cancel_escalation':
+            clear_approval_notifications(shipment.tracking_number)
             shipment.assigned_manager = None
             shipment.discrepancy_remarks = ''
             shipment.save()
@@ -4406,6 +4483,7 @@ def shipment_detail_view(request, pk):
             shipment.status = 'Completed'
             shipment.approved_by = request.user
             shipment.save()
+            clear_approval_notifications(shipment.tracking_number)
 
             # Manually handle discrepancy deduction and lock release
             if shipment.direction in ['Outbound', 'Transfer']:
@@ -4505,12 +4583,7 @@ def shipment_detail_view(request, pk):
                 user_obj = CustomUser.objects.filter(id=user_id).first()
                 if user_obj and user_obj not in shipment.followers.all():
                     shipment.followers.add(user_obj)
-                    from django.urls import reverse
-                    Notification.objects.create(
-                        user=user_obj,
-                        message=f"{request.user.get_full_name() or request.user.username} added you as a follower to Shipment {shipment.tracking_number}.",
-                        link=reverse('shipment_detail', args=[shipment.pk])
-                    )
+                    notify_added_follower(request.user, user_obj, f"Shipment {shipment.tracking_number}", reverse('shipment_detail', args=[shipment.pk]))
                     messages.success(request, f"Added {user_obj.get_full_name() or user_obj.username} as a follower.")
                     
         elif action == 'remove_follower':
@@ -4593,7 +4666,13 @@ def profile_view(request):
         user = request.user
         user.first_name = request.POST.get('first_name', user.first_name)
         user.last_name = request.POST.get('last_name', user.last_name)
-        user.email = request.POST.get('email', user.email)
+        email = request.POST.get('email', user.email).strip()
+        try:
+            validate_email_address(email)
+        except ValidationError as e:
+            messages.error(request, validation_messages(e))
+            return redirect('profile')
+        user.email = email
         user.save()
         messages.success(request, "Profile updated successfully.")
         return redirect('profile')
@@ -4871,7 +4950,7 @@ def so_create_shipment_view(request, pk):
                     origin_warehouse_id=wh_id or (so.origin_warehouse_id if so.origin_warehouse else None),
                     last_edited_by=request.user,
                     client_contact_name=(so.client.contact_person or None) if so.client else None,
-                    client_contact_phone=(so.client.phone or None) if so.client else None,
+                    client_contact_phone=(so.client.phone or so.client.email or None) if so.client else None,
                     client_address=(so.client.delivery_address or None) if so.client else None,
                 )
                 OrderTimeline.objects.create(shipment=shipment, action=f"Drafted from {so.so_number}.", user=request.user)
@@ -5502,6 +5581,7 @@ def production_run_detail_view(request, pk):
                 if user_obj not in run.followers.all():
                     run.followers.add(user_obj)
                     OrderTimeline.objects.create(production_run=run, action=f"Added {user_obj.get_full_name() or user_obj.username} as a follower.", user=request.user)
+                    notify_added_follower(request.user, user_obj, f"Production Run {run.run_number}", reverse('production_run_detail', args=[run.pk]))
                     messages.success(request, f"Added {user_obj.get_full_name() or user_obj.username} as a follower.")
             return redirect('production_run_detail', pk=pk)
 
