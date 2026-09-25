@@ -1308,9 +1308,13 @@ def incoming_transfer_mt():
 
 
 def rent_reduction_opportunities():
-    """DSS: for rented (Usage-billed) warehouses capacity_forecast() flags
-    critical/watch, suggests batches to relocate into our own warehouses and
-    estimates the rent that would stop accruing - per day and in total.
+    """DSS: for every rented (Usage-billed) warehouse, suggests batches to
+    relocate into our own warehouses and estimates the rent that would stop
+    accruing - per day and in total. Every such warehouse is looked at whatever
+    its capacity_forecast() status: rent is paid on each MT stored, however full
+    the warehouse is (and the moves themselves bring its trend down, so gating on
+    critical/watch hid the rest of the suggestions after the first move). The
+    status is passed through for the badge and to list the fullest first.
 
     Destinations are Internal warehouses that can store stock (location_type
     Storage or Both - a manufacturing-only plant is never suggested), each with
@@ -1333,10 +1337,10 @@ def rent_reduction_opportunities():
     from .models import Warehouse, Batch, RentSuggestion
     from .settings_store import get_setting
 
+    rented = list(Warehouse.objects.exclude(ownership_type='Internal').filter(rental_billing_method='Usage'))
+    if not rented:
+        return []  # nothing to save moving off a free or flat-Overall-billed warehouse
     forecast_rows = {r['warehouse_id']: r for r in capacity_forecast()}
-    flagged = [wid for wid, r in forecast_rows.items() if r['status'] in ('critical', 'watch')]
-    if not flagged:
-        return []
 
     util_by_wh = {r['warehouse_id']: r for r in warehouse_utilization()}
     incoming = incoming_transfer_mt()
@@ -1359,12 +1363,10 @@ def rent_reduction_opportunities():
         decision='Dismissed', snoozed_until__gte=today, batch__isnull=False
     ).values_list('batch_id', flat=True))
 
-    # Gather every movable batch across all flagged rented warehouses first ...
+    # Gather every movable batch across all rented warehouses first ...
     origins = {}
     batches = []
-    for w in Warehouse.objects.filter(id__in=flagged):
-        if w.ownership_type == 'Internal' or w.rental_billing_method != 'Usage':
-            continue  # nothing to save moving off a free or flat-Overall-billed warehouse
+    for w in rented:
         origins[w.id] = {'warehouse': w, 'candidates': [], 'excluded_low_saving': 0, 'dismissed_hidden': 0}
         for b in (Batch.objects.filter(warehouse=w, status__in=['Active', 'Quarantined'])
                   .select_related('material', 'product')):
@@ -1434,7 +1436,7 @@ def rent_reduction_opportunities():
                 'snooze_days': snooze_days,
                 'min_total_saving': min_saving,
             })
-    opportunities.sort(key=lambda o: -o['total_saving'])
+    opportunities.sort(key=lambda o: (_CAPACITY_RANK[o['status']], -o['total_saving']))
     return opportunities
 
 

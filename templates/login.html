@@ -12,6 +12,12 @@
             <p class="auth-subtitle">Verify identity to establish connection</p>
         </div>
 
+        {% if request.GET.reason == 'idle' and not form.errors %}
+        <div class="session-timeout-notice" role="status">
+            You were signed out after {{ session_idle_timeout_minutes }} minutes of inactivity. Sign in again to continue.
+        </div>
+        {% endif %}
+
         {% if form.errors %}
         <div class="form-errors">
             <strong>Authentication Failed:</strong>
@@ -28,6 +34,7 @@
 
         <form method="post" action="{% url 'login' %}">
             {% csrf_token %}
+            {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
 
             <div class="form-group">
                 <label for="id_username" class="form-label">Username</label>

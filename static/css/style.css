@@ -2742,3 +2742,57 @@ button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
     .action-center-grid form { flex-wrap: wrap; }
     .action-center-grid form .form-input { flex-basis: 100%; }
 }
+
+/* Idle sign-out warning (base.html + static/js/session-timeout.js) */
+.session-timeout-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(15, 23, 42, 0.45);
+}
+.session-timeout-overlay[hidden] { display: none; }
+.session-timeout-dialog {
+    width: 100%;
+    max-width: 420px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 1.75rem;
+}
+.session-timeout-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-main);
+    margin-bottom: 0.5rem;
+}
+.session-timeout-text {
+    color: var(--text-muted);
+    font-size: 0.92rem;
+    line-height: 1.55;
+}
+.session-timeout-countdown {
+    color: var(--warning-strong);
+    font-variant-numeric: tabular-nums;
+}
+.session-timeout-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    margin-top: 1.5rem;
+}
+.session-timeout-notice {
+    background: var(--warning-bg);
+    border: 1px solid var(--warning-border);
+    color: var(--warning-strong);
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    margin-bottom: 1.5rem;
+}

@@ -17,8 +17,8 @@
             Rent Reduction Opportunities
         </h1>
         <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:66ch;">
-            Batches sitting in Critical/Watch warehouses that could move to spare Internal
-            capacity, worst rent-burn first.
+            Batches sitting in rented warehouses that could move to spare Internal
+            capacity, fullest warehouses first.
         </p>
     </div>
 </header>
@@ -43,7 +43,7 @@
 
 <section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay:0.05s; margin-bottom:1.5rem;">
     <div class="kpi-item-card">
-        <span class="kpi-label">Warehouses Flagged</span>
+        <span class="kpi-label">Rented Warehouses</span>
         <div class="kpi-value-row"><span class="kpi-value">{{ summary.opportunity_count }}</span></div>
     </div>
     <div class="kpi-item-card">
@@ -168,8 +168,12 @@
                 <a href="{% url 'warehouse_edit' o.warehouse_id %}" style="font-weight:700; font-size:1.05rem; color:var(--primary); text-decoration:none;">{{ o.name }}</a>
                 {% if o.status == 'critical' %}
                 <span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">Critical</span>
-                {% else %}
+                {% elif o.status == 'watch' %}
                 <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">Watch</span>
+                {% elif o.status == 'no_data' %}
+                <span style="font-size:0.7rem; font-weight:700; background:#f1f5f9; color:#475569; padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">No trend yet</span>
+                {% else %}
+                <span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">{% if o.status == 'ok' %}OK{% else %}Stable{% endif %}</span>
                 {% endif %}
             </div>
             <div style="text-align:right;">
@@ -258,7 +262,7 @@
     {% endfor %}
 {% else %}
 <div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:2.5rem; text-align:center; color:var(--text-muted);">
-    No rent-reduction opportunities right now &mdash; either no rented warehouse is Critical/Watch,
+    No rent-reduction opportunities right now &mdash; either no warehouse is rented by usage,
     or none of your own storage facilities has spare capacity to move stock into.
 </div>
 {% endif %}

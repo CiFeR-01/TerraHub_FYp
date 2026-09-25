@@ -2402,9 +2402,34 @@ class RentReductionOpportunitiesTests(TestCase):
         self._snap(wh, 90, 3)
         self._snap(wh, 97, 0)
 
-    def test_no_opportunities_when_nothing_flagged(self):
+    def test_unflagged_rented_warehouse_is_still_suggested(self):
+        # falling trend and under 95% -> Stable, but its stock still costs rent
+        self._snap(self.rented, 99, 6)
+        self._snap(self.rented, 97, 3)
+        self._snap(self.rented, 94, 0)
         self._batch(self.rented, 100, '5.00')
+        self._depot()
+        rows = rent_reduction_opportunities()
+        self.assertEqual((rows[0]['status'], rows[0]['total_daily_saving']), ('stable', 500.0))
+
+    def test_flat_billed_or_own_warehouses_are_never_origins(self):
+        self.rented.rental_billing_method = 'Overall'
+        self.rented.save()
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00')
+        self._depot()
         self.assertEqual(rent_reduction_opportunities(), [])
+
+    def test_fullest_warehouses_listed_first(self):
+        calm = Warehouse.objects.create(
+            name='Calm Depot', location_type='Storage', ownership_type='ExternalProvider',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('9.00'), total_capacity_mt=Decimal('1000'),
+        )
+        self._flag_critical(self.rented)
+        self._batch(self.rented, 100, '5.00')
+        self._batch(calm, 100, '9.00')      # bigger saving, but no pressure on space
+        self._depot('1000')
+        self.assertEqual([r['warehouse_id'] for r in rent_reduction_opportunities()], [self.rented.id, calm.id])
 
     def test_no_opportunities_without_internal_spare_capacity(self):
         self._flag_critical(self.rented)
@@ -5886,3 +5911,49 @@ class OrderListShowsItemsTests(TestCase):
             PurchaseOrderDetail.objects.create(purchase_order=self.po1, material=m, quantity_ordered=Decimal('1'))
         resp = self.client.get(reverse('po_list'))
         self.assertContains(resp, '+2 more')      # 5 lines, 3 shown
+
+
+class SessionIdleTimeoutTests(TestCase):
+    """30-minute idle sign-out: settings, keep-alive endpoint and warning popup."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(username='idle', password='pw')
+
+    def test_session_settings(self):
+        from django.conf import settings
+        self.assertEqual(settings.SESSION_COOKIE_AGE, 30 * 60)
+        self.assertTrue(settings.SESSION_SAVE_EVERY_REQUEST)
+        self.assertTrue(settings.SESSION_EXPIRE_AT_BROWSER_CLOSE)
+
+    def test_keepalive_anonymous_gets_401_not_redirect(self):
+        resp = self.client.post(reverse('session_keepalive'))
+        self.assertEqual(resp.status_code, 401)
+
+    def test_keepalive_rejects_get(self):
+        self.client.login(username='idle', password='pw')
+        self.assertEqual(self.client.get(reverse('session_keepalive')).status_code, 405)
+
+    def test_keepalive_authenticated(self):
+        self.client.login(username='idle', password='pw')
+        resp = self.client.post(reverse('session_keepalive'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['expires_in'], 30 * 60)
+
+    def test_warning_popup_only_for_signed_in_users(self):
+        resp = self.client.get(reverse('home'))
+        self.assertNotContains(resp, 'session-timeout-modal')
+        self.client.login(username='idle', password='pw')
+        resp = self.client.get(reverse('dashboard'))
+        self.assertContains(resp, 'id="session-timeout-modal"')
+        self.assertContains(resp, 'data-timeout="1800"')
+        self.assertContains(resp, 'js/session-timeout.js')
+
+    def test_login_page_explains_idle_sign_out_and_keeps_next(self):
+        resp = self.client.get(reverse('login') + '?reason=idle&next=/warehouse/inventory/')
+        self.assertContains(resp, 'signed out after 30 minutes of inactivity')
+        self.assertContains(resp, 'name="next" value="/warehouse/inventory/"')
+        resp = self.client.post(reverse('login') + '?reason=idle', {
+            'username': 'idle', 'password': 'pw', 'next': '/warehouse/inventory/',
+        })
+        self.assertRedirects(resp, '/warehouse/inventory/', fetch_redirect_response=False)
