@@ -74,6 +74,77 @@ REGISTRY: dict[str, tuple[object, str, str]] = {
         "Longest period (days) Rent Opportunities counts rent savings over for a "
         "batch that isn't expected to be used up or expire sooner.",
     ),
+    "capacity_trend_window_days": (
+        60,
+        "int",
+        "Inventory Capacity fits each warehouse's fill trend over the most recent "
+        "this-many days only, so one old step change (a big shipment, a clear-out) "
+        "stops skewing the projection once it is this far behind. 0 = use all history.",
+    ),
+    "stockout_reorder_now_days": (
+        2,
+        "int",
+        "Stockout & Reorder Forecast: a material whose reorder-by date is this many "
+        "days away (or nearer, or already past) is 'Action Required'.",
+    ),
+    "stockout_watch_days": (
+        14,
+        "int",
+        "Stockout & Reorder Forecast: a material whose reorder-by date is beyond the "
+        "'reorder now' band but within this many days is 'Watch'; later is 'Healthy'.",
+    ),
+    "capacity_critical_percent": (
+        95.0,
+        "float",
+        "Inventory Capacity: a warehouse at or above this utilization (%) is 'Critical' "
+        "whatever its trend.",
+    ),
+    "capacity_critical_days": (
+        14,
+        "int",
+        "Inventory Capacity: a warehouse projected to reach 100% within this many days "
+        "is 'Critical'.",
+    ),
+    "capacity_watch_days": (
+        60,
+        "int",
+        "Inventory Capacity: a warehouse projected to reach 100% within this many days "
+        "(but not 'Critical') is 'Watch'; further out is 'Filling'.",
+    ),
+    "capacity_flat_slope_pp": (
+        0.02,
+        "float",
+        "Inventory Capacity: a fill trend flatter than this many percentage points per "
+        "day counts as not filling ('Stable').",
+    ),
+    "supplier_good_on_time_pct": (
+        90.0,
+        "float",
+        "Supplier Performance: a supplier is 'On track' only with at least this on-time "
+        "delivery rate (%) and the fill rate below.",
+    ),
+    "supplier_good_fill_pct": (
+        98.0,
+        "float",
+        "Supplier Performance: minimum fill rate (%) for 'On track' (with the on-time rate above).",
+    ),
+    "supplier_poor_on_time_pct": (
+        70.0,
+        "float",
+        "Supplier Performance: a supplier below this on-time delivery rate (%) is 'Poor'.",
+    ),
+    "supplier_poor_fill_pct": (
+        90.0,
+        "float",
+        "Supplier Performance: a supplier below this fill rate (%) is 'Poor'.",
+    ),
+    "trend_significant_pct": (
+        15.0,
+        "float",
+        "Demand & Sales Trends: a product is 'Rising' or 'Declining' when its recent "
+        "average monthly quantity differs from the earlier average by at least this "
+        "many percent; within the band it is 'Flat'.",
+    ),
     "logistics_stall_days": (
         5,
         "int",

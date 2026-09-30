@@ -6,17 +6,19 @@ template under templates/analytics/. All real computation lives in analytics.py 
 it stays testable and reusable by management commands. See
 SYSTEM_DOCUMENTATION.md section 8 and ANALYTICS_CHANGELOG.md.
 """
+import functools
 import os
 from datetime import timedelta
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import Http404
+from django.http import Http404, HttpResponseRedirect
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from . import analytics
+from .analytics_cache import invalidate as invalidate_analytics_cache
 from .context_processors import ANALYTICS_CATEGORIES, _perm_ok
 from .models import RentSuggestion, Warehouse
 from .settings_store import get_setting
@@ -25,6 +27,22 @@ from .utils import create_rent_transfer, dismiss_rent_suggestions
 # Trailing windows offered in the UI. 0 == all time.
 WINDOW_CHOICES = (30, 90, 180, 365, 0)
 _DEFAULT_WINDOW = 180
+
+
+def refreshable(view):
+    """`?refresh=1` (the "Refresh" link on every analytics page) drops the cached
+    analytics results, then redirects to the same page without the parameter so a
+    later reload doesn't keep busting the cache."""
+    @functools.wraps(view)
+    def wrapper(request, *args, **kwargs):
+        if request.method == "GET" and "refresh" in request.GET:
+            invalidate_analytics_cache()
+            params = request.GET.copy()
+            params.pop("refresh", None)
+            qs = params.urlencode()
+            return HttpResponseRedirect(request.path + (f"?{qs}" if qs else ""))
+        return view(request, *args, **kwargs)
+    return wrapper
 
 
 def _parse_window(request, default=_DEFAULT_WINDOW):
@@ -51,6 +69,7 @@ def _analytics_tabs(request, url_name):
 
 
 @login_required
+@refreshable
 def supplier_scorecard_view(request):
     window_days = _parse_window(request)
     since = timezone.now().date() - timedelta(days=window_days) if window_days else None
@@ -74,19 +93,23 @@ def supplier_scorecard_view(request):
         "estimated_share": (estimated_pos / assessable_pos) if assessable_pos else None,
     }
 
+    as_of = timezone.now()
     analytics_category, analytics_tabs = _analytics_tabs(request, "supplier_scorecard")
     return render(request, "analytics/supplier_scorecard.html", {
         "rows": rows,
         "summary": summary,
         "window_days": window_days,
         "window_choices": WINDOW_CHOICES,
+        "th": {k: round(v * 100, 1) for k, v in analytics.supplier_thresholds().items()},
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,
+        "as_of": as_of,
         "analytics_active": "supplier_scorecard",
     })
 
 
 @login_required
+@refreshable
 def sales_order_delivery_risk_view(request):
     rows = analytics.sales_order_delivery_risk()
     risk_filter = request.GET.get("risk", "").strip()
@@ -103,6 +126,7 @@ def sales_order_delivery_risk_view(request):
         "on_track_count": sum(1 for r in rows if r["risk"] == "on_track"),
         "no_deadline_count": sum(1 for r in rows if r["risk"] == "no_deadline"),
     }
+    as_of = timezone.now()
     analytics_category, analytics_tabs = _analytics_tabs(request, "so_delivery_risk")
     return render(request, "analytics/so_delivery_risk.html", {
         "rows": shown,
@@ -117,11 +141,13 @@ def sales_order_delivery_risk_view(request):
         ],
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,
+        "as_of": as_of,
         "analytics_active": "so_delivery_risk",
     })
 
 
 @login_required
+@refreshable
 def audit_accuracy_view(request):
     window_days = _parse_window(request, default=365)
     since = timezone.now().date() - timedelta(days=window_days) if window_days else None
@@ -139,6 +165,7 @@ def audit_accuracy_view(request):
         "shrinkage": total_shrink,
         "chronic_warehouses": sum(1 for r in wh if r["chronic_shrinkage"]),
     }
+    as_of = timezone.now()
     analytics_category, analytics_tabs = _analytics_tabs(request, "audit_accuracy")
     return render(request, "analytics/audit_accuracy.html", {
         "sections": [
@@ -151,11 +178,13 @@ def audit_accuracy_view(request):
         "window_choices": WINDOW_CHOICES,
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,
+        "as_of": as_of,
         "analytics_active": "audit_accuracy",
     })
 
 
 @login_required
+@refreshable
 def production_yield_view(request):
     data = analytics.production_yield_variance()
     prod = data["by_product"]
@@ -169,6 +198,7 @@ def production_yield_view(request):
             sum(r["mean_yield_variance_pct"] for r in rated) / len(rated) if rated else None
         ),
     }
+    as_of = timezone.now()
     analytics_category, analytics_tabs = _analytics_tabs(request, "production_yield")
     return render(request, "analytics/production_yield.html", {
         "sections": [
@@ -179,6 +209,7 @@ def production_yield_view(request):
         "summary": summary,
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,
+        "as_of": as_of,
         "analytics_active": "production_yield",
     })
 
@@ -210,6 +241,7 @@ _COVERAGE_MAX_ROWS = 15
 
 
 @login_required
+@refreshable
 def forecast_view(request):
     try:
         window = int(request.GET.get("window", 30))
@@ -218,7 +250,8 @@ def forecast_view(request):
     if window not in FORECAST_WINDOWS:
         window = 30
 
-    rows = analytics.stockout_forecast(window_days=window)
+    rows, as_of = analytics.stockout_forecast.with_meta(window_days=window)
+    reorder_now_days, reorder_watch_days = analytics.stockout_thresholds()
 
     status_filter = request.GET.get("status", "").strip()
     if status_filter not in _STATUS_FILTER_MAP:
@@ -264,6 +297,8 @@ def forecast_view(request):
         "coverage_rows": coverage_rows,
         "summary": summary,
         "window": window,
+        "reorder_now_days": reorder_now_days,
+        "reorder_watch_days": reorder_watch_days,
         "window_choices": FORECAST_WINDOWS,
         "status_filter": status_filter,
         "query": query,
@@ -276,11 +311,13 @@ def forecast_view(request):
         ],
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,
+        "as_of": as_of,
         "analytics_active": "forecast",
     })
 
 
 @login_required
+@refreshable
 def capacity_forecast_view(request):
     can_run_snapshot = request.user.has_perm("core.add_warehouseutilizationsnapshot")
 
@@ -292,17 +329,24 @@ def capacity_forecast_view(request):
             messages.success(request, f"Snapshotted {count} warehouse(s) for {snap_date}.")
         return redirect("capacity_forecast")
 
-    analytics.ensure_today_snapshots()
-    rows = analytics.capacity_forecast()
+    rows, as_of = analytics.capacity_forecast.with_meta()
     rent_by_id = {r["warehouse_id"]: r for r in analytics.warehouse_rent_burn()}
     for r in rows:
         rent_row = rent_by_id.get(r["warehouse_id"])
         r["daily_rent"] = rent_row["daily_cost"] if rent_row else None
 
-    history_days = max((r["snapshot_count"] for r in rows), default=0)
+    # Snapshots are written when stock changes (core/signals.py), so a quiet day has no row
+    # and that's fine. What isn't fine is live occupancy that no snapshot reflects - a bulk
+    # update that skipped the signals - so compare the two instead of writing on a GET.
+    live_pct = {r["warehouse_id"]: r["utilization_percent"] for r in analytics.warehouse_utilization()}
+    out_of_sync = sum(
+        1 for r in rows
+        if r["current_percent"] is None or abs(live_pct.get(r["warehouse_id"], 0.0) - r["current_percent"]) > 0.05
+    )
+
+    history_days = max((r["history_days"] for r in rows), default=0)
     latest_dates = [r["latest_date"] for r in rows if r["latest_date"]]
     latest_snapshot_date = max(latest_dates) if latest_dates else None
-    stale_days = (timezone.localdate() - latest_snapshot_date).days if latest_snapshot_date else None
 
     summary = {
         "warehouse_count": len(rows),
@@ -315,24 +359,26 @@ def capacity_forecast_view(request):
         "total_daily_rent": sum(r["daily_rent"] or 0 for r in rows),
         "has_rent_opportunities": any(r["status"] in ("critical", "watch") for r in rows),
         "latest_snapshot_date": latest_snapshot_date,
-        "stale_days": stale_days,
-        "is_stale": stale_days is not None and stale_days >= 2,
+        "out_of_sync": out_of_sync,
     }
     analytics_category, analytics_tabs = _analytics_tabs(request, "capacity_forecast")
     return render(request, "analytics/capacity_forecast.html", {
         "rows": rows,
         "summary": summary,
         "can_run_snapshot": can_run_snapshot,
+        "trend_window_days": get_setting("capacity_trend_window_days"),
+        "th": analytics.capacity_thresholds(),
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,
+        "as_of": as_of,
         "analytics_active": "capacity_forecast",
     })
 
 
 @login_required
+@refreshable
 def rent_opportunities_view(request):
-    analytics.ensure_today_snapshots()
-    rows = analytics.rent_reduction_opportunities()
+    rows, as_of = analytics.rent_reduction_opportunities.with_meta()
     history = analytics.rent_history(days=180)
     results = analytics.rent_results()
     summary = {
@@ -350,6 +396,7 @@ def rent_opportunities_view(request):
         "results": results,
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,
+        "as_of": as_of,
         "analytics_active": "rent_opportunities",
     })
 
@@ -377,7 +424,7 @@ def rent_suggestion_decide(request):
         return redirect("rent_opportunities")
 
     fresh = {}
-    for o in analytics.rent_reduction_opportunities():
+    for o in analytics.rent_reduction_opportunities.uncached():
         origin = Warehouse.objects.get(pk=o["warehouse_id"])
         for c in o["candidate_batches"]:
             fresh[(c["batch_id"], c["destination_id"])] = (origin, c)
@@ -592,6 +639,7 @@ def ops_briefing_view(request):
 
 
 @login_required
+@refreshable
 def shipment_logistics_view(request):
     rows = analytics.shipment_logistics()
     summary = {
@@ -602,17 +650,20 @@ def shipment_logistics_view(request):
         "stalled": sum(1 for r in rows if r["risk"] == "stalled"),
         "pending": sum(1 for r in rows if r["risk"] == "pending"),
     }
+    as_of = timezone.now()
     analytics_category, analytics_tabs = _analytics_tabs(request, "shipment_logistics")
     return render(request, "analytics/shipment_logistics.html", {
         "rows": rows,
         "summary": summary,
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,
+        "as_of": as_of,
         "analytics_active": "shipment_logistics",
     })
 
 
 @login_required
+@refreshable
 def product_sales_trend_view(request):
     rows = analytics.product_sales_trend()
     summary = {
@@ -622,12 +673,15 @@ def product_sales_trend_view(request):
         "flat": sum(1 for r in rows if r["status"] == "flat"),
         "new": sum(1 for r in rows if r["status"] == "new"),
     }
+    as_of = timezone.now()
     analytics_category, analytics_tabs = _analytics_tabs(request, "product_sales_trend")
     return render(request, "analytics/product_sales_trend.html", {
         "rows": rows,
         "summary": summary,
         "window_months": analytics.TREND_WINDOW_MONTHS,
+        "significant_pct": get_setting("trend_significant_pct"),
         "analytics_category": analytics_category,
         "analytics_tabs": analytics_tabs,
+        "as_of": as_of,
         "analytics_active": "product_sales_trend",
     })

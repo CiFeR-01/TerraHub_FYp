@@ -444,8 +444,8 @@ lead_time   = max SupplierMaterial.lead_time_days for the material
 reorder_by  = stockout - lead_time
 days_until_reorder = days_cover - lead_time
 status      = critical     if days_cover <= 0 (out, nothing arriving today), or days_until_reorder < 0
-              reorder_now  if days_until_reorder <= 2
-              watch        if days_until_reorder <= 14
+              reorder_now  if days_until_reorder <= stockout_reorder_now_days (2)
+              watch        if days_until_reorder <= stockout_watch_days (14)
               ok           otherwise
               no_usage     if burn/day == 0
 ```
@@ -472,9 +472,9 @@ Quarantined via `analytics.used_mt_expr()`, and `quarantined_mt`) and rent
 (Malaysia time, `timezone.localdate()`) after any commit that saves a `Batch`
 (incl. moves between warehouses), a `Warehouse`, or a Material/Product unit
 weight — the last write of the day is that day's figure; a day with no row means
-nothing changed. Bulk `QuerySet.update()` skips signals, so the Capacity and Rent
-Opportunities pages call `ensure_today_snapshots()` to fill any missing row for
-today. `manage.py snapshot_utilization` remains for manual use. (The old Railway
+nothing changed. Bulk `QuerySet.update()` skips signals, so the Capacity page compares live occupancy
+with the last snapshot and warns (with "Run snapshot now") when they differ; page
+views never write. `manage.py snapshot_utilization` remains for manual use. (The old Railway
 cron service for this command can be removed.)
 
 Rows written before daily rent was recorded (and rows the seed/simulation
@@ -485,19 +485,21 @@ rows into per-warehouse daily series (carrying values forward over days with no
 row) for the Rent History chart on Rent Opportunities.
 
 ```
-slope, _  = least-squares fit of utilization_percent over the snapshot dates
+slope, _  = least-squares fit of utilization_percent over one point per calendar day over the last
+            `capacity_trend_window_days` (default 60, 0 = all; minimum 7), or since the first
+            snapshot if that is more recent (a day with no row carries the last row forward)
 weekly_rate_pp = slope × 7
 days_to_full   = (100 − current) / slope           (slope in pp/day)
-projected_full = latest_snapshot_date + days_to_full
-status = no_data   if < 3 snapshots
-         stable    if slope <= 0.02 pp/day (and current < 95)
-         critical  if current >= 95%, or days_to_full <= 14
-         watch     if days_to_full <= 60
+projected_full = today + days_to_full
+status = no_data   if < 3 calendar days of history (first snapshot -> today)
+         stable    if slope <= capacity_flat_slope_pp (0.02 pp/day) and current < capacity_critical_percent (95)
+         critical  if current >= capacity_critical_percent (95%), or days_to_full <= capacity_critical_days (14)
+         watch     if days_to_full <= capacity_watch_days (60)
          ok         otherwise
 ```
 
 Sorted `(status rank, days_to_full, -current, name)`. The UI shows a "collecting
-data" banner until a warehouse has 7 snapshots.
+data" banner until there are 7 calendar days of history.
 
 ### 8.9. AI Copilot — category briefings  *(Phase 3 — implemented; split into categories in Phase 4)*
 
@@ -668,8 +670,8 @@ recent_avg  = mean of the second half
 pct_change  = (recent_avg − earlier_avg) / earlier_avg × 100
 status = insufficient_data  if sales activity in fewer than 3 of the 6 months
          new                if earlier_avg == 0 and recent_avg > 0
-         declining          if pct_change <= −15%
-         rising             if pct_change >= +15%
+         declining          if pct_change <= −trend_significant_pct (15%)
+         rising             if pct_change >= +trend_significant_pct (15%)
          flat               otherwise
 ```
 

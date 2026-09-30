@@ -22,6 +22,7 @@
 </header>
 
 {% include "analytics/partials/_analytics_tabs.html" %}
+{% include "analytics/partials/_freshness.html" %}
 
 <form method="get" class="animate-fade-in-up" style="display:flex; gap:1.5rem; flex-wrap:wrap; align-items:center; margin-bottom:1.25rem;">
     <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center;">
@@ -179,8 +180,8 @@
     else the <code>po_default_lead_time_days</code> setting, tagged
     <span style="font-size:0.6rem; font-weight:700; background:#eef2ff; color:#4338ca; padding:0.05rem 0.35rem; border-radius:4px;">EST</span>).
     <span style="color:#b91c1c;">&#128308; Action Required</span> = already out of stock, or
-    the reorder-by date is today or in the past. <span style="color:#b45309;">&#128992; Watch</span>
-    = reorder-by within 14 days. <span style="color:#065f46;">&#128994; Healthy</span> = beyond that.
+    the reorder-by date is {% if reorder_now_days %}within {{ reorder_now_days }} day{{ reorder_now_days|pluralize }} or{% else %}today or{% endif %} in the past. <span style="color:#b45309;">&#128992; Watch</span>
+    = reorder-by within {{ reorder_watch_days }} days. <span style="color:#065f46;">&#128994; Healthy</span> = beyond that.
     <em>On order</em> (open POs) is added to the projection on each PO's expected
     delivery date (its own date, else order date + lead time, marked <em>est.</em>).
     A delivery that lands before the stock runs out extends <em>days cover</em>;

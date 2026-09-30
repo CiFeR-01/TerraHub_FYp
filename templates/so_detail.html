@@ -104,7 +104,7 @@
                         {% for run in so_runs %}
                         <a href="{% url 'production_run_detail' run.pk %}" style="color:var(--primary); text-decoration:none; display:flex; align-items:center; gap:0.4rem;">
                             {{ run.run_number }}
-                            <span class="badge {% if run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.65rem;">{{ run.status }}</span>
+                            <span class="badge {% if run.in_qa %}badge-amber{% elif run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.65rem;">{{ run.status }}</span>
                         </a>
                         {% empty %}
                         <span style="color:var(--text-muted); font-weight:400; font-size:0.85rem;">No production run linked yet</span>
@@ -132,19 +132,19 @@
 
             </div>
         </div>
-        <!-- Edit header panel -->
+        <!-- Edit header panel (read-only once the order is locked) -->
         <div style="background:#f8fafc; border-radius:10px; border:1px solid var(--border-light); padding:1.25rem;">
-            <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.75rem; text-transform:uppercase; letter-spacing:0.05em;">Edit Details</div>
+            <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.75rem; text-transform:uppercase; letter-spacing:0.05em;">{% if items_locked %}Order Details{% else %}Edit Details{% endif %}</div>
             <form method="post">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="update_so_header">
                 <div style="margin-bottom:0.6rem;">
                     <label style="font-size:0.78rem; font-weight:600; display:block; margin-bottom:0.2rem;">Client Name</label>
-                    <input type="text" name="client_name" value="{{ so.client_name }}" class="form-input" style="width:100%; padding:0.45rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.82rem;">
+                    <input type="text" name="client_name" {% if items_locked %}disabled{% endif %} value="{{ so.client_name }}" class="form-input" style="width:100%; padding:0.45rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.82rem;">
                 </div>
                 <div style="margin-bottom:0.6rem;">
                     <label style="font-size:0.78rem; font-weight:600; display:block; margin-bottom:0.2rem;">Origin Warehouse</label>
-                    <select name="origin_warehouse_id" class="form-select" style="width:100%; padding:0.45rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.82rem;">
+                    <select name="origin_warehouse_id" {% if items_locked %}disabled{% endif %} class="form-select" style="width:100%; padding:0.45rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.82rem;">
                         {% for w in warehouses %}
                         <option value="{{ w.id }}" {% if w.id == so.origin_warehouse.id %}selected{% endif %}>{{ w.name }}</option>
                         {% endfor %}
@@ -152,9 +152,9 @@
                 </div>
                 <div style="margin-bottom:0.75rem;">
                     <label style="font-size:0.78rem; font-weight:600; display:block; margin-bottom:0.2rem;">Fulfillment Deadline</label>
-                    <input type="date" name="fulfillment_deadline" value="{{ so.fulfillment_deadline|default:'' }}" class="form-input" style="width:100%; padding:0.45rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.82rem;">
+                    <input type="date" name="fulfillment_deadline" {% if items_locked %}disabled{% endif %} value="{{ so.fulfillment_deadline|default:'' }}" class="form-input" style="width:100%; padding:0.45rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.82rem;">
                 </div>
-                <button type="submit" class="btn btn-secondary" style="width:100%; padding:0.45rem; font-size:0.82rem;">Save Changes</button>
+                {% if not items_locked %}<button type="submit" class="btn btn-secondary" style="width:100%; padding:0.45rem; font-size:0.82rem;">Save Changes</button>{% endif %}
             </form>
         </div>
     </div>
@@ -166,13 +166,15 @@
 <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.05s;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700;">Product Line Items</h3>
+        {% if not items_locked and so.status != 'Rejected' %}
         <button onclick="var f=document.getElementById('add-item-form'); f.style.display=f.style.display==='none'?'block':'none';" class="btn btn-primary" style="padding:0.4rem 0.9rem; font-size:0.82rem;">
             ✚ Add Line Item
         </button>
+        {% endif %}
     </div>
 
     <!-- Add Item Form (hidden by default) -->
-    {% if so.status != 'Shipped' and so.status != 'Delivered' and so.status != 'Rejected' %}
+    {% if not items_locked and so.status != 'Rejected' %}
     <div id="add-item-form" style="display:none; background:#f8fafc; border-radius:10px; border:1px solid var(--border-light); padding:1.25rem; margin-bottom:1.25rem;">
         <form method="post">
             {% csrf_token %}
@@ -247,6 +249,7 @@
                         {% if row.allocation_rows %}
                         <button onclick="(function(){var el=document.getElementById('batches-{{ row.item.id }}');el.style.display=el.style.display==='none'?'table-row':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--text-muted); margin-right:0.3rem;">📦 Batches</button>
                         {% endif %}
+                        {% if not items_locked %}
                         <button onclick="(function(){var el=document.getElementById('bom-{{ row.item.id }}');el.style.display=el.style.display==='none'?'table-row':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--text-muted); margin-right:0.3rem;">⚗ BOM</button>
                         <form method="post" style="display:inline;">
                             {% csrf_token %}
@@ -254,13 +257,14 @@
                             <input type="hidden" name="item_id" value="{{ row.item.id }}">
                             <button type="submit" onclick="return confirm('Remove {{ row.item.product.name }} from this order?')" style="background:none; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:#dc2626;">✕</button>
                         </form>
+                        {% endif %}
                     </td>
                 </tr>
                 <!-- Allocated Batches Detail Row -->
                 {% if row.allocation_rows %}
                 <tr id="batches-{{ row.item.id }}" style="display:none; background:#f8fafc;">
                     <td colspan="12" style="padding:0.75rem 1.5rem 1rem 2rem;">
-                        <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">Allocated Batches — {{ row.item.product.name }}</div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">Batches — {{ row.item.product.name }}</div>
                         <table class="sortable" style="width:100%; border-collapse:collapse; font-size:0.82rem; max-width:1000px;">
                             <tr style="color:var(--text-muted); font-weight:600; border-bottom:1px solid var(--border-light);">
                                 <td style="padding:0.3rem 0.75rem;">Batch</td>
@@ -280,11 +284,13 @@
                                     {% if arow.produced_for %}
                                     <br><a href="{{ arow.produced_for.url }}" style="font-size:0.72rem; color:#b45309; text-decoration:none;">⚠ Originally produced for {{ arow.produced_for.so_number }}</a>
                                     {% endif %}
+                                    {% if arow.shipment %}<br><a href="{% url 'shipment_detail' arow.shipment.pk %}" style="font-size:0.72rem; color:var(--primary); text-decoration:none;">On {{ arow.shipment.tracking_number }} ({{ arow.shipment.status }})</a>{% endif %}
                                 </td>
                                 <td style="padding:0.4rem 0.75rem; text-align:right;">
-                                    <button type="button" onclick="(function(){var el=document.getElementById('unalloc-{{ arow.alloc_id }}');el.style.display=el.style.display==='none'?'block':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.15rem 0.5rem; cursor:pointer; font-size:0.72rem; color:var(--text-muted);">Unallocate</button>
+                                    {% if arow.can_unallocate %}<button type="button" onclick="(function(){var el=document.getElementById('unalloc-{{ arow.alloc_id }}');el.style.display=el.style.display==='none'?'block':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.15rem 0.5rem; cursor:pointer; font-size:0.72rem; color:var(--text-muted);">Unallocate</button>{% endif %}
                                 </td>
                             </tr>
+                            {% if arow.can_unallocate %}
                             <tr id="unalloc-{{ arow.alloc_id }}" style="display:none;">
                                 <td colspan="4" style="padding:0.5rem 0.75rem 0.85rem;">
                                     <form method="post" style="display:flex; align-items:flex-end; gap:0.6rem; flex-wrap:wrap; background:#fff; border:1px solid var(--border-light); border-radius:6px; padding:0.75rem;">
@@ -308,12 +314,14 @@
                                     </form>
                                 </td>
                             </tr>
+                            {% endif %}
                             {% endfor %}
                         </table>
                     </td>
                 </tr>
                 {% endif %}
                 <!-- BOM Detail Row -->
+                {% if not items_locked %}
                 <tr id="bom-{{ row.item.id }}" style="display:none; background:#f8fafc;">
                     <td colspan="12" style="padding:0.75rem 1.5rem 1rem 2rem;">
                         <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">BOM — {{ row.item.product.name }}</div>
@@ -342,6 +350,7 @@
                         {% endif %}
                     </td>
                 </tr>
+                {% endif %}
                 {% endfor %}
             </tbody>
             <tfoot>
@@ -410,7 +419,7 @@
             {% for run in so_runs %}
             <a href="{% url 'production_run_detail' run.pk %}" style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; padding:0.6rem 0.85rem; background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; text-decoration:none; color:var(--text-main); font-size:0.85rem;">
                 <span><strong style="color:var(--primary);">{{ run.run_number }}</strong> — {{ run.target_product.name }} ({{ run.expected_yield|floatformat:0 }} units ≈ {{ run.expected_yield|weight_display:run.target_product }})</span>
-                <span class="badge {% if run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.7rem;">{{ run.status }}</span>
+                <span class="badge {% if run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.7rem;">{% if run.in_qa %}Quality Check{% else %}{{ run.status }}{% endif %}</span>
             </a>
             {% endfor %}
         </div>
@@ -485,6 +494,10 @@
                 </form>
             {% endif %}
         </div>
+    {% elif so_in_qa %}
+        <p style="font-size:0.85rem; color:#92400e; padding:1rem; background:#fffbeb; border-radius:8px; border:1px solid #fde68a;">
+            <strong>In Quality Check.</strong> The finished goods for this order have been produced and are waiting for QA release. They will be allocated to this order automatically once released.
+        </p>
     {% else %}
         <p style="font-size:0.85rem; color:var(--text-muted); padding:1rem; background:#f8fafc; border-radius:8px; border:1px solid var(--border-light);">
             Allocation is available when the order is in <strong>Pending</strong> status. Current status: <span style="font-weight:600;">{{ so.status }}</span>.
@@ -531,6 +544,19 @@
     </p>
     {% if so.approval_remarks %}
     <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">"{{ so.approval_remarks }}"</p>
+    {% endif %}
+    {% if can_decide_approval %}
+    <form method="post" action="{% url 'approvals_inbox' %}" style="margin:0.75rem 0 1rem;">
+        {% csrf_token %}
+        <input type="hidden" name="item_type" value="sales_order">
+        <input type="hidden" name="item_id" value="{{ so.id }}">
+        <input type="hidden" name="next" value="{{ request.path }}">
+        <textarea name="comment" rows="2" class="form-input" placeholder="Comment (optional)" style="width:100%; padding:0.5rem 0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.85rem; resize:vertical; font-family:inherit; margin-bottom:0.6rem;"></textarea>
+        <div style="display:flex; gap:0.5rem;">
+            <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.45rem 1.1rem; font-size:0.85rem;">Approve</button>
+            <button type="submit" name="action" value="reject" class="btn btn-secondary" style="padding:0.45rem 1.1rem; font-size:0.85rem; border-color:#dc2626; color:#dc2626;" onclick="return confirm('Reject this order? It will return to Draft.')">Reject</button>
+        </div>
+    </form>
     {% endif %}
     <button type="button" onclick="var f=document.getElementById('resend-approval-form'); f.style.display=f.style.display==='none'?'block':'none';" style="background:none; border:1px solid var(--border-light); border-radius:6px; padding:0.4rem 0.8rem; font-size:0.8rem; color:var(--text-muted); cursor:pointer; margin-top:0.5rem;">
         Reassign / Resend Request

@@ -473,6 +473,7 @@ def consume_materials_for_run(run, user):
         for u in RunMaterialUsage.objects.filter(production_run=run)
     }
 
+    released = []   # unused allocated stock handed back, one entry per batch
     material_ids = set(usage_by_material.keys())
     material_ids.update(
         StockAllocation.objects.filter(production_run=run, batch__material__isnull=False)
@@ -500,6 +501,9 @@ def consume_materials_for_run(run, user):
                 remaining -= take
 
             # Release the full hold this allocation had — whatever wasn't consumed becomes available again
+            unused = alloc.quantity - take
+            if unused > 0:
+                released.append(f"{unused.normalize():f} {material.unit_of_measure} of {material.name} back to batch {batch.batch_number}")
             batch.allocated_quantity -= alloc.quantity
             if batch.allocated_quantity < 0:
                 batch.allocated_quantity = 0
@@ -564,6 +568,14 @@ def consume_materials_for_run(run, user):
                 action=f"Warning: {material.sku} usage exceeded available stock by {remaining}.",
                 user=user
             )
+
+    if released:
+        from .models import OrderTimeline
+        OrderTimeline.objects.create(
+            production_run=run,
+            action="Unused allocated stock released: " + "; ".join(released) + ".",
+            user=user
+        )
 
 
 def approve_production_run(run, user):
@@ -883,7 +895,7 @@ def apply_po_material_receipt(po_detail, delta_qty, user):
         # existing batches at a stale snapshot.
         rental_rate = po_detail.negotiated_rental_rate_per_mt
         batch = Batch.objects.create(
-            batch_number=f"B-{po.po_number}-{po_detail.material.sku}-{uuid.uuid4().hex[:6].upper()}",
+            batch_number=po_batch_number(po, po_detail.material),
             status='Active',
             material=po_detail.material,
             quantity=delta_qty,
@@ -917,6 +929,16 @@ def apply_po_material_receipt(po_detail, delta_qty, user):
         po.save(update_fields=['status'])
 
 
+def po_batch_number(po, material):
+    """Short batch id for stock received on a PO: B-<PO ref>-<material ref>-<6 hex>, e.g.
+    PO-TS003 + MAT-1005 -> B-TS003-1005-A1B2C3. The redundant PO-/MAT- prefixes are
+    dropped; the random tail keeps it unique across receipts of the same PO and material."""
+    import uuid
+    po_ref = re.sub(r'^PO-', '', po.po_number)
+    mat_ref = re.sub(r'^MAT-', '', material.sku)
+    return f"B-{po_ref}-{mat_ref}-{uuid.uuid4().hex[:6].upper()}"
+
+
 def receive_transfer_into_destination(shipment, user):
     """Creates the destination-side batch for each received item of an internal
     Transfer. Shared by complete_shipment and force_close_shipment. Completed
@@ -941,8 +963,12 @@ def receive_transfer_into_destination(shipment, user):
         b = item.batch
         rcv_qty = Decimal(str(item.received_quantity))
 
+        # Keep the original batch number and add only this transfer's id: a batch moved
+        # again must not stack suffixes (X-TRF-1-TRF-9-...), which grows without bound and
+        # would eventually overflow the 100-character batch_number column.
+        root_number = re.sub(r'(-TRF-\d+)+$', '', b.batch_number)
         new_batch, created = Batch.objects.get_or_create(
-            batch_number=f"{b.batch_number}-TRF-{shipment.id}",
+            batch_number=f"{root_number}-TRF-{shipment.id}",
             defaults={
                 'status': 'Active',
                 'material': b.material,

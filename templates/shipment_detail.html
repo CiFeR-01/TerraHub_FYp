@@ -34,6 +34,9 @@
             {% if shipment.sales_order %}
             SO: <a href="{% url 'so_detail' shipment.sales_order.id %}" style="color:var(--primary); font-weight:600; text-decoration:none;">{{ shipment.sales_order.so_number }}</a>
             {% endif %}
+            {% if shipment.linked_production_run %}
+            {% if shipment.purchase_order or shipment.sales_order %} | {% endif %}Production Run: <a href="{% url 'production_run_detail' shipment.linked_production_run.id %}" style="color:var(--primary); font-weight:600; text-decoration:none;">{{ shipment.linked_production_run.run_number }}</a>
+            {% endif %}
         </div>
     </div>
       <div class="header-action-tray">

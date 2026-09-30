@@ -309,6 +309,19 @@
     {% if po.approval_remarks %}
     <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">"{{ po.approval_remarks }}"</p>
     {% endif %}
+    {% if can_decide_approval %}
+    <form method="post" action="{% url 'approvals_inbox' %}" style="margin:0.75rem 0 1rem;">
+        {% csrf_token %}
+        <input type="hidden" name="item_type" value="purchase_order">
+        <input type="hidden" name="item_id" value="{{ po.id }}">
+        <input type="hidden" name="next" value="{{ request.path }}">
+        <textarea name="comment" rows="2" class="form-input" placeholder="Comment (optional)" style="width:100%; padding:0.5rem 0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.85rem; resize:vertical; font-family:inherit; margin-bottom:0.6rem;"></textarea>
+        <div style="display:flex; gap:0.5rem;">
+            <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.45rem 1.1rem; font-size:0.85rem;">Approve</button>
+            <button type="submit" name="action" value="reject" class="btn btn-secondary" style="padding:0.45rem 1.1rem; font-size:0.85rem; border-color:#dc2626; color:#dc2626;" onclick="return confirm('Reject this order? It will return to Draft.')">Reject</button>
+        </div>
+    </form>
+    {% endif %}
     <button type="button" onclick="var f=document.getElementById('resend-approval-form'); f.style.display=f.style.display==='none'?'block':'none';" style="background:none; border:1px solid var(--border-light); border-radius:6px; padding:0.4rem 0.8rem; font-size:0.8rem; color:var(--text-muted); cursor:pointer; margin-top:0.5rem;">
         Reassign / Resend Request
     </button>

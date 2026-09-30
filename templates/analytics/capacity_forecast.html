@@ -46,12 +46,13 @@
 {% endif %}
 
 {% include "analytics/partials/_analytics_tabs.html" %}
+{% include "analytics/partials/_freshness.html" %}
 
-{% if summary.is_stale %}
+{% if summary.out_of_sync %}
 <div class="animate-fade-in-up" style="background:#fee2e2; border:1px solid rgba(220,38,38,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:#b91c1c;">
-    <strong>Snapshot data is stale.</strong> Last recorded {{ summary.stale_days }} days ago
-    ({{ summary.latest_snapshot_date|date:"d M Y" }}) &mdash; the daily job may have failed.
-    {% if can_run_snapshot %}Use "Run snapshot now" above to catch up, and check the scheduled job.{% else %}Ask an Admin or Manager to run a snapshot and check the scheduled job.{% endif %}
+    <strong>Snapshots are behind live data.</strong> {{ summary.out_of_sync }} warehouse{{ summary.out_of_sync|pluralize }}
+    {{ summary.out_of_sync|pluralize:"has,have" }} occupancy that no snapshot reflects yet (usually a bulk update that skipped the automatic recording).
+    {% if can_run_snapshot %}Use "Run snapshot now" above to catch up.{% else %}Ask an Admin or Manager to run a snapshot.{% endif %}
 </div>
 {% endif %}
 
@@ -172,12 +173,16 @@
 </div>
 
 <p style="color:var(--text-muted); font-size:0.75rem; margin-top:1rem; max-width:78ch;">
-    <strong>How it is projected.</strong> Each night <code>snapshot_utilization</code> records
-    every warehouse's <em>utilization</em> (active-stock tonnage &divide; capacity). A least-squares
-    line is fit through the last snapshots; its slope &times;&nbsp;7 is the <em>weekly rate</em>.
+    <strong>How it is projected.</strong> A warehouse's <em>utilization</em> (stored tonnage, active and
+    quarantined, &divide; capacity) is recorded whenever its stock, rate or capacity changes; the last
+    recording of a day is that day's figure. A day with no recording means nothing changed, so it
+    carries the previous figure forward. A least-squares line is fit through one point per day, from
+    the first recording to today{% if trend_window_days %} &mdash; using only the last {{ trend_window_days }} days once there is
+    more history than that, so an old one-off change stops skewing it{% endif %}; its slope &times;&nbsp;7 is the <em>weekly rate</em>. A trend needs
+    3 days of history and firms up after about 7.
     <em>Days to full</em> = (100&thinsp;% &minus; current) &divide; daily slope. <em>Critical</em> =
-    at or above 95&thinsp;%, or full within 14 days; <em>Watch</em> = full within 60 days;
-    <em>Filling</em> = rising but further out; <em>Stable</em> = flat or emptying.
+    at or above {{ th.critical_percent|floatformat:'-1' }}&thinsp;%, or full within {{ th.critical_days }} days; <em>Watch</em> = full within {{ th.watch_days }} days;
+    <em>Filling</em> = rising but further out; <em>Stable</em> = flat (under {{ th.flat_slope_pp|floatformat:'-2' }}&thinsp;pp/day) or emptying.
     <em>Daily Rent</em> is computed per batch: a batch with its own negotiated rate (set
     on the purchase order) stays at that rate for life; a batch using the warehouse's
     standard rate tracks that rate live, so editing a warehouse's rate immediately

@@ -2702,6 +2702,10 @@ def so_detail_view(request, pk):
                 messages.error(request, "You don't have permission to unallocate stock from an order.")
                 return redirect('so_detail', pk=so.pk)
 
+            if so.status in ('Shipped', 'Delivered'):
+                messages.error(request, "Stock can't be unallocated once the order has shipped.")
+                return redirect('so_detail', pk=so.pk)
+
             alloc_id = request.POST.get('alloc_id')
             qty_str = request.POST.get('quantity')
             target_so_id = request.POST.get('target_so_id')
@@ -2729,7 +2733,10 @@ def so_detail_view(request, pk):
                 messages.error(request, "An order can only be consolidated once it is Ready to Ship.")
             else:
                 groups = [g for g in so_stock_by_warehouse(so) if g['warehouse'] and g['warehouse'].id != so.origin_warehouse_id]
-                if not groups:
+                held = sorted({a.batch.batch_number for g in groups for a in g['allocations'] if a.batch.status == 'Quarantined'})
+                if held:
+                    messages.error(request, f"Batch {', '.join(held)} is in QA quarantine and can't be moved until QA releases it.")
+                elif not groups:
                     messages.info(request, f"All of this order's stock is already at {so.origin_warehouse.name}.")
                 else:
                     created = []
@@ -2778,6 +2785,11 @@ def so_detail_view(request, pk):
                     OrderTimeline.objects.create(sales_order=so, action=f"Delivery plan switched. Cancelled {', '.join(sh.tracking_number for sh in plan)}; stock stays reserved for this order.", user=request.user)
                 messages.success(request, "Delivery plan cancelled. The stock is still reserved for this order - choose how to deliver it again.")
 
+        if action in ('add_so_item', 'remove_so_item', 'update_so_status', 'request_approval', 'send_to_manufacturing'):
+            # "Last edited by" covers line-item and status changes, not just the header form
+            from django.utils import timezone as _tz
+            SalesOrder.objects.filter(pk=so.pk).update(updated_by=request.user, updated_at=_tz.now())
+
         return redirect('so_detail', pk=so.pk)
 
     # BOM readiness and Allocation logic
@@ -2808,6 +2820,25 @@ def so_detail_view(request, pk):
             allocation_rows.append({
                 'alloc_id': a.id, 'batch': a.batch, 'quantity': a.quantity, 'source': source,
                 'produced_for': produced_for,
+                'can_unallocate': so.status not in ('Shipped', 'Delivered'),
+            })
+
+        # Stock that has moved onto this order's logistics orders is no longer a
+        # reservation on the order, but it stays listed here (read-only) so the batches
+        # remain visible through delivery.
+        for si in (ShipmentItem.objects
+                   .filter(shipment__sales_order=so, shipment__direction='Outbound', product=item.product, batch__isnull=False)
+                   .exclude(shipment__status='Cancelled')
+                   .select_related('batch', 'batch__produced_in', 'batch__purchase_order', 'shipment')):
+            b = si.batch
+            source = (f"Newly Manufactured (Run {b.produced_in.run_number})" if b.produced_in_id
+                      else f"Existing Stock (PO {b.purchase_order.po_number})" if b.purchase_order_id
+                      else "Existing Stock")
+            allocation_rows.append({
+                'alloc_id': None, 'batch': b,
+                'quantity': si.received_quantity if si.shipment.status == 'Completed' else si.quantity,
+                'source': source, 'produced_for': None, 'can_unallocate': False,
+                'shipment': si.shipment,
             })
 
         transfer_targets = SalesOrder.objects.filter(items__product=item.product).exclude(pk=so.pk).exclude(
@@ -2878,10 +2909,17 @@ def so_detail_view(request, pk):
     open_stock_moves = [sh for sh in open_plan if sh.direction == 'Transfer']
     open_outbound = [sh for sh in open_plan if sh.direction == 'Outbound']
 
+    # A finished run whose batch is still held for QA release isn't usable yet: say so.
+    qa_run_ids = set(Batch.objects.filter(status='Quarantined', produced_in__sales_order=so).values_list('produced_in_id', flat=True))
+    so_runs = [r for r in so.production_runs.all() if r.status != 'Cancelled']
+    for r in so_runs:
+        r.in_qa = r.id in qa_run_ids
+
     context = {
         'so': so,
         # Scrapped/cancelled runs are history, not part of how this order is being fulfilled
-        'so_runs': [r for r in so.production_runs.all() if r.status != 'Cancelled'],
+        'so_runs': so_runs,
+        'so_in_qa': any(r.in_qa for r in so_runs),
         'stock_split': stock_split,
         'open_stock_moves': open_stock_moves,
         'open_outbound': open_outbound,
@@ -2891,11 +2929,13 @@ def so_detail_view(request, pk):
         'unpriced_lines': sum(1 for row in line_items_with_bom if row['subtotal'] is None),
         'has_deficit': has_deficit,
         'has_unshipped_allocation': has_unshipped_allocation,
+        'items_locked': so.status in SO_ITEMS_LOCKED,
         'products': products,
         'warehouses': warehouses,
         'manufacturing_plants': manufacturing_plants,
         'so_status_choices': [c for c in SalesOrder.STATUS_CHOICES if c[0] == so.status or c[0] in SO_MANUAL_TRANSITIONS.get(so.status, [])],
         'managers': approvers(),
+        'can_decide_approval': can_approve(request.user) and may_decide_approval(request.user, so),
         'all_users': CustomUser.objects.all().order_by('username'),
     }
     return render(request, 'so_detail.html', context)
@@ -3058,6 +3098,7 @@ def po_detail_view(request, pk):
         'warehouses': warehouses,
         'po_status_choices': PurchaseOrder.STATUS_CHOICES,
         'managers': approvers(),
+        'can_decide_approval': can_approve(request.user) and may_decide_approval(request.user, po),
         'all_users': CustomUser.objects.all().order_by('username'),
     }
     return render(request, 'po_detail.html', context)
@@ -3748,6 +3789,7 @@ def approvals_inbox_view(request):
             if action == 'approve':
                 so.status = 'Pending'
                 so.approved_by = request.user
+                so.updated_by = request.user
                 so.save()
                 OrderTimeline.objects.create(sales_order=so, action=_with_comment("Approved by Manager.", comment), user=request.user)
                 messages.success(request, f"Sales Order {so.so_number} approved.")
@@ -3755,6 +3797,7 @@ def approvals_inbox_view(request):
                 so.status = 'Draft'
                 so.assigned_to = None
                 so.approval_remarks = ''
+                so.updated_by = request.user
                 so.save()
                 OrderTimeline.objects.create(sales_order=so, action=_with_comment("Approval Rejected by Manager.", comment), user=request.user)
                 messages.warning(request, f"Sales Order {so.so_number} returned to Draft.")
@@ -4017,6 +4060,8 @@ def shipment_dispatch_problem(shipment):
             return (f"Batch {item.batch.batch_number} is at "
                     f"{item.batch.warehouse.name if item.batch.warehouse else 'no warehouse'}, "
                     f"not this shipment's origin ({shipment.origin_warehouse.name}).")
+        if item.batch.status == 'Quarantined':
+            return f"Batch {item.batch.batch_number} is in QA quarantine and can't be shipped until QA releases it."
     return None
 
 
@@ -4058,6 +4103,8 @@ def shipment_detail_view(request, pk):
                 elif (shipment.direction in ['Outbound', 'Transfer'] and shipment.origin_warehouse_id
                       and batch.warehouse_id != shipment.origin_warehouse_id):
                     messages.error(request, f"Batch {batch.batch_number} is at {batch.warehouse.name if batch.warehouse else 'no warehouse'}, not this shipment's origin ({shipment.origin_warehouse.name}). Move it with an internal transfer first.")
+                elif shipment.direction in ['Outbound', 'Transfer'] and batch.status == 'Quarantined':
+                    messages.error(request, f"Batch {batch.batch_number} is in QA quarantine and can't be shipped or moved until QA releases it.")
                 elif shipment.direction in ['Outbound', 'Transfer'] and batch:
                     qty_val = float(qty) if qty else 0.0
                     if qty_val > float(batch.available_quantity):
@@ -4944,6 +4991,11 @@ def so_create_shipment_view(request, pk):
                 messages.error(request, "There is no allocated stock to draft a logistics order from.")
             return redirect('so_detail', pk=so.pk)
 
+        held = sorted({a.batch.batch_number for a in allocations if a.batch.status == 'Quarantined'})
+        if held:
+            messages.error(request, f"Batch {', '.join(held)} is in QA quarantine and can't be shipped until QA releases it.")
+            return redirect('so_detail', pk=so.pk)
+
         # A shipment leaves from one place, so allocated stock sitting in different
         # warehouses gets one outbound shipment per warehouse (same idea as the
         # production-run auto-logistics, which splits transfers by origin).
@@ -5015,9 +5067,9 @@ def production_run_allocate_view(request, pk):
     if run.status not in ('Pending Allocation', 'Planned', 'Awaiting Materials', 'InProgress', 'Paused'):
         messages.error(request, f"Materials can't be allocated to a run that is {run.get_status_display()}.")
         return redirect('production_run_detail', pk=pk)
-    # Once production is under way more than the recipe needs can be reserved (with a reason);
-    # before that the requirement is a hard cap.
-    extra_allowed = run.status in ('InProgress', 'Paused')
+    # More than the recipe needs can be reserved at any stage, but only with a reason.
+    extra_allowed = True
+    under_way = run.status in ('InProgress', 'Paused')
 
     # Anything already allocated (and any transfers raised for it) stays as it is;
     # a further allocation is added on top, so suggestions only cover what's still short.
@@ -5252,6 +5304,7 @@ def production_run_allocate_view(request, pk):
         'existing_allocations': existing_allocations,
         'existing_shipments': existing_shipments,
         'extra_allowed': extra_allowed,
+        'under_way': under_way,
     })
 
 def parse_extra_material_sources(request, bom_materials, allocated_by_material):
