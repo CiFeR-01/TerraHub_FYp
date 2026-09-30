@@ -53,6 +53,24 @@ def _parse_window(request, default=_DEFAULT_WINDOW):
     return w if w in WINDOW_CHOICES else default
 
 
+# An estimate-heavy page gets its note in amber once this share of what it scores is a guess.
+_ESTIMATE_WARN_SHARE = 0.5
+
+
+def _estimate_note(parts, total):
+    """{text, warn} for the "how much of this page is a guess" line, or None.
+    `parts` = [(count, phrase), ...] where phrase is e.g. "use an estimated lead time";
+    `total` is how many rows those counts are out of. warn when any single kind of
+    estimate covers at least half of them."""
+    parts = [(n, ph) for n, ph in parts if n]
+    if not parts or not total:
+        return None
+    return {
+        "text": "; ".join(f"{n} of {total} {ph}" for n, ph in parts),
+        "warn": any(n / total >= _ESTIMATE_WARN_SHARE for n, _ in parts),
+    }
+
+
 def _analytics_tabs(request, url_name):
     """(category_label, [(url_name, label), ...]) for `url_name`'s Analytics
     category, filtered to what `request.user` can see. Powers the tab strip
@@ -127,11 +145,19 @@ def sales_order_delivery_risk_view(request):
         "no_deadline_count": sum(1 for r in rows if r["risk"] == "no_deadline"),
     }
     as_of = timezone.now()
+    scored = [r for r in rows if r["risk"] != "no_deadline"]
+    estimate_note = _estimate_note([
+        (sum(1 for r in scored if r["arrival"] is not None and not r["arrival_is_actual"]),
+         "open orders rely on a projected ETA (not yet arrived)"),
+        (sum(1 for r in scored if r["arrival"] is None),
+         "have no shipment yet, so are judged by their deadline alone"),
+    ], len(scored))
     analytics_category, analytics_tabs = _analytics_tabs(request, "so_delivery_risk")
     return render(request, "analytics/so_delivery_risk.html", {
         "rows": shown,
         "summary": summary,
         "risk_filter": risk_filter,
+        "estimate_note": estimate_note,
         "filters": [
             ("", "All"),
             ("late", "Late"),
@@ -291,12 +317,20 @@ def forecast_view(request):
         "no_usage": sum(1 for r in rows if r["status"] == "no_usage"),
         "estimated_lead": sum(1 for r in rows if r["lead_time_estimated"] and r["status"] != "no_usage"),
     }
+    with_usage = [r for r in rows if r["status"] != "no_usage"]
+    estimate_note = _estimate_note([
+        (sum(1 for r in with_usage if r["lead_time_estimated"]), "materials use an estimated lead time"),
+        (sum(1 for r in with_usage if r["next_po_date_estimated"]), "rely on an estimated PO arrival date"),
+        # an overdue PO's own date isn't a guess, but the projection assumes it lands today
+        (sum(1 for r in with_usage if r["po_overdue"]), "count an overdue PO as arriving today"),
+    ], len(with_usage))
     analytics_category, analytics_tabs = _analytics_tabs(request, "forecast")
     return render(request, "analytics/forecast.html", {
         "rows": shown,
         "coverage_rows": coverage_rows,
         "summary": summary,
         "window": window,
+        "estimate_note": estimate_note,
         "reorder_now_days": reorder_now_days,
         "reorder_watch_days": reorder_watch_days,
         "window_choices": FORECAST_WINDOWS,

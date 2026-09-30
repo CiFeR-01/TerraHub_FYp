@@ -1031,6 +1031,27 @@ class SalesOrderDeliveryRiskTests(TestCase):
         self.assertContains(resp, 'SO-E')
         self.assertNotContains(resp, 'SO-F')
 
+    def test_estimate_note_counts_etas_and_unshipped_orders(self):
+        eta = self._so('SO-ETA', status='Shipped', deadline_in=10)
+        self._ship(eta, 'TRK-ETA', eta_in=5)                       # projected, not arrived
+        done = self._so('SO-ACT', status='Delivered', deadline_in=10)
+        self._ship(done, 'TRK-ACT', arrived_in=-1, status='Completed')
+        self._so('SO-NONE', status='Pending', deadline_in=30)      # nothing shipped yet
+        self._so('SO-NODL', status='Pending')                      # no deadline: not scored
+        self.client.login(username='risk', password='pw')
+        resp = self.client.get(reverse('so_delivery_risk'))
+        note = resp.context['estimate_note']
+        self.assertIn('1 of', note['text'])
+        self.assertIn('projected ETA', note['text'])
+        self.assertIn('no shipment yet', note['text'])
+        self.assertContains(resp, 'Estimates in play')
+
+    def test_estimate_note_absent_when_nothing_is_estimated(self):
+        self.client.login(username='risk', password='pw')
+        resp = self.client.get(reverse('so_delivery_risk'))
+        self.assertIsNone(resp.context['estimate_note'])
+        self.assertNotContains(resp, 'Estimates in play')
+
     def test_so_list_links_to_delivery_risk(self):
         self.client.login(username='risk', password='pw')
         resp = self.client.get(reverse('so_list'))
@@ -6221,3 +6242,45 @@ class AnalyticsThresholdTests(TestCase):
         self.assertContains(self.client.get(reverse('supplier_scorecard')), '85% on-time')
         self.assertContains(self.client.get(reverse('product_sales_trend')), 'differs by 25% or more')
         self.assertContains(self.client.get(reverse('forecast')), 'reorder-by within 21 days')
+
+
+class EstimateNoteHelperTests(TestCase):
+    def test_note_text_warn_and_empty_cases(self):
+        from core.views_analytics import _estimate_note
+        self.assertIsNone(_estimate_note([(0, 'x')], 5))         # nothing estimated
+        self.assertIsNone(_estimate_note([(2, 'x')], 0))         # nothing scored
+        low = _estimate_note([(2, 'use an estimated lead time')], 10)
+        self.assertEqual(low['text'], '2 of 10 use an estimated lead time')
+        self.assertFalse(low['warn'])
+        high = _estimate_note([(1, 'a'), (5, 'b')], 10)          # one kind covers half
+        self.assertEqual(high['text'], '1 of 10 a; 5 of 10 b')
+        self.assertTrue(high['warn'])
+
+    def test_forecast_page_shows_estimated_lead_time_note(self):
+        user = User.objects.create_user(username='estnote', password='pw', is_superuser=True)
+        self.client.login(username='estnote', password='pw')
+        wh = Warehouse.objects.create(name='Est WH', location_type='Storage', total_capacity_mt=Decimal('1000'))
+        mat = Material.objects.create(name='Est Mat', sku='EST-1', category='Bulk', unit_of_measure='MT',
+                                      safe_storage_days=365, weight_mt_per_unit=Decimal('1.0'))
+        RegistryLog.objects.create(action_type='Consumed_For_Manufacturing', item_name='Est Mat',
+                                   material=mat, quantity_changed=Decimal('30'), warehouse=wh)
+        resp = self.client.get(reverse('forecast'))
+        self.assertEqual(resp.context['estimate_note']['text'], '1 of 1 materials use an estimated lead time')
+        self.assertTrue(resp.context['estimate_note']['warn'])
+        self.assertContains(resp, 'Estimates in play')
+
+    def test_forecast_note_flags_overdue_po_assumed_to_arrive_today(self):
+        User.objects.create_user(username='estnote2', password='pw', is_superuser=True)
+        self.client.login(username='estnote2', password='pw')
+        wh = Warehouse.objects.create(name='Od WH', location_type='Storage', total_capacity_mt=Decimal('1000'))
+        mat = Material.objects.create(name='Od Mat', sku='OD-1', category='Bulk', unit_of_measure='MT',
+                                      safe_storage_days=365, weight_mt_per_unit=Decimal('1.0'))
+        RegistryLog.objects.create(action_type='Consumed_For_Manufacturing', item_name='Od Mat',
+                                   material=mat, quantity_changed=Decimal('30'), warehouse=wh)
+        po = PurchaseOrder.objects.create(
+            po_number='PO-OD1', supplier_name='S', target_warehouse=wh, status='Pending',
+            expected_delivery_date=date.today() - timedelta(days=10),
+        )
+        PurchaseOrderDetail.objects.create(purchase_order=po, material=mat, quantity_ordered=Decimal('100'))
+        resp = self.client.get(reverse('forecast'))
+        self.assertIn('1 of 1 count an overdue PO as arriving today', resp.context['estimate_note']['text'])
