@@ -29,7 +29,7 @@ from .utils import generate_next_code, format_stock_display
 from .validators import normalise_phone, normalise_phone_or_email, validate_email_address, validation_messages
 from .decorators import permission_or_redirect
 from .permissions import (
-    is_admin_user, can_approve, approvers, users_with_perm, pending_actions,
+    is_admin_user, can_approve, can_grant_group, approvers, users_with_perm, pending_actions,
     ADJUST_PHYSICAL_STOCK, MANAGE_USERS, HANDLE_PURCHASING, APPROVE_REQUESTS,
 )
 
@@ -141,6 +141,16 @@ SO_MANUAL_TRANSITIONS = {
     'Partially Shipped': ['Shipped', 'Delivered'],
     'Shipped': ['Delivered'],
 }
+
+# Approval and receiving set every other PO status; by hand you can only close
+# out a partly received order.
+PO_MANUAL_TRANSITIONS = {
+    'Partially Received': ['Completed'],
+}
+
+# Orders nobody has approved yet: nothing may be allocated, received or
+# produced against them.
+UNAPPROVED_STATUSES = ('Draft', 'Pending Approval', 'Rejected')
 
 
 def so_return_for_reapproval(so, user, what):
@@ -2487,6 +2497,9 @@ def purchase_order_list_view(request):
             po_id = request.POST.get('po_id')
             new_status = request.POST.get('status')
             po = get_object_or_404(PurchaseOrder, id=po_id)
+            if new_status not in PO_MANUAL_TRANSITIONS.get(po.status, []):
+                messages.error(request, f"{po.po_number} can't be changed from {po.status} to {new_status} by hand.")
+                return redirect('po_list')
             po.status = new_status
             if new_status in ['Pending', 'Partially Received']:
                 po.approved_by = request.user
@@ -2994,6 +3007,9 @@ def po_detail_view(request, pk):
         elif action == 'mark_received':
             item_id = request.POST.get('item_id')
             qty_received = request.POST.get('qty_received', 0)
+            if po.status in UNAPPROVED_STATUSES:
+                messages.error(request, f"{po.po_number} hasn't been approved yet, so nothing can be received against it.")
+                return redirect('po_detail', pk=po.pk)
             try:
                 item = get_object_or_404(PurchaseOrderDetail, id=item_id, purchase_order=po)
                 old_qty = float(item.quantity_received)
@@ -3009,6 +3025,9 @@ def po_detail_view(request, pk):
 
         elif action == 'update_po_status':
             new_status = request.POST.get('status')
+            if new_status not in PO_MANUAL_TRANSITIONS.get(po.status, []):
+                messages.error(request, f"{po.po_number} can't be changed from {po.status} to {new_status} by hand.")
+                return redirect('po_detail', pk=po.pk)
             po.status = new_status
             if new_status in ['Pending', 'Partially Received']:
                 po.approved_by = request.user
@@ -3096,7 +3115,8 @@ def po_detail_view(request, pk):
         'po_total': po_total,
         'materials': materials,
         'warehouses': warehouses,
-        'po_status_choices': PurchaseOrder.STATUS_CHOICES,
+        'po_status_choices': [c for c in PurchaseOrder.STATUS_CHOICES if c[0] == po.status or c[0] in PO_MANUAL_TRANSITIONS.get(po.status, [])],
+        'unapproved_statuses': UNAPPROVED_STATUSES,
         'managers': approvers(),
         'can_decide_approval': can_approve(request.user) and may_decide_approval(request.user, po),
         'all_users': CustomUser.objects.all().order_by('username'),
@@ -3124,6 +3144,9 @@ def manufacturing_view(request):
                 prod = get_object_or_404(Product, id=prod_id)
                 plant = get_object_or_404(Warehouse, id=plant_id)
                 so = SalesOrder.objects.filter(id=so_id).first() if so_id else None
+                if so and so.status in UNAPPROVED_STATUSES:
+                    messages.error(request, f"{so.so_number} hasn't been approved yet, so no production run can be scheduled for it.")
+                    return redirect('readiness')
 
                 tomorrow = timezone.now().replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=1)
                 
@@ -4785,12 +4808,17 @@ def user_management_view(request):
         if action == 'update_user':
             user_id = request.POST.get('user_id')
             user_obj = get_object_or_404(CustomUser, id=user_id)
-            
+
+            # Roles: only groups the editor could hold themselves may be added or removed
+            new_groups = set(Group.objects.filter(id__in=request.POST.getlist('roles')))
+            changed = new_groups ^ set(user_obj.groups.all())
+            too_high = sorted(g.name for g in changed if not can_grant_group(request.user, g))
+            if too_high:
+                messages.error(request, f"You can't add or remove the {', '.join(too_high)} role, because it has permissions you don't have.")
+                return redirect('user_management')
+
             user_obj.is_active = request.POST.get('is_active') == 'on'
-            
-            # Roles
-            role_ids = request.POST.getlist('roles')
-            user_obj.groups.set(Group.objects.filter(id__in=role_ids))
+            user_obj.groups.set(new_groups)
             
             # Locations
             location_ids = request.POST.getlist('locations')
@@ -4844,6 +4872,10 @@ def so_allocate_view(request, pk):
         from .utils import so_line_commitment
         covered = so_line_commitment(so, item.product, item.quantity_shipped)['total']
         return max(Decimal(str(item.quantity_ordered)) - covered, Decimal('0'))
+
+    if so.status in UNAPPROVED_STATUSES:
+        messages.error(request, f"{so.so_number} hasn't been approved yet, so no stock can be allocated to it.")
+        return redirect('so_detail', pk=so.pk)
 
     if request.method == 'POST':
         action = request.POST.get('action')
