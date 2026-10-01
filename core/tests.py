@@ -4675,9 +4675,10 @@ class GroupPermissionTests(TestCase):
         self.assertEqual(self.client.get(reverse('approvals_inbox')).status_code, 200)
 
     def test_new_group_with_manage_users_can_assign_groups(self):
-        self._give('manage_users')
         other = make_user(username='gp_other', password='pw')
         sales = Group.objects.get(name='Sales')
+        # Only roles whose permissions you hold yourself can be handed out
+        self._give('manage_users', *sales.permissions.values_list('codename', flat=True))
         self.client.post(reverse('user_management'), {
             'action': 'update_user', 'user_id': other.id, 'is_active': 'on', 'roles': [sales.id],
         })
@@ -5957,3 +5958,129 @@ class SessionIdleTimeoutTests(TestCase):
             'username': 'idle', 'password': 'pw', 'next': '/warehouse/inventory/',
         })
         self.assertRedirects(resp, '/warehouse/inventory/', fetch_redirect_response=False)
+
+
+class ApprovalBypassTests(TestCase):
+    """Nothing is allocated, received or produced against an order nobody has
+    approved, the status dropdown can't stand in for approval, and nobody can
+    hand out a role with more power than their own."""
+
+    def setUp(self):
+        from core.models import PurchaseOrder, PurchaseOrderDetail
+        self.admin = make_user(username='ab_admin', password='pw', role='Admin')
+        self.manager = make_user(username='ab_mgr', password='pw', role='Manager')
+        self.client.login(username='ab_admin', password='pw')
+        self.wh = Warehouse.objects.create(name='AB Hub', location_type='Storage')
+        self.plant = Warehouse.objects.create(name='AB Plant', location_type='Manufacturing')
+        self.product = Product.objects.create(name='AB Product', sku='PRD-AB', unit_of_measure='kg', price_per_unit=1)
+        self.batch = Batch.objects.create(
+            batch_number='AB-FG', status='Active', product=self.product, quantity=Decimal('50'),
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=200), warehouse=self.wh,
+        )
+        self.material = Material.objects.create(name='AB Mat', sku='MAT-AB', category='Bulk',
+                                                unit_of_measure='MT', safe_storage_days=365)
+        self.po = PurchaseOrder.objects.create(po_number='PO-AB', supplier_name='S', target_warehouse=self.wh, status='Draft')
+        self.po_item = PurchaseOrderDetail.objects.create(purchase_order=self.po, material=self.material,
+                                                          quantity_ordered=Decimal('10'))
+
+    def _so(self, status):
+        so = SalesOrder.objects.create(so_number=f'SO-AB-{status}', client_name='C', origin_warehouse=self.wh, status=status)
+        item = SalesOrderDetail.objects.create(sales_order=so, product=self.product, quantity_ordered=Decimal('10'))
+        return so, item
+
+    def test_unapproved_sales_order_cannot_be_allocated(self):
+        for status in ('Draft', 'Pending Approval', 'Rejected'):
+            so, item = self._so(status)
+            resp = self.client.get(reverse('so_allocate', args=[so.pk]))
+            self.assertRedirects(resp, reverse('so_detail', args=[so.pk]), fetch_redirect_response=False)
+            self.client.post(reverse('so_allocate', args=[so.pk]), {
+                'action': 'allocate_manual', f'batch_qty_{item.id}_{self.batch.id}': '10'})
+            so.refresh_from_db()
+            self.assertEqual(so.status, status)
+            self.assertFalse(StockAllocation.objects.filter(sales_order=so).exists())
+
+    def test_approved_sales_order_can_still_be_allocated(self):
+        so, item = self._so('Pending')
+        self.client.post(reverse('so_allocate', args=[so.pk]), {
+            'action': 'allocate_manual', f'batch_qty_{item.id}_{self.batch.id}': '10'})
+        so.refresh_from_db()
+        self.assertEqual(so.status, 'Ready to Ship')
+
+    def _receive(self):
+        self.client.post(reverse('po_detail', args=[self.po.pk]),
+                         {'action': 'mark_received', 'item_id': self.po_item.id, 'qty_received': '10'})
+        self.po.refresh_from_db()
+        self.po_item.refresh_from_db()
+
+    def test_unapproved_purchase_order_cannot_be_received(self):
+        for status in ('Draft', 'Pending Approval', 'Rejected'):
+            self.po.status = status
+            self.po.save()
+            self._receive()
+            self.assertEqual(self.po.status, status)
+            self.assertEqual(self.po_item.quantity_received, 0)
+            self.assertFalse(Batch.objects.filter(material=self.material).exists())
+
+    def test_approved_purchase_order_can_still_be_received(self):
+        self.po.status = 'Pending'
+        self.po.save()
+        self._receive()
+        self.assertEqual(self.po.status, 'Completed')
+        self.assertEqual(self.po_item.quantity_received, 10)
+
+    def _create_run(self, so):
+        from core.models import ProductionRun
+        self.client.post(reverse('readiness'), {
+            'action': 'create_run', 'run_number_auto': '1', 'target_product_id': self.product.id,
+            'manufacturing_plant_id': self.plant.id, 'expected_yield': '10', 'sales_order_id': so.id})
+        so.refresh_from_db()
+        return ProductionRun.objects.filter(sales_order=so).exists()
+
+    def test_run_cannot_be_linked_to_unapproved_sales_order(self):
+        so, _ = self._so('Draft')
+        self.assertFalse(self._create_run(so))
+        self.assertEqual(so.status, 'Draft')
+
+    def test_run_can_be_linked_to_approved_sales_order(self):
+        so, _ = self._so('Pending')
+        self.assertTrue(self._create_run(so))
+        self.assertEqual(so.status, 'In Production')
+
+    def test_po_status_dropdown_cannot_approve_or_complete(self):
+        for status in ('Pending', 'Partially Received', 'Completed'):
+            self.client.post(reverse('po_detail', args=[self.po.pk]), {'action': 'update_po_status', 'status': status})
+            self.client.post(reverse('po_list'), {'action': 'update_po_status', 'po_id': self.po.pk, 'status': status})
+            self.po.refresh_from_db()
+            self.assertEqual(self.po.status, 'Draft')
+            self.assertIsNone(self.po.approved_by)
+
+    def test_partly_received_po_can_be_closed_by_hand(self):
+        self.po.status = 'Partially Received'
+        self.po.save()
+        resp = self.client.get(reverse('po_detail', args=[self.po.pk]))
+        self.assertContains(resp, 'value="Completed"')
+        self.client.post(reverse('po_detail', args=[self.po.pk]), {'action': 'update_po_status', 'status': 'Completed'})
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, 'Completed')
+
+    def _set_roles(self, user, *names):
+        self.client.post(reverse('user_management'), {
+            'action': 'update_user', 'user_id': user.id, 'is_active': 'on',
+            'roles': [Group.objects.get(name=n).id for n in names]})
+        return set(user.groups.values_list('name', flat=True))
+
+    def test_manager_cannot_grant_or_remove_admin(self):
+        self.client.login(username='ab_mgr', password='pw')
+        self.assertEqual(self._set_roles(self.manager, 'Manager', 'Admin'), {'Manager'})
+        self.assertEqual(self._set_roles(self.admin), {'Admin'})
+
+    def test_manager_can_still_assign_ordinary_roles(self):
+        self.client.login(username='ab_mgr', password='pw')
+        other = make_user(username='ab_other', password='pw')
+        self.assertEqual(self._set_roles(other, 'Sales', 'Purchasing', 'Warehouse'), {'Sales', 'Purchasing', 'Warehouse'})
+        # Editing an Admin without touching their roles is fine
+        self.assertEqual(self._set_roles(self.admin, 'Admin', 'Sales'), {'Admin', 'Sales'})
+
+    def test_admin_can_grant_admin(self):
+        other = make_user(username='ab_other2', password='pw')
+        self.assertEqual(self._set_roles(other, 'Admin'), {'Admin'})

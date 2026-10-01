@@ -22,6 +22,7 @@
         {% endif %}
     </div>
     <div class="header-action-tray">
+        {% if po_status_choices|length > 1 %}
         <form method="post" style="display:inline-flex; gap:0.5rem; align-items:center;">
             {% csrf_token %}
             <input type="hidden" name="action" value="update_po_status">
@@ -32,6 +33,7 @@
             </select>
             <button type="submit" class="btn btn-primary" style="padding:0.45rem 1rem; font-size:0.85rem;">Update Status</button>
         </form>
+        {% endif %}
     </div>
 </header>
 
@@ -226,7 +228,9 @@
                     <td style="padding:0.85rem 1rem; font-weight:600; white-space:nowrap;">{% if row.subtotal > 0 %}RM {{ row.subtotal|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
                         <!-- Receive form -->
+                        {% if po.status not in unapproved_statuses %}
                         <button onclick="(function(){var el=document.getElementById('recv-{{ row.item.id }}');el.style.display=el.style.display==='none'?'block':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--text-muted); margin-right:0.3rem;">📥 Receive</button>
+                        {% endif %}
                         <form method="post" style="display:inline;">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="remove_po_item">
