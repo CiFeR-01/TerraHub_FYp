@@ -25,7 +25,7 @@ from .models import (
     Shipment, ShipmentItem, ShipmentItemReceipt, StockAudit, RegistryLog, OrderTimeline, Notification,
     StockAllocation, Supplier, SupplierMaterial, Client
 )
-from .utils import generate_next_code, format_stock_display
+from .utils import generate_next_code, format_stock_display, unexpired
 from .validators import normalise_phone, normalise_phone_or_email, validate_email_address, validation_messages
 from .decorators import permission_or_redirect
 from .permissions import (
@@ -1070,12 +1070,17 @@ def stock_audit_view(request):
             audit_id = request.POST.get('audit_id')
             audit = get_object_or_404(StockAudit, id=audit_id)
             if audit.status == 'Pending':
+                from .utils import trim_batch_reservations
                 with transaction.atomic():
+                    b = audit.batch
+                    problem = trim_batch_reservations(b, audit.actual_quantity, request.user, f"stock count found only {audit.actual_quantity}")
+                    if problem:
+                        messages.error(request, problem)
+                        return redirect('stock_audit')
                     variance = audit.variance
                     audit.status = 'Resolved'
                     audit.save()
-                    
-                    b = audit.batch
+
                     b.quantity = audit.actual_quantity
                     b.save()
 
@@ -3709,6 +3714,11 @@ def qa_dashboard_view(request):
             messages.success(request, f"Batch {batch.batch_number} released to Active inventory.")
 
         elif action == 'spoil_dispose':
+            from .utils import trim_batch_reservations
+            problem = trim_batch_reservations(batch, 0, request.user, "batch spoiled / disposed")
+            if problem:
+                messages.error(request, problem)
+                return redirect('qa_dashboard')
             batch.status = 'Spoiled'
             batch.closed_date = date.today()
             batch.save()
@@ -4316,8 +4326,18 @@ def shipment_detail_view(request, pk):
                                 else: so_alloc.save(update_fields=['quantity'])
                                 remaining -= deduct
 
-                        if shipment.linked_production_run or shipment.sales_order:
-                            released = qty_dec - remaining
+                        else:
+                            # A plain stock move (manual or rent advisor) holds its lock on the shipment itself
+                            alloc = StockAllocation.objects.filter(shipment=shipment, batch=batch).first()
+                            if alloc and remaining > 0:
+                                deduct = min(remaining, alloc.quantity)
+                                alloc.quantity -= deduct
+                                if alloc.quantity <= 0: alloc.delete()
+                                else: alloc.save(update_fields=['quantity'])
+                                remaining -= deduct
+
+                        released = qty_dec - remaining
+                        if released > 0:
                             batch.allocated_quantity -= released
                             if batch.allocated_quantity < 0: batch.allocated_quantity = 0
                             batch.save(update_fields=['allocated_quantity'])
@@ -4431,6 +4451,11 @@ def shipment_detail_view(request, pk):
             stage = {'Preparing': 0, 'Dispatched': 1, 'Delayed': 1, 'Arrived': 2}
             if stage[new_st] < stage[shipment.status]:
                 messages.error(request, f"A shipment can't go back from {shipment.status} to {new_st}.")
+                return redirect('shipment_detail', pk=shipment.pk)
+            if (shipment.direction in ['Outbound', 'Transfer'] and shipment.status == 'Preparing'
+                    and new_st in ['Delayed', 'Arrived']):
+                # Dispatch is where cargo is checked and credited, so it can't be skipped
+                messages.error(request, f"Mark this shipment as Dispatched before setting it to {new_st}.")
                 return redirect('shipment_detail', pk=shipment.pk)
             if new_st == 'Dispatched' and shipment.direction in ['Outbound', 'Transfer']:
                 problem = shipment_dispatch_problem(shipment)
@@ -4612,14 +4637,17 @@ def shipment_detail_view(request, pk):
 
                 if shipment.direction == 'Outbound' and shipment.sales_order:
                     from .utils import mark_so_delivered_if_fully_shipped, apply_so_product_shipment
-                    if not shipment.credited_to_so:
-                        for item in shipment.items.all():
-                            if item.product:
-                                so_detail = SalesOrderDetail.objects.filter(sales_order=shipment.sales_order, product=item.product).first()
-                                if so_detail:
+                    for item in shipment.items.all():
+                        if item.product:
+                            so_detail = SalesOrderDetail.objects.filter(sales_order=shipment.sales_order, product=item.product).first()
+                            if so_detail:
+                                if not shipment.credited_to_so:
                                     apply_so_product_shipment(so_detail, item.received_quantity)
-                        shipment.credited_to_so = True
-                        shipment.save(update_fields=['credited_to_so'])
+                                elif item.shortage_quantity > 0:
+                                    # Credited in full at dispatch; the client only got what was received
+                                    apply_so_product_shipment(so_detail, -item.shortage_quantity)
+                    shipment.credited_to_so = True
+                    shipment.save(update_fields=['credited_to_so'])
                     mark_so_delivered_if_fully_shipped(shipment.sales_order, completing_shipment=shipment)
 
             if shipment.direction == 'Transfer':
@@ -4845,7 +4873,7 @@ def _fg_fefo_batches(product):
     """Active finished-goods batches with free stock, earliest expiry first (FEFO)."""
     from django.db.models import F
     return [
-        b for b in Batch.objects.filter(product=product, status='Active')
+        b for b in unexpired(Batch.objects.filter(product=product, status='Active'))
         .select_related('warehouse')
         .order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
         if b.quantity - b.allocated_quantity > 0
@@ -5126,7 +5154,7 @@ def production_run_allocate_view(request, pk):
         needed = max(required_total - already, Decimal('0'))
 
         # Get all active batches globally, ordered by expiry date (FEFO)
-        batches = Batch.objects.filter(material=req.material, status='Active').annotate(
+        batches = unexpired(Batch.objects.filter(material=req.material, status='Active')).annotate(
             avail=F('quantity') - F('allocated_quantity')
         ).filter(avail__gt=0).order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
         
@@ -5445,9 +5473,9 @@ def production_run_detail_view(request, pk):
         # Unreserved stock at the run's plant: what extra material can be traced to
         plant_batches = []
         if run.manufacturing_plant_id:
-            plant_batches = list(Batch.objects.filter(
+            plant_batches = list(unexpired(Batch.objects.filter(
                 material=req.material, status='Active', warehouse_id=run.manufacturing_plant_id,
-            ).annotate(avail=F('quantity') - F('allocated_quantity')).filter(avail__gt=0).order_by(
+            )).annotate(avail=F('quantity') - F('allocated_quantity')).filter(avail__gt=0).order_by(
                 F('expiry_date').asc(nulls_last=True), 'manufacturing_date'))
         bom_materials.append({
             'material': req.material,

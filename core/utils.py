@@ -64,6 +64,68 @@ def generate_next_code(model_class, field_name, prefix, default_num=1001, pad=4)
         candidate = f"{prefix}-{next_num:0{pad}d}" if pad else f"{prefix}-{next_num}"
     return candidate
 
+def unexpired(batches):
+    """Narrows a Batch queryset to stock that can still be used: no expiry date,
+    or one that hasn't passed yet. FEFO picking must never suggest expired stock."""
+    from django.db.models import Q
+    from django.utils import timezone
+    return batches.filter(Q(expiry_date__isnull=True) | Q(expiry_date__gte=timezone.localdate()))
+
+
+def trim_batch_reservations(batch, keep, user, why):
+    """Cuts the reservations on `batch` down to `keep` units, for when stock is
+    spoiled or a count finds less than was reserved. Order and run reservations
+    are cut newest first; an order that loses stock drops back from Ready to Ship
+    to Pending, and a run from Planned to Pending Allocation, so they get
+    allocated again. Stock already loaded on an open shipment is never cut:
+    returns an error message (and changes nothing) if that would be needed,
+    else None. Saves the batch's allocated_quantity."""
+    from .models import OrderTimeline
+    keep = max(Decimal(str(keep)), Decimal('0'))
+    if batch.allocated_quantity <= keep:
+        return None
+
+    allocs = list(batch.allocations.select_related('sales_order', 'production_run', 'shipment').order_by('-id'))
+    on_trucks = [a for a in allocs if a.shipment and a.shipment.status not in ('Completed', 'Cancelled')]
+    if sum((a.quantity for a in on_trucks), Decimal('0')) > keep:
+        trucks = ', '.join(sorted({a.shipment.tracking_number for a in on_trucks}))
+        return f"Stock from batch {batch.batch_number} is loaded on {trucks}. Scrap or finish that shipment first."
+
+    excess = batch.allocated_quantity - keep
+    for a in allocs:
+        if excess <= 0:
+            break
+        if a in on_trucks:
+            continue
+        cut = min(a.quantity, excess)
+        excess -= cut
+        a.quantity -= cut
+        if a.quantity <= 0:
+            a.delete()
+        else:
+            a.save(update_fields=['quantity'])
+        note = f"{cut} reserved from batch {batch.batch_number} released: {why}."
+        if a.sales_order:
+            so = a.sales_order
+            if so.status == 'Ready to Ship':
+                so.status = 'Pending'
+                so.save(update_fields=['status'])
+                note += " Allocate stock again before shipping."
+            OrderTimeline.objects.create(sales_order=so, action=note, user=user)
+        elif a.production_run:
+            run = a.production_run
+            if run.status == 'Planned':
+                run.status = 'Pending Allocation'
+                run.save(update_fields=['status'])
+                note += " Allocate materials again before starting."
+            OrderTimeline.objects.create(production_run=run, action=note, user=user)
+
+    # Any excess left over was a counter with no reservation row behind it
+    batch.allocated_quantity = keep
+    batch.save(update_fields=['allocated_quantity'])
+    return None
+
+
 def allocate_stock(order_type, order, material_or_product, required_qty, warehouse=None):
     """
     Allocates `required_qty` of a Material or Product to a SalesOrder, ProductionRun, or Shipment.
@@ -83,7 +145,7 @@ def allocate_stock(order_type, order, material_or_product, required_qty, warehou
         batches = batches.filter(warehouse=warehouse)
         
     from django.db.models import F
-    batches = batches.order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
+    batches = unexpired(batches).order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
 
     remaining_to_allocate = Decimal(str(required_qty))
     total_allocated = Decimal('0')
@@ -533,9 +595,9 @@ def consume_materials_for_run(run, user):
         # No sources recorded (e.g. submitted before extra-material tracing existed):
         # fall back to the plant's earliest-expiring stock.
         if remaining > 0 and not extras and run.manufacturing_plant:
-            extra_batches = Batch.objects.filter(
+            extra_batches = unexpired(Batch.objects.filter(
                 material=material, status='Active', warehouse=run.manufacturing_plant
-            ).annotate(avail=F('quantity') - F('allocated_quantity')).filter(avail__gt=0).order_by(
+            )).annotate(avail=F('quantity') - F('allocated_quantity')).filter(avail__gt=0).order_by(
                 F('expiry_date').asc(nulls_last=True), 'manufacturing_date'
             )
             for batch in extra_batches:
@@ -1124,12 +1186,17 @@ def apply_so_product_shipment(so_detail, delta_qty):
 
 def mark_so_delivered_if_fully_shipped(so, completing_shipment=None):
     """Marks a SalesOrder Delivered once its Outbound shipment(s) all complete -
-    not early, while another shipment against it is still in transit."""
+    not early, while another shipment against it is still in transit, and not
+    while any line still has units owed to the client."""
     outstanding = so.shipments.filter(direction='Outbound').exclude(status__in=['Completed', 'Cancelled'])
     if completing_shipment is not None:
         outstanding = outstanding.exclude(pk=completing_shipment.pk)
+    owed = any(
+        Decimal(str(i.quantity_shipped or 0)) < Decimal(str(i.quantity_ordered))
+        for i in so.items.all()
+    )
 
-    if not outstanding.exists():
+    if not outstanding.exists() and not owed:
         so.status = 'Delivered'
         so.save(update_fields=['status'])
         return True

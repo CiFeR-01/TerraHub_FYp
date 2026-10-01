@@ -409,7 +409,7 @@ class StockAllocationTests(TestCase):
 
         self.batch = Batch.objects.create(
             batch_number='B-PRD-Y-1', product=self.product, quantity=50.0, status='Active',
-            manufacturing_date='2025-01-01', expiry_date='2026-01-01',
+            manufacturing_date='2025-01-01', expiry_date='2036-01-01',
             warehouse=self.warehouse, location='Zone A Aisle 1',
         )
 
@@ -458,7 +458,7 @@ class BatchClosureTests(TestCase):
     def _batch(self, qty):
         return Batch.objects.create(
             batch_number='B-CLOSE-1', product=self.product, quantity=qty, status='Active',
-            manufacturing_date='2025-01-01', expiry_date='2026-01-01',
+            manufacturing_date='2025-01-01', expiry_date='2036-01-01',
             warehouse=self.warehouse, location='Zone A',
         )
 
@@ -6411,3 +6411,133 @@ class ApprovalBypassTests(TestCase):
     def test_admin_can_grant_admin(self):
         other = make_user(username='ab_other2', password='pw')
         self.assertEqual(self._set_roles(other, 'Admin'), {'Admin'})
+
+
+class StockAndDeliveryTests(TestCase):
+    """An order is only Delivered when every unit reached the client, dispatch
+    can't be skipped, expired stock is never picked, and reservations are
+    released when stock is scrapped, spoiled or counted short."""
+
+    def setUp(self):
+        self.admin = make_user(username='sd_admin', password='pw', role='Admin')
+        self.client.force_login(self.admin)
+        self.wh = Warehouse.objects.create(name='SD Hub', location_type='Storage')
+        self.dest = Warehouse.objects.create(name='SD Dest', location_type='Storage')
+        self.product = Product.objects.create(name='SD Product', sku='PRD-SD', unit_of_measure='kg', price_per_unit=1)
+
+    def _batch(self, number, qty, allocated=0, expires_in=100):
+        return Batch.objects.create(
+            batch_number=number, status='Active', product=self.product, quantity=Decimal(qty),
+            allocated_quantity=Decimal(allocated), manufacturing_date=date.today() - timedelta(days=200),
+            expiry_date=date.today() + timedelta(days=expires_in), warehouse=self.wh,
+        )
+
+    def _so(self, ordered, status='Pending', shipped=0):
+        so = SalesOrder.objects.create(so_number=f'SO-SD-{SalesOrder.objects.count()}', client_name='C',
+                                       origin_warehouse=self.wh, status=status)
+        detail = SalesOrderDetail.objects.create(sales_order=so, product=self.product,
+                                                 quantity_ordered=Decimal(ordered), quantity_shipped=Decimal(shipped))
+        return so, detail
+
+    def _outbound(self, so, batch, qty, status='Arrived', **kw):
+        s = Shipment.objects.create(tracking_number=f'SHP-SD-{Shipment.objects.count()}', direction='Outbound',
+                                    status=status, origin_warehouse=self.wh, sales_order=so, **kw)
+        item = ShipmentItem.objects.create(shipment=s, product=self.product, batch=batch, quantity=Decimal(qty))
+        StockAllocation.objects.create(batch=batch, shipment=s, quantity=Decimal(qty))
+        return s, item
+
+    def _post(self, s, **data):
+        return self.client.post(reverse('shipment_detail', args=[s.pk]), data)
+
+    def test_partial_shipment_does_not_mark_order_delivered(self):
+        so, detail = self._so('20', status='Pending')
+        s, _ = self._outbound(so, self._batch('SD-P', '5', allocated='5'), '5')
+        self._post(s, action='receive_all')
+        so.refresh_from_db(); detail.refresh_from_db()
+        self.assertEqual(detail.quantity_shipped, Decimal('5'))
+        self.assertEqual(so.status, 'Partially Shipped')
+
+    def test_force_close_credits_only_what_the_client_received(self):
+        so, detail = self._so('10', status='Shipped', shipped='10')
+        batch = self._batch('SD-FC', '10', allocated='10')
+        s, item = self._outbound(so, batch, '10', status='Discrepant', credited_to_so=True)
+        item.received_quantity = Decimal('9')
+        item.save()
+        self._post(s, action='force_close_shipment', manager_comment='one damaged')
+        so.refresh_from_db(); detail.refresh_from_db(); batch.refresh_from_db()
+        self.assertEqual(detail.quantity_shipped, Decimal('9'))
+        self.assertEqual(so.status, 'Partially Shipped')
+        self.assertEqual((batch.quantity, batch.allocated_quantity), (Decimal('1'), Decimal('0')))
+
+    def test_outbound_cannot_skip_dispatch(self):
+        so, detail = self._so('4', status='Ready to Ship')
+        s, _ = self._outbound(so, self._batch('SD-SK', '4', allocated='4'), '4', status='Preparing')
+        for target in ('Arrived', 'Delayed'):
+            self._post(s, action='update_operational_status', status=target)
+            s.refresh_from_db()
+            self.assertEqual(s.status, 'Preparing')
+        inbound = Shipment.objects.create(tracking_number='SHP-SD-IN', direction='Inbound', status='Preparing',
+                                          destination_warehouse=self.wh)
+        self._post(inbound, action='update_operational_status', status='Arrived')
+        inbound.refresh_from_db()
+        self.assertEqual(inbound.status, 'Arrived')
+
+    def test_expired_batches_are_never_picked(self):
+        expired = self._batch('SD-EXP', '5', expires_in=-3)
+        fresh = self._batch('SD-OK', '10', expires_in=30)
+        so, detail = self._so('10')
+        resp = self.client.get(reverse('so_allocate', args=[so.pk]))
+        offered = [b['id'] for b in resp.context['allocation_data'][0]['batches']]
+        self.assertEqual(offered, [fresh.id])
+        # Posting the expired batch anyway reserves nothing from it
+        self.client.post(reverse('so_allocate', args=[so.pk]), {
+            'action': 'allocate_manual', f'batch_qty_{detail.id}_{expired.id}': '5', 'override_reason': 'x'})
+        self.assertFalse(StockAllocation.objects.filter(batch=expired).exists())
+
+        from core.utils import allocate_stock
+        so2, _ = self._so('3')
+        allocate_stock('sales_order', so2, self.product, 3)
+        self.assertEqual(list(StockAllocation.objects.filter(sales_order=so2).values_list('batch__batch_number', flat=True)), ['SD-OK'])
+
+    def test_scrapping_a_plain_transfer_releases_its_stock(self):
+        batch = self._batch('SD-TR', '50', allocated='30')
+        s = Shipment.objects.create(tracking_number='SHP-SD-TR', direction='Transfer', status='Draft',
+                                    origin_warehouse=self.wh, destination_warehouse=self.dest)
+        ShipmentItem.objects.create(shipment=s, product=self.product, batch=batch, quantity=Decimal('30'))
+        StockAllocation.objects.create(batch=batch, shipment=s, quantity=Decimal('30'))
+        self._post(s, action='scrap_shipment')
+        s.refresh_from_db(); batch.refresh_from_db()
+        self.assertEqual(s.status, 'Cancelled')
+        self.assertEqual(batch.allocated_quantity, Decimal('0'))
+        self.assertFalse(StockAllocation.objects.filter(batch=batch).exists())
+
+    def test_spoiling_a_reserved_batch_releases_the_order(self):
+        batch = self._batch('SD-SP', '60', allocated='10')
+        so, _ = self._so('10', status='Ready to Ship')
+        StockAllocation.objects.create(batch=batch, sales_order=so, quantity=Decimal('10'))
+        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'batch_id': batch.id})
+        batch.refresh_from_db(); so.refresh_from_db()
+        self.assertEqual((batch.status, batch.allocated_quantity), ('Spoiled', Decimal('0')))
+        self.assertFalse(StockAllocation.objects.filter(batch=batch).exists())
+        self.assertEqual(so.status, 'Pending')
+
+    def test_spoiling_stock_loaded_on_a_shipment_is_refused(self):
+        batch = self._batch('SD-SP2', '10', allocated='10')
+        so, _ = self._so('10', status='Ready to Ship')
+        self._outbound(so, batch, '10', status='Dispatched')
+        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'batch_id': batch.id})
+        batch.refresh_from_db()
+        self.assertEqual((batch.status, batch.allocated_quantity), ('Active', Decimal('10')))
+
+    def test_short_count_trims_reservations_to_what_is_left(self):
+        from core.models import StockAudit
+        batch = self._batch('SD-AU', '40', allocated='40')
+        so, _ = self._so('40', status='Ready to Ship')
+        StockAllocation.objects.create(batch=batch, sales_order=so, quantity=Decimal('40'))
+        audit = StockAudit.objects.create(batch=batch, expected_quantity=Decimal('40'), actual_quantity=Decimal('20'))
+        self.client.post(reverse('stock_audit'), {'action': 'resolve', 'audit_id': audit.id})
+        batch.refresh_from_db(); so.refresh_from_db(); audit.refresh_from_db()
+        self.assertEqual(audit.status, 'Resolved')
+        self.assertEqual((batch.quantity, batch.allocated_quantity), (Decimal('20'), Decimal('20')))
+        self.assertEqual(StockAllocation.objects.get(batch=batch).quantity, Decimal('20'))
+        self.assertEqual(so.status, 'Pending')
