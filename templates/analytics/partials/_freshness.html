@@ -1,0 +1,14 @@
+{% comment %}
+"As of" stamp + Refresh link for an analytics page. Context: `as_of` (when the shown
+figures were computed - results are cached for up to a minute and dropped early
+whenever the underlying data changes). Refresh (`?refresh=1`, see views_analytics.refreshable)
+forces a recompute.
+Usage: {% include "analytics/partials/_freshness.html" %}
+{% endcomment %}
+{% if as_of %}
+<div class="animate-fade-in-up" style="display:flex; align-items:center; gap:0.6rem; margin:-0.75rem 0 1.25rem; font-size:0.8rem; color:var(--text-muted);">
+    <span>As of {{ as_of|date:"d M Y, H:i" }}</span>
+    <a href="{{ request.path }}?{% for k, v in request.GET.items %}{{ k|urlencode }}={{ v|urlencode }}&amp;{% endfor %}refresh=1"
+       style="font-weight:600; color:var(--accent,#4f46e5); text-decoration:none;">&#8635; Refresh</a>
+</div>
+{% endif %}

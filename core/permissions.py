@@ -26,6 +26,20 @@ def can_approve(user):
     return user.has_perm(APPROVE_REQUESTS)
 
 
+def can_grant_group(user, group):
+    """A user may only hand out (or take away) a group whose permissions they
+    hold themselves, so nobody can promote themselves or anyone else above
+    their own level."""
+    if user.is_superuser:
+        return True
+    return all(
+        user.has_perm(f"{app_label}.{codename}")
+        for app_label, codename in group.permissions.values_list('content_type__app_label', 'codename')
+        # HANDLE_PURCHASING only marks who purchasing work is routed to; it isn't a power
+        if f"{app_label}.{codename}" != HANDLE_PURCHASING
+    )
+
+
 def users_with_perm(perm, include_superusers=True):
     """Active users holding `perm` ('app_label.codename') directly or through
     a group. Superusers implicitly hold every permission."""

@@ -22,6 +22,7 @@
         {% endif %}
     </div>
     <div class="header-action-tray">
+        {% if po_status_choices|length > 1 %}
         <form method="post" style="display:inline-flex; gap:0.5rem; align-items:center;">
             {% csrf_token %}
             <input type="hidden" name="action" value="update_po_status">
@@ -32,6 +33,7 @@
             </select>
             <button type="submit" class="btn btn-primary" style="padding:0.45rem 1rem; font-size:0.85rem;">Update Status</button>
         </form>
+        {% endif %}
     </div>
 </header>
 
@@ -226,7 +228,9 @@
                     <td style="padding:0.85rem 1rem; font-weight:600; white-space:nowrap;">{% if row.subtotal > 0 %}RM {{ row.subtotal|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
                         <!-- Receive form -->
+                        {% if po.status not in unapproved_statuses %}
                         <button onclick="(function(){var el=document.getElementById('recv-{{ row.item.id }}');el.style.display=el.style.display==='none'?'block':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--text-muted); margin-right:0.3rem;">📥 Receive</button>
+                        {% endif %}
                         <form method="post" style="display:inline;">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="remove_po_item">
@@ -308,6 +312,19 @@
     </p>
     {% if po.approval_remarks %}
     <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">"{{ po.approval_remarks }}"</p>
+    {% endif %}
+    {% if can_decide_approval %}
+    <form method="post" action="{% url 'approvals_inbox' %}" style="margin:0.75rem 0 1rem;">
+        {% csrf_token %}
+        <input type="hidden" name="item_type" value="purchase_order">
+        <input type="hidden" name="item_id" value="{{ po.id }}">
+        <input type="hidden" name="next" value="{{ request.path }}">
+        <textarea name="comment" rows="2" class="form-input" placeholder="Comment (optional)" style="width:100%; padding:0.5rem 0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.85rem; resize:vertical; font-family:inherit; margin-bottom:0.6rem;"></textarea>
+        <div style="display:flex; gap:0.5rem;">
+            <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.45rem 1.1rem; font-size:0.85rem;">Approve</button>
+            <button type="submit" name="action" value="reject" class="btn btn-secondary" style="padding:0.45rem 1.1rem; font-size:0.85rem; border-color:#dc2626; color:#dc2626;" onclick="return confirm('Reject this order? It will return to Draft.')">Reject</button>
+        </div>
+    </form>
     {% endif %}
     <button type="button" onclick="var f=document.getElementById('resend-approval-form'); f.style.display=f.style.display==='none'?'block':'none';" style="background:none; border:1px solid var(--border-light); border-radius:6px; padding:0.4rem 0.8rem; font-size:0.8rem; color:var(--text-muted); cursor:pointer; margin-top:0.5rem;">
         Reassign / Resend Request

@@ -14,6 +14,8 @@ from decimal import Decimal
 from django.db.models import Sum
 from django.utils import timezone
 
+from .analytics_cache import cached_analytics
+
 # RegistryLog.action_type for material draws into a run (see core/utils.py).
 CONSUMPTION_ACTION = "Consumed_For_Manufacturing"
 
@@ -146,15 +148,30 @@ def _expected_delivery(po, lead_map, default_lead_days):
     return po.order_date + _dt.timedelta(days=lead), True
 
 
-def _rate_supplier(on_time_rate, fill_rate):
+def supplier_thresholds():
+    """Rating cut-offs as fractions, from the supplier_* settings (percent there).
+    Read once per run; 'poor' is kept at or below 'good'."""
+    from .settings_store import get_setting
+
+    good_ot = get_setting("supplier_good_on_time_pct") / 100.0
+    good_fill = get_setting("supplier_good_fill_pct") / 100.0
+    return {
+        "good_on_time": good_ot,
+        "good_fill": good_fill,
+        "poor_on_time": min(get_setting("supplier_poor_on_time_pct") / 100.0, good_ot),
+        "poor_fill": min(get_setting("supplier_poor_fill_pct") / 100.0, good_fill),
+    }
+
+
+def _rate_supplier(on_time_rate, fill_rate, th):
     """Blend on-time and fill performance into good / watch / poor / n/a."""
     if on_time_rate is None and fill_rate is None:
         return "n/a"
     ot = 1.0 if on_time_rate is None else on_time_rate
     fr = 1.0 if fill_rate is None else fill_rate
-    if ot >= 0.9 and fr >= 0.98:
+    if ot >= th["good_on_time"] and fr >= th["good_fill"]:
         return "good"
-    if ot < 0.7 or fr < 0.9:
+    if ot < th["poor_on_time"] or fr < th["poor_fill"]:
         return "poor"
     return "watch"
 
@@ -169,6 +186,7 @@ def supplier_reliability(*, since=None, until=None):
 
     default_lead = get_setting("po_default_lead_time_days")
     lead_map = _supplier_lead_map()
+    th = supplier_thresholds()
 
     pos = (
         PurchaseOrder.objects.filter(status__in=SCORECARD_PO_STATUSES)
@@ -238,7 +256,7 @@ def supplier_reliability(*, since=None, until=None):
         b["estimated_share"] = b["estimated_count"] / b["assessable_count"] if b["assessable_count"] else None
         b["avg_delay_days"] = sum(delays) / len(delays) if delays else None
         b["last_delivery"] = max(arrivals) if arrivals else None
-        b["rating"] = _rate_supplier(b["on_time_rate"], b["fill_rate"])
+        b["rating"] = _rate_supplier(b["on_time_rate"], b["fill_rate"], th)
         rows.append(b)
 
     rows.sort(key=lambda r: (
@@ -619,9 +637,13 @@ def unrecorded_material_usage(recent_days=7, window_days=28, now=None):
 
 _STOCKOUT_RANK = {"critical": 0, "reorder_now": 1, "watch": 2, "ok": 3, "no_usage": 4}
 
-# Days-until-reorder bands: <= _REORDER_NOW_DAYS is "reorder now", <= _REORDER_WATCH_DAYS is "watch".
-_REORDER_NOW_DAYS = 2
-_REORDER_WATCH_DAYS = 14
+def stockout_thresholds():
+    """(reorder_now_days, watch_days) from settings: days-until-reorder <= the first is
+    "reorder now", <= the second is "watch". Watch is kept at or beyond reorder-now."""
+    from .settings_store import get_setting
+
+    now_days = max(int(get_setting("stockout_reorder_now_days")), 0)
+    return now_days, max(int(get_setting("stockout_watch_days")), now_days)
 
 # Beyond this many days of cover, don't bother projecting a date - it's noise.
 _FORECAST_HORIZON_DAYS = 3650
@@ -675,6 +697,7 @@ def _project_cover(available, rate, arrivals, today):
     return cover, counted, late
 
 
+@cached_analytics
 def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
     """Per active material: days of cover, stockout date, and reorder-by date
     from burn rate, counting open-PO deliveries that arrive before the stock runs
@@ -700,6 +723,7 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
         ).values("material_id").annotate(lt=Max("lead_time_days"))
     }
     default_lead = get_setting("po_default_lead_time_days")
+    reorder_now_days, reorder_watch_days = stockout_thresholds()
 
     # Open PO lines -> expected arrivals per material (same expected-date rule as
     # the supplier scorecard: the PO's own date, else order date + lead time).
@@ -753,9 +777,9 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
                 days_until_reorder = days_cover - lead_days
                 if days_cover <= 0 or days_until_reorder < 0:
                     status = "critical"   # already out, or can't reorder in time
-                elif days_until_reorder <= _REORDER_NOW_DAYS:
+                elif days_until_reorder <= reorder_now_days:
                     status = "reorder_now"
-                elif days_until_reorder <= _REORDER_WATCH_DAYS:
+                elif days_until_reorder <= reorder_watch_days:
                     status = "watch"
                 else:
                     status = "ok"
@@ -804,10 +828,8 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
 
 _CAPACITY_RANK = {"critical": 0, "watch": 1, "ok": 2, "stable": 3, "no_data": 4}
 
-# Below this many snapshots there is no trend to fit.
-_MIN_SNAPSHOTS = 3
-# Slopes flatter than this (percentage points per day) count as "not filling".
-_FLAT_SLOPE_PP = 0.02
+# Below this many calendar days of history (first snapshot -> today) there is no trend to fit.
+_MIN_HISTORY_DAYS = 3
 _CAPACITY_HORIZON_DAYS = 3650
 
 
@@ -869,7 +891,7 @@ def snapshot_warehouse_utilization(snap_date=None, warehouse_ids=None):
     Idempotent per (warehouse, date): later calls the same day overwrite, so the
     last write of the day is that day's figure. Called by core/signals.py whenever
     stock or a warehouse changes (warehouse_ids = just the affected ones), by
-    ensure_today_snapshots(), and by the `snapshot_utilization` command.
+    the `snapshot_utilization` command and the Capacity page's "Run snapshot now".
     Returns (warehouse_count, snap_date)."""
     from .models import WarehouseUtilizationSnapshot
 
@@ -891,19 +913,6 @@ def snapshot_warehouse_utilization(snap_date=None, warehouse_ids=None):
             },
         )
     return len(rows), snap_date
-
-
-def ensure_today_snapshots():
-    """Safety net for the save-on-change snapshots: if any warehouse has no row for
-    today yet (nothing has changed today, or a bulk update skipped the signals),
-    write them now. Cheap no-op once today's rows exist."""
-    from .models import Warehouse, WarehouseUtilizationSnapshot
-
-    today = timezone.localdate()
-    have = set(WarehouseUtilizationSnapshot.objects.filter(snapshot_date=today).values_list('warehouse_id', flat=True))
-    missing = set(Warehouse.objects.values_list('id', flat=True)) - have
-    if missing:
-        snapshot_warehouse_utilization(warehouse_ids=missing)
 
 
 def estimate_snapshot_rent(snapshot, warehouse):
@@ -1178,10 +1187,51 @@ def _linreg(points):
     return slope, intercept
 
 
+def capacity_thresholds():
+    """Capacity status bands from settings. Watch is kept at or beyond critical."""
+    from .settings_store import get_setting
+
+    critical_days = max(int(get_setting("capacity_critical_days")), 0)
+    return {
+        "critical_percent": float(get_setting("capacity_critical_percent")),
+        "critical_days": critical_days,
+        "watch_days": max(int(get_setting("capacity_watch_days")), critical_days),
+        "flat_slope_pp": max(float(get_setting("capacity_flat_slope_pp")), 0.0),
+    }
+
+
+def _daily_series(hist, end, window_days=0):
+    """[(day_offset, percent), ...] with one point per calendar day from the first
+    snapshot (or, if `window_days` > 0, the last `window_days` days ending at `end`,
+    whichever is later) to `end`. Snapshots are only written when something changes,
+    so a day with no row means "same as the last row" - carry it forward. Fitting only
+    the change days would over-weight the days stock arrived and overstate the fill
+    rate. The window drops old history so a one-off step doesn't skew the slope."""
+    start = hist[0][0]
+    if window_days > 0:
+        start = max(start, end - _dt.timedelta(days=window_days - 1))
+    points, i, last = [], 0, hist[0][1]
+    for offset in range((end - start).days + 1):
+        day = start + _dt.timedelta(days=offset)
+        while i < len(hist) and hist[i][0] <= day:
+            last = hist[i][1]
+            i += 1
+        points.append((offset, last))
+    return points
+
+
+@cached_analytics
 def capacity_forecast():
-    """Per warehouse, projects when it reaches 100% from its snapshot history.
-    Worst first - see §8.8 for the row shape and status bands."""
+    """Per warehouse, projects when it reaches 100% from its snapshot history
+    (quiet days carried forward, trailing `capacity_trend_window_days` only - see
+    _daily_series). Worst first - see §8.8 for the row shape and status bands."""
     from .models import Warehouse, WarehouseUtilizationSnapshot
+    from .settings_store import get_setting
+
+    window_days = int(get_setting("capacity_trend_window_days"))
+    th = capacity_thresholds()
+    if 0 < window_days < 7:
+        window_days = 7  # a shorter fit is just noise
 
     snaps = {}
     for s in (WarehouseUtilizationSnapshot.objects
@@ -1191,37 +1241,39 @@ def capacity_forecast():
             (s['snapshot_date'], float(s['utilization_percent']))
         )
 
+    today = timezone.localdate()
     rows = []
     for w in Warehouse.objects.order_by('name'):
         hist = snaps.get(w.id, [])
+        end = max(today, hist[-1][0]) if hist else today
         base = {
             "warehouse_id": w.id, "name": w.name,
             "snapshot_count": len(hist),
+            "history_days": (end - hist[0][0]).days + 1 if hist else 0,
             "first_date": hist[0][0] if hist else None,
             "latest_date": hist[-1][0] if hist else None,
             "current_percent": round(hist[-1][1], 2) if hist else None,
             "weekly_rate_pp": None, "days_to_full": None, "projected_full_date": None,
         }
-        if len(hist) < _MIN_SNAPSHOTS:
+        if base["history_days"] < _MIN_HISTORY_DAYS:
             base["status"] = "no_data"
             rows.append(base)
             continue
 
-        d0 = hist[0][0]
-        slope, _intercept = _linreg([((d - d0).days, y) for d, y in hist])
+        slope, _intercept = _linreg(_daily_series(hist, end, window_days))
         current = hist[-1][1]
         base["weekly_rate_pp"] = round(slope * 7, 2) if slope is not None else None
 
-        if slope is None or slope <= _FLAT_SLOPE_PP:
-            base["status"] = "stable" if current < 95 else "critical"
+        if slope is None or slope <= th["flat_slope_pp"]:
+            base["status"] = "stable" if current < th["critical_percent"] else "critical"
         else:
             days_to_full = max(0.0, (100.0 - current) / slope)
             base["days_to_full"] = round(days_to_full, 1)
             if days_to_full <= _CAPACITY_HORIZON_DAYS:
-                base["projected_full_date"] = hist[-1][0] + _dt.timedelta(days=round(days_to_full))
-            if current >= 95 or days_to_full <= 14:
+                base["projected_full_date"] = end + _dt.timedelta(days=round(days_to_full))
+            if current >= th["critical_percent"] or days_to_full <= th["critical_days"]:
                 base["status"] = "critical"
-            elif days_to_full <= 60:
+            elif days_to_full <= th["watch_days"]:
                 base["status"] = "watch"
             else:
                 base["status"] = "ok"
@@ -1307,6 +1359,7 @@ def incoming_transfer_mt():
     return incoming
 
 
+@cached_analytics
 def rent_reduction_opportunities():
     """DSS: for every rented (Usage-billed) warehouse, suggests batches to
     relocate into our own warehouses and estimates the rent that would stop
@@ -1340,7 +1393,7 @@ def rent_reduction_opportunities():
     rented = list(Warehouse.objects.exclude(ownership_type='Internal').filter(rental_billing_method='Usage'))
     if not rented:
         return []  # nothing to save moving off a free or flat-Overall-billed warehouse
-    forecast_rows = {r['warehouse_id']: r for r in capacity_forecast()}
+    forecast_rows = {r['warehouse_id']: r for r in capacity_forecast.uncached()}
 
     util_by_wh = {r['warehouse_id']: r for r in warehouse_utilization()}
     incoming = incoming_transfer_mt()
@@ -1623,7 +1676,6 @@ TREND_WINDOW_MONTHS = 6
 _MIN_MONTHS_FOR_TREND = 3
 # +/- this % change (recent months' average vs earlier months') counts as a
 # real trend rather than noise.
-_TREND_SIGNIFICANT_PCT = 15.0
 # SO statuses that never became a real commitment - excluded from the trend.
 _TREND_EXCLUDED_SO_STATUSES = ("Draft", "Rejected")
 
@@ -1654,13 +1706,15 @@ def product_sales_trend(*, window_months=TREND_WINDOW_MONTHS, end=None):
     ('declining' | 'rising' | 'flat' | 'new' | 'insufficient_data').
 
       declining/rising - recent-average vs earlier-average differs by at least
-                          _TREND_SIGNIFICANT_PCT
+                          the trend_significant_pct setting (default 15)
       flat              - real history, but change is within that band
       new               - no sales in the earlier months, some in the recent ones
       insufficient_data - sales activity in fewer than _MIN_MONTHS_FOR_TREND months
     """
     from .models import SalesOrderDetail
+    from .settings_store import get_setting
 
+    significant_pct = max(float(get_setting("trend_significant_pct")), 0.0)
     end = end or timezone.localdate()
     month_keys = _trailing_month_keys(end, window_months)
     earliest = _dt.date(*(int(p) for p in month_keys[0].split("-")), 1)
@@ -1709,9 +1763,9 @@ def product_sales_trend(*, window_months=TREND_WINDOW_MONTHS, end=None):
             status, pct_change = ("new", None) if recent_avg > 0 else ("insufficient_data", None)
         else:
             pct_change = (recent_avg - earlier_avg) / earlier_avg * 100.0
-            if pct_change >= _TREND_SIGNIFICANT_PCT:
+            if pct_change >= significant_pct:
                 status = "rising"
-            elif pct_change <= -_TREND_SIGNIFICANT_PCT:
+            elif pct_change <= -significant_pct:
                 status = "declining"
             else:
                 status = "flat"

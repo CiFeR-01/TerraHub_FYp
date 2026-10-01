@@ -23,6 +23,7 @@
 </header>
 
 {% include "analytics/partials/_analytics_tabs.html" %}
+{% include "analytics/partials/_freshness.html" %}
 
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
@@ -117,7 +118,7 @@
     <strong>How it's classified.</strong> Each month's ordered quantity (Draft/Rejected orders excluded)
     is bucketed by order date. <em>Recent avg</em> is the second half of the {{ window_months }}-month
     window; <em>Earlier avg</em> is the first half. <em>Declining</em>/<em>Rising</em> = recent vs earlier
-    differs by 15% or more; <em>Flat</em> = within that band; <em>New</em> = no sales in the earlier
+    differs by {{ significant_pct|floatformat:'-1' }}% or more; <em>Flat</em> = within that band; <em>New</em> = no sales in the earlier
     months but some recently; <em>Not enough data</em> = sales in fewer than 3 of the {{ window_months }}
     months. Revenue is shown only for months where every line has a unit price on file.
 </p>

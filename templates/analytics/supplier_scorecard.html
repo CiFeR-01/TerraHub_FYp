@@ -23,6 +23,7 @@
 </header>
 
 {% include "analytics/partials/_analytics_tabs.html" %}
+{% include "analytics/partials/_freshness.html" %}
 
 <div class="animate-fade-in-up" style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center; margin-bottom:1.25rem;">
     <span style="font-size:0.8rem; color:var(--text-muted); margin-right:0.25rem;">Ordered within:</span>
@@ -164,8 +165,8 @@
     <span style="font-size:0.6rem; font-weight:700; background:#eef2ff; color:#4338ca; padding:0.05rem 0.35rem; border-radius:4px;">EST</span>.
     A PO is "on time" when arrival is on or before the due date. Fill rate is total
     quantity received &divide; total quantity ordered across the supplier's POs.
-    Rating: <em>On track</em> &ge; 90% on-time and &ge; 98% fill; <em>Poor</em> below
-    70% on-time or below 90% fill; <em>Watch</em> in between. POs in Draft, Pending
+    Rating: <em>On track</em> &ge; {{ th.good_on_time|floatformat:"-1" }}% on-time and &ge; {{ th.good_fill|floatformat:"-1" }}% fill; <em>Poor</em> below
+    {{ th.poor_on_time|floatformat:"-1" }}% on-time or below {{ th.poor_fill|floatformat:"-1" }}% fill; <em>Watch</em> in between. POs in Draft, Pending
     Approval, or Rejected are excluded.
     Rows load worst-first &mdash; click any column heading to re-sort.
 </p>

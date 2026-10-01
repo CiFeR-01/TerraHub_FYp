@@ -83,6 +83,15 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'TerraHub.wsgi.application'
 
+# Cache - only the analytics computations use it (core/analytics_cache.py). Local-memory
+# is per worker process, so a change made on one worker reaches the others once the
+# short TTL expires. Tests get a dummy cache so results never leak between cases.
+import sys
+if 'test' in sys.argv:
+    CACHES = {'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}}
+else:
+    CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
+
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases

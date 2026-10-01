@@ -8,8 +8,8 @@ warehouses' rows for today are rewritten once the transaction commits. The last
 write of the day is that day's figure; a day with no write means nothing changed.
 
 Bulk QuerySet.update()/bulk_create() skip these signals (the seed and simulation
-scripts use them); analytics.ensure_today_snapshots() on the Rent Opportunities
-and Capacity pages covers that gap for today.
+scripts use them); the Capacity page warns when live occupancy has drifted from the last
+snapshot, and "Run snapshot now" (or the snapshot_utilization command) repairs it.
 """
 from functools import partial
 
@@ -17,7 +17,12 @@ from django.db import transaction
 from django.db.models.signals import post_delete, post_init, post_save
 from django.dispatch import receiver
 
-from .models import Batch, Material, Product, Warehouse
+from .analytics_cache import invalidate as _invalidate_analytics
+from .models import (
+    Batch, Material, Product, ProductionRun, PurchaseOrder, PurchaseOrderDetail, RegistryLog,
+    RentSuggestion, SalesOrder, SalesOrderDetail, Shipment, ShipmentItem, SupplierMaterial,
+    SystemSetting, Warehouse, WarehouseUtilizationSnapshot,
+)
 
 OPEN_BATCH_STATUSES = ('Active', 'Quarantined')
 
@@ -72,3 +77,19 @@ def _weight_saved(sender, instance, raw=False, **kwargs):
 for _model in (Material, Product):
     post_init.connect(_remember_weight, sender=_model, dispatch_uid=f'snapshot_weight_init_{_model.__name__}')
     post_save.connect(_weight_saved, sender=_model, dispatch_uid=f'snapshot_weight_save_{_model.__name__}')
+
+
+# Anything the cached analytics (core/analytics_cache.py) read: saving or deleting one
+# drops the cached results once the transaction commits, so the next page view recomputes.
+# Bulk QuerySet.update()/bulk_create() skip signals - the short cache TTL covers those.
+def _analytics_changed(sender, raw=False, **kwargs):
+    if not raw:
+        transaction.on_commit(_invalidate_analytics)
+
+
+for _model in (Batch, Warehouse, Material, Product, SupplierMaterial, ProductionRun, PurchaseOrder,
+               PurchaseOrderDetail, SalesOrder, SalesOrderDetail, Shipment, ShipmentItem, RegistryLog,
+               RentSuggestion, SystemSetting, WarehouseUtilizationSnapshot):
+    for _signal in (post_save, post_delete):
+        _signal.connect(_analytics_changed, sender=_model,
+                        dispatch_uid=f'analytics_cache_{_signal.__class__.__name__}_{_model.__name__}')

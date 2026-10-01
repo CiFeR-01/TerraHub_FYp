@@ -174,7 +174,7 @@
                                 {% if log.action_type in 'Inbound,Produced' %}+{% endif %}{{ log.quantity_changed }}
                             </td>
                             <td style="font-size: 0.85rem; color: var(--text-muted);">
-                                {{ log.user.get_full_name|default:log.user.username|default:"System" }}
+                                {% if log.user %}{{ log.user.get_full_name|default:log.user.username }}{% else %}System{% endif %}
                             </td>
                         </tr>
                         {% endfor %}

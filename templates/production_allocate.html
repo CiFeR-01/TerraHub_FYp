@@ -30,7 +30,7 @@
 {% endif %}
 
 <div class="animate-fade-in-up" style="max-width:1000px;">
-    <form id="allocate_form" method="post" action="{% url 'production_run_allocate' run.pk %}" data-plant-id="{{ run.manufacturing_plant_id|default_if_none:'' }}" data-plant-name="{{ run.manufacturing_plant.name }}" data-extra-allowed="{% if extra_allowed %}1{% endif %}">
+    <form id="allocate_form" method="post" action="{% url 'production_run_allocate' run.pk %}" data-plant-id="{{ run.manufacturing_plant_id|default_if_none:'' }}" data-plant-name="{{ run.manufacturing_plant.name }}" data-extra-allowed="{% if extra_allowed %}1{% endif %}" data-under-way="{% if under_way %}1{% endif %}">
         {% csrf_token %}
         <input type="hidden" name="action" value="allocate_run">
 
@@ -67,7 +67,7 @@
 
             {% if extra_allowed %}
             <div style="margin-bottom:1.5rem; background:#fffbeb; padding:0.85rem 1rem; border:1px solid #fde68a; border-radius:8px; font-size:0.82rem; color:#92400e;">
-                Production is under way, so you can allocate <strong>more than the recipe needs</strong>. Anything over the requirement needs a reason, which is kept on the run. Stock at another warehouse gets a draft transfer as usual.
+                You can allocate <strong>more than the recipe needs</strong>. Anything over the requirement needs a reason, which is kept on the run. Stock at another warehouse gets a draft transfer as usual.
             </div>
             {% endif %}
 
@@ -155,6 +155,7 @@
     var ackBox = ack.querySelector('input');
     var submit = document.getElementById('alloc-submit');
     var extraAllowed = !!form.getAttribute('data-extra-allowed');
+    var underWay = !!form.getAttribute('data-under-way');
     var reasonBox = document.getElementById('extra-reason-box');
     var reasonInput = reasonBox.querySelector('input');
     var EPS = 0.005, GREEN = '#166534', RED = '#b91c1c', AMBER = '#b45309';
@@ -202,10 +203,10 @@
         else if (originList.length) {
             parts.push(originList.length + ' transfer' + (originList.length === 1 ? '' : 's') + ' from ' +
                 originList.map(function (o) { return o.name + ' (' + fmt(o.qty) + ')'; }).join(', '));
-            parts.push(extraAllowed ? 'the run keeps running' : 'run will wait for them to arrive');
+            parts.push(underWay ? 'the run keeps running' : 'run will wait for them to arrive');
         } else {
             parts.push('all stock is already at the plant, no transfers');
-            if (!extraAllowed) parts.push('run will be ready to start');
+            if (!underWay) parts.push('run will be ready to start');
         }
         if (anyOver) parts.push('reduce the quantities marked Over');
         summary.textContent = parts.join(' · ');
