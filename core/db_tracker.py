@@ -65,8 +65,7 @@ def get_db_status():
     port = db_config.get('PORT', '')
     user = db_config.get('USER', '')
     
-    # Check if we are connected to the live database
-    # Live database is configured if DB_ENGINE environment is django.db.backends.postgresql
+    # Live database is configured when DB_ENGINE is django.db.backends.postgresql
     is_live = (engine == 'django.db.backends.postgresql')
     
     status = "Disconnected"

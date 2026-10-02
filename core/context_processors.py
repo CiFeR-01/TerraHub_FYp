@@ -1,13 +1,10 @@
 from django.conf import settings
 from django.utils.safestring import mark_safe
 
-from .permissions import can_approve, pending_actions, MANAGE_USERS
+from .permissions import can_approve, pending_actions, MANAGE_USERS, ACTION_PERMS
 
 def approvals_count(request):
-    """
-    The number of items waiting on the user in the Action Center, for its
-    sidebar badge. Counts from the same querysets the page lists.
-    """
+    """Number of items waiting on the user in the Action Center (sidebar badge), counted from the same querysets the page lists."""
     if request.user.is_authenticated and can_approve(request.user):
         total = sum(qs.count() for qs in pending_actions(request.user).values())
         return {'pending_approvals_total': total}
@@ -62,10 +59,7 @@ def _perm_ok(user, perm):
 
 
 # Analytics taxonomy: (category label, [(url_name, page label, permission), ...]).
-# Single source of truth for both the sidebar (one collapsed link per
-# category, landing on the first report the user can see) and the tab strip
-# each analytics page renders for its sibling reports in the same category
-# (see core/views_analytics.py's `_analytics_tabs`).
+# Source for the sidebar category links and the tab strip in core/views_analytics.py's `_analytics_tabs`.
 ANALYTICS_CATEGORIES = [
     ('Inventory', [
         ('forecast', 'Stockout & Reorder', 'core.view_material'),
@@ -88,11 +82,7 @@ ANALYTICS_CATEGORIES = [
 
 
 def sidebar_nav(request):
-    """
-    Builds the sidebar navigation as a single data structure so group/link
-    visibility and the "active" state live in one place instead of being
-    re-checked per link in the template.
-    """
+    """Builds the sidebar navigation as one data structure so link visibility and the active state live in one place."""
     user = request.user
     if not user.is_authenticated:
         return {}
@@ -114,18 +104,8 @@ def sidebar_nav(request):
         })
     groups.append({'id': 'overview', 'label': 'Overview', 'icon': NAV_ICONS['overview'], 'items': overview_items})
 
-    # Analytics - the single home for the analytics & forecasting views, one
-    # collapsed link per domain category (Inventory, Supply Chain, Demand,
-    # Operations). Each link lands on the first report in its category the
-    # user can see; the sibling reports in that category are reachable as
-    # tabs on the page itself (see core/views_analytics.py's
-    # `_analytics_tabs`), not as separate sidebar entries. Each domain page
-    # (Suppliers, Sales Orders, Stock Tally, Manufacture, Materials Hub,
-    # Products, Warehouses, Shipments) also links into its analytic via
-    # _insight_link.html.
-    # The Tier 3 AI Copilot (category briefings + the personal checklist that
-    # narrate these signals) lives on the "AI Copilot" link in Overview
-    # (Phase 3/4), not in this section.
+    # Analytics: one collapsed link per category, landing on the first report the user can see; siblings appear as tabs on the page.
+    # The AI Copilot link lives in Overview.
     analytics_items = []
     for category_label, item_specs in ANALYTICS_CATEGORIES:
         visible = [url_name for url_name, label, perm in item_specs if _perm_ok(user, perm)]
@@ -210,3 +190,12 @@ def session_timeout(request):
         'session_idle_warning': settings.SESSION_IDLE_WARNING,
         'session_idle_timeout_minutes': settings.SESSION_IDLE_TIMEOUT // 60,
     }
+
+
+def denied_actions(request):
+    """Form actions on this page the user isn't allowed to run, for base.html to hide."""
+    match = getattr(request, 'resolver_match', None)
+    if not request.user.is_authenticated or not match:
+        return {'denied_actions': []}
+    perms = ACTION_PERMS.get(match.url_name, {})
+    return {'denied_actions': sorted(a for a, perm in perms.items() if not request.user.has_perm(perm))}

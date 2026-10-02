@@ -1,10 +1,6 @@
-"""Reusable field validators. Each raises django ValidationError, so they can be
-attached to a model field (validators=[...]) or called from a view.
+"""Reusable field validators. Each raises ValidationError, for model fields (validators=[...]) or views.
 
-static/js/contact-validation.js applies the same rules in the browser for live
-feedback (via libphonenumber-js, the JS port of the same Google rules). The
-server check here is the one that counts.
-"""
+static/js/contact-validation.js applies the same rules in the browser; the server check is the one that counts."""
 import phonenumbers
 from phonenumbers import geocoder
 from django.core.exceptions import ValidationError
@@ -22,13 +18,8 @@ def _example(region):
 
 
 def normalise_phone(raw, region=DEFAULT_PHONE_REGION):
-    """Check a phone number against its country's rules and return it tidied up.
-
-    `region` is the country picked on the form (ISO code, e.g. 'SG'); a number
-    typed with a leading + uses its own country code instead. Malaysian numbers
-    come back in local form (012-345 6789), others in international form
-    (+65 9123 4567). Blank in, blank out.
-    """
+    """Validates a phone number against its country's rules and returns it tidied up.
+    `region` is the form's ISO country code (e.g. 'SG'); a leading + uses its own country code. Malaysian numbers return in local form, others international. Blank in, blank out."""
     raw = (raw or '').strip()
     if not raw:
         return ''

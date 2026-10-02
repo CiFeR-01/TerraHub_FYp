@@ -1,21 +1,9 @@
-"""
-simulate_sales_history — one-off generation of 6 months of realistic, dated
-Sales Order / Shipment activity that draws every Product's current stock
-down to a believable level (< 1,000 units in the post-rescale 50kg-per-unit
-scale), so there's real history to exercise product_sales_trend() and a
-real 180-day trend behind the Capacity Runway page - not just today's stock
-level with nothing behind it.
+"""simulate_sales_history: one-off generation of 6 months of dated Sales Order / Shipment history that draws product stock down.
 
-Runs the REAL fulfillment pipeline (allocate_stock -> Shipment/ShipmentItem
--> deduct_stock_from_allocation) for every simulated order, backdated, so
-RegistryLog/OrderTimeline audit trails come out the same way a real historical
-order would leave them. This actually deducts Batch.quantity - it is NOT
-idempotent and NOT safely re-runnable (running it twice would sell the same
-stock down twice). It refuses to run if it looks like it already has.
+Runs the real fulfillment pipeline (allocate_stock -> Shipment -> deduct_stock_from_allocation), backdated, so audit trails match real orders.
+It deducts Batch.quantity and is NOT re-runnable (it refuses if it looks already run).
 
-Run:  python manage.py simulate_sales_history
-      python manage.py simulate_sales_history --dry-run   (plan only, no writes)
-"""
+Run:  python manage.py simulate_sales_history [--dry-run]"""
 from __future__ import annotations
 
 import datetime as dt
@@ -212,10 +200,7 @@ class Command(BaseCommand):
             pk=OrderTimeline.objects.filter(sales_order=so).latest("id").pk
         ).update(timestamp=_aware(order["date"] + dt.timedelta(days=2), 15))
 
-        # deduct_stock_from_allocation just created exactly n_allocs new RegistryLog
-        # 'Outbound' rows (one per batch it consumed for this order) - back-date them.
-        # Sequential/single-threaded within this atomic transaction, so "the last
-        # n_allocs Outbound rows by id" are unambiguously this order's.
+        # Back-date the Outbound RegistryLog rows deduct_stock_from_allocation just created (the last n_allocs by id, within this transaction).
         if n_allocs > 0:
             log_ids = list(
                 RegistryLog.objects.filter(action_type="Outbound")

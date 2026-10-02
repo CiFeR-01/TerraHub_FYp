@@ -1,16 +1,8 @@
-"""
-core/briefing.py - Tier 3 "AI Copilot": category briefings + the personal checklist.
+"""core/briefing.py: Tier 3 "AI Copilot" category briefings and the personal checklist.
 
-Two stateless Claude calls, no tool loop, no database access for the model:
-category briefings narrate the notable Tier 1/2 signals per domain
-(collect_signals/generate_briefing); the personal checklist narrates one
-user's own open records (analytics.my_open_jobs/generate_my_checklist).
-Both persist an OpsBriefing row. See SYSTEM_DOCUMENTATION.md §8.9-§8.11.
-
-Config (settings_store.py, editable at /system/settings/): ops_briefing_enabled,
-ops_briefing_model. The API key is the ANTHROPIC_API_KEY env var - a secret,
-deliberately not a SystemSetting.
-"""
+Two stateless Claude calls that narrate Tier 1/2 signals per category (collect_signals/generate_briefing) or one user's open records
+(analytics.my_open_jobs/generate_my_checklist), each saved as an OpsBriefing row. See SYSTEM_DOCUMENTATION.md sections 8.9-8.11.
+Settings: ops_briefing_enabled, ops_briefing_model. The API key is the ANTHROPIC_API_KEY env var, not a SystemSetting."""
 from __future__ import annotations
 
 import datetime as _dt
@@ -31,14 +23,11 @@ except ImportError:  # pragma: no cover - exercised via the "not installed" path
 SIGNAL_WINDOW_DAYS = 180
 # Hard cap on rows per section so the prompt stays small and cheap.
 MAX_ROWS_PER_SECTION = 12
-# Response ceiling. Keep generous - reasoning models spend thinking tokens
-# against this budget before any text, so too low yields an empty reply.
+# Response ceiling; reasoning models spend thinking tokens first, so too low gives an empty reply.
 MAX_OUTPUT_TOKENS = 4000
 
 
-# ---------------------------------------------------------------------------
 # Shared helpers
-# ---------------------------------------------------------------------------
 
 def _num(x, places=2):
     """Round floats for the payload; pass through None / ints unchanged."""
@@ -95,12 +84,9 @@ def _call_claude(*, model_id, system_prompt, user_content):
         return "", model_id, None, None, f"{type(exc).__name__}: {exc}"[:500]
 
 
-# ---------------------------------------------------------------------------
-# Category briefings - signal collection
-# ---------------------------------------------------------------------------
+# Category briefings: signal collection
 
-# Weeks of history handed to Claude for the optional "Outlook (estimate)"
-# section - a real trend line, not just a single current-state number.
+# Weeks of history given to Claude for the optional "Outlook (estimate)" section.
 TREND_WEEKS = 6
 # Snapshot points handed to Claude for the same purpose (capacity).
 TREND_SNAPSHOTS = 8
@@ -299,8 +285,7 @@ def _logistics_signals(since):
     ]
 
 
-# Which analytics feed which category. Every builder takes (since) - even the
-# ones that ignore it - so collect_signals() can call them uniformly.
+# Analytics feeding each category. Every builder takes (since) so collect_signals() can call them uniformly.
 CATEGORY_SIGNAL_BUILDERS = {
     "materials": [("stockout_forecast", _stockout_signals)],
     "products": [("production_yield_variance", _yield_signals)],
@@ -348,9 +333,7 @@ def collect_signals(category, *, window_days=SIGNAL_WINDOW_DAYS, end=None):
     }
 
 
-# ---------------------------------------------------------------------------
-# Category briefings - prompt + generation
-# ---------------------------------------------------------------------------
+# Category briefings: prompt and generation
 
 _BRIEFING_PROMPT_TEMPLATE = """\
 You write the {intro}. Every number in the payload has already been calculated
@@ -473,11 +456,7 @@ def generate_briefing(*, category, period="daily", user=None, window_days=SIGNAL
     )
 
 
-# ---------------------------------------------------------------------------
-# Personal checklist - "My Open Jobs"
-# ---------------------------------------------------------------------------
-# Different signal source (analytics.my_open_jobs, not a company-wide roll-up)
-# and a different prompt - see CHECKLIST_SYSTEM_PROMPT below.
+# Personal checklist: "My Open Jobs" (signals from analytics.my_open_jobs, prompt in CHECKLIST_SYSTEM_PROMPT)
 
 CHECKLIST_SYSTEM_PROMPT = """\
 You are the AI Copilot's personal checklist writer for TerraHub. You are given

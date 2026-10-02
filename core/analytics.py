@@ -1,10 +1,6 @@
-"""
-core/analytics.py — computation layer for TerraHub's analytics & forecasting.
+"""core/analytics.py: analytics and forecasting computations.
 
-Pure functions over the ORM: no request/response objects, no side effects.
-Used by web views, management commands, the shell, and tests. Algorithms,
-row shapes, and status bands are documented in SYSTEM_DOCUMENTATION.md §8.
-"""
+Pure functions over the ORM (no request objects or side effects) used by views, commands and tests. Algorithms and row shapes are in SYSTEM_DOCUMENTATION.md section 8."""
 from __future__ import annotations
 
 import datetime as _dt
@@ -23,19 +19,14 @@ CONSUMPTION_ACTION = "Consumed_For_Manufacturing"
 DEFAULT_WINDOW_DAYS = 30
 
 
-# --------------------------------------------------------------------------------
 # RegistryLog.item_name -> Material resolution (used by migration 0036's backfill)
-# --------------------------------------------------------------------------------
 
 _UPDATED_MATERIAL_RE = re.compile(r"Updated Material '(.+?)'")
 _AUDIT_RESOLVE_RE = re.compile(r"^Batch \S+ \(.+? - (.+?)\)$")
 
 
 def resolve_material_from_label(item_name, by_name):
-    """
-    Map a free-text RegistryLog.item_name back to a material via ``by_name``
-    (keyed by lowercased material name). Returns None if nothing matches.
-    """
+    """Maps a free-text RegistryLog.item_name to a material via `by_name` (lowercased names). Returns None if nothing matches."""
     if not item_name:
         return None
     s = item_name.strip()
@@ -67,10 +58,7 @@ def resolve_material_from_label(item_name, by_name):
 
 
 def daily_consumption(material, *, window_days: int = DEFAULT_WINDOW_DAYS, end=None) -> dict:
-    """
-    {date: Decimal} of material consumed for manufacturing per day over the
-    trailing window ending on ``end``. Untagged RegistryLog rows are skipped.
-    """
+    """{date: Decimal} of material consumed for manufacturing per day over the window ending on `end`. Untagged rows are skipped."""
     end = end or timezone.localdate()
     start = end - _dt.timedelta(days=window_days)
     rows = (
@@ -96,9 +84,7 @@ def consumption_rate(material, *, window_days: int = DEFAULT_WINDOW_DAYS, end=No
     return total / Decimal(window_days)
 
 
-# --------------------------------------------------------------------------------
 # Tier 1 - Supplier reliability scorecard
-# --------------------------------------------------------------------------------
 
 # Statuses with real fulfilment activity - Draft/Pending Approval/Rejected excluded.
 SCORECARD_PO_STATUSES = ("Pending", "Partially Received", "Completed")
@@ -177,10 +163,7 @@ def _rate_supplier(on_time_rate, fill_rate, th):
 
 
 def supplier_reliability(*, since=None, until=None):
-    """
-    Per-supplier fulfilment scorecard, worst first. ``since``/``until`` bound
-    the POs by order_date. See SYSTEM_DOCUMENTATION.md §8.3 for the row shape.
-    """
+    """Per-supplier fulfilment scorecard, worst first. `since`/`until` bound POs by order_date (row shape: SYSTEM_DOCUMENTATION.md section 8.3)."""
     from .models import PurchaseOrder
     from .settings_store import get_setting
 
@@ -268,9 +251,7 @@ def supplier_reliability(*, since=None, until=None):
     return rows
 
 
-# --------------------------------------------------------------------------------
 # Tier 1 - Sales-order delivery risk
-# --------------------------------------------------------------------------------
 
 # Still "in flight" and worth risk-tracking; Delivered/Rejected/Draft excluded.
 _OPEN_SO_STATUSES = (
@@ -381,9 +362,7 @@ def sales_order_delivery_risk():
     return rows
 
 
-# --------------------------------------------------------------------------------
 # Tier 1 - Stock-audit accuracy
-# --------------------------------------------------------------------------------
 
 
 def _audit_bucket_init(name):
@@ -467,9 +446,7 @@ def audit_accuracy(*, since=None):
     return {"by_warehouse": by_warehouse, "by_item": by_item, "trend": trend}
 
 
-# --------------------------------------------------------------------------------
 # Tier 1 - Production yield variance
-# --------------------------------------------------------------------------------
 
 _YIELD_RATING_RANK = {"poor": 0, "watch": 1, "good": 2, "n/a": 3}
 
@@ -555,12 +532,8 @@ def production_yield_variance():
 
 
 def unrecorded_material_usage(recent_days=7, window_days=28, now=None):
-    """Material poured into runs from stock that isn't in the records (the "batch not
-    in records" option when a run uses more than was allocated), per material, worst
-    first. Each row: events / quantity over the recent window and the longer one, the
-    share of what was poured in completed runs over the longer window, the most common
-    reasons, who entered them, and the runs involved. Nothing is deducted from stock for
-    these, so a high share means inventory records and the shop floor are drifting apart."""
+    """Material poured into runs from stock not in the records, per material, worst first.
+    Each row has event counts and quantities for the recent and longer windows, share of poured material, common reasons, who entered them and the runs involved. No stock is deducted for these."""
     from collections import Counter
 
     from .models import RunExtraMaterial, RunMaterialUsage
@@ -631,9 +604,7 @@ def unrecorded_material_usage(recent_days=7, window_days=28, now=None):
     }
 
 
-# --------------------------------------------------------------------------------
 # Tier 2 - Consumption-rate stockout forecast
-# --------------------------------------------------------------------------------
 
 _STOCKOUT_RANK = {"critical": 0, "reorder_now": 1, "watch": 2, "ok": 3, "no_usage": 4}
 
@@ -679,11 +650,8 @@ def consumption_rates(material_ids, *, window_days=DEFAULT_WINDOW_DAYS, end=None
 
 
 def _project_cover(available, rate, arrivals, today):
-    """Days until stock runs out, drawing `available` down at `rate`/day and adding
-    each open-PO delivery on its expected date. A delivery only helps if it lands
-    before the stock is gone - one that arrives after that doesn't prevent the
-    stockout. `arrivals` = [(date, qty), ...]; overdue dates count as today.
-    Returns (days_cover, counted_qty, late_qty)."""
+    """Days until stock runs out, drawing `available` down at `rate`/day and adding each open-PO delivery on its date (only if it lands before stock runs out).
+    `arrivals` = [(date, qty), ...]; overdue dates count as today. Returns (days_cover, counted_qty, late_qty)."""
     rate = float(rate)
     cover = max(float(available), 0.0) / rate
     counted = late = 0.0
@@ -725,8 +693,7 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
     default_lead = get_setting("po_default_lead_time_days")
     reorder_now_days, reorder_watch_days = stockout_thresholds()
 
-    # Open PO lines -> expected arrivals per material (same expected-date rule as
-    # the supplier scorecard: the PO's own date, else order date + lead time).
+    # Open PO lines -> expected arrivals per material (PO date, else order date + lead time, as in the supplier scorecard).
     supplier_leads = _supplier_lead_map()
     arrivals = {}
     for d in (PurchaseOrderDetail.objects
@@ -793,8 +760,7 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
             "allocated": float(al),
             "available": float(available),
             "on_order": float(on_order),
-            # how much of on_order lands before the stock runs out (counted in
-            # days_cover) vs after it (too late to prevent the stockout)
+            # on_order that lands before stock runs out (in days_cover) vs after it (too late)
             "on_order_counted": counted,
             "on_order_late": late,
             "next_po_number": next_po["po_number"] if next_po else None,
@@ -822,9 +788,7 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
     return rows
 
 
-# --------------------------------------------------------------------------------
 # Tier 2 - Warehouse capacity runway
-# --------------------------------------------------------------------------------
 
 _CAPACITY_RANK = {"critical": 0, "watch": 1, "ok": 2, "stable": 3, "no_data": 4}
 
@@ -886,13 +850,8 @@ def warehouse_utilization():
 
 
 def snapshot_warehouse_utilization(snap_date=None, warehouse_ids=None):
-    """Records each warehouse's current occupancy and daily rent into
-    WarehouseUtilizationSnapshot for snap_date (defaults to today, Malaysia time).
-    Idempotent per (warehouse, date): later calls the same day overwrite, so the
-    last write of the day is that day's figure. Called by core/signals.py whenever
-    stock or a warehouse changes (warehouse_ids = just the affected ones), by
-    the `snapshot_utilization` command and the Capacity page's "Run snapshot now".
-    Returns (warehouse_count, snap_date)."""
+    """Records each warehouse's occupancy and daily rent into WarehouseUtilizationSnapshot for snap_date (default today, Malaysia time).
+    Idempotent per (warehouse, date). Called from core/signals.py, the `snapshot_utilization` command and the Capacity page. Returns (warehouse_count, snap_date)."""
     from .models import WarehouseUtilizationSnapshot
 
     snap_date = snap_date or timezone.localdate()
@@ -926,11 +885,8 @@ def estimate_snapshot_rent(snapshot, warehouse):
 
 
 def rent_history(days=180, end=None):
-    """Daily rent per rented warehouse for the last `days` days, for the chart on
-    Rent Opportunities. A day with no snapshot carries the previous day's value
-    forward (nothing changed that day). Rows without recorded rent are estimated
-    (estimate_snapshot_rent) and flagged. Warehouses that never cost anything in
-    the window (our own) are left out."""
+    """Daily rent per rented warehouse for the last `days` days (Rent Opportunities chart). Days without a snapshot carry the previous value forward;
+    rows without recorded rent are estimated and flagged. Warehouses that never cost anything are left out."""
     from .models import Warehouse, WarehouseUtilizationSnapshot
 
     end = end or timezone.localdate()
@@ -1013,16 +969,10 @@ def _window_avg(days):
 
 
 def rent_results(limit=10):
-    """DSS #11 - did the accepted Rent Opportunities moves save what they promised?
+    """DSS #11: did accepted Rent Opportunities moves save what they promised?
 
-    One row per accepted transfer. Once the transfer is completed, the origin's
-    average recorded daily rent for the week before is compared with the week after
-    (the destination's rent change is netted off); `promised` is the sum of the
-    estimates stored when it was accepted. A move is marked "unclear" when the
-    origin's tonnage changed by more than half the move's size for some other
-    reason, since the rent change can't then be put down to the move alone.
-    Statuses: measuring (not completed / too soon), measured, unclear, unavailable
-    (no recorded rent to compare)."""
+    One row per accepted transfer. Once completed, the origin's average daily rent for the week before is compared with the week after (net of the destination's change) against the estimate stored on acceptance.
+    Statuses: measuring, measured, unclear (origin tonnage changed for other reasons), unavailable (no recorded rent)."""
     from .models import OrderTimeline, RentSuggestion
 
     today = timezone.localdate()
@@ -1108,16 +1058,8 @@ def rent_results(limit=10):
 
 
 def open_batch_rent_expr():
-    """ORM expression: Sum (batch tonnage x effective rate) across a
-    warehouse's currently-open batches - Active OR Quarantined (same statuses as
-    used_mt_expr(): a Quarantined batch still occupies space and still costs
-    rent even though it isn't "usable" stock).
-
-    "Effective rate" = the batch's own rental_rate_per_mt if it has one
-    (a genuine per-PO negotiated rate, locked in permanently at receipt),
-    else the warehouse's CURRENT rental_cost_per_mt (live-tracked - a batch
-    that just used the warehouse's fallback rate should reflect a later
-    correction/edit to that rate, not be stranded at a stale snapshot)."""
+    """ORM expression: Sum of batch tonnage x effective rate over a warehouse's open (Active or Quarantined) batches.
+    Effective rate = the batch's own rental_rate_per_mt, else the warehouse's current rental_cost_per_mt."""
     from django.db.models import Case, When, F, Value, DecimalField, Q
     from django.db.models.functions import Coalesce
 
@@ -1136,13 +1078,8 @@ def open_batch_rent_expr():
 
 
 def warehouse_rent_burn(warehouse_ids=None):
-    """Per-warehouse true daily rent burn - the single source of truth for
-    rental cost, replacing the flat "used_mt * warehouse.rental_cost_per_mt"
-    calculations that used to live in views.dashboard_view and
-    views.facility_management_view. Internal=0 and Overall=capacity*rate are
-    unchanged; Usage is now batch-aware (sums each open batch's own
-    locked-in rate, via open_batch_rent_expr(), instead of applying one flat
-    rate to the warehouse's current total)."""
+    """Per-warehouse daily rent burn (single source of truth for rental cost). Internal = 0, Overall = capacity x rate,
+    Usage = sum of each open batch's effective rate via open_batch_rent_expr()."""
     from .models import Warehouse
 
     qs = Warehouse.objects.all()
@@ -1201,12 +1138,8 @@ def capacity_thresholds():
 
 
 def _daily_series(hist, end, window_days=0):
-    """[(day_offset, percent), ...] with one point per calendar day from the first
-    snapshot (or, if `window_days` > 0, the last `window_days` days ending at `end`,
-    whichever is later) to `end`. Snapshots are only written when something changes,
-    so a day with no row means "same as the last row" - carry it forward. Fitting only
-    the change days would over-weight the days stock arrived and overstate the fill
-    rate. The window drops old history so a one-off step doesn't skew the slope."""
+    """[(day_offset, percent), ...], one point per day from the first snapshot (or the last `window_days` days if `window_days` > 0) to `end`.
+    Snapshots are written only on change, so missing days carry the last value forward; the window keeps old history from skewing the slope."""
     start = hist[0][0]
     if window_days > 0:
         start = max(start, end - _dt.timedelta(days=window_days - 1))
@@ -1310,10 +1243,8 @@ def _daily_usage_rates(material_ids, product_ids, today):
 
 
 def _days_batch_would_stay(batch, rates, fefo_ahead, horizon):
-    """(days, reason) this batch's free stock would sit where it is if left alone:
-    the earlier of its expiry and when it'll be used up - drawn oldest-first
-    (FEFO), so the free stock in batches ahead of it goes first - capped at
-    `horizon`. reason is 'expires', 'used up' or 'horizon'."""
+    """(days, reason) this batch's free stock would sit unmoved: the earlier of expiry and being used up (FEFO, after batches ahead of it), capped at `horizon`.
+    reason is 'expires', 'used up' or 'horizon'."""
     options = [(horizon, 'horizon')]
     if batch.days_until_expiry is not None:
         options.append((max(batch.days_until_expiry, 0), 'expires'))
@@ -1361,32 +1292,10 @@ def incoming_transfer_mt():
 
 @cached_analytics
 def rent_reduction_opportunities():
-    """DSS: for every rented (Usage-billed) warehouse, suggests batches to
-    relocate into our own warehouses and estimates the rent that would stop
-    accruing - per day and in total. Every such warehouse is looked at whatever
-    its capacity_forecast() status: rent is paid on each MT stored, however full
-    the warehouse is (and the moves themselves bring its trend down, so gating on
-    critical/watch hid the rest of the suggestions after the first move). The
-    status is passed through for the badge and to list the fullest first.
+    """DSS: for every Usage-billed rented warehouse, suggests batches to move into our own storage warehouses and estimates the rent saved (per day and in total).
 
-    Destinations are Internal warehouses that can store stock (location_type
-    Storage or Both - a manufacturing-only plant is never suggested), each with
-    its OWN spare capacity, used up as it's taken - so two flagged warehouses can
-    never both claim the same free space.
-
-    Only each batch's unallocated portion counts as movable (the allocated part is
-    already committed to an outgoing SO/production run).
-
-    Total saving = daily saving x the days the batch would otherwise stay: the
-    earlier of expiry and being used up (FEFO, at the current usage/sales rate),
-    capped at dss_saving_horizon_days. Batches saving less than
-    dss_min_total_saving_rm in total are left out and counted per warehouse.
-    Free space goes first to the batches that save the most per MT.
-
-    A destination's free space is its capacity less what's stored and what's
-    already on the way there (incoming_transfer_mt), so accepting a suggestion
-    reserves its room. Batches someone dismissed stay out until their snooze
-    (RentSuggestion.snoozed_until) ends."""
+    Only each batch's unallocated portion is movable. Total saving = daily saving x days the batch would otherwise stay (earlier of expiry and used up, capped at dss_saving_horizon_days); batches under dss_min_total_saving_rm are left out and counted per warehouse.
+    Destinations are Internal Storage/Both warehouses; free space is capacity minus stored and incoming (incoming_transfer_mt), used up as taken, best saving per MT first. Dismissed batches stay out until RentSuggestion.snoozed_until."""
     from .models import Warehouse, Batch, RentSuggestion
     from .settings_store import get_setting
 
@@ -1435,8 +1344,7 @@ def rent_reduction_opportunities():
 
     pool = []
     for b, w in batches:
-        # Effective rate = the batch's own locked-in rate if it has one, else this
-        # warehouse's current standing rate (same fallback as open_batch_rent_expr()).
+        # Effective rate: the batch's own rate, else the warehouse's current rate (as in open_batch_rent_expr()).
         rate = float(b.rental_rate_per_mt if b.rental_rate_per_mt is not None else w.rental_cost_per_mt)
         stay_days, stay_reason = _days_batch_would_stay(b, rates, ahead, horizon)
         mt = float(b.available_weight_mt)
@@ -1445,8 +1353,7 @@ def rent_reduction_opportunities():
             continue  # leaves soon / too small - not worth relocating
         pool.append((rate * stay_days, rate, stay_days, stay_reason, mt, b, w.id))
 
-    # ... then place them best saving per MT first (free space is the limit),
-    # drawing each destination's space down as it's used.
+    # Place best saving per MT first, drawing down each destination's free space.
     pool.sort(key=lambda p: (-p[0], -p[4], p[5].batch_number))
     for per_mt, rate, stay_days, stay_reason, mt, b, origin_id in pool:
         dest_id = max(remaining, key=lambda d: remaining[d])
@@ -1493,11 +1400,7 @@ def rent_reduction_opportunities():
     return opportunities
 
 
-# --------------------------------------------------------------------------------
-# Phase 4 - Logistics: in-flight shipment risk
-# --------------------------------------------------------------------------------
-# First function to see every direction (Inbound/Outbound/Transfer) - previously
-# Shipment only surfaced indirectly inside sales_order_delivery_risk/supplier_reliability.
+# Phase 4 - Logistics: in-flight shipment risk (covers Inbound, Outbound and Transfer)
 
 _LOGISTICS_RANK = {
     "discrepant": 0, "overdue": 1, "at_risk": 2, "stalled": 3, "pending": 4, "on_track": 5,
@@ -1575,11 +1478,8 @@ def shipment_logistics():
     return rows
 
 
-# --------------------------------------------------------------------------------
 # Phase 4 - Personal checklist: "my open jobs"
-# --------------------------------------------------------------------------------
-# One user's own records, not a company-wide roll-up. Shipment has no creator
-# field, so last_edited_by is used as a labelled proxy (ownership='touched').
+# One user's own records; Shipment has no creator field, so last_edited_by is used as a proxy (ownership='touched').
 
 _SO_CLOSED_STATUSES = ("Delivered", "Rejected")
 _PO_CLOSED_STATUSES = ("Completed", "Rejected")
@@ -1638,8 +1538,7 @@ def my_open_jobs(user):
                   .select_related("batch")):
         opened = audit.audit_date.date() if audit.audit_date else None
         rows.append({
-            # stock_audit is a list page (no per-record detail view), so pk is
-            # None here - the template links to the list, not one record.
+            # stock_audit is a list page with no per-record view, so pk is None.
             "kind": "Stock Audit", "reference": f"Batch {audit.batch.batch_number}" if audit.batch_id else f"Audit #{audit.id}",
             "url_name": "stock_audit", "pk": None, "status": audit.status,
             "opened_on": opened, "age_days": _age(opened), "ownership": "created", "context": None,
@@ -1661,22 +1560,15 @@ def my_open_jobs(user):
     return rows
 
 
-# --------------------------------------------------------------------------------
-# Phase 5 - Product sales trend
-# --------------------------------------------------------------------------------
-# Per product, monthly sales volume (and revenue, where pricing is on file) over
-# a trailing window, classified rising/declining/flat - the only genuinely
-# time-series view of Sales, as opposed to sales_order_delivery_risk()'s
-# point-in-time snapshot of currently-open orders.
+# Phase 5 - Product sales trend: monthly sales per product over a trailing window, classified rising/declining/flat.
 
 _PRODUCT_TREND_RANK = {"declining": 0, "rising": 1, "flat": 2, "new": 3, "insufficient_data": 4}
 
 TREND_WINDOW_MONTHS = 6
 # Need sales activity in at least this many months to classify a trend at all.
 _MIN_MONTHS_FOR_TREND = 3
-# +/- this % change (recent months' average vs earlier months') counts as a
-# real trend rather than noise.
-# SO statuses that never became a real commitment - excluded from the trend.
+# A change of +/- this % (recent vs earlier average) counts as a real trend.
+# SO statuses that never became a commitment are excluded.
 _TREND_EXCLUDED_SO_STATUSES = ("Draft", "Rejected")
 
 
@@ -1694,23 +1586,10 @@ def _trailing_month_keys(end, window_months):
 
 
 def product_sales_trend(*, window_months=TREND_WINDOW_MONTHS, end=None):
-    """
-    Per product, monthly quantity_ordered (and revenue, if unit_price is on
-    every line that month) over the trailing window, worst (declining) first.
+    """Per product, monthly quantity_ordered (and revenue if every line is priced) over the trailing window, declining first.
 
-    Row keys: product_id, sku, name, monthly_qty (list, oldest first),
-    monthly_revenue (list, or None if any month has an unpriced line),
-    total_qty, total_revenue (or None), recent_avg_qty, earlier_avg_qty,
-    pct_change (recent vs earlier average; None if not computable),
-    months_with_sales, status
-    ('declining' | 'rising' | 'flat' | 'new' | 'insufficient_data').
-
-      declining/rising - recent-average vs earlier-average differs by at least
-                          the trend_significant_pct setting (default 15)
-      flat              - real history, but change is within that band
-      new               - no sales in the earlier months, some in the recent ones
-      insufficient_data - sales activity in fewer than _MIN_MONTHS_FOR_TREND months
-    """
+    Row keys: product_id, sku, name, monthly_qty, monthly_revenue, total_qty, total_revenue, recent_avg_qty, earlier_avg_qty, pct_change, months_with_sales, status.
+    Status: declining/rising (change at least trend_significant_pct), flat, new (no earlier sales), insufficient_data (fewer than _MIN_MONTHS_FOR_TREND active months)."""
     from .models import SalesOrderDetail
     from .settings_store import get_setting
 

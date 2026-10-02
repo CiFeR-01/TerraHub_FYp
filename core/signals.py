@@ -1,16 +1,7 @@
-"""
-Keeps today's WarehouseUtilizationSnapshot rows current without a cron job.
+"""Keeps today's WarehouseUtilizationSnapshot rows current without a cron job.
 
-Whenever something that changes a warehouse's occupancy or rent is saved - a
-batch (arriving, leaving, used up, quarantined, moved), a warehouse (rate,
-capacity, billing method, type) or a material/product unit weight - the affected
-warehouses' rows for today are rewritten once the transaction commits. The last
-write of the day is that day's figure; a day with no write means nothing changed.
-
-Bulk QuerySet.update()/bulk_create() skip these signals (the seed and simulation
-scripts use them); the Capacity page warns when live occupancy has drifted from the last
-snapshot, and "Run snapshot now" (or the snapshot_utilization command) repairs it.
-"""
+When a batch, warehouse or unit weight changes, the affected warehouses' rows for today are rewritten after the transaction commits.
+Bulk update()/bulk_create() skip these signals; the Capacity page warns on drift and "Run snapshot now" (or snapshot_utilization) repairs it."""
 from functools import partial
 
 from django.db import transaction
@@ -79,9 +70,7 @@ for _model in (Material, Product):
     post_save.connect(_weight_saved, sender=_model, dispatch_uid=f'snapshot_weight_save_{_model.__name__}')
 
 
-# Anything the cached analytics (core/analytics_cache.py) read: saving or deleting one
-# drops the cached results once the transaction commits, so the next page view recomputes.
-# Bulk QuerySet.update()/bulk_create() skip signals - the short cache TTL covers those.
+# Changes to data the cached analytics read drop the cache after commit (bulk update()/bulk_create() skip signals; the short TTL covers those).
 def _analytics_changed(sender, raw=False, **kwargs):
     if not raw:
         transaction.on_commit(_invalidate_analytics)

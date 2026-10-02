@@ -1,17 +1,7 @@
-"""
-core/analytics_cache.py - short-lived cache for the heavy analytics computations.
+"""core/analytics_cache.py: short-lived cache for heavy analytics computations.
 
-`@cached_analytics` wraps a pure function in core/analytics.py. Results live
-for TTL seconds and are dropped early when `invalidate()` bumps the version
-(core/signals.py calls it whenever data the analytics read is saved or deleted,
-and the pages' Refresh button calls it too). The wrapped function keeps two extras:
-
-    fn.uncached(*a, **kw)   always recompute (used where a decision must act on
-                            fresh data, e.g. accepting a rent suggestion)
-    fn.with_meta(*a, **kw)  -> (value, computed_at), for the "as of" stamp
-
-The cache stores a pickled copy, so callers can freely mutate the rows they get.
-"""
+`@cached_analytics` caches a core/analytics.py function for TTL seconds; `invalidate()` bumps the version (called from core/signals.py and the Refresh button).
+The wrapped function also has `fn.uncached(...)` (always recompute) and `fn.with_meta(...)` -> (value, computed_at). Results are pickled copies, so callers may mutate rows."""
 import functools
 import hashlib
 

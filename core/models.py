@@ -5,11 +5,7 @@ from datetime import date
 from .validators import validate_phone, validate_phone_or_email
 
 class Capability(models.Model):
-    """No table - just a home for the app-wide permissions that aren't about
-    one model. Roles are Django Groups (Django admin > Groups); an Admin grants
-    these, alongside the normal per-model add/change/view/delete permissions,
-    to whichever groups should have them. Code checks the permission, never a
-    role or group name (see core/permissions.py)."""
+    """No table: a home for app-wide permissions not tied to one model. Roles are Django Groups; code checks permissions, never role names (see core/permissions.py)."""
 
     class Meta:
         managed = False
@@ -49,8 +45,7 @@ class Warehouse(models.Model):
         ('Manufacturing', 'Manufacturing'),
         ('Both', 'Storage & Manufacturing'),
     )
-    # Filter with location_type__in=... rather than comparing to one value, so a
-    # 'Both' facility counts as a storage place AND a manufacturing plant.
+    # Filter with location_type__in=...: a 'Both' facility is a storage place and a plant.
     STORAGE_TYPES = ('Storage', 'Both')
     MANUFACTURING_TYPES = ('Manufacturing', 'Both')
     OWNERSHIP_CHOICES = (
@@ -230,10 +225,7 @@ class RunMaterialUsage(models.Model):
         return f"{self.production_run.run_number} - {self.material.sku} Usage"
 
 class RunExtraMaterial(models.Model):
-    """Material poured beyond what was allocated to a run, and where it came from:
-    a specific batch (stock is deducted from it when the run completes) or, with
-    batch=None, stock that isn't in the records (usage is noted with a mandatory
-    reason but nothing is deducted, since the system never held it)."""
+    """Material poured beyond what was allocated to a run: from a specific batch (deducted on completion) or, with batch=None, from unrecorded stock (reason required, nothing deducted)."""
     production_run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, related_name='extra_sources')
     material = models.ForeignKey(Material, on_delete=models.CASCADE)
     batch = models.ForeignKey('Batch', on_delete=models.SET_NULL, null=True, blank=True, related_name='extra_usages')
@@ -335,8 +327,7 @@ class PurchaseOrder(models.Model):
     target_warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
     order_date = models.DateField(auto_now_add=True)
     expected_delivery_date = models.DateField(null=True, blank=True)
-    # Authoritative "arrived" date for the supplier scorecard - stamped once by
-    # core/utils.py :: apply_po_material_receipt.
+    # Arrived date for the supplier scorecard, stamped by core/utils.py :: apply_po_material_receipt.
     completed_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Draft')
     
@@ -497,9 +488,7 @@ class Shipment(models.Model):
     
     is_auto_generated = models.BooleanField(default=False)
 
-    # Set once this shipment's cargo has been applied to its Sales Order's
-    # SalesOrderDetail.quantity_shipped, so completion paths that run after an
-    # earlier Dispatched-crossing credit (or vice versa) don't double-count it.
+    # Set once the cargo is credited to the SO's quantity_shipped, to avoid double-counting.
     credited_to_so = models.BooleanField(default=False)
 
     def __str__(self):
@@ -573,8 +562,7 @@ class RegistryLog(models.Model):
     material = models.ForeignKey(
         Material, on_delete=models.SET_NULL, null=True, blank=True, related_name='registry_logs'
     )
-    # Always a positive magnitude, regardless of action_type; direction (+/-) is
-    # derived from action_type by callers/templates, not stored in the sign.
+    # Always positive; direction comes from action_type.
     quantity_changed = models.DecimalField(max_digits=12, decimal_places=2)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True)
     timestamp = models.DateTimeField(auto_now_add=True)
@@ -642,10 +630,7 @@ class SystemSetting(models.Model):
 
 
 class WarehouseUtilizationSnapshot(models.Model):
-    """One row per warehouse per day: its end-of-day occupancy and rent. Kept up
-    to date by core/signals.py whenever stock or the warehouse changes (the last
-    write of the day is that day's figure), so capacity_forecast() has a trend to
-    fit and rent_history() has daily rent to chart."""
+    """One row per warehouse per day: end-of-day occupancy and rent. Kept current by core/signals.py; feeds capacity_forecast() and rent_history()."""
     warehouse = models.ForeignKey(
         Warehouse, on_delete=models.CASCADE, related_name='utilization_snapshots'
     )
@@ -657,8 +642,7 @@ class WarehouseUtilizationSnapshot(models.Model):
     # NULL = not recorded (e.g. a seeded row) - rent_history() estimates it on read
     daily_rent_cost = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     billing_mode = models.CharField(max_length=30, blank=True)
-    # True when daily_rent_cost was estimated from tonnage x current rate rather
-    # than recorded on the day (the pre-history backfill)
+    # True when daily_rent_cost was estimated (pre-history backfill) rather than recorded
     rent_estimated = models.BooleanField(default=False)
 
     class Meta:
@@ -670,11 +654,7 @@ class WarehouseUtilizationSnapshot(models.Model):
 
 
 class RentSuggestion(models.Model):
-    """What someone did with a Rent Opportunities suggestion: turned it into an
-    internal transfer (Accepted) or set it aside with a reason (Dismissed). The
-    estimate at the time is stored so the result can be compared with the rent
-    actually saved afterwards. Suggestions themselves are computed live and are
-    not stored - only decisions are."""
+    """A decision on a Rent Opportunities suggestion: Accepted (turned into a transfer) or Dismissed (with a reason). Stores the estimate at the time; suggestions themselves are computed live."""
     DECISION_CHOICES = (('Accepted', 'Accepted'), ('Dismissed', 'Dismissed'))
     DISMISS_REASONS = (
         ('not_worth_it', 'Not worth the effort'),

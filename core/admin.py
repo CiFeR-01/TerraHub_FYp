@@ -11,8 +11,7 @@ from .models import (
 
 class CustomUserAdmin(UserAdmin):
     model = CustomUser
-    # Roles are the "Groups" field under Permissions; what each role may do is
-    # set on its Group (Authentication and Authorization > Groups).
+    # Roles are Groups (Authentication and Authorization > Groups).
     fieldsets = UserAdmin.fieldsets + (
         ('Custom Attributes', {'fields': ('branch',)}),
     )

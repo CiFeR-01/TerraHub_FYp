@@ -1,31 +1,10 @@
-"""
-seed_test_data — additive, idempotent demo/test data for the analytics & forecasting
-build-out (predictive-analysis branch).
+"""seed_test_data: additive, idempotent demo data for the analytics and forecasting pages.
 
-What it does NOT touch:
-  * Warehouses, Products, Materials, ProductRecipe (the BOM) — reused as-is.
-  * Any pre-existing PO / SO / ProductionRun / Batch / RegistryLog.
+Reuses existing warehouses, products, materials and recipes (creating them if missing) and never touches existing orders, runs, batches or logs.
+Adds rows keyed by natural key or source='TestSeed' (so re-running is a no-op): supplier/client contacts, supplier-material links, ~40 days of consumption history, raw-material batches,
+POs, completed and in-progress production runs, open sales orders with shipments, resolved stock audits and 61 days of warehouse utilization snapshots.
 
-What it adds (all rows carry a stable natural key or the source='TestSeed' marker,
-so re-running is a no-op rather than a pile-up):
-  * Contact details on the 3 existing suppliers + 1 existing client that had blanks.
-  * 3 new suppliers, 4 new clients, with full contact info.
-  * SupplierMaterial links (unit price + real lead time) for every consumed material.
-  * ~40 days of daily `Consumed_For_Manufacturing` RegistryLog history for 10
-    materials, tuned so the stockout forecast shows every status band.
-  * Raw-material on-hand Batches for those 10 materials.
-  * 12 Purchase Orders (Completed / Partially Received / Pending) with line items,
-    explicit expected + actual dates, linked inbound shipments and received batches.
-  * 12 completed Production Runs with RunMaterialUsage + yield logs + FG batches,
-    plus 2 in-progress runs linked to sales orders.
-  * 9 open Sales Orders with deadlines, line items and outbound shipments covering
-    every delivery-risk band, plus linked production runs.
-  * ~28 resolved StockAudits across all 4 warehouses over ~4 months (one chronic
-    shrinkage item).
-  * 61 days of daily WarehouseUtilizationSnapshot per warehouse with a real trend.
-
-Run:  python manage.py seed_test_data
-"""
+Run:  python manage.py seed_test_data"""
 from __future__ import annotations
 
 import datetime as dt
@@ -43,7 +22,7 @@ from core.models import (
     StockAudit, Supplier, SupplierMaterial, Warehouse, WarehouseUtilizationSnapshot,
 )
 
-TODAY = dt.date(2026, 9, 10)          # matches the branch's "today"
+TODAY = dt.date.today()
 Q = Decimal("0.01")
 
 
@@ -111,10 +90,47 @@ class Command(BaseCommand):
             run_number__startswith="RUN-TS").delete()[0]
         self.stdout.write(self.style.WARNING(f"reset: deleted {n}"))
 
+    def _ensure_base(self):
+        """Create the base facilities, catalog and users if they don't exist."""
+        from django.contrib.auth.models import Group
+        from core.models import ProductRecipe
+        for name, kind, owner, rate in [
+            ("Raw Storage Alpha", "Storage", "Internal", 5),
+            ("Raw Storage Beta", "Storage", "ExternalProvider", 12),
+            ("Main Assembly Plant", "Manufacturing", "Internal", 3),
+            ("Finished Goods Hub", "Both", "Internal", 4),
+        ]:
+            Warehouse.objects.get_or_create(name=name, defaults=dict(
+                location_type=kind, ownership_type=owner, rental_cost_per_mt=rate, total_capacity_mt=1000))
+        for i in range(1, 21):
+            Material.objects.get_or_create(sku=f"MAT-{1000 + i}", defaults=dict(
+                name=f"Material {i}", category="Chemical", unit_of_measure="kg", safe_storage_days=180,
+                weight_mt_per_unit=Decimal("0.001"), cost_per_unit=Decimal(10 + i)))
+        for i in range(1, 9):
+            p, _ = Product.objects.get_or_create(sku=f"PROD-{2000 + i}", defaults=dict(
+                name=f"Product {i}", unit_of_measure="pcs", weight_mt_per_unit=Decimal("0.01"),
+                price_per_unit=Decimal(100 + i)))
+            if not p.recipe_items.exists():
+                for j in (i, i + 5, i + 10):
+                    ProductRecipe.objects.create(product=p, material=Material.objects.get(sku=f"MAT-{1000 + j}"),
+                                                 quantity_required=Decimal("2"))
+        for username, group in [
+            ("admin", "Admin"), ("manager_user", "Manager"), ("production_super", "Manufacturing"),
+            ("purchasing_staff", "Purchasing"), ("sales_rep", "Sales"), ("logistics_coordinator", "Logistics"),
+        ]:
+            user, created = CustomUser.objects.get_or_create(username=username)
+            if created:
+                # No password; set one with changepassword
+                user.set_unusable_password()
+                user.save()
+                user.groups.add(Group.objects.get(name=group))
+                self.stdout.write(f"created user {username} ({group}) - set a password before logging in")
+
     def handle(self, *args, **opts):
         with transaction.atomic():
             if opts.get("reset"):
                 self._reset()
+            self._ensure_base()
             self.users = {u.username: u for u in CustomUser.objects.all()}
             self.wh = {w.name: w for w in Warehouse.objects.all()}
             self.mat = {m.sku: m for m in Material.objects.all()}
@@ -232,12 +248,7 @@ class Command(BaseCommand):
             n += 1
         self._suppliermat = n
 
-    # ---------------------------------------------------- consumption history
-    # sku -> (supplier lead days, target days-of-cover). The daily burn rate is
-    # derived at run time as (current available on-hand / target days-of-cover),
-    # so the stockout forecast lands in a known band regardless of how much stock
-    # already exists:  cover < lead => critical, cover-lead in 0..2 => reorder_now,
-    # 2..14 => watch, > 14 => ok.
+    # Consumption history. sku -> (supplier lead days, target days-of-cover); the daily burn is derived from on-hand stock so the forecast lands in a known band.
     CONSUME = {
         "MAT-1001": (10, 6),   "MAT-1002": (14, 9),    # critical
         "MAT-1004": (7, 8),    "MAT-1005": (12, 13),   # reorder_now
@@ -306,11 +317,8 @@ class Command(BaseCommand):
         alpha, beta = self.wh["Raw Storage Alpha"], self.wh["Raw Storage Beta"]
         buyer = self.users.get("purchasing_staff")
         appr = self.users.get("manager_user")
-        # (supplier, [material skus], order_days_ago, lead, status, fill_frac, delay_days)
-        # delay is (actual arrival - expected); <=0 is on time. Ratings target:
-        #   Northline -> good, Pacific -> good, Krishna -> watch, GreenGrow -> watch,
-        #   Ghost Corp -> poor. Only Ghost carries the partial / pending POs so the
-        #   others' fill_rate stays clean.
+        # (supplier, [material skus], order_days_ago, lead, status, fill_frac, delay_days); delay = actual - expected arrival (<= 0 is on time).
+        # Only Ghost Corp carries partial/pending POs so the others' fill rates stay clean.
         specs = [
             ("Northline Chemicals Sdn Bhd", ["MAT-1001", "MAT-1004"], 140, 10, "Completed", 1.0, -2),
             ("Northline Chemicals Sdn Bhd", ["MAT-1002"],             112, 14, "Completed", 1.0, -1),
@@ -401,9 +409,7 @@ class Command(BaseCommand):
         plant = self.wh["Main Assembly Plant"]
         fg = self.wh["Finished Goods Hub"]
         sups = [self.users.get("production_super"), self.users.get("manager_user"), self.users.get("admin")]
-        # (product sku, expected_yield, yield_factor, overuse_factor, days_ago)
-        # PROD-2001 = deliberately poor (under-yields ~17%, overuses ~22%);
-        # PROD-2008 = watch; everything else = good.
+        # (product sku, expected_yield, yield_factor, overuse_factor, days_ago); PROD-2001 is deliberately poor, PROD-2008 is watch, the rest are good.
         specs = [
             ("PROD-2001", 40, 0.83, 1.22, 150), ("PROD-2001", 55, 0.82, 1.23, 96),
             ("PROD-2001", 30, 0.85, 1.21, 44),  ("PROD-2001", 45, 0.84, 1.22, 12),
@@ -470,8 +476,7 @@ class Command(BaseCommand):
         appr = self.users.get("manager_user")
         cl = self.clients
         names = list(cl.keys())
-        # (client, product, qty, deadline_offset, status, shipped_frac,
-        #  ship: None | ("eta", off) | ("arr", off), make_run)
+        # (client, product, qty, deadline_offset, status, shipped_frac, ship: None | ("eta", off) | ("arr", off), make_run)
         specs = [
             (names[0], "PROD-2001", 30, -5,  "In Production",           0.0, None,          True),
             (names[1], "PROD-2002", 25, -2,  "Pending",                 0.0, None,          False),
@@ -586,15 +591,7 @@ class Command(BaseCommand):
 
     # --------------------------------------------------------------- snapshots
     def _snapshots(self):
-        """
-        61 days of daily snapshots per warehouse, ending at the warehouse's real
-        current tonnage and ramping up to it on a per-warehouse gradient (so the
-        trend chart and weekly_rate_pp are meaningful). NOTE: every warehouse is
-        currently well past 100% of total_capacity_mt because the DB already
-        holds far more batch tonnage than the 1,000 MT caps — so capacity_forecast
-        will read 'critical' for all four until capacities are raised or old stock
-        is archived. That is a data condition, not a seeding artefact.
-        """
+        """61 days of daily snapshots per warehouse, ramping to its current tonnage. Warehouses read 'critical' when the existing stock already exceeds capacity."""
         # fraction of today's tonnage that was present 60 days ago (per warehouse)
         start_frac = {
             "Raw Storage Alpha": 0.78, "Raw Storage Beta": 0.86,

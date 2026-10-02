@@ -1,15 +1,7 @@
-"""
-core/settings_store.py - typed access to editable operational settings.
+"""core/settings_store.py: typed access to editable operational settings.
 
-Tunables that ops staff change without a deploy live in the SystemSetting table
-(edited via Django admin). Every setting is registered here with its default,
-type, and a human description; a data migration seeds a row per entry so they are
-all visible in admin from the start.
-
-Callers use get_setting("key") and get a correctly-typed value: the DB override
-if a row exists and parses, otherwise the registered default. Read the value
-once per request and pass it down - do not call get_setting() inside a loop.
-"""
+Settings live in the SystemSetting table, each registered here with a default, type and description (a data migration seeds a row per entry).
+get_setting("key") returns the DB value if it parses, else the default. Read once per request; don't call it in a loop."""
 from __future__ import annotations
 
 # key -> (default, type, description)

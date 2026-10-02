@@ -3,11 +3,7 @@ from django.contrib import messages
 from django.shortcuts import redirect
 
 def permission_or_redirect(perm):
-    """
-    Decorator for views that need `perm` (e.g. 'core.approve_requests').
-    Users without it are sent back to the dashboard with a message instead of
-    a bare 403 page.
-    """
+    """Requires `perm` (e.g. 'core.approve_requests'); users without it go back to the dashboard with a message instead of a 403."""
     def decorator(view_func):
         @wraps(view_func)
         def _wrapped_view(request, *args, **kwargs):
