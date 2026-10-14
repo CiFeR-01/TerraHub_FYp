@@ -1,17 +1,6 @@
-/* Live phone/email checks for contact forms.
- *
- * Mirrors core/validators.py, which is the check that actually counts - this is
- * only feedback while typing. Load vendor/libphonenumber-max.js and
- * vendor/phone-examples.js first.
- *
- * Markup:
- *   <div data-phone-field>                     country dropdown + number box
- *     <select name="phone_country"></select>   (options are filled in here)
- *     <input type="tel" name="phone">
- *   </div>
- *   <input data-email-field>                   email only
- *   <input data-phone-or-email>                either one (shipment contact)
- *
+/* Live phone/email checks for contact forms (feedback only; core/validators.py is the check that counts).
+ * Load vendor/libphonenumber-max.js and vendor/phone-examples.js first.
+ * Markup: <div data-phone-field> (select[name=phone_country] + input[type=tel][name=phone]), <input data-email-field>, <input data-phone-or-email>.
  * A form's submit buttons are disabled while any checked field in it is invalid.
  */
 (function () {

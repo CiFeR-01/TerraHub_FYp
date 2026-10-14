@@ -1,9 +1,6 @@
-// Idle sign-out with a warning popup (markup in base.html, settings in
-// TerraHub/settings.py). The server ends the session SESSION_IDLE_TIMEOUT
-// seconds after the last request; this script mirrors that deadline, keeps it
-// pushed back while the user is actually typing or clicking, and warns before
-// it runs out. The last-refresh time is shared through localStorage so an
-// active tab keeps the user's other open tabs from signing them out.
+// Idle sign-out with a warning popup (markup in base.html, settings in TerraHub/settings.py).
+// Mirrors the server's SESSION_IDLE_TIMEOUT deadline, extends it on activity, warns before it expires,
+// and shares the last-refresh time across tabs through localStorage.
 (function () {
     var modal = document.getElementById('session-timeout-modal');
     if (!modal) return;
@@ -99,8 +96,7 @@
         if (remaining <= 0) { signOut(); return; }
 
         if (remaining <= WARNING_MS) {
-            // Once the popup is up, only the button keeps the session - a stray
-            // mouse move over a walked-away screen shouldn't.
+            // Once the popup is up, only the button keeps the session.
             showWarning();
             countdownEl.textContent = formatRemaining(remaining);
             return;
@@ -123,8 +119,7 @@
     window.addEventListener('storage', function (e) {
         if (e.key === STORAGE_KEY) tick();
     });
-    // Timers are throttled in background tabs and paused during sleep, so
-    // re-check the moment the tab is visible again.
+    // Timers are throttled in background tabs, so re-check when the tab is visible again.
     document.addEventListener('visibilitychange', function () {
         if (!document.hidden) tick();
     });

@@ -9,10 +9,7 @@ register = template.Library()
 
 @register.filter
 def weight_display(qty, product):
-    """Human-friendly weight for a Product-linked unit-count quantity.
-    Delegates to core.utils.format_stock_display (also used on product_detail.html)
-    so the conversion logic - including the 'pcs' special case - stays in one place.
-    """
+    """Weight display for a Product-linked unit-count quantity (via core.utils.format_stock_display, including the 'pcs' case)."""
     if product is None or qty is None:
         return ""
     try:
@@ -23,9 +20,7 @@ def weight_display(qty, product):
 
 @register.filter
 def qty_display(value, places=4):
-    """A quantity with up to `places` decimals, trailing zeros dropped and thousands
-    separated: 591000.0 -> 591,000 | 20.0 -> 20 | 0.02 -> 0.02 | 0.0005 -> 0.0005.
-    Unlike floatformat:1 it never rounds a trace amount down to 0."""
+    """A quantity with up to `places` decimals, trailing zeros dropped and thousands separated (591000.0 -> 591,000); never rounds a trace amount to 0."""
     if value is None or value == '':
         return ""
     try:
@@ -41,11 +36,7 @@ def qty_display(value, places=4):
 
 @register.filter
 def mt_display(total_mt):
-    """Human-friendly display for an MT amount that's already computed
-    (no product/material to look weight_mt_per_unit up from) - e.g. the
-    rent-reduction DSS, which works in MT throughout. Auto-switches to kg
-    for small amounts via core.utils.format_mt, same threshold as weight_display.
-    """
+    """Display for an MT amount already computed (e.g. the rent DSS), switching to kg for small amounts via core.utils.format_mt."""
     if total_mt is None:
         return ""
     try:

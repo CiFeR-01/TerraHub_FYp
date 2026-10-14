@@ -1,11 +1,4 @@
-"""
-core/views_analytics.py - HTTP controllers for the analytics & forecasting pages.
-
-Deliberately thin: parse request params, call core/analytics.py, render a
-template under templates/analytics/. All real computation lives in analytics.py so
-it stays testable and reusable by management commands. See
-SYSTEM_DOCUMENTATION.md section 8 and ANALYTICS_CHANGELOG.md.
-"""
+"""HTTP controllers for the analytics pages: parse params, call core/analytics.py, render templates/analytics/."""
 import functools
 import os
 from datetime import timedelta
@@ -30,9 +23,7 @@ _DEFAULT_WINDOW = 180
 
 
 def refreshable(view):
-    """`?refresh=1` (the "Refresh" link on every analytics page) drops the cached
-    analytics results, then redirects to the same page without the parameter so a
-    later reload doesn't keep busting the cache."""
+    """`?refresh=1` drops the cached analytics results, then redirects to the same page without the parameter."""
     @functools.wraps(view)
     def wrapper(request, *args, **kwargs):
         if request.method == "GET" and "refresh" in request.GET:
@@ -58,10 +49,7 @@ _ESTIMATE_WARN_SHARE = 0.5
 
 
 def _estimate_note(parts, total):
-    """{text, warn} for the "how much of this page is a guess" line, or None.
-    `parts` = [(count, phrase), ...] where phrase is e.g. "use an estimated lead time";
-    `total` is how many rows those counts are out of. warn when any single kind of
-    estimate covers at least half of them."""
+    """{text, warn} for the "how much of this page is a guess" line, or None. `parts` = [(count, phrase), ...] out of `total` rows; warn when one kind covers at least half."""
     parts = [(n, ph) for n, ph in parts if n]
     if not parts or not total:
         return None
@@ -72,12 +60,7 @@ def _estimate_note(parts, total):
 
 
 def _analytics_tabs(request, url_name):
-    """(category_label, [(url_name, label), ...]) for `url_name`'s Analytics
-    category, filtered to what `request.user` can see. Powers the tab strip
-    each analytics page shows for its sibling reports in the same category
-    (core/context_processors.py's ANALYTICS_CATEGORIES is the source of
-    truth; the sidebar collapses each category to one link, this expands it
-    back out into tabs on the page itself)."""
+    """(category_label, [(url_name, label), ...]) for the sibling reports in `url_name`'s category that `request.user` can see (source: ANALYTICS_CATEGORIES in core/context_processors.py)."""
     for category_label, items in ANALYTICS_CATEGORIES:
         names = [item[0] for item in items]
         if url_name in names:
@@ -240,12 +223,10 @@ def production_yield_view(request):
     })
 
 
-# Burn-rate lookback windows for the stockout forecast (days). No "all time" here
-# - a rate is total / window, so the divisor must be a real span.
+# Burn-rate lookback windows (days); no "all time" since the rate is total / window.
 FORECAST_WINDOWS = (14, 30, 60, 90)
 
-# UI-facing status buckets (merges the backend's critical/reorder_now into one
-# "action required" bucket) -> (display label, badge color, emoji, action label).
+# UI status buckets (critical/reorder_now merged) -> (label, badge color, emoji, action label).
 _STATUS_DISPLAY = {
     "critical": ("Action Required", "rose", "\U0001F534", "Reorder"),
     "reorder_now": ("Action Required", "rose", "\U0001F534", "Reorder"),
@@ -369,9 +350,7 @@ def capacity_forecast_view(request):
         rent_row = rent_by_id.get(r["warehouse_id"])
         r["daily_rent"] = rent_row["daily_cost"] if rent_row else None
 
-    # Snapshots are written when stock changes (core/signals.py), so a quiet day has no row
-    # and that's fine. What isn't fine is live occupancy that no snapshot reflects - a bulk
-    # update that skipped the signals - so compare the two instead of writing on a GET.
+    # Snapshots are written on stock change, so a quiet day has no row; compare live occupancy with the last snapshot to catch writes that skipped the signals.
     live_pct = {r["warehouse_id"]: r["utilization_percent"] for r in analytics.warehouse_utilization()}
     out_of_sync = sum(
         1 for r in rows
@@ -438,9 +417,7 @@ def rent_opportunities_view(request):
 @login_required
 @require_POST
 def rent_suggestion_decide(request):
-    """Accept (-> Draft internal transfers) or dismiss the ticked Rent Opportunities
-    suggestions. Every pick is checked against a fresh run of the DSS first, so
-    a page that's gone stale can't move stock that has changed since."""
+    """Accepts (-> Draft internal transfers) or dismisses ticked Rent Opportunities suggestions, re-checked against a fresh DSS run first."""
     if not request.user.has_perm("core.add_shipment"):
         messages.error(request, "You don't have permission to create transfers.")
         return redirect("rent_opportunities")
@@ -504,13 +481,7 @@ def rent_suggestion_decide(request):
     return redirect("rent_opportunities")
 
 
-# --------------------------------------------------------------------------------
-# Tier 3 - AI Copilot: category briefings + the personal checklist
-# --------------------------------------------------------------------------------
-# Six company-wide, category-scoped briefings (core/briefing.py) plus one
-# personal "My Open Jobs" checklist. The checklist ("AI Copilot" sidebar link)
-# is any authenticated user's own data; generating a category briefing needs
-# core.add_opsbriefing, since each run is a paid model call.
+# Tier 3 - AI Copilot: six category briefings (need core.add_opsbriefing, each is a paid model call) plus the personal "My Open Jobs" checklist (any signed-in user).
 
 CATEGORY_TABS = (
     ("materials", "Materials"),
@@ -624,13 +595,7 @@ def category_briefing_view(request, category):
 
 @login_required
 def ops_briefing_view(request):
-    """
-    The personal checklist - "My Open Jobs". The table of live_items is always
-    computed straight from the database (no API dependency); the optional
-    Claude-prioritised card on top is generated on demand by the user it's
-    for - any authenticated user, not just those who can run category briefings, since it is only
-    ever their own data and their own click.
-    """
+    """The personal "My Open Jobs" checklist. The live items table comes straight from the database; the optional Claude-prioritised card is generated on demand by the user it is for."""
     from .models import OpsBriefing
 
     live_items = analytics.my_open_jobs(request.user)

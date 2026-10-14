@@ -237,6 +237,23 @@
     {% endif %}
     {% block extra_js %}{% endblock %}
     {% include "partials/_sortable_tables.html" %}
+    {{ denied_actions|json_script:"th-denied-actions" }}
+    <script>
+        // Hide forms for actions the user can't run
+        (function () {
+            var denied = JSON.parse(document.getElementById('th-denied-actions').textContent);
+            if (!denied.length) return;
+            document.querySelectorAll('input[name="action"], button[name="action"]').forEach(function (el) {
+                if (denied.indexOf(el.value) === -1) return;
+                var form = el.closest('form');
+                if (el.tagName === 'BUTTON' && form && form.querySelectorAll('button[name="action"]').length > 1) {
+                    el.style.display = 'none';
+                } else if (form) {
+                    form.style.display = 'none';
+                }
+            });
+        })();
+    </script>
     <script>
         // Collapsible sidebar nav — toggle with max 3 open at once, persisted across page loads
         (function () {

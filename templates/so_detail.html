@@ -32,8 +32,26 @@
             <button type="submit" class="btn btn-primary" style="padding:0.45rem 1rem; font-size:0.85rem;">Update Status</button>
         </form>
         {% endif %}
+        {% if perms.core.cancel_orders and so.status != 'Shipped' and so.status != 'Delivered' and so.status != 'Cancelled' %}
+        <details style="position:relative;">
+            <summary class="btn btn-secondary" style="padding:0.45rem 1rem; font-size:0.85rem; border-color:#dc2626; color:#dc2626; list-style:none; cursor:pointer;">Cancel Order</summary>
+            <form method="post" style="position:absolute; right:0; top:2.6rem; z-index:20; width:320px; padding:1rem; background:#fff; border:1px solid #fecaca; border-radius:8px; box-shadow:0 8px 24px rgba(15,23,42,0.12);">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="cancel_so">
+                <label style="display:block; font-size:0.8rem; font-weight:600; color:#991b1b; margin-bottom:0.4rem;">Why is this order being cancelled?</label>
+                <textarea name="reason" required class="form-input" style="width:100%; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:0.5rem; height:60px;"></textarea>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 0.75rem;">Reserved stock is released, runs that haven't started and shipments that haven't left are cancelled. This can't be undone.</p>
+                <button type="submit" class="btn" style="width:100%; padding:0.5rem; background:#dc2626; color:#fff; border:none; border-radius:6px; font-weight:600;" onclick="return confirm('Cancel this order for good?')">Cancel Order</button>
+            </form>
+        </details>
+        {% endif %}
     </div>
 </header>
+{% if so.status == 'Cancelled' %}
+<div style="padding:0.85rem 1.25rem; border-radius:8px; margin-bottom:1rem; background:#fef2f2; border:1px solid #fecaca; color:#991b1b; font-size:0.9rem;">
+    <strong>Cancelled.</strong> {{ so.cancel_reason }}
+</div>
+{% endif %}
 
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom:1.5rem;">
@@ -58,6 +76,7 @@
                 {% elif so.status == 'Ready to Ship' %}<span class="badge badge-emerald">Ready to Ship</span>
                 {% elif so.status == 'Shipped' %}<span class="badge badge-emerald">Shipped</span>
                 {% elif so.status == 'Delivered' %}<span class="badge badge-emerald">Delivered</span>
+                {% elif so.status == 'Cancelled' %}<span class="badge badge-rose">Cancelled</span>
                 {% else %}<span class="badge badge-rose">{{ so.status }}</span>{% endif %}
             </div>
             <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:1.25rem;">
@@ -483,7 +502,7 @@
         {% endif %}
     {% elif so.status == 'Pending' %}
         <div style="display:flex; gap:1rem; align-items:center;">
-            <a href="{% url 'so_allocate' so.pk %}" class="btn btn-primary" style="padding:0.5rem 1.25rem; font-size:0.9rem;">Allocate Finished Goods</a>
+            {% if perms.core.allocate_order_stock %}<a href="{% url 'so_allocate' so.pk %}" class="btn btn-primary" style="padding:0.5rem 1.25rem; font-size:0.9rem;">Allocate Finished Goods</a>{% endif %}
             
             {% if has_deficit %}
                 <form method="post" id="sendMfgForm" style="margin:0;">
@@ -494,6 +513,9 @@
                 </form>
             {% endif %}
         </div>
+    {% elif so.status == 'Partially Shipped' and has_deficit %}
+        <p style="font-size:0.85rem; color:var(--text-muted); margin:0 0 0.75rem;">Part of this order has shipped, but some units are still owed with no stock reserved for them.</p>
+        {% if perms.core.allocate_order_stock %}<a href="{% url 'so_allocate' so.pk %}" class="btn btn-primary" style="padding:0.5rem 1.25rem; font-size:0.9rem;">Allocate Finished Goods</a>{% endif %}
     {% elif so_in_qa %}
         <p style="font-size:0.85rem; color:#92400e; padding:1rem; background:#fffbeb; border-radius:8px; border:1px solid #fde68a;">
             <strong>In Quality Check.</strong> The finished goods for this order have been produced and are waiting for QA release. They will be allocated to this order automatically once released.

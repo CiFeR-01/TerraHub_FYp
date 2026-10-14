@@ -1,6 +1,4 @@
-/* ==========================================================================
-   TerraHub Design System & Core Stylesheet
-   ========================================================================== */
+/* TerraHub core stylesheet */
 
 /* 1. CSS Custom Properties / Variables */
 :root {
@@ -54,12 +52,7 @@
     padding: 0;
 }
 
-/* Baseline keyboard-focus visibility. Previously only .nav-btn and
-   .form-input had any :focus styling defined anywhere in this file, so
-   every other link, button, and interactive table header (see
-   partials/_sortable_tables.html) fell back to whatever the browser's
-   bare default happened to render - or nothing, if a reset elsewhere
-   suppressed it. th[tabindex] covers sortable column headers. */
+/* Baseline keyboard-focus outline for links, buttons and sortable headers (th[tabindex]). */
 a:focus-visible,
 button:focus-visible,
 input:focus-visible,
@@ -946,9 +939,7 @@ button.nav-btn:focus-visible {
 }
 
 
-/* ==========================================================================
-   Page-Specific Modules
-   ========================================================================== */
+/* Page-specific modules */
 
 /* 7. Home Landing Page Styles (home.html) */
 
@@ -1361,8 +1352,7 @@ button.nav-btn:focus-visible {
     box-shadow: 0 0 10px rgba(0, 242, 254, 0.15);
 }
 
-/* Live contact checks (static/js/contact-validation.js). !important because the
-   list-page modals set their borders inline. */
+/* Live contact checks (static/js/contact-validation.js); !important because list-page modals set borders inline. */
 .form-input.is-valid { border-color: var(--success) !important; }
 .form-input.is-invalid { border-color: var(--danger) !important; }
 .form-input.is-invalid:focus { box-shadow: 0 0 0 3px var(--danger-bg); }
@@ -1588,9 +1578,7 @@ button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
     line-height: 1.6;
 }
 
-/* ==========================================================================
-   Executive Dashboard Specific Styles
-   ========================================================================== */
+/* Executive dashboard */
 
 /* Main scrollable content area */
 .dashboard-content-view {
@@ -1720,14 +1708,7 @@ button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
     height: 100%;
 }
 
-/* The doughnut's chart-box also carries a wrapping color-ledger beneath it,
-   which a plain flex:1 wrapper doesn't leave room for inside the shared
-   380px .chart-box height - the ring grows to fill the space the ledger
-   needed and pushes it out past the card's bottom edge. Cap the ring at a
-   fixed, proportionate size instead of letting it claim all available
-   space, and let the card's height be a floor rather than a hard ceiling -
-   the ledger wraps onto more rows at narrower widths, and it should push
-   the card taller, not get clipped past its bottom edge.  */
+/* Cap the doughnut ring's size so its colour ledger fits inside the card; the card height is a floor, not a ceiling. */
 .chart-wrapper--donut {
     flex: 0 0 auto;
     height: 200px;
@@ -1852,11 +1833,7 @@ button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
     }
 }
 
-/* Without this, a grid track won't shrink below its content's min-content
-   width - so the long, no-longer-wrapping tracking IDs in the logistics
-   table (white-space: nowrap, see .custom-table td) were forcing this
-   column wider than its 1.2fr share and crushing its sibling column to a
-   sliver instead of letting the table's own horizontal scroll handle it. */
+/* Lets this grid track shrink below its content so the nowrap tracking IDs scroll inside the table instead of crushing the sibling column. */
 .split-grid > .pane-card {
     min-width: 0;
 }
@@ -1888,13 +1865,7 @@ button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
     overflow-x: auto;
 }
 
-/* Horizontally-scrollable table wrapper (used across 25+ templates). Was
-   previously a no-op class with no rule here, so a table wider than its
-   card silently clipped columns - worst on mobile - with no visual cue
-   that more content existed off-screen. The two "local" gradients scroll
-   with the table content and mask the shadow layers beneath once there's
-   nothing left to scroll toward, giving a self-adjusting "more this way"
-   affordance without JS. */
+/* Horizontally scrollable table wrapper; the "local" gradients hide the edge shadows once there is nothing left to scroll. */
 .table-responsive {
     width: 100%;
     overflow-x: auto;
@@ -2185,13 +2156,9 @@ button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
 }
 
 
-/* ==========================================================================
-   Executive Dashboard — Professional Upgrade (v2)
-   Layered on top of the base dashboard styles above.
-   ========================================================================== */
+/* Executive dashboard (v2), layered on the base styles above */
 
-/* Give the scroll area a comfortable max measure so ultra-wide screens
-   don't stretch tables and charts into unreadable widths. */
+/* Cap the scroll area width so tables and charts stay readable on ultra-wide screens. */
 .dashboard-content-view > .dash-shell {
     max-width: 1600px;
     margin: 0 auto;
@@ -2581,9 +2548,7 @@ button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
 }
 
 
-/* ==========================================================================
-   Executive Dashboard — layout & accessibility pass (v3)
-   ========================================================================== */
+/* Executive dashboard: layout and accessibility (v3) */
 
 /* Screen-reader-only text (direction labels, trend direction, etc.) */
 .sr-only {
@@ -2613,8 +2578,7 @@ button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
 .dash-section-head .sec-icon.sec-icon--danger { background: var(--danger-bg); color: var(--danger-strong); }
 .sec-sub-strong { color: var(--text-main); font-weight: 600; }
 
-/* Grid children must be allowed to shrink below their content, or wide
-   tables/canvases push the whole page into horizontal scroll. */
+/* Let grid children shrink below their content so wide tables/canvases don't cause horizontal page scroll. */
 .charts-container-grid > *,
 .kpi-wrapper-grid > *,
 .run-grid > *,
