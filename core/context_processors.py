@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.utils.safestring import mark_safe
 
-from .permissions import can_approve, pending_actions, MANAGE_USERS, ACTION_PERMS
+from .permissions import can_approve, pending_actions, MANAGE_USERS, ACTION_PERMS, has_any_perm
 
 def approvals_count(request):
     """Number of items waiting on the user in the Action Center (sidebar badge), counted from the same querysets the page lists."""
@@ -198,4 +198,4 @@ def denied_actions(request):
     if not request.user.is_authenticated or not match:
         return {'denied_actions': []}
     perms = ACTION_PERMS.get(match.url_name, {})
-    return {'denied_actions': sorted(a for a, perm in perms.items() if not request.user.has_perm(perm))}
+    return {'denied_actions': sorted(a for a, perm in perms.items() if not has_any_perm(request.user, perm))}

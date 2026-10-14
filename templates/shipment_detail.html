@@ -558,7 +558,7 @@
                 </div>
                 <button type="submit" class="btn btn-primary" style="width:100%; padding:0.65rem; margin-bottom:0.75rem;">Submit for Approval</button>
                 {% if can_self_approve %}
-                <button type="submit" name="approve_now" value="1" formnovalidate class="btn" style="width:100%; padding:0.65rem; margin-bottom:0.75rem; background:#fff; border:1px solid #16a34a; color:#16a34a; border-radius:6px; font-weight:600;">Submit &amp; Approve (Admin)</button>
+                <button type="submit" name="approve_now" value="1" formnovalidate class="btn" style="width:100%; padding:0.65rem; margin-bottom:0.75rem; background:#fff; border:1px solid #16a34a; color:#16a34a; border-radius:6px; font-weight:600;">Submit &amp; Approve</button>
                 {% endif %}
             </form>
             {% endif %}
@@ -636,14 +636,14 @@
                     <label style="display:block; font-size:0.85rem; font-weight:600; color:#991b1b; margin-bottom:0.5rem;">Manager Acknowledgment Comment</label>
                     <textarea name="manager_comment" class="form-input" placeholder="Type acknowledgment comment..." style="width:100%; height:60px; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:1.5rem;"></textarea>
 
-                    {% if shipment.direction == 'Transfer' %}
+                    {% if shipment.direction == 'Transfer' or shipment.direction == 'Outbound' %}
                     {% for item in shipment.items.all %}{% if item.batch and item.shortage_quantity > 0 %}
                     <label style="display:block; font-size:0.85rem; font-weight:600; color:#991b1b; margin-bottom:0.5rem;">
                         Missing {{ item.shortage_quantity }} of {% if item.material %}{{ item.material.name }}{% else %}{{ item.product.name }}{% endif %} (Batch {{ item.batch.batch_number }}): where did they go?
                     </label>
                     <select name="shortage_reason_{{ item.id }}" required class="form-select" style="width:100%; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:1rem;">
                         <option value="">-- Select --</option>
-                        <option value="origin">Still at origin (not loaded / miscount), keep on batch</option>
+                        <option value="origin">{% if shipment.direction == 'Outbound' %}Never left or came back to origin, keep on batch{% else %}Still at origin (not loaded / miscount), keep on batch{% endif %}</option>
                         <option value="lost">Lost or damaged in transit, write off</option>
                     </select>
                     {% endif %}{% endfor %}

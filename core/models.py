@@ -11,12 +11,18 @@ class Capability(models.Model):
         managed = False
         default_permissions = ()
         permissions = [
-            ('approve_requests', 'Can approve requests (orders, shipments, production runs)'),
-            ('override_approvals', 'Can self-approve and decide any pending approval'),
+            ('approve_sales_orders', 'Can approve sales orders'),
+            ('approve_purchase_orders', 'Can approve purchase orders'),
+            ('approve_production_runs', 'Can approve production runs'),
+            ('approve_shipments', 'Can approve shipments and force-close discrepant ones'),
+            ('override_approvals', 'Can work in every facility and use the system tools'),
             ('adjust_physical_stock', 'Can manually adjust physical stock'),
             ('manage_users', 'Can manage users and their facility access'),
             ('set_order_status', 'Can set a sales order status by hand'),
             ('handle_purchasing', 'Receives purchase orders drafted for material shortages'),
+            ('allocate_order_stock', 'Can reserve finished goods for sales orders'),
+            ('allocate_run_materials', 'Can reserve materials for production runs'),
+            ('cancel_orders', 'Can cancel sales orders and abort production runs'),
         ]
 
 
@@ -387,6 +393,7 @@ class SalesOrder(models.Model):
         ('Shipped', 'Shipped'),
         ('Delivered', 'Delivered'),
         ('Rejected', 'Rejected'),
+        ('Cancelled', 'Cancelled'),
     )
     so_number = models.CharField(max_length=100, unique=True)
     client_name = models.CharField(max_length=255)
@@ -402,6 +409,7 @@ class SalesOrder(models.Model):
     manufacturing_plant = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='manufacturing_sos')
     approval_remarks = models.TextField(blank=True, null=True)
     rejection_reason = models.TextField(blank=True, null=True)
+    cancel_reason = models.TextField(blank=True, default='')
     revision_count = models.IntegerField(default=0)
     followers = models.ManyToManyField(CustomUser, blank=True, related_name='followed_sos')
     updated_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_sos')

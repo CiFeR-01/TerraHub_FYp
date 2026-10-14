@@ -31,7 +31,8 @@ from .decorators import permission_or_redirect
 from .permissions import (
     is_admin_user, can_approve, can_grant_group, action_denied,
     limited_warehouse_ids, may_use_warehouse, FACILITY_REFUSED, approvers, users_with_perm, pending_actions,
-    ADJUST_PHYSICAL_STOCK, MANAGE_USERS, HANDLE_PURCHASING, APPROVE_REQUESTS,
+    ADJUST_PHYSICAL_STOCK, MANAGE_USERS, HANDLE_PURCHASING, approve_perm,
+    APPROVE_SALES_ORDERS, APPROVE_PURCHASE_ORDERS, APPROVE_PRODUCTION_RUNS, APPROVE_SHIPMENTS,
 )
 
 
@@ -61,9 +62,7 @@ PAGE_SIZE_CHOICES = (25, 50, 100)
 
 
 def get_page_size(request, default=25, max_size=500):
-    """Resolves ?page_size= for a paginated list view. Falls back to `default` on
-    anything missing or invalid, and caps it so a hand-edited URL can't force one
-    request to pull the whole table."""
+    """Resolves ?page_size= for a paginated list, using `default` if missing or invalid and capping it."""
     raw = request.GET.get('page_size', default)
     try:
         size = int(raw)
@@ -74,20 +73,16 @@ def get_page_size(request, default=25, max_size=500):
     return min(size, max_size)
 
 
-def approver_problem(requester, approver):
-    """Why `approver` can't take an approval request from `requester`, or None.
-    Only Admins may send a request to themselves."""
-    if not approver or not can_approve(approver):
+def approver_problem(approver, perm):
+    """Why `approver` can't take an approval request needing `perm`, or None.
+    Anyone holding `perm` may be picked, including the requester themselves (self-approval)."""
+    if not approver or not approver.has_perm(perm):
         return "Please select a valid manager for approval."
-    if approver == requester and not is_admin_user(requester):
-        return "You can't send an approval request to yourself. Choose another manager."
     return None
 
 
 def clear_approval_notifications(reference):
-    """Mark the "requires your approval" style notifications for `reference`
-    (an SO/PO number, shipment tracking number or run number) as read, so they
-    stop nagging once the item has been decided or sent back."""
+    """Marks the "requires your approval" notifications for `reference` (SO/PO number, tracking number or run number) as read."""
     Notification.objects.filter(is_read=False, message__contains=reference).filter(
         Q(message__icontains='requires your approval') | Q(message__icontains='approval required')
         | Q(message__icontains='pending variance approval') | Q(message__icontains='QA release needed')
@@ -108,30 +103,24 @@ def notify_added_follower(adder, follower, label, link):
 
 
 def self_approval_note(requester, approver):
-    return " (self-approval by Admin)" if approver == requester else ""
+    return " (self-approval)" if approver == requester else ""
 
 
 def may_decide_approval(user, obj):
-    """Only something actually pending approval, and only by its assigned approver or an Admin."""
-    return obj.status == 'Pending Approval' and (obj.assigned_to_id == user.id or is_admin_user(user))
+    """Only something actually pending approval, and only by its assigned approver while they hold the module's approve permission."""
+    return obj.status == 'Pending Approval' and obj.assigned_to_id == user.id and user.has_perm(approve_perm(obj))
 
 
 def may_decide_run_approval(user, run):
-    """Production runs often have no assigned approver: any Manager/Admin may decide
-    while it's pending approval. If an approver was named (variance sign-off), only
-    they or an Admin."""
-    if run.status != 'Pending Approval' or not can_approve(user):
-        return False
-    if is_admin_user(user):
-        return True
-    # Block self-approval (Admins excepted)
-    if user.id in (run.created_by_id, run.supervisor_id):
+    """Unassigned pending runs can be decided by anyone who may approve runs, including whoever created or supervises the run;
+    if an approver was named, only they."""
+    if run.status != 'Pending Approval' or not user.has_perm(APPROVE_PRODUCTION_RUNS):
         return False
     return not run.assigned_to_id or run.assigned_to_id == user.id
 
 
 # Sales order edit rules: locked once stock is heading out; editing an approved order sends it back to Draft.
-SO_ITEMS_LOCKED = ('Ready to Ship', 'Partially Shipped', 'Shipped', 'Delivered')
+SO_ITEMS_LOCKED = ('Ready to Ship', 'Partially Shipped', 'Shipped', 'Delivered', 'Cancelled')
 SO_REAPPROVE_ON_EDIT = ('Pending Approval', 'Pending', 'Awaiting Acknowledgement', 'In Production')
 # Status changes allowed from the dropdown; everything else comes from the order flow.
 # Delivery plan can be switched until one of its shipments is approved.
@@ -142,6 +131,74 @@ SO_MANUAL_TRANSITIONS = {
     'Shipped': ['Delivered'],
 }
 
+
+SO_UNCANCELLABLE = ('Shipped', 'Delivered', 'Cancelled')
+SHIPMENT_OUT = ('Dispatched', 'Delayed', 'Arrived', 'Discrepant')   # goods physically left; can't be undone by a cancel
+
+
+def so_cancel_problem(so):
+    """Why `so` can't be cancelled right now, or None. Anything already on the road or being made must be dealt with first."""
+    if so.status in SO_UNCANCELLABLE:
+        return f"{so.so_number} is {so.status}, so it can't be cancelled."
+    out = so.shipments.filter(direction__in=['Outbound', 'Transfer'], status__in=SHIPMENT_OUT)
+    if out.exists():
+        return (f"{', '.join(out.values_list('tracking_number', flat=True))} has already left. "
+                "Receive or force close it before cancelling the order.")
+    running = so.production_runs.filter(status__in=['InProgress', 'Paused'])
+    if running.exists():
+        return (f"Run {', '.join(running.values_list('run_number', flat=True))} is already in production. "
+                "Abort or finish it on the run page before cancelling the order.")
+    return None
+
+
+def cancel_sales_order(so, reason, user):
+    """Cancels an order for good: frees every reservation it holds, cancels its unstarted runs and its shipments
+    that haven't left. Shipped units and finished runs stay as history. Callers check so_cancel_problem first."""
+    from .utils import release_production_run_allocations
+    with transaction.atomic():
+        for sh in so.shipments.filter(direction__in=['Outbound', 'Transfer']).exclude(status__in=['Completed', 'Cancelled']):
+            for a in StockAllocation.objects.filter(shipment=sh).select_related('batch'):
+                a.batch.allocated_quantity = max(a.batch.allocated_quantity - a.quantity, Decimal('0'))
+                a.batch.save(update_fields=['allocated_quantity'])
+                a.delete()
+            sh.status = 'Cancelled'
+            sh.save(update_fields=['status'])
+            clear_approval_notifications(sh.tracking_number)
+            OrderTimeline.objects.create(shipment=sh, action=f"Cancelled with {so.so_number}. Its stock is free again.", user=user)
+        for a in StockAllocation.objects.filter(sales_order=so).select_related('batch'):
+            a.batch.allocated_quantity = max(a.batch.allocated_quantity - a.quantity, Decimal('0'))
+            a.batch.save(update_fields=['allocated_quantity'])
+            a.delete()
+        for run in so.production_runs.filter(status__in=['Pending Approval', 'Pending Allocation', 'Awaiting Materials', 'Planned']):
+            release_production_run_allocations(run, user)
+            run.status = 'Cancelled'
+            run.save(update_fields=['status'])
+            clear_approval_notifications(run.run_number)
+            OrderTimeline.objects.create(production_run=run, action=f"Cancelled with {so.so_number}. Reason: {reason}", user=user)
+        so.status = 'Cancelled'
+        so.cancel_reason = reason
+        so.assigned_to = None
+        so.updated_by = user
+        so.save()
+        clear_approval_notifications(so.so_number)
+        OrderTimeline.objects.create(sales_order=so, action=f"Order cancelled. Reason: {reason}", user=user)
+        for follower in so.followers.exclude(pk=user.pk):
+            Notification.objects.create(user=follower, message=f"Sales Order {so.so_number} was cancelled.", link=reverse('so_detail', args=[so.pk]))
+
+
+def so_manual_status_problem(so, new_status):
+    """Why `so` can't be set to `new_status` from the dropdown, or None.
+    Shipped/Delivered by hand only once every unit has shipped and none of its shipments is still open."""
+    if new_status not in SO_MANUAL_TRANSITIONS.get(so.status, []):
+        return f"{so.so_number} can't be changed from {so.status} to {new_status} by hand."
+    open_ships = so.shipments.filter(direction__in=['Outbound', 'Transfer']).exclude(status__in=['Completed', 'Cancelled'])
+    if open_ships.exists():
+        return (f"{so.so_number} still has open shipment(s) {', '.join(open_ships.values_list('tracking_number', flat=True))}. "
+                f"Complete or scrap them before marking it {new_status}.")
+    if any(i.quantity_shipped < i.quantity_ordered for i in so.items.all()):
+        return f"{so.so_number} hasn't shipped every unit it ordered, so it can't be marked {new_status} by hand."
+    return None
+
 # Only a partly received PO can be closed by hand; other PO statuses come from approval and receiving.
 PO_MANUAL_TRANSITIONS = {
     'Partially Received': ['Completed'],
@@ -149,6 +206,10 @@ PO_MANUAL_TRANSITIONS = {
 
 # Unapproved orders cannot be allocated, received or produced against.
 UNAPPROVED_STATUSES = ('Draft', 'Pending Approval', 'Rejected')
+# Orders that stock can be allocated to: approved and not covered yet, or part-shipped and still owed units.
+SO_ALLOCATABLE = ('Pending', 'Partially Shipped')
+# Orders whose shortages may be sent to manufacturing: approved and not yet Ready to Ship.
+SO_MANUFACTURABLE = ('Pending', 'Awaiting Acknowledgement', 'In Production')
 
 
 # PO statuses where lines can't be edited
@@ -184,6 +245,15 @@ def so_return_for_reapproval(so, user, what):
 
 # Outbound/Transfer cargo is locked once the truck leaves; edits while pending or approved return the shipment to Logistics Review.
 SHIPMENT_CARGO_LOCKED = ('Dispatched', 'Delayed', 'Arrived', 'Completed', 'Discrepant', 'Cancelled')
+# Statuses each shipment action may start from: nothing that has left can be scrapped or sent back, and only a finished one reopened.
+SHIPMENT_ACTION_STATUSES = {
+    'scrap_shipment': ('Draft', 'Logistics Review', 'Pending Approval', 'Preparing'),
+    'submit_for_approval': ('Draft', 'Logistics Review'),
+    'return_to_manufacturing': ('Logistics Review', 'Pending Approval', 'Preparing'),
+    'reopen_shipment': ('Completed',),
+}
+# A supplier's truck still on the road holds none of our stock, so it can be scrapped too.
+INBOUND_EXTRA_SCRAPPABLE = ('Dispatched', 'Delayed')
 
 
 @login_required
@@ -298,9 +368,7 @@ def dashboard_view(request):
         return float(logs.aggregate(s=expr)['s'] or 0)
 
     def _trend(cur, prev):
-        """Period-over-period change for a KPI trend pill. A swing of 200%+
-        almost always means the prior period was tiny, so it is shown neutral
-        rather than as a big green/red headline."""
+        """Period-over-period change for a KPI pill; swings of 200%+ are shown neutral."""
         if not prev:
             return {'dir': 'none', 'pct': None, 'prev': prev}
         pct = (cur - prev) / prev * 100
@@ -613,6 +681,8 @@ def db_logs_api_view(request):
 
 @login_required
 def db_clear_logs_view(request):
+    if request.method != 'POST' or not (request.user.is_superuser or is_admin_user(request.user)):
+        return JsonResponse({'status': 'error', 'message': "Permission denied."}, status=403)
     from .db_tracker import DB_QUERY_LOGS
     DB_QUERY_LOGS.clear()
     return JsonResponse({'status': 'success'})
@@ -620,7 +690,9 @@ def db_clear_logs_view(request):
 
 @login_required
 def db_test_op_view(request):
-    op_type = request.GET.get('type', 'read')
+    if request.method != 'POST' or not (request.user.is_superuser or is_admin_user(request.user)):
+        return JsonResponse({'status': 'error', 'message': "Permission denied."}, status=403)
+    op_type = request.POST.get('type', 'read')
     if op_type == 'write':
         Notification.objects.create(
             user=request.user,
@@ -638,9 +710,7 @@ def db_test_op_view(request):
 
 
 def home_view(request):
-    """Public landing page. ?batch=<number> is the "Trace a batch" box: it jumps
-    to that batch's public page (the one its QR label opens), or re-renders with
-    a not-found note. Signed-in users otherwise go straight to the dashboard."""
+    """Public landing page. ?batch=<number> jumps to that batch's public page or shows a not-found note; signed-in users go to the dashboard."""
     trace_query = request.GET.get('batch', '').strip()[:100]
     if trace_query:
         batch_number = Batch.objects.filter(batch_number__iexact=trace_query).values_list('batch_number', flat=True).first()
@@ -844,10 +914,20 @@ def batch_detail_view(request, batch_number):
             new_location_id = request.POST.get('location_id')
             
             changes = []
-            if new_status and batch.status != new_status:
-                changes.append(f"Status changed to {new_status}")
-                batch.status = new_status
-            
+            # Status moves with stock effects go through the same steps as QA; Spoiled/Depleted are final.
+            status_change = new_status if new_status and new_status != batch.status else None
+            if status_change:
+                problem = None
+                if status_change not in dict(Batch.STATUS_CHOICES):
+                    problem = f"'{status_change}' isn't a batch status."
+                elif batch.status in ('Spoiled', 'Depleted'):
+                    problem = f"Batch {batch.batch_number} is {batch.status}, so its status can't be changed."
+                elif status_change == 'Depleted':
+                    problem = "A batch becomes Depleted by itself when its stock runs out; it can't be set by hand."
+                if problem:
+                    messages.error(request, problem)
+                    return redirect('batch_detail', batch_number=batch.batch_number)
+
             if new_expiry:
                 parsed_expiry, err = read_date(request.POST, 'expiry_date', "Expiry date")
                 if err:
@@ -871,6 +951,9 @@ def batch_detail_view(request, batch_number):
                 except InvalidOperation:
                     new_rate = batch.rental_rate_per_mt
                     messages.error(request, "Invalid rental rate — leaving it unchanged.")
+                if new_rate is not None and new_rate < 0:
+                    new_rate = batch.rental_rate_per_mt
+                    messages.error(request, "Rental rate can't be negative — leaving it unchanged.")
                 if batch.rental_rate_per_mt != new_rate:
                     changes.append(
                         f"Rental rate set to RM{new_rate}/MT" if new_rate is not None
@@ -878,6 +961,17 @@ def batch_detail_view(request, batch_number):
                     )
                     batch.rental_rate_per_mt = new_rate
 
+            # Spoiling logs its own disposal entry; QA release runs after the save so the order gets its reservation.
+            qa_release = status_change == 'Active' and batch.status == 'Quarantined'
+            if status_change == 'Spoiled':
+                problem = spoil_batch(batch, request.user)
+                if problem:
+                    messages.error(request, problem)
+                    return redirect('batch_detail', batch_number=batch.batch_number)
+            elif status_change:
+                changes.insert(0, f"Status changed to {status_change}")
+                if not qa_release:
+                    batch.status = status_change
             if changes:
                 batch.save()
                 RegistryLog.objects.create(
@@ -887,6 +981,9 @@ def batch_detail_view(request, batch_number):
                     warehouse=batch.warehouse if batch.warehouse else None,
                     user=request.user,
                 )
+            if qa_release:
+                release_batch_from_qa(batch, request.user)
+            if changes or status_change:
                 messages.success(request, "Batch details updated successfully.")
             return redirect('batch_detail', batch_number=batch.batch_number)
 
@@ -1133,7 +1230,12 @@ def stock_audit_view(request):
 
     audits = StockAudit.objects.select_related('batch', 'auditor').order_by('-id')
     active_batches = Batch.objects.filter(status='Active').select_related('material', 'product', 'warehouse')
-    
+    # Facility limit check - disabled for now; uncomment to enforce
+    # limited = limited_warehouse_ids(request.user)
+    # if limited is not None:
+    #     audits = audits.filter(batch__warehouse_id__in=limited)
+    #     active_batches = active_batches.filter(warehouse_id__in=limited)
+
     pending_count = audits.filter(status='Pending').count()
     resolved_count = audits.filter(status='Resolved').count()
 
@@ -1227,6 +1329,9 @@ def export_products_csv(request):
 def import_products(request):
     """Bulk import Products from uploaded CSV with dry-run, anti-duplication, and error reporting."""
     if request.method != 'POST':
+        return redirect('product_list')
+    if not request.user.has_perm('core.add_product'):
+        messages.error(request, "You don't have permission to import products.")
         return redirect('product_list')
 
     csv_file = request.FILES.get('csv_file')
@@ -1446,6 +1551,9 @@ def export_materials_csv(request):
 def import_materials(request):
     """Bulk import Materials from uploaded CSV with dry-run, anti-duplication, and error reporting."""
     if request.method != 'POST':
+        return redirect('material_list')
+    if not request.user.has_perm('core.add_material'):
+        messages.error(request, "You don't have permission to import materials.")
         return redirect('material_list')
 
     csv_file = request.FILES.get('csv_file')
@@ -2043,9 +2151,7 @@ def material_list_view(request):
 
 
 def _apply_material_update(request, material):
-    """Validates the material edit form in request.POST and saves it, queuing a
-    success/error message. Shared by the edit view and the details page. The
-    "Updated Material '<name>'" log text is parsed by analytics.resolve_material_from_label."""
+    """Validates and saves the material edit form from request.POST, queuing a message. The "Updated Material '<name>'" log text is parsed by analytics.resolve_material_from_label."""
     name = request.POST.get('name', '').strip()
     sku = request.POST.get('sku', '').strip().upper()
     category = request.POST.get('category', '').strip()
@@ -2099,6 +2205,9 @@ def material_edit_view(request, pk):
     material = get_object_or_404(Material, pk=pk)
 
     if request.method == 'POST':
+        if not request.user.has_perm('core.change_material'):
+            messages.error(request, "You don't have permission to edit materials.")
+            return redirect('material_list')
         _apply_material_update(request, material)
         return redirect('material_list')
 
@@ -2316,6 +2425,9 @@ def supplier_edit_view(request, pk):
     supplier = get_object_or_404(Supplier, pk=pk)
 
     if request.method == 'POST':
+        if not request.user.has_perm('core.change_supplier'):
+            messages.error(request, "You don't have permission to edit suppliers.")
+            return redirect('supplier_list')
         name = request.POST.get('name', '').strip()
         try:
             if not name:
@@ -2407,6 +2519,9 @@ def client_edit_view(request, pk):
     client = get_object_or_404(Client, pk=pk)
 
     if request.method == 'POST':
+        if not request.user.has_perm('core.change_client'):
+            messages.error(request, "You don't have permission to edit clients.")
+            return redirect('client_list')
         name = request.POST.get('name', '').strip()
         try:
             if not name:
@@ -2463,8 +2578,9 @@ def sales_order_list_view(request):
             so_id = request.POST.get('so_id')
             new_status = request.POST.get('status')
             so = get_object_or_404(SalesOrder, id=so_id)
-            if new_status not in SO_MANUAL_TRANSITIONS.get(so.status, []):
-                messages.error(request, f"{so.so_number} can't be changed from {so.status} to {new_status} by hand.")
+            problem = so_manual_status_problem(so, new_status)
+            if problem:
+                messages.error(request, problem)
                 return redirect('so_list')
             old_status = so.status
             so.status = new_status
@@ -2647,14 +2763,25 @@ def so_detail_view(request, pk):
                 return redirect('so_detail', pk=so.pk)
             try:
                 prod = get_object_or_404(Product, id=prod_id)
-                SalesOrderDetail.objects.create(
-                    sales_order=so,
-                    product=prod,
-                    quantity_ordered=qty,
-                    unit_price=float(unit_price) if unit_price else None
-                )
-                OrderTimeline.objects.create(sales_order=so, action=f"Line item added: {prod.name} x{qty}", user=request.user)
-                messages.success(request, f"Added {prod.name} to {so.so_number}.")
+                # One line per product: adding a product already on the order raises that line instead.
+                existing = so.items.filter(product=prod).first()
+                if existing:
+                    old_qty = existing.quantity_ordered
+                    existing.quantity_ordered += qty
+                    if unit_price:
+                        existing.unit_price = Decimal(unit_price)
+                    existing.save()
+                    OrderTimeline.objects.create(sales_order=so, action=f"Line quantity raised: {prod.name} {old_qty} -> {existing.quantity_ordered}", user=request.user)
+                    messages.success(request, f"{prod.name} was already on {so.so_number}, so its quantity was raised to {existing.quantity_ordered}.")
+                else:
+                    SalesOrderDetail.objects.create(
+                        sales_order=so,
+                        product=prod,
+                        quantity_ordered=qty,
+                        unit_price=float(unit_price) if unit_price else None
+                    )
+                    OrderTimeline.objects.create(sales_order=so, action=f"Line item added: {prod.name} x{qty}", user=request.user)
+                    messages.success(request, f"Added {prod.name} to {so.so_number}.")
                 if so_return_for_reapproval(so, request.user, "Line item added"):
                     messages.warning(request, f"{so.so_number} was already approved, so it's back in Draft. Request approval again.")
             except Exception as e:
@@ -2681,8 +2808,9 @@ def so_detail_view(request, pk):
 
         elif action == 'update_so_status':
             new_status = request.POST.get('status')
-            if new_status not in SO_MANUAL_TRANSITIONS.get(so.status, []):
-                messages.error(request, f"{so.so_number} can't be changed from {so.status} to {new_status} by hand.")
+            problem = so_manual_status_problem(so, new_status)
+            if problem:
+                messages.error(request, problem)
                 return redirect('so_detail', pk=so.pk)
             old_status = so.status
             so.status = new_status
@@ -2726,10 +2854,15 @@ def so_detail_view(request, pk):
             remarks = request.POST.get('remarks', '').strip()
             
             mgr = CustomUser.objects.filter(id=manager_id).first()
-            problem = approver_problem(request.user, mgr)
+            # Approval is only for unapproved orders (or resending one still pending); an approved or shipped order can't be sent back through it.
+            problem = (None if so.status in UNAPPROVED_STATUSES
+                       else f"{so.so_number} is {so.status}, so it can't be sent for approval again.")
+            problem = problem or approver_problem(mgr, APPROVE_SALES_ORDERS)
             if problem:
                 messages.error(request, problem)
             else:
+                if so.status == 'Pending Approval':
+                    clear_approval_notifications(so.so_number)   # resent: the previous approver's request is void
                 so.status = 'Pending Approval'
                 so.assigned_to = mgr
                 so.approval_remarks = remarks
@@ -2747,7 +2880,12 @@ def so_detail_view(request, pk):
             from django.utils import timezone
             from datetime import timedelta
             from decimal import Decimal
-            
+
+            # Only approved orders still being fulfilled; Draft/unapproved or already shipping orders can't raise runs.
+            if so.status not in SO_MANUFACTURABLE:
+                messages.error(request, f"{so.so_number} is {so.status}, so it can't be sent to manufacturing. Only approved orders that aren't ready to ship yet can.")
+                return redirect('so_detail', pk=so.pk)
+
             plant_id = request.POST.get('manufacturing_plant_id')
             plant = None
             if plant_id:
@@ -2756,8 +2894,9 @@ def so_detail_view(request, pk):
             from .utils import create_shortage_production_runs
             created_any = create_shortage_production_runs(so, plant, request.user)
 
-            so.status = 'Awaiting Acknowledgement'
-            so.save()
+            if so.status == 'Pending':   # an order already In Production keeps that status
+                so.status = 'Awaiting Acknowledgement'
+                so.save()
             OrderTimeline.objects.create(sales_order=so, action="Shortages sent to manufacturing queue.", user=request.user)
             if created_any:
                 messages.success(request, f"Manufacturing orders created for shortages on {so.so_number}.")
@@ -2844,6 +2983,17 @@ def so_detail_view(request, pk):
                             user=request.user,
                         )
                     messages.success(request, f"Drafted stock move(s) {', '.join(created)} to {so.origin_warehouse.name}. Take them through Logistics; once they arrive, create the logistics order to ship everything together.")
+
+        elif action == 'cancel_so':
+            reason = request.POST.get('reason', '').strip()
+            problem = so_cancel_problem(so)
+            if not reason:
+                problem = "Give a reason for cancelling the order."
+            if problem:
+                messages.error(request, problem)
+                return redirect('so_detail', pk=so.pk)
+            cancel_sales_order(so, reason, request.user)
+            messages.success(request, f"{so.so_number} cancelled. Its reserved stock is free again and unstarted runs and shipments were cancelled.")
 
         elif action == 'cancel_delivery_plan':
             # Switch plans: cancel unapproved stock moves/outbound shipments and return their reservations to the order.
@@ -3014,8 +3164,8 @@ def so_detail_view(request, pk):
         'warehouses': warehouses,
         'manufacturing_plants': manufacturing_plants,
         'so_status_choices': [c for c in SalesOrder.STATUS_CHOICES if c[0] == so.status or c[0] in SO_MANUAL_TRANSITIONS.get(so.status, [])],
-        'managers': approvers(),
-        'can_decide_approval': can_approve(request.user) and may_decide_approval(request.user, so),
+        'managers': approvers(APPROVE_SALES_ORDERS),
+        'can_decide_approval': may_decide_approval(request.user, so),
         'all_users': CustomUser.objects.all().order_by('username'),
     }
     return render(request, 'so_detail.html', context)
@@ -3049,6 +3199,9 @@ def po_detail_view(request, pk):
             unit_price = request.POST.get('unit_price', None)
             rental_rate = request.POST.get('negotiated_rental_rate_per_mt', None)
             qty, err = read_decimal(request.POST, 'quantity_ordered', "Quantity", above=0)
+            unit_price, price_err = read_decimal(request.POST, 'unit_price', "Unit price", min_value=0, required=False)
+            rental_rate, rate_err = read_decimal(request.POST, 'negotiated_rental_rate_per_mt', "Rental rate", min_value=0, required=False)
+            err = err or price_err or rate_err
             if err:
                 messages.error(request, err)
                 return redirect('po_detail', pk=pk)
@@ -3058,8 +3211,8 @@ def po_detail_view(request, pk):
                     purchase_order=po,
                     material=mat,
                     quantity_ordered=qty,
-                    unit_price=float(unit_price) if unit_price else None,
-                    negotiated_rental_rate_per_mt=float(rental_rate) if rental_rate else None
+                    unit_price=unit_price,
+                    negotiated_rental_rate_per_mt=rental_rate
                 )
                 OrderTimeline.objects.create(purchase_order=po, action=f"Line item added: {mat.name} x{qty}", user=request.user)
                 messages.success(request, f"Added {mat.name} to {po.po_number}.")
@@ -3155,7 +3308,7 @@ def po_detail_view(request, pk):
             remarks = request.POST.get('remarks', '').strip()
             
             mgr = CustomUser.objects.filter(id=manager_id).first()
-            problem = approver_problem(request.user, mgr)
+            problem = approver_problem(mgr, APPROVE_PURCHASE_ORDERS)
             if problem:
                 messages.error(request, problem)
             else:
@@ -3211,8 +3364,8 @@ def po_detail_view(request, pk):
         'warehouses': warehouses,
         'po_status_choices': [c for c in PurchaseOrder.STATUS_CHOICES if c[0] == po.status or c[0] in PO_MANUAL_TRANSITIONS.get(po.status, [])],
         'unapproved_statuses': UNAPPROVED_STATUSES,
-        'managers': approvers(),
-        'can_decide_approval': can_approve(request.user) and may_decide_approval(request.user, po),
+        'managers': approvers(APPROVE_PURCHASE_ORDERS),
+        'can_decide_approval': may_decide_approval(request.user, po),
         'all_users': CustomUser.objects.all().order_by('username'),
     }
     return render(request, 'po_detail.html', context)
@@ -3240,7 +3393,7 @@ def manufacturing_view(request):
                 prod = get_object_or_404(Product, id=prod_id)
                 plant = get_object_or_404(Warehouse, id=plant_id)
                 so = SalesOrder.objects.filter(id=so_id).first() if so_id else None
-                if so and so.status in UNAPPROVED_STATUSES:
+                if so and so.status in UNAPPROVED_STATUSES + ('Cancelled',):
                     messages.error(request, f"{so.so_number} hasn't been approved yet, so no production run can be scheduled for it.")
                     return redirect('readiness')
 
@@ -3416,7 +3569,7 @@ def manufacturing_view(request):
             run_id = request.POST.get('run_id')
             run = get_object_or_404(ProductionRun, id=run_id)
             if not may_decide_run_approval(request.user, run):
-                messages.error(request, "Only a Manager or Admin can approve a production run that is pending approval.")
+                messages.error(request, "Only someone who may approve production runs (the named approver, if there is one) can approve a run that is pending approval.")
                 return redirect('readiness')
             clear_approval_notifications(run.run_number)
 
@@ -3449,6 +3602,8 @@ def manufacturing_view(request):
                 run.status = 'InProgress'
                 run.start_time = timezone.now()
                 run.save()
+                from .utils import mark_order_in_production
+                mark_order_in_production(run, request.user)
                 messages.success(request, f"Production Run {run.run_number} started.")
 
         elif action == 'complete_run':
@@ -3545,7 +3700,8 @@ def manufacturing_view(request):
             from .utils import so_line_commitment
             allocated = float(so_line_commitment(so, item.product, item.quantity_shipped)['total'])
             incoming_production = float(ProductionRun.objects.filter(
-                sales_order=so, target_product=item.product, status__in=['Pending Approval', 'Planned', 'InProgress']
+                sales_order=so, target_product=item.product,
+                status__in=['Pending Approval', 'Pending Allocation', 'Awaiting Materials', 'Planned', 'InProgress', 'Paused']
             ).aggregate(s=Sum('expected_yield'))['s'] or 0)
             deficit = max(0.0, float(item.quantity_ordered) - allocated - incoming_production)
 
@@ -3632,6 +3788,12 @@ def shipments_view(request):
             actual_arrival_dt = request.POST.get('actual_arrival_date')
             external_origin = request.POST.get('external_origin')
 
+            # Facility limit check - disabled for now; uncomment to enforce
+            # ends = [i for i in (origin_id, dest_id) if i]
+            # if ends and not any(may_use_warehouse(request.user, i) for i in ends):
+            #     messages.error(request, FACILITY_REFUSED)
+            #     return redirect('shipments')
+
             try:
                 if tracking_mode == 'auto' or not tracking_number:
                     import random, string
@@ -3711,6 +3873,10 @@ def shipments_view(request):
     shipments = Shipment.objects.select_related(
         'origin_warehouse', 'destination_warehouse', 'purchase_order', 'sales_order'
     ).prefetch_related('items').order_by('-id')
+    # Facility limit check - disabled for now; uncomment to enforce
+    # limited = limited_warehouse_ids(request.user)
+    # if limited is not None:
+    #     shipments = shipments.filter(Q(origin_warehouse_id__in=limited) | Q(destination_warehouse_id__in=limited))
 
     if status_filter:
         shipments = shipments.filter(status=status_filter)
@@ -3775,6 +3941,40 @@ def shipments_view(request):
 
 
 
+def release_batch_from_qa(batch, user):
+    """QA release: the batch becomes Active and, if a run made it for an order, is reserved for that order now."""
+    batch.status = 'Active'
+    batch.save()
+    clear_approval_notifications(batch.batch_number)
+    run = batch.produced_in
+    if run:
+        OrderTimeline.objects.create(production_run=run, action=f"FG batch {batch.batch_number} released by QA.", user=user)
+        # A batch held at completion gets its order reservation now, if it has none.
+        if run.sales_order and not batch.allocations.exists():
+            from .utils import allocate_finished_batch_to_order
+            allocate_finished_batch_to_order(run, batch, user, event=f"FG batch {batch.batch_number} (Run {run.run_number}) released by QA.")
+
+
+def spoil_batch(batch, user):
+    """Writes a batch off as Spoiled: frees its reservations and logs the disposal. Returns an error message (changing nothing) if it's loaded on a shipment, else None."""
+    from .utils import trim_batch_reservations
+    problem = trim_batch_reservations(batch, 0, user, "batch spoiled / disposed")
+    if problem:
+        return problem
+    batch.status = 'Spoiled'
+    batch.closed_date = date.today()
+    batch.save()
+    RegistryLog.objects.create(
+        action_type='Spoiled_Disposal',
+        item_name=f"Batch {batch.batch_number} Disposed",
+        material=batch.material,
+        quantity_changed=batch.quantity,
+        warehouse=batch.warehouse if batch.warehouse else None,
+        user=user
+    )
+    return None
+
+
 # QA and spoilage control
 @login_required
 def qa_dashboard_view(request):
@@ -3819,35 +4019,14 @@ def qa_dashboard_view(request):
             if batch.status != 'Quarantined':
                 messages.error(request, f"Batch {batch.batch_number} is {batch.status}, not Quarantined, so it can't be released.")
                 return redirect('qa_dashboard')
-            batch.status = 'Active'
-            batch.save()
-            clear_approval_notifications(batch.batch_number)
-            run = batch.produced_in
-            if run:
-                OrderTimeline.objects.create(production_run=run, action=f"FG batch {batch.batch_number} released by QA.", user=request.user)
-                # A batch held at completion gets its order reservation now, if it has none.
-                if run.sales_order and not batch.allocations.exists():
-                    from .utils import allocate_finished_batch_to_order
-                    allocate_finished_batch_to_order(run, batch, request.user, event=f"FG batch {batch.batch_number} (Run {run.run_number}) released by QA.")
+            release_batch_from_qa(batch, request.user)
             messages.success(request, f"Batch {batch.batch_number} released to Active inventory.")
 
         elif action == 'spoil_dispose':
-            from .utils import trim_batch_reservations
-            problem = trim_batch_reservations(batch, 0, request.user, "batch spoiled / disposed")
+            problem = spoil_batch(batch, request.user)
             if problem:
                 messages.error(request, problem)
                 return redirect('qa_dashboard')
-            batch.status = 'Spoiled'
-            batch.closed_date = date.today()
-            batch.save()
-            RegistryLog.objects.create(
-                action_type='Spoiled_Disposal',
-                item_name=f"Batch {batch.batch_number} Disposed",
-                material=batch.material,
-                quantity_changed=batch.quantity,
-                warehouse=batch.warehouse if batch.warehouse else None,
-                user=request.user
-            )
             messages.error(request, f"Batch {batch.batch_number} marked as Spoiled / Disposed.")
 
         return redirect('qa_dashboard')
@@ -3888,9 +4067,7 @@ def _with_comment(text, comment):
 
 
 def notify_approval_requester(decider, reference, link, approved, comment='', **timeline_fk):
-    """Tell whoever asked for the approval how it went. The requester is the user on
-    the latest "Approval Requested ..." (SO/PO) or "Submitted to ..." (shipment)
-    timeline entry; nothing is sent when they decided it themselves."""
+    """Notifies whoever requested the approval of the outcome (not sent if they decided it themselves)."""
     request_entry = OrderTimeline.objects.filter(**timeline_fk).filter(
         Q(action__startswith='Approval Requested') | Q(action__startswith='Submitted to')
     ).order_by('-timestamp').first()
@@ -3906,8 +4083,10 @@ def notify_approval_requester(decider, reference, link, approved, comment='', **
 
 
 @login_required
-@permission_or_redirect(APPROVE_REQUESTS)
 def approvals_inbox_view(request):
+    if not can_approve(request.user):
+        messages.error(request, "Permission Denied: You do not have permission to access this area.")
+        return redirect('dashboard')
     if request.method == 'POST':
         action = request.POST.get('action')
         item_type = request.POST.get('item_type')
@@ -3918,7 +4097,7 @@ def approvals_inbox_view(request):
         back = request.POST.get('next', '')
         if not url_has_allowed_host_and_scheme(back, allowed_hosts={request.get_host()}):
             back = reverse('approvals_inbox')
-        refused = "Only the assigned approver (or an Admin) can decide this, and only while it's pending approval."
+        refused = "Only the assigned approver can decide this, and only while it's pending approval."
 
         if action not in ('approve', 'reject') or item_type not in ('sales_order', 'production_run', 'purchase_order', 'shipment'):
             messages.error(request, "Unrecognised approval request.")
@@ -3940,6 +4119,7 @@ def approvals_inbox_view(request):
             else:
                 so.status = 'Draft'
                 so.assigned_to = None
+                so.approved_by = None
                 so.approval_remarks = ''
                 so.updated_by = request.user
                 so.save()
@@ -3951,7 +4131,7 @@ def approvals_inbox_view(request):
         elif item_type == 'production_run':
             run = get_object_or_404(ProductionRun, id=item_id)
             if not may_decide_run_approval(request.user, run):
-                messages.error(request, "Only a Manager or Admin can decide a production run that is pending approval.")
+                messages.error(request, "Only someone who may approve production runs (the named approver, if there is one) can decide a run that is pending approval.")
                 return redirect(back)
             clear_approval_notifications(run.run_number)
             run_link = reverse('production_run_detail', args=[run.pk])
@@ -4183,9 +4363,7 @@ def finish_shipment_receiving(request, shipment):
 
 
 def shipment_dispatch_problem(shipment):
-    """Why an Outbound/Transfer shipment can't be dispatched yet, or None. Every item
-    must name a batch at the shipment's origin - otherwise completing it can't take
-    the stock off anything (the SO-1001 / SHP-1001 case)."""
+    """Why an Outbound/Transfer shipment can't be dispatched yet (every item needs a batch at the origin), or None."""
     items = list(shipment.items.select_related('batch', 'batch__warehouse', 'material', 'product'))
     if not items:
         return "Add at least one item before dispatching."
@@ -4199,6 +4377,8 @@ def shipment_dispatch_problem(shipment):
                     f"not this shipment's origin ({shipment.origin_warehouse.name}).")
         if item.batch.status == 'Quarantined':
             return f"Batch {item.batch.batch_number} is in QA quarantine and can't be shipped until QA releases it."
+        if item.batch.expiry_date and item.batch.expiry_date < timezone.localdate():
+            return f"Batch {item.batch.batch_number} expired on {item.batch.expiry_date}. Replace it, or have QA extend its expiry first."
     return None
 
 
@@ -4212,8 +4392,20 @@ def shipment_detail_view(request, pk):
     
     route_error = False
     if request.method == 'POST':
+        # Facility limit check - disabled for now; uncomment to enforce
+        # ends = [i for i in (shipment.origin_warehouse_id, shipment.destination_warehouse_id) if i]
+        # if ends and not any(may_use_warehouse(request.user, i) for i in ends):
+        #     messages.error(request, FACILITY_REFUSED)
+        #     return redirect('shipment_detail', pk=shipment.pk)
         old_status = shipment.status
         action = request.POST.get('action')
+
+        allowed = SHIPMENT_ACTION_STATUSES.get(action)
+        if allowed and shipment.direction == 'Inbound' and action == 'scrap_shipment':
+            allowed += INBOUND_EXTRA_SCRAPPABLE
+        if allowed and shipment.status not in allowed:
+            messages.error(request, f"{shipment.tracking_number} is {shipment.status}, so that can't be done now.")
+            return redirect('shipment_detail', pk=shipment.pk)
 
         cargo_before = None
         if action in ('add_item', 'remove_item') and shipment.direction == 'Transfer' and shipment.sales_order:
@@ -4389,6 +4581,21 @@ def shipment_detail_view(request, pk):
                 OrderTimeline.objects.create(sales_order=so, action=f"Stock move {shipment.tracking_number} scrapped; the stock stays reserved for this order.", user=request.user)
             messages.success(request, f"Stock move scrapped. {so.so_number} keeps its reserved stock.")
 
+        elif (action == 'scrap_shipment' and shipment.direction == 'Outbound' and shipment.sales_order
+              and not shipment.linked_production_run and not shipment.credited_to_so):
+            # A delivery that never left: the order keeps the stock, ready for another logistics order.
+            so = shipment.sales_order
+            with transaction.atomic():
+                StockAllocation.objects.filter(shipment=shipment).update(sales_order=so, shipment=None)
+                shipment.status = 'Cancelled'
+                shipment.save(update_fields=['status'])
+                clear_approval_notifications(shipment.tracking_number)
+                OrderTimeline.objects.create(shipment=shipment, action=f"Scrapped before dispatch. {so.so_number} keeps its stock reservations.", user=request.user)
+                OrderTimeline.objects.create(sales_order=so, action=f"Logistics order {shipment.tracking_number} scrapped before dispatch; its stock stays reserved for this order.", user=request.user)
+                from .utils import _resync_so_fulfillment_status
+                _resync_so_fulfillment_status(so, request.user)
+            messages.success(request, f"Shipment scrapped. {so.so_number} keeps its reserved stock; draft a new logistics order when ready.")
+
         elif action == 'scrap_shipment':
             
             with transaction.atomic():
@@ -4477,7 +4684,7 @@ def shipment_detail_view(request, pk):
                 messages.success(request, "Shipment confirmed and marked as Preparing.")
 
         elif action == 'submit_for_approval':
-            approve_now = request.POST.get('approve_now') == '1' and is_admin_user(request.user)
+            approve_now = request.POST.get('approve_now') == '1' and request.user.has_perm(APPROVE_SHIPMENTS)
             approver_id = str(request.user.id) if approve_now else request.POST.get('approver_id')
             if shipment.direction == 'Transfer' and (not shipment.origin_warehouse or not shipment.destination_warehouse):
                 messages.error(request, "Origin and Destination facilities MUST be selected before submitting for approval.")
@@ -4489,7 +4696,7 @@ def shipment_detail_view(request, pk):
                 messages.error(request, "You must select a Manager for approval.")
             else:
                 approver = CustomUser.objects.filter(id=approver_id).first()
-                problem = approver_problem(request.user, approver)
+                problem = approver_problem(approver, APPROVE_SHIPMENTS)
                 if problem:
                     messages.error(request, problem)
                 elif approver and approve_now:
@@ -4517,12 +4724,15 @@ def shipment_detail_view(request, pk):
             
         elif action == 'return_to_manufacturing':
             shipment.status = 'Draft'
+            shipment.assigned_to = None   # any approval it was waiting on no longer applies
             shipment.save()
+            clear_approval_notifications(shipment.tracking_number)
+            OrderTimeline.objects.create(shipment=shipment, action=f"Returned to Draft from {old_status}.", user=request.user)
             messages.warning(request, "Shipment returned to Manufacturing.")
             
         elif action == 'approve':
             if not may_decide_approval(request.user, shipment):
-                messages.error(request, "Only the assigned approver (or an Admin) can approve a shipment that is pending approval.")
+                messages.error(request, "Only the assigned approver can approve a shipment that is pending approval.")
             else:
                 shipment.status = 'Preparing'
                 shipment.save()
@@ -4532,7 +4742,7 @@ def shipment_detail_view(request, pk):
                 
         elif action == 'reject':
             if not may_decide_approval(request.user, shipment):
-                messages.error(request, "Only the assigned approver (or an Admin) can reject a shipment that is pending approval.")
+                messages.error(request, "Only the assigned approver can reject a shipment that is pending approval.")
             else:
                 shipment.status = 'Logistics Review'
                 shipment.save()
@@ -4639,7 +4849,11 @@ def shipment_detail_view(request, pk):
                 messages.error(request, "You must provide remarks and assign a manager to request Force Close.")
                 return redirect('shipment_detail', pk=shipment.pk)
                 
-            mgr = CustomUser.objects.get(id=mgr_id)
+            mgr = CustomUser.objects.filter(id=mgr_id).first()
+            problem = approver_problem(mgr, APPROVE_SHIPMENTS)
+            if problem:
+                messages.error(request, problem)
+                return redirect('shipment_detail', pk=shipment.pk)
             shipment.discrepancy_remarks = remarks
             shipment.assigned_manager = mgr
             shipment.save()
@@ -4661,13 +4875,13 @@ def shipment_detail_view(request, pk):
             if shipment.status != 'Discrepant':
                 messages.error(request, "Only a Discrepant shipment can be force closed.")
                 return redirect('shipment_detail', pk=shipment.pk)
-            if request.user != shipment.assigned_manager and not is_admin_user(request.user):
-                messages.error(request, "Only the assigned manager (or an Admin) can approve the Force Close. Request it from a manager first.")
+            if request.user != shipment.assigned_manager or not request.user.has_perm(APPROVE_SHIPMENTS):
+                messages.error(request, "Only the assigned manager can approve the Force Close. Request it from a manager first.")
                 return redirect('shipment_detail', pk=shipment.pk)
 
-            # Transfers: the manager says where missing units went: 'origin' (stay on origin batch) or 'lost' (written off).
+            # Transfers and deliveries: the manager says where missing units went: 'origin' (back on the origin batch) or 'lost' (written off).
             shortage_reasons = {}
-            if shipment.direction == 'Transfer':
+            if shipment.direction in ('Transfer', 'Outbound'):
                 for item in shipment.items.filter(batch__isnull=False):
                     if item.shortage_quantity > 0:
                         reason = request.POST.get(f'shortage_reason_{item.id}')
@@ -4832,7 +5046,7 @@ def shipment_detail_view(request, pk):
     if shipment.direction in ('Outbound', 'Transfer') and shipment.origin_warehouse_id:
         # a shipment leaves from one place - only offer stock that's actually there
         batches = batches.filter(warehouse_id=shipment.origin_warehouse_id)
-    managers = approvers()
+    managers = approvers(APPROVE_SHIPMENTS)
     all_users = CustomUser.objects.all().order_by('username')
     
     warehouses = Warehouse.objects.all()
@@ -4852,7 +5066,7 @@ def shipment_detail_view(request, pk):
         'batches': batches,
         'managers': managers,
         'all_users': all_users,
-        'can_self_approve': is_admin_user(request.user),
+        'can_self_approve': request.user.has_perm(APPROVE_SHIPMENTS),
         'status_choices': Shipment.STATUS_CHOICES,
         'warehouses': warehouses,
         'route_error': route_error,
@@ -5021,6 +5235,10 @@ def so_allocate_view(request, pk):
     if so.status in UNAPPROVED_STATUSES:
         messages.error(request, f"{so.so_number} hasn't been approved yet, so no stock can be allocated to it.")
         return redirect('so_detail', pk=so.pk)
+    # Allocation is open while the order is Pending, or part-shipped with units still owed, as on the order page
+    if so.status not in SO_ALLOCATABLE:
+        messages.error(request, f"{so.so_number} is {so.status}, so stock can't be allocated to it now.")
+        return redirect('so_detail', pk=so.pk)
 
     if request.method == 'POST':
         action = request.POST.get('action')
@@ -5051,6 +5269,10 @@ def so_allocate_view(request, pk):
                     if amt > b.quantity - b.allocated_quantity:
                         messages.error(request, f"Cannot allocate {amt} from batch {b.batch_number}. Only {b.quantity - b.allocated_quantity} available.")
                         return redirect('so_allocate', pk=so.pk)
+                    # Facility limit check - disabled for now; uncomment to enforce
+                    # if amt > 0 and not may_use_warehouse(request.user, b.warehouse_id):
+                    #     messages.error(request, f"Batch {b.batch_number}: {FACILITY_REFUSED}")
+                    #     return redirect('so_allocate', pk=so.pk)
                     if amt > 0:
                         chosen.append((b, amt))
                 total = sum((amt for _, amt in chosen), Decimal('0'))
@@ -5060,6 +5282,18 @@ def so_allocate_view(request, pk):
                 if {b.id: amt for b, amt in chosen} != _fefo_plan(batches, total):
                     off_fefo.append(item.product.name)
                 plans.append((item, needed, chosen))
+
+            # A quantity posted for a batch the page no longer offers (reserved elsewhere, quarantined, expired) must not vanish silently.
+            offered = {f'batch_qty_{item.id}_{b.id}' for item, _, _ in plans for b in _fg_fefo_batches(item.product)}
+            stale = [k for k, v in request.POST.items() if k.startswith('batch_qty_') and k not in offered and v.strip() not in ('', '0')]
+            if stale:
+                ids = [k.rsplit('_', 1)[-1] for k in stale]
+                names = ', '.join(Batch.objects.filter(id__in=[i for i in ids if i.isdigit()]).values_list('batch_number', flat=True)) or 'a selected batch'
+                messages.error(request, f"Batch {names} is no longer available (reserved elsewhere, quarantined or expired). Refresh the page and pick again.")
+                return redirect('so_allocate', pk=so.pk)
+            if not any(chosen for _, _, chosen in plans) and request.POST.get('send_to_manufacturing') != 'true':
+                messages.error(request, f"Nothing was allocated to {so.so_number}. Enter a quantity for at least one batch.")
+                return redirect('so_allocate', pk=so.pk)
 
             if off_fefo and not override_reason:
                 messages.error(request, f"Batches for {', '.join(off_fefo)} don't follow FEFO (earliest expiry first). Give an override reason to continue.")
@@ -5101,20 +5335,21 @@ def so_allocate_view(request, pk):
                     from .utils import create_shortage_production_runs
                     create_shortage_production_runs(so, plant, request.user)
 
-                    so.status = 'Awaiting Acknowledgement'
+                    if so.status == 'Pending':   # a part-shipped order keeps showing that
+                        so.status = 'Awaiting Acknowledgement'
                     OrderTimeline.objects.create(sales_order=so, action="Shortages sent to manufacturing queue.", user=request.user)
                 elif total_unfulfilled_across_so <= Decimal('0'):
                     so.status = 'Ready to Ship'
                     OrderTimeline.objects.create(sales_order=so, action="Allocation completed. Status updated to Ready to Ship.", user=request.user)
                 else:
-                    if so.status != 'Pending':
-                        so.status = 'Pending'
                     OrderTimeline.objects.create(sales_order=so, action="Partial allocation completed. Shortages remain.", user=request.user)
                 so.save()
                 from .utils import prompt_delivery_choice
                 prompt_delivery_choice(so, request.user)
 
-                messages.success(request, f"Allocation saved for {so.so_number}.")
+                allocated = sum((amt for _, _, chosen in plans for _, amt in chosen), Decimal('0'))
+                messages.success(request, f"Allocated {allocated.normalize():f} to {so.so_number}."
+                                 + (f" {total_unfulfilled_across_so.normalize():f} still short." if total_unfulfilled_across_so > 0 else " Fully covered."))
                 return redirect('so_detail', pk=so.pk)
 
     # Gather data for UI
@@ -5149,6 +5384,9 @@ def so_allocate_view(request, pk):
 def so_create_shipment_view(request, pk):
     so = get_object_or_404(SalesOrder, pk=pk)
     if request.method == 'POST':
+        if not request.user.has_perm('core.add_shipment'):
+            messages.error(request, "You don't have permission to create shipments.")
+            return redirect('so_detail', pk=so.pk)
         if so.status != 'Ready to Ship':
             messages.error(request, "Order is not ready to ship.")
             return redirect('so_detail', pk=so.pk)
@@ -5171,6 +5409,10 @@ def so_create_shipment_view(request, pk):
         held = sorted({a.batch.batch_number for a in allocations if a.batch.status == 'Quarantined'})
         if held:
             messages.error(request, f"Batch {', '.join(held)} is in QA quarantine and can't be shipped until QA releases it.")
+            return redirect('so_detail', pk=so.pk)
+        expired = sorted({a.batch.batch_number for a in allocations if a.batch.expiry_date and a.batch.expiry_date < timezone.localdate()})
+        if expired:
+            messages.error(request, f"Batch {', '.join(expired)} has expired. Unallocate it and allocate fresh stock, or have QA extend its expiry first.")
             return redirect('so_detail', pk=so.pk)
 
         # One outbound shipment per origin warehouse of the allocated stock.
@@ -5328,7 +5570,13 @@ def production_run_allocate_view(request, pk):
                                 is_overridden = True
                     except (ValueError, TypeError):
                         pass
-                        
+
+            # Facility limit check - disabled for now; uncomment to enforce
+            # limited = limited_warehouse_ids(request.user)
+            # if limited is not None and Batch.objects.filter(id__in=selected_allocations).exclude(warehouse_id__in=limited).exists():
+            #     messages.error(request, FACILITY_REFUSED)
+            #     return redirect('production_run_allocate', pk=pk)
+
             # Re-check the page's numbers: only offered batches, within free stock, no over-allocation, shortfalls acknowledged.
             batch_info = {}
             for rr in recipe_reqs:
@@ -5412,7 +5660,7 @@ def production_run_allocate_view(request, pk):
                     transfer_count += 1
 
                     # Generate unique tracking number
-                    tracking = f"SHP-AUTO-{str(uuid.uuid4())[:8].upper()}"
+                    tracking = generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4)
 
                     shipment = Shipment.objects.create(
                         tracking_number=tracking,
@@ -5627,6 +5875,8 @@ def production_run_detail_view(request, pk):
             if override_remark:
                 run.fefo_override_reason = (run.fefo_override_reason or '') + f"\nStarted with partial materials. Remark: {override_remark}"
             run.save()
+            from .utils import mark_order_in_production
+            mark_order_in_production(run, request.user)
             messages.success(request, f"Production Run {run.run_number} started.")
             return redirect('production_run_detail', pk=pk)
 
@@ -5647,6 +5897,43 @@ def production_run_detail_view(request, pk):
             OrderTimeline.objects.create(production_run=run, action=f"Run scrapped before starting. Reason: {reason}", user=request.user)
             messages.success(request, f"Production Run {run.run_number} scrapped.")
             return redirect('readiness')
+
+        elif action == 'abort_run':
+            # Stop a run part-way: record what was really used and made, free the rest, and close it as Cancelled.
+            if run.status not in ('InProgress', 'Paused'):
+                messages.error(request, "Only a run that's In Progress or Paused can be aborted. Scrap it instead if it hasn't started.")
+                return redirect('production_run_detail', pk=pk)
+            reason = request.POST.get('reason', '').strip()
+            if not reason:
+                messages.error(request, "Give a reason for aborting the run.")
+                return redirect('production_run_detail', pk=pk)
+            used = {}
+            for bom in bom_materials:
+                qty, err = read_decimal(request.POST, f"used_qty_{bom['material'].id}", f"{bom['material'].name} used", min_value=0, required=False)
+                if err:
+                    messages.error(request, err)
+                    return redirect('production_run_detail', pk=pk)
+                used[bom['material']] = (qty or Decimal('0'), Decimal(str(bom['needed'])))
+            from .utils import finalize_production_run
+            with transaction.atomic():
+                # Unlike completion, nothing counts as used unless entered: an aborted run may have poured nothing.
+                for material, (qty, expected) in used.items():
+                    RunMaterialUsage.objects.update_or_create(production_run=run, material=material,
+                                                              defaults={'expected_qty': expected, 'actual_qty': qty})
+                made = run.yield_logs.aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+                run.actual_yield = made if made > 0 else None
+                fg_batch = finalize_production_run(run, request.user)
+                run.status = 'Cancelled'
+                run.save(update_fields=['status'])
+                OrderTimeline.objects.create(
+                    production_run=run, user=request.user,
+                    action=f"Run aborted. Reason: {reason}. Unused materials released"
+                           + (f"; {made} already made went to batch {fg_batch.batch_number}." if fg_batch else "; nothing had been made."))
+                if run.sales_order:
+                    OrderTimeline.objects.create(sales_order=run.sales_order, user=request.user,
+                                                 action=f"Production Run {run.run_number} aborted. Reason: {reason}")
+            messages.success(request, f"Run {run.run_number} aborted. Unused materials are free again.")
+            return redirect('production_run_detail', pk=pk)
 
         elif action == 'pause_production':
             if run.status != 'InProgress':
@@ -5703,6 +5990,12 @@ def production_run_detail_view(request, pk):
             if extra_error:
                 messages.error(request, extra_error)
                 return redirect('production_run_detail', pk=pk)
+            approver_id = request.POST.get('approver_id')
+            if approver_id:
+                problem = approver_problem(CustomUser.objects.filter(id=approver_id).first(), APPROVE_PRODUCTION_RUNS)
+                if problem:
+                    messages.error(request, problem)
+                    return redirect('production_run_detail', pk=pk)
             _, yield_error = read_decimal(request.POST, 'actual_yield', "Actual yield", min_value=0, required=False)
             if yield_error:
                 messages.error(request, yield_error)
@@ -5903,7 +6196,7 @@ def production_run_detail_view(request, pk):
         'all_shipments_arrived': all_shipments_arrived,
         'pending_shipments_count': pending_shipments_count,
         'bom_materials': bom_materials,
-        'managers': approvers(),
+        'managers': approvers(APPROVE_PRODUCTION_RUNS),
         'all_users': CustomUser.objects.prefetch_related('groups'),
         'timeline_events': run.timeline.all().order_by('-timestamp'),
         'allocations': run.allocations.select_related('batch__material', 'batch__warehouse', 'shipment'),

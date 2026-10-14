@@ -1,8 +1,5 @@
-"""core/briefing.py: Tier 3 "AI Copilot" category briefings and the personal checklist.
-
-Two stateless Claude calls that narrate Tier 1/2 signals per category (collect_signals/generate_briefing) or one user's open records
-(analytics.my_open_jobs/generate_my_checklist), each saved as an OpsBriefing row. See SYSTEM_DOCUMENTATION.md sections 8.9-8.11.
-Settings: ops_briefing_enabled, ops_briefing_model. The API key is the ANTHROPIC_API_KEY env var, not a SystemSetting."""
+"""Tier 3 "AI Copilot": category briefings and the personal checklist, each one Claude call saved as an OpsBriefing row.
+Settings: ops_briefing_enabled, ops_briefing_model; the API key is the ANTHROPIC_API_KEY env var."""
 from __future__ import annotations
 
 import datetime as _dt
@@ -398,9 +395,7 @@ def render_prompt(signals, *, period="daily"):
 
 
 def generate_briefing(*, category, period="daily", user=None, window_days=SIGNAL_WINDOW_DAYS):
-    """Collect one category's signals, call Claude once, and persist an
-    OpsBriefing row. Never raises for an API/config problem - it's recorded
-    on the row instead. Returns the saved OpsBriefing."""
+    """Collects one category's signals, calls Claude once and saves an OpsBriefing. API/config problems are recorded on the row, not raised."""
     from .models import OpsBriefing
 
     signals = collect_signals(category, window_days=window_days)
@@ -516,9 +511,7 @@ def render_checklist_prompt(signals):
 
 
 def generate_my_checklist(*, user, window_days=SIGNAL_WINDOW_DAYS):
-    """Collect this user's own open items, call Claude once to prioritise/
-    annotate them, and persist an OpsBriefing(category='my_checklist',
-    generated_by=user) row. window_days is unused - kept for signature symmetry."""
+    """Collects the user's own open items, has Claude prioritise them and saves an OpsBriefing(category='my_checklist'). window_days is unused."""
     from .models import OpsBriefing
 
     signals = _checklist_signals(user)

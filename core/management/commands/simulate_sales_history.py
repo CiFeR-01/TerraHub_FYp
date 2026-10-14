@@ -1,9 +1,5 @@
-"""simulate_sales_history: one-off generation of 6 months of dated Sales Order / Shipment history that draws product stock down.
-
-Runs the real fulfillment pipeline (allocate_stock -> Shipment -> deduct_stock_from_allocation), backdated, so audit trails match real orders.
-It deducts Batch.quantity and is NOT re-runnable (it refuses if it looks already run).
-
-Run:  python manage.py simulate_sales_history [--dry-run]"""
+"""One-off 6-month backdated sales history run through the real fulfillment pipeline. Deducts stock and is not re-runnable.
+Run: python manage.py simulate_sales_history [--dry-run]"""
 from __future__ import annotations
 
 import datetime as dt

@@ -14,9 +14,7 @@ def _close_batch_if_depleted(batch):
 
 
 def format_mt(total_mt):
-    """Human-friendly display for an already-computed MT amount: auto-switches
-    kg -> MT so a small figure (e.g. one batch's weight) doesn't read as a
-    fiddly '0.03 MT' when '30 kg' is what a person actually means."""
+    """Display for an already-computed MT amount, switching kg -> MT (e.g. '30 kg', not '0.03 MT')."""
     total_mt = float(total_mt)
     if total_mt >= 1:
         return f"{total_mt:.2f} MT"
@@ -31,17 +29,15 @@ def format_stock_display(quantity, product):
 
 
 def generate_next_code(model_class, field_name, prefix, default_num=1001, pad=4):
-    """Next unique code for a prefix (e.g. SO-1004): the highest trailing integer among existing codes, plus 1."""
+    """Next unique code for a prefix (e.g. SO-1004): the highest number among codes of exactly that form, plus 1.
+    Other codes (e.g. old SHP-AUTO-<random> transfers) are ignored so they can't push the sequence."""
     existing_codes = model_class.objects.values_list(field_name, flat=True)
+    pattern = re.compile(rf'^{re.escape(prefix)}-?(\d+)$', re.IGNORECASE)
     max_num = 0
     for code in existing_codes:
-        if not code:
-            continue
-        nums = re.findall(r'\d+', str(code))
-        if nums:
-            num = int(nums[-1])
-            if num > max_num:
-                max_num = num
+        m = pattern.match(str(code or '').strip())
+        if m and int(m.group(1)) > max_num:
+            max_num = int(m.group(1))
     
     if max_num < default_num - 1:
         next_num = default_num
@@ -217,9 +213,24 @@ def so_line_commitment(so, product, quantity_shipped=None):
             'total': held + in_logistics + shipped}
 
 
+UNSTARTED_RUN_STATUSES = ('Pending Approval', 'Pending Allocation', 'Awaiting Materials', 'Planned')
+STARTED_RUN_STATUSES = ('InProgress', 'Paused')
+
+
+def incoming_from_started_runs(so, product):
+    """Units of `product` already on their way to `so` that no reservation shows yet: runs under way, plus finished batches held for QA."""
+    from django.db.models import Sum
+    from .models import ProductionRun, Batch
+    started = ProductionRun.objects.filter(sales_order=so, target_product=product, status__in=STARTED_RUN_STATUSES) \
+        .aggregate(s=Sum('expected_yield'))['s'] or Decimal('0')
+    in_qa = Batch.objects.filter(produced_in__sales_order=so, product=product, status='Quarantined', allocations__isnull=True) \
+        .aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+    return Decimal(str(started)) + Decimal(str(in_qa))
+
+
 def create_shortage_production_runs(so, plant, user):
-    """Creates a 'Pending Approval' Production Run for each SO line item not
-    yet covered by StockAllocations. Returns True if any run was created."""
+    """Makes sure every SO line's shortfall is being produced: resizes a run that hasn't started to match it,
+    or creates a 'Pending Approval' run (a top-up if one is already under way). Returns True if any run was created or resized."""
     from django.utils import timezone
     from datetime import timedelta
     from django.db.models import Sum
@@ -230,28 +241,35 @@ def create_shortage_production_runs(so, plant, user):
         qty_needed = Decimal(str(item.quantity_ordered))
         unfulfilled = qty_needed - so_line_commitment(so, item.product, item.quantity_shipped)['total']
 
+        if ProductionRun.objects.filter(sales_order=so, target_product=item.product, status__in=UNSTARTED_RUN_STATUSES).exists():
+            created_any |= sync_production_run_yield(so, item.product, unfulfilled, user)
+            continue
+        unfulfilled -= incoming_from_started_runs(so, item.product)
+
         if unfulfilled > 0:
-            pr = ProductionRun.objects.filter(sales_order=so, target_product=item.product).exclude(status='Cancelled').first()
-            if not pr:
-                # A cancelled run from an earlier attempt still holds the plain name, so use the next free suffix
-                base_number = f"PR-{so.so_number}-{item.product.sku}"
-                run_number, attempt = base_number, 1
-                while ProductionRun.objects.filter(run_number=run_number).exists():
-                    attempt += 1
-                    run_number = f"{base_number}-{attempt}"
-                pr_new = ProductionRun.objects.create(
-                    run_number=run_number,
-                    target_product=item.product,
-                    expected_yield=unfulfilled,
-                    status='Pending Approval',
-                    sales_order=so,
-                    manufacturing_plant=plant,
-                    start_time=timezone.now() + timedelta(days=1),
-                    end_time=timezone.now() + timedelta(days=1, hours=4),
-                    created_by=user
-                )
-                OrderTimeline.objects.create(production_run=pr_new, action="Manufacturing Order created. Pending Approval.", user=user)
-                created_any = True
+            under_way = ProductionRun.objects.filter(sales_order=so, target_product=item.product, status__in=STARTED_RUN_STATUSES).first()
+            # Earlier runs (cancelled, finished or under way) hold the plain name, so use the next free suffix
+            base_number = f"PR-{so.so_number}-{item.product.sku}"
+            run_number, attempt = base_number, 1
+            while ProductionRun.objects.filter(run_number=run_number).exists():
+                attempt += 1
+                run_number = f"{base_number}-{attempt}"
+            pr_new = ProductionRun.objects.create(
+                run_number=run_number,
+                target_product=item.product,
+                expected_yield=unfulfilled,
+                status='Pending Approval',
+                sales_order=so,
+                manufacturing_plant=plant,
+                start_time=timezone.now() + timedelta(days=1),
+                end_time=timezone.now() + timedelta(days=1, hours=4),
+                created_by=user
+            )
+            OrderTimeline.objects.create(
+                production_run=pr_new, user=user,
+                action="Manufacturing Order created. Pending Approval."
+                       + (f" Top-up: {unfulfilled} more than Run {under_way.run_number} (already under way) will make." if under_way else ""))
+            created_any = True
 
     return created_any
 
@@ -300,9 +318,7 @@ def delete_draft_transfer(shipment, user=None, note=""):
 
 
 def release_production_run_allocations(run, user=None):
-    """Releases every StockAllocation held by a run back to stock, and deletes
-    any auto-generated Draft transfer shipments left over from allocating it
-    (a trace of each stays in the Registry Ledger)."""
+    """Releases every StockAllocation held by a run and deletes leftover auto-generated Draft transfers (traced in the Registry Ledger)."""
     from .models import StockAllocation, Shipment
 
     allocs = StockAllocation.objects.filter(production_run=run)
@@ -379,18 +395,17 @@ def remove_run_allocation(run, alloc, user=None):
 
 
 def sync_production_run_yield(so, product, unfulfilled, user):
-    """Keeps a not-yet-started run's expected_yield in sync with the SO's
-    remaining shortfall (cancels it if the shortfall reaches zero)."""
+    """Keeps a not-yet-started run's expected_yield in sync with the SO's remaining shortfall, net of runs
+    already under way (cancels it if nothing is left to make). Returns True if the run changed."""
     from .models import ProductionRun, OrderTimeline
 
     run = ProductionRun.objects.filter(
-        sales_order=so, target_product=product,
-        status__in=['Pending Approval', 'Pending Allocation', 'Awaiting Materials', 'Planned']
+        sales_order=so, target_product=product, status__in=UNSTARTED_RUN_STATUSES
     ).first()
     if not run:
-        return
+        return False
 
-    unfulfilled = Decimal(str(unfulfilled))
+    unfulfilled = Decimal(str(unfulfilled)) - incoming_from_started_runs(so, product)
     if unfulfilled <= 0:
         old_yield = run.expected_yield
         release_production_run_allocations(run, user)
@@ -404,12 +419,16 @@ def sync_production_run_yield(so, product, unfulfilled, user):
     elif unfulfilled != run.expected_yield:
         old_yield = run.expected_yield
         run.expected_yield = unfulfilled
-        run.save(update_fields=['expected_yield'])
-        OrderTimeline.objects.create(
-            production_run=run,
-            action=f"Expected yield adjusted from {old_yield} to {unfulfilled} MT after additional stock was directly allocated to the SO.",
-            user=user
-        )
+        note = f"Expected yield adjusted from {old_yield} to {unfulfilled} to match {so.so_number}'s remaining shortfall."
+        # Materials reserved for the old size aren't enough any more: top them up before starting.
+        if unfulfilled > old_yield and run.status in ('Planned', 'Awaiting Materials'):
+            run.status = 'Pending Allocation'
+            note += " Allocate the extra materials before starting."
+        run.save(update_fields=['expected_yield', 'status'])
+        OrderTimeline.objects.create(production_run=run, action=note, user=user)
+    else:
+        return False
+    return True
 
 
 def handle_so_item_removed(so, product, user):
@@ -509,9 +528,7 @@ def prompt_delivery_choice(so, user):
 
 
 def consume_materials_for_run(run, user):
-    """Deducts the raw materials a completed run used: consumes from its
-    allocations first, then tops up from plant stock via FEFO if actual usage
-    exceeded what was allocated. Logs a ProductionConsumption + RegistryLog entry."""
+    """Deducts the materials a completed run used: allocations first, then plant stock via FEFO for any excess. Logs ProductionConsumption + RegistryLog."""
     from django.db.models import F
     from .models import Batch, StockAllocation, ProductionConsumption, RunMaterialUsage, Material, RegistryLog
 
@@ -638,6 +655,18 @@ def approve_production_run(run, user):
         action=f"Production Run {run.run_number} approved. Ready for material allocation.",
         user=user
     )
+    mark_order_in_production(run, user)
+
+
+def mark_order_in_production(run, user):
+    """Once manufacturing takes up an order's run (approved or started), the order shows In Production
+    instead of waiting at Awaiting Acknowledgement. Finished goods arriving move it on as before."""
+    from .models import OrderTimeline
+    so = run.sales_order
+    if so and so.status == 'Awaiting Acknowledgement':
+        so.status = 'In Production'
+        so.save(update_fields=['status'])
+        OrderTimeline.objects.create(sales_order=so, action=f"In production: Run {run.run_number} is {run.get_status_display()}.", user=user)
 
 
 def finalize_production_run(run, user):
@@ -689,8 +718,8 @@ def finalize_production_run(run, user):
                 action=f"Production Run {run.run_number} completed. FG batch {fg_batch.batch_number} is awaiting QA release before it can be allocated.",
                 user=user
             )
-        from .permissions import approvers
-        for reviewer in approvers():
+        from .permissions import approvers, APPROVE_PRODUCTION_RUNS
+        for reviewer in approvers(APPROVE_PRODUCTION_RUNS):
             Notification.objects.create(
                 user=reviewer,
                 message=f"QA release needed: batch {fg_batch.batch_number} ({run.target_product.name}) from Run {run.run_number}.",
@@ -703,9 +732,7 @@ def finalize_production_run(run, user):
 
 
 def allocate_finished_batch_to_order(run, fg_batch, user, event):
-    """Reserve a run's finished batch for the sales order it was made for (up to what
-    the order still needs) and move the order to Ready to Ship / Pending. Called at
-    run completion, or on QA release when the batch was held."""
+    """Reserves a run's finished batch for its sales order (up to what it still needs) and advances the order. Called at run completion or QA release."""
     from django.db.models import Sum
     from .models import StockAllocation, OrderTimeline
 
@@ -865,9 +892,7 @@ def _resync_so_fulfillment_status(so, user):
 
 
 def deallocate_stock(order_type, order):
-    """
-    Reverses all allocations for a specific SalesOrder, ProductionRun, or Shipment.
-    """
+    """Reverses all allocations for a SalesOrder, ProductionRun or Shipment."""
     from .models import StockAllocation
     with transaction.atomic():
         if order_type == 'sales_order':
@@ -916,9 +941,7 @@ def deduct_stock_from_allocation(order_type, order, user=None):
 
 
 def apply_po_material_receipt(po_detail, delta_qty, user):
-    """Single source of truth for "goods received against a PO": adds
-    delta_qty to quantity_received, creates a Batch for it, and recomputes
-    the PO's status (Partially Received / Completed)."""
+    """Single source for goods received against a PO: adds delta_qty to quantity_received, creates a Batch and recomputes the PO status."""
     import uuid
     from datetime import date, timedelta
     from .models import Batch, WarehouseLocation, RegistryLog
@@ -998,9 +1021,7 @@ def apply_po_material_receipt(po_detail, delta_qty, user):
 
 
 def po_batch_number(po, material):
-    """Short batch id for stock received on a PO: B-<PO ref>-<material ref>-<6 hex>, e.g.
-    PO-TS003 + MAT-1005 -> B-TS003-1005-A1B2C3. The redundant PO-/MAT- prefixes are
-    dropped; the random tail keeps it unique across receipts of the same PO and material."""
+    """Short batch id for PO receipts: B-<PO ref>-<material ref>-<6 hex>, e.g. B-TS003-1005-A1B2C3."""
     import uuid
     po_ref = re.sub(r'^PO-', '', po.po_number)
     mat_ref = re.sub(r'^MAT-', '', material.sku)
@@ -1171,9 +1192,7 @@ def apply_so_product_shipment(so_detail, delta_qty):
 
 
 def mark_so_delivered_if_fully_shipped(so, completing_shipment=None):
-    """Marks a SalesOrder Delivered once its Outbound shipment(s) all complete -
-    not early, while another shipment against it is still in transit, and not
-    while any line still has units owed to the client."""
+    """Marks a SalesOrder Delivered once all its Outbound shipments complete and no line still has units owed."""
     outstanding = so.shipments.filter(direction='Outbound').exclude(status__in=['Completed', 'Cancelled'])
     if completing_shipment is not None:
         outstanding = outstanding.exclude(pk=completing_shipment.pk)

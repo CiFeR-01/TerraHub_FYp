@@ -1,10 +1,5 @@
-"""seed_test_data: additive, idempotent demo data for the analytics and forecasting pages.
-
-Reuses existing warehouses, products, materials and recipes (creating them if missing) and never touches existing orders, runs, batches or logs.
-Adds rows keyed by natural key or source='TestSeed' (so re-running is a no-op): supplier/client contacts, supplier-material links, ~40 days of consumption history, raw-material batches,
-POs, completed and in-progress production runs, open sales orders with shipments, resolved stock audits and 61 days of warehouse utilization snapshots.
-
-Run:  python manage.py seed_test_data"""
+"""Additive, idempotent demo data for the analytics and forecasting pages (rows keyed by natural key or source='TestSeed').
+Run: python manage.py seed_test_data"""
 from __future__ import annotations
 
 import datetime as dt

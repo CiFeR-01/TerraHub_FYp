@@ -1,7 +1,5 @@
-"""core/settings_store.py: typed access to editable operational settings.
-
-Settings live in the SystemSetting table, each registered here with a default, type and description (a data migration seeds a row per entry).
-get_setting("key") returns the DB value if it parses, else the default. Read once per request; don't call it in a loop."""
+"""Typed access to editable settings in the SystemSetting table (registered here with defaults).
+get_setting("key") returns the DB value if it parses, else the default; read once per request, not in a loop."""
 from __future__ import annotations
 
 # key -> (default, type, description)

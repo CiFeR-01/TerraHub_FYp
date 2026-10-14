@@ -1,8 +1,5 @@
-"""Record today's occupancy and rent for every warehouse into WarehouseUtilizationSnapshot.
-
-No scheduling needed (core/signals.py keeps today's row current); kept for manual use, e.g. after a bulk import or with --date.
-
-    python manage.py snapshot_utilization"""
+"""Record today's occupancy and rent per warehouse into WarehouseUtilizationSnapshot (normally done by core/signals.py; for manual use or --date).
+Usage: python manage.py snapshot_utilization"""
 from django.core.management.base import BaseCommand
 
 from core.analytics import snapshot_warehouse_utilization

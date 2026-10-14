@@ -1,6 +1,4 @@
-"""Reusable field validators. Each raises ValidationError, for model fields (validators=[...]) or views.
-
-static/js/contact-validation.js applies the same rules in the browser; the server check is the one that counts."""
+"""Reusable field validators (raise ValidationError). static/js/contact-validation.js mirrors them in the browser; the server check counts."""
 import phonenumbers
 from phonenumbers import geocoder
 from django.core.exceptions import ValidationError

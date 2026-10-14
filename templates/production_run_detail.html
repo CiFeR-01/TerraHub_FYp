@@ -199,7 +199,7 @@
                 <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; padding:1.5rem; text-align:center;">
                     {% if run.status == 'Pending Allocation' %}
                     <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;">Materials must be allocated before production can start.</p>
-                    <a href="{% url 'production_run_allocate' run.pk %}" class="btn btn-primary" style="width:100%; justify-content:center; padding:0.75rem; font-size:1rem; text-decoration:none;">Allocate Materials</a>
+                    {% if perms.core.allocate_run_materials %}<a href="{% url 'production_run_allocate' run.pk %}" class="btn btn-primary" style="width:100%; justify-content:center; padding:0.75rem; font-size:1rem; text-decoration:none;">Allocate Materials</a>{% endif %}
                     {% else %}
                     <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;">Ready to begin manufacturing? Review the material inbound statuses on the right before starting.</p>
                     {% if materials_short %}
@@ -262,6 +262,26 @@
                         {% endif %}
                     </div>
                     <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">Production can span more than one session — log what's actually been made as you go, then finalize once the run is done.</p>
+                    {% if perms.core.cancel_orders %}
+                    <details style="margin-bottom:1rem;">
+                        <summary style="cursor:pointer; font-size:0.85rem; color:#b91c1c; font-weight:600;">Abort this run</summary>
+                        <form method="post" action="{% url 'production_run_detail' run.pk %}" style="margin-top:0.75rem; padding:1rem; border:1px solid #fecaca; background:#fef2f2; border-radius:8px;">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="abort_run">
+                            <label style="display:block; font-size:0.8rem; font-weight:600; color:#991b1b; margin-bottom:0.4rem;">Reason</label>
+                            <textarea name="reason" required class="form-input" style="width:100%; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:0.75rem; height:60px;" placeholder="Why is production stopping?"></textarea>
+                            <p style="font-size:0.78rem; color:#7f1d1d; margin:0 0 0.5rem;">Material actually used so far (the rest goes back to stock):</p>
+                            {% for bom in bom_materials %}
+                            <label style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; font-size:0.8rem; margin-bottom:0.4rem;">
+                                <span>{{ bom.material.name }} <span style="color:var(--text-muted);">(reserved {{ bom.allocated|floatformat:2 }} {{ bom.material.unit_of_measure }})</span></span>
+                                <input type="number" step="0.01" min="0" name="used_qty_{{ bom.material.id }}" value="0" class="form-input" style="width:110px; padding:0.35rem;">
+                            </label>
+                            {% endfor %}
+                            <p style="font-size:0.78rem; color:#7f1d1d; margin:0.5rem 0 0.75rem;">Yield already logged ({{ yield_logs_sum|floatformat:2 }}) becomes a finished-goods batch.</p>
+                            <button type="submit" class="btn" style="width:100%; padding:0.6rem; background:#fff; border:1px solid #dc2626; color:#dc2626; border-radius:6px; font-weight:600;" onclick="return confirm('Abort this run? It closes as Cancelled and cannot be resumed.')">Abort Run</button>
+                        </form>
+                    </details>
+                    {% endif %}
 
                     {% if yield_logs %}
                     <div style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-bottom:1rem;">
@@ -650,7 +670,7 @@
             <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:1.5rem;">
                     <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin:0;">Materials Allocated</h3>
-                    <a href="{% url 'production_run_allocate' run.pk %}" class="btn btn-primary" style="padding:0.4rem 1rem; font-size:0.85rem; text-decoration:none;">+ Allocate Materials</a>
+                    {% if perms.core.allocate_run_materials %}<a href="{% url 'production_run_allocate' run.pk %}" class="btn btn-primary" style="padding:0.4rem 1rem; font-size:0.85rem; text-decoration:none;">+ Allocate Materials</a>{% endif %}
                 </div>
                 {% if allocations %}
                 <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">

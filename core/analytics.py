@@ -1,6 +1,4 @@
-"""core/analytics.py: analytics and forecasting computations.
-
-Pure functions over the ORM (no request objects or side effects) used by views, commands and tests. Algorithms and row shapes are in SYSTEM_DOCUMENTATION.md section 8."""
+"""Analytics and forecasting computations: pure ORM functions (see SYSTEM_DOCUMENTATION.md section 8)."""
 from __future__ import annotations
 
 import datetime as _dt
@@ -667,9 +665,7 @@ def _project_cover(available, rate, arrivals, today):
 
 @cached_analytics
 def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
-    """Per active material: days of cover, stockout date, and reorder-by date
-    from burn rate, counting open-PO deliveries that arrive before the stock runs
-    out. Worst first - see §8.7 for the row shape and status bands."""
+    """Per active material: days of cover, stockout date and reorder-by date from burn rate, counting open-PO deliveries that arrive in time. Worst first."""
     from django.db.models import Max
     from .models import Material, Batch, SupplierMaterial, PurchaseOrderDetail
     from .settings_store import get_setting
@@ -817,9 +813,7 @@ def _tonnage_expr(statuses):
 
 
 def used_mt_expr():
-    """ORM expression for a Warehouse's occupied tonnage: Active AND Quarantined
-    stock - a quarantined batch still takes up space. Shared by dashboard_view,
-    facility management and warehouse_utilization()."""
+    """ORM expression for a Warehouse's occupied tonnage (Active and Quarantined stock)."""
     return _tonnage_expr(['Active', 'Quarantined'])
 
 
@@ -943,9 +937,7 @@ RESULT_MIN_DAYS_AFTER = 3       # wait for this many days after the move before 
 
 
 def _recorded_days(warehouse_id, start, end):
-    """[(rent, used_mt) or None] for each day start..end from the rows recorded on
-    the day (never the estimated backfill). A day with no row carries the latest
-    earlier row forward, since snapshots are only written when something changes."""
+    """[(rent, used_mt) or None] per day from recorded snapshot rows; days with no row carry the latest earlier row forward."""
     from .models import WarehouseUtilizationSnapshot
 
     qs = WarehouseUtilizationSnapshot.objects.filter(
@@ -969,10 +961,8 @@ def _window_avg(days):
 
 
 def rent_results(limit=10):
-    """DSS #11: did accepted Rent Opportunities moves save what they promised?
-
-    One row per accepted transfer. Once completed, the origin's average daily rent for the week before is compared with the week after (net of the destination's change) against the estimate stored on acceptance.
-    Statuses: measuring, measured, unclear (origin tonnage changed for other reasons), unavailable (no recorded rent)."""
+    """DSS #11: compares each accepted, completed move's origin rent (week before vs after, net of the destination) with the stored estimate.
+    Statuses: measuring, measured, unclear, unavailable."""
     from .models import OrderTimeline, RentSuggestion
 
     today = timezone.localdate()
@@ -1155,9 +1145,7 @@ def _daily_series(hist, end, window_days=0):
 
 @cached_analytics
 def capacity_forecast():
-    """Per warehouse, projects when it reaches 100% from its snapshot history
-    (quiet days carried forward, trailing `capacity_trend_window_days` only - see
-    _daily_series). Worst first - see §8.8 for the row shape and status bands."""
+    """Per warehouse, projects when it reaches 100% from its snapshot history (see _daily_series). Worst first."""
     from .models import Warehouse, WarehouseUtilizationSnapshot
     from .settings_store import get_setting
 
@@ -1222,9 +1210,7 @@ def capacity_forecast():
 
 
 def _daily_usage_rates(material_ids, product_ids, today):
-    """How fast stock leaves on its own, per unit per day: materials from the last
-    DEFAULT_WINDOW_DAYS of production consumption, products from the last 180
-    days of sales orders (excluding Draft/Rejected)."""
+    """Units leaving stock per day: materials from recent production consumption, products from the last 180 days of sales orders (excluding Draft/Rejected)."""
     from .models import SalesOrderDetail
 
     rates = {('material', mid): r for mid, r in
@@ -1273,9 +1259,7 @@ def _fefo_ahead(batches):
 
 
 def incoming_transfer_mt():
-    """{warehouse_id: MT} of stock on internal transfers that are heading to a
-    warehouse but haven't been received yet - it isn't stored there yet, but it
-    will take up the space, so it isn't free."""
+    """{warehouse_id: MT} of stock on internal transfers heading to a warehouse but not yet received."""
     from .models import ShipmentItem
 
     incoming = {}
@@ -1292,10 +1276,8 @@ def incoming_transfer_mt():
 
 @cached_analytics
 def rent_reduction_opportunities():
-    """DSS: for every Usage-billed rented warehouse, suggests batches to move into our own storage warehouses and estimates the rent saved (per day and in total).
-
-    Only each batch's unallocated portion is movable. Total saving = daily saving x days the batch would otherwise stay (earlier of expiry and used up, capped at dss_saving_horizon_days); batches under dss_min_total_saving_rm are left out and counted per warehouse.
-    Destinations are Internal Storage/Both warehouses; free space is capacity minus stored and incoming (incoming_transfer_mt), used up as taken, best saving per MT first. Dismissed batches stay out until RentSuggestion.snoozed_until."""
+    """DSS: for each Usage-billed rented warehouse, suggests batches to move into our own storage warehouses and estimates the rent saved.
+    Savings are capped at dss_saving_horizon_days and filtered by dss_min_total_saving_rm; dismissed batches stay out until RentSuggestion.snoozed_until."""
     from .models import Warehouse, Batch, RentSuggestion
     from .settings_store import get_setting
 
@@ -1587,9 +1569,7 @@ def _trailing_month_keys(end, window_months):
 
 def product_sales_trend(*, window_months=TREND_WINDOW_MONTHS, end=None):
     """Per product, monthly quantity_ordered (and revenue if every line is priced) over the trailing window, declining first.
-
-    Row keys: product_id, sku, name, monthly_qty, monthly_revenue, total_qty, total_revenue, recent_avg_qty, earlier_avg_qty, pct_change, months_with_sales, status.
-    Status: declining/rising (change at least trend_significant_pct), flat, new (no earlier sales), insufficient_data (fewer than _MIN_MONTHS_FOR_TREND active months)."""
+    Status: declining/rising/flat, new, or insufficient_data."""
     from .models import SalesOrderDetail
     from .settings_store import get_setting
 

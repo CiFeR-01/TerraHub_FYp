@@ -1,6 +1,4 @@
-"""core/views_analytics.py: HTTP controllers for the analytics pages.
-
-Thin: parse params, call core/analytics.py, render templates/analytics/. See SYSTEM_DOCUMENTATION.md section 8 and ANALYTICS_CHANGELOG.md."""
+"""HTTP controllers for the analytics pages: parse params, call core/analytics.py, render templates/analytics/."""
 import functools
 import os
 from datetime import timedelta
@@ -25,9 +23,7 @@ _DEFAULT_WINDOW = 180
 
 
 def refreshable(view):
-    """`?refresh=1` (the "Refresh" link on every analytics page) drops the cached
-    analytics results, then redirects to the same page without the parameter so a
-    later reload doesn't keep busting the cache."""
+    """`?refresh=1` drops the cached analytics results, then redirects to the same page without the parameter."""
     @functools.wraps(view)
     def wrapper(request, *args, **kwargs):
         if request.method == "GET" and "refresh" in request.GET:
@@ -421,9 +417,7 @@ def rent_opportunities_view(request):
 @login_required
 @require_POST
 def rent_suggestion_decide(request):
-    """Accept (-> Draft internal transfers) or dismiss the ticked Rent Opportunities
-    suggestions. Every pick is checked against a fresh run of the DSS first, so
-    a page that's gone stale can't move stock that has changed since."""
+    """Accepts (-> Draft internal transfers) or dismisses ticked Rent Opportunities suggestions, re-checked against a fresh DSS run first."""
     if not request.user.has_perm("core.add_shipment"):
         messages.error(request, "You don't have permission to create transfers.")
         return redirect("rent_opportunities")

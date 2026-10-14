@@ -1,30 +1,41 @@
-"""Every "who may do X" rule lives here. Roles are Django Groups; code asks about permissions, never role names.
-
-App-wide permissions are declared on core.models.Capability; the rest are Django's per-model ones (core.change_product etc)."""
+"""Every "who may do X" rule. Code checks permissions (core.models.Capability or per-model), never role names."""
 from django.db.models import Q
 
-APPROVE_REQUESTS = 'core.approve_requests'
+# Approving is per module: holding a module's permission lets you approve its requests, including your own.
+APPROVE_SALES_ORDERS = 'core.approve_sales_orders'
+APPROVE_PURCHASE_ORDERS = 'core.approve_purchase_orders'
+APPROVE_PRODUCTION_RUNS = 'core.approve_production_runs'
+APPROVE_SHIPMENTS = 'core.approve_shipments'
+APPROVE_PERMS = (APPROVE_SALES_ORDERS, APPROVE_PURCHASE_ORDERS, APPROVE_PRODUCTION_RUNS, APPROVE_SHIPMENTS)
 OVERRIDE_APPROVALS = 'core.override_approvals'
 ADJUST_PHYSICAL_STOCK = 'core.adjust_physical_stock'
 MANAGE_USERS = 'core.manage_users'
 SET_ORDER_STATUS = 'core.set_order_status'
 HANDLE_PURCHASING = 'core.handle_purchasing'
+# Finished goods for orders and materials for runs are separate jobs, so separate permissions.
+ALLOCATE_ORDER_STOCK = 'core.allocate_order_stock'
+ALLOCATE_RUN_MATERIALS = 'core.allocate_run_materials'
+CANCEL_ORDERS = 'core.cancel_orders'
 
 
 def is_admin_user(user):
-    """Admin-level override: may self-approve and decide any pending approval."""
+    """Admin-level access: every facility and the system tools. Grants no approval powers (those are per module)."""
     return user.has_perm(OVERRIDE_APPROVALS)
 
 
+def approve_perm(obj):
+    """The approve permission for `obj`'s module (a SalesOrder, PurchaseOrder, ProductionRun or Shipment)."""
+    return {'SalesOrder': APPROVE_SALES_ORDERS, 'PurchaseOrder': APPROVE_PURCHASE_ORDERS,
+            'ProductionRun': APPROVE_PRODUCTION_RUNS, 'Shipment': APPROVE_SHIPMENTS}[type(obj).__name__]
+
+
 def can_approve(user):
-    """Who may approve anything at all (and be picked as an approver)."""
-    return user.has_perm(APPROVE_REQUESTS)
+    """Who may approve in at least one module (and so sees the Action Center)."""
+    return has_any_perm(user, APPROVE_PERMS)
 
 
 def can_grant_group(user, group):
-    """A user may only hand out (or take away) a group whose permissions they
-    hold themselves, so nobody can promote themselves or anyone else above
-    their own level."""
+    """A user may only grant or revoke a group whose permissions they hold themselves."""
     if user.is_superuser:
         return True
     return all(
@@ -50,9 +61,9 @@ def users_with_perm(perm, include_superusers=True):
     return CustomUser.objects.filter(grants, is_active=True).distinct()
 
 
-def approvers():
-    """Users who can be sent an approval request, for the approver dropdowns."""
-    return users_with_perm(APPROVE_REQUESTS).prefetch_related('groups').order_by('username')
+def approvers(perm):
+    """Users who can be sent an approval request needing `perm`, for the approver dropdowns."""
+    return users_with_perm(perm).prefetch_related('groups').order_by('username')
 
 
 def pending_actions(user):
@@ -60,18 +71,22 @@ def pending_actions(user):
     Both the page and the sidebar badge count from here so they always agree."""
     from .models import SalesOrder, PurchaseOrder, ProductionRun, Shipment
 
-    runs = ProductionRun.objects.filter(status='Pending Approval')
-    if not is_admin_user(user):
-        # Like may_decide_run_approval: unassigned runs are open to any approver, a named approver's runs are theirs alone.
-        runs = runs.filter(Q(assigned_to__isnull=True) | Q(assigned_to=user))
+    def mine(model, perm, **filters):
+        # Sections for a module the user can't approve in stay empty.
+        qs = model.objects.filter(**filters)
+        return qs if user.has_perm(perm) else qs.none()
+
+    # Like may_decide_run_approval: unassigned runs are open to any run approver, a named approver's runs are theirs alone.
+    runs = mine(ProductionRun, APPROVE_PRODUCTION_RUNS, status='Pending Approval').filter(
+        Q(assigned_to__isnull=True) | Q(assigned_to=user))
     return {
-        'pending_sos': SalesOrder.objects.filter(status='Pending Approval', assigned_to=user)
+        'pending_sos': mine(SalesOrder, APPROVE_SALES_ORDERS, status='Pending Approval', assigned_to=user)
             .prefetch_related('items').order_by('order_date'),
         'pending_runs': runs.select_related('target_product').order_by('start_time'),
-        'pending_pos': PurchaseOrder.objects.filter(status='Pending Approval', assigned_to=user)
+        'pending_pos': mine(PurchaseOrder, APPROVE_PURCHASE_ORDERS, status='Pending Approval', assigned_to=user)
             .select_related('supplier', 'linked_production_run').prefetch_related('items').order_by('order_date'),
-        'pending_shipment_approvals': Shipment.objects.filter(status='Pending Approval', assigned_to=user).order_by('-id'),
-        'pending_shipments': Shipment.objects.filter(status='Discrepant', assigned_manager=user).order_by('-id'),
+        'pending_shipment_approvals': mine(Shipment, APPROVE_SHIPMENTS, status='Pending Approval', assigned_to=user).order_by('-id'),
+        'pending_shipments': mine(Shipment, APPROVE_SHIPMENTS, status='Discrepant', assigned_manager=user).order_by('-id'),
     }
 
 
@@ -96,26 +111,33 @@ ACTION_PERMS = {
     'po_list': {'create_po': 'core.add_purchaseorder', 'update_po_status': PURCHASE},
     'so_detail': {a: ORDER for a in ('add_so_item', 'remove_so_item', 'request_approval', 'cancel_delivery_plan',
                                      'consolidate_stock', 'send_to_manufacturing', 'unallocate_so_stock',
-                                     'update_so_header')} | {'update_so_status': SET_ORDER_STATUS},
+                                     'update_so_header')} | {'update_so_status': SET_ORDER_STATUS, 'cancel_so': CANCEL_ORDERS},
     'po_detail': {a: PURCHASE for a in ('add_po_item', 'remove_po_item', 'request_approval', 'update_po_header',
-                                        'update_po_status')} | {'mark_received': 'core.change_purchaseorderdetail'},
+                                        'update_po_status')} | {'mark_received': ('core.change_purchaseorderdetail', 'core.add_batch', RECEIVE)},
     'readiness': {'create_run': 'core.add_productionrun'} | {
-        a: RUN for a in ('cancel_allocation', 'update_run_schedule', 'draft_transfer_from_shortage',
-                         'draft_po_from_shortage', 'start_run', 'complete_run')},
+        a: RUN for a in ('cancel_allocation', 'update_run_schedule', 'draft_po_from_shortage', 'start_run', 'complete_run')}
+    | {'draft_transfer_from_shortage': ALLOCATE_RUN_MATERIALS},
     'shipments': {'create_shipment': 'core.add_shipment'},
     'qa_dashboard': {a: 'core.change_batch' for a in ('extend_expiry', 'quarantine', 'release_quarantine', 'spoil_dispose')},
     'shipment_detail': {a: SHIP for a in ('update_route', 'submit_to_logistics', 'submit_for_approval', 'skip_approval',
                                           'scrap_shipment', 'update_operational_status', 'reopen_shipment',
-                                          'return_to_manufacturing', 'request_force_close', 'cancel_escalation')}
+                                          'return_to_manufacturing', 'cancel_escalation')}
+    | {'request_force_close': (SHIP, RECEIVE)}
     | {'add_item': 'core.change_shipmentitem', 'remove_item': 'core.change_shipmentitem'}
     | {a: RECEIVE for a in ('log_item_receipt', 'receive_all', 'complete_shipment', 'finalize_shipment_receiving')},
     'user_management': {'add_location': 'core.add_warehouse'},
-    'so_allocate': {'allocate_manual': 'core.add_stockallocation'},
-    'production_run_allocate': {'allocate_run': RUN},
+    'so_allocate': {'allocate_manual': ALLOCATE_ORDER_STOCK},
+    'production_run_allocate': {'allocate_run': ALLOCATE_RUN_MATERIALS},
     'production_run_detail': {a: RUN for a in ('cancel_allocation', 'complete_production', 'log_yield', 'pause_production',
                                                'remove_allocation', 'resume_production', 'schedule_run', 'scrap_run',
-                                               'start_production')},
+                                               'start_production')} | {'abort_run': CANCEL_ORDERS},
 }
+
+
+def has_any_perm(user, perm):
+    """True if the user holds `perm`, or any of them when it's a tuple."""
+    perms = perm if isinstance(perm, tuple) else (perm,)
+    return any(user.has_perm(p) for p in perms)
 
 
 def action_denied(request, page):
@@ -123,7 +145,7 @@ def action_denied(request, page):
     if request.method != 'POST':
         return None
     perm = ACTION_PERMS.get(page, {}).get(request.POST.get('action'))
-    if perm and not request.user.has_perm(perm):
+    if perm and not has_any_perm(request.user, perm):
         return "You don't have permission to do that. Ask a Manager or Admin if you need it."
     return None
 

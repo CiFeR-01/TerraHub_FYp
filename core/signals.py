@@ -1,7 +1,5 @@
-"""Keeps today's WarehouseUtilizationSnapshot rows current without a cron job.
-
-When a batch, warehouse or unit weight changes, the affected warehouses' rows for today are rewritten after the transaction commits.
-Bulk update()/bulk_create() skip these signals; the Capacity page warns on drift and "Run snapshot now" (or snapshot_utilization) repairs it."""
+"""Keeps today's WarehouseUtilizationSnapshot rows current after stock, warehouse or unit-weight changes commit.
+Bulk update()/bulk_create() skip these signals; "Run snapshot now" repairs the drift."""
 from functools import partial
 
 from django.db import transaction

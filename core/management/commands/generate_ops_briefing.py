@@ -1,10 +1,5 @@
-"""Generate the Tier 3 "AI Copilot" category briefings from the current analytics signals.
-
-For one or all categories (core/briefing.py::CATEGORY_SIGNAL_BUILDERS) it sends the signals to Claude once and stores an OpsBriefing row.
-Schedule daily (or weekly with --period weekly). API/config failures are recorded on the row, never a non-zero exit.
-The personal checklist is generated on demand by the user, not by this command.
-
-    python manage.py generate_ops_briefing [--category materials|all] [--period weekly] [--dry-run]"""
+"""Generate the AI Copilot category briefings from current analytics signals (schedule daily, or weekly with --period weekly).
+Usage: python manage.py generate_ops_briefing [--category materials|all] [--period weekly] [--dry-run]"""
 import json
 
 from django.core.management.base import BaseCommand

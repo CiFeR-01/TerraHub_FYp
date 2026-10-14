@@ -1,7 +1,4 @@
-"""core/analytics_cache.py: short-lived cache for heavy analytics computations.
-
-`@cached_analytics` caches a core/analytics.py function for TTL seconds; `invalidate()` bumps the version (called from core/signals.py and the Refresh button).
-The wrapped function also has `fn.uncached(...)` (always recompute) and `fn.with_meta(...)` -> (value, computed_at). Results are pickled copies, so callers may mutate rows."""
+"""Short-lived cache for heavy analytics. `@cached_analytics` caches for TTL seconds until `invalidate()`; adds `fn.uncached(...)` and `fn.with_meta(...)` -> (value, computed_at)."""
 import functools
 import hashlib
 
