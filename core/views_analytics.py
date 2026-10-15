@@ -542,15 +542,13 @@ def _ticked(briefing, user):
 @login_required
 @require_POST
 def briefing_tick(request, pk):
-    """Ticks (done=1) or unticks one bullet of a briefing for the current user. Returns JSON."""
+    """Ticks (done=1) or unticks one bullet of the user's own My Open Jobs checklist. Returns JSON."""
     from django.db import IntegrityError
     from django.shortcuts import get_object_or_404
     from .models import BriefingTick, OpsBriefing
 
-    b = get_object_or_404(OpsBriefing.objects.exclude(category="legacy"), pk=pk, status="ok")
-    # A personal checklist is only its owner's to tick.
-    if b.category == "my_checklist" and b.generated_by_id != request.user.pk:
-        raise Http404
+    # Only My Open Jobs is a checklist, and only its owner can tick it.
+    b = get_object_or_404(OpsBriefing, pk=pk, status="ok", category="my_checklist", generated_by=request.user)
     try:
         index = int(request.POST.get("index", ""))
     except ValueError:
@@ -615,7 +613,6 @@ def category_briefing_view(request, category):
         "tabs": CATEGORY_TABS,
         "briefing": latest,
         "points": points,
-        "ticked": _ticked(latest, request.user),
         "watch": watch,
         "outlook": outlook,
         "last_attempt": last_attempt,

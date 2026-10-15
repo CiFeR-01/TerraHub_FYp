@@ -250,6 +250,13 @@ function toggleMaterialSkuAuto() {
     }
 }
 
+// Escape text before it goes into innerHTML: names and SKUs are user-entered.
+function escHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
 function runMaterialDryRun() {
     var fileInput = document.getElementById('mat_csv_file');
     if (!fileInput.files || fileInput.files.length === 0) {
@@ -296,11 +303,11 @@ function runMaterialDryRun() {
             else statusBadge = '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-weight:600;">ERROR</span>';
 
             tr.innerHTML = `
-                <td style="padding:0.4rem 0.6rem; font-weight:600;">L${r.line}</td>
-                <td style="padding:0.4rem 0.6rem;">${r.name}</td>
-                <td style="padding:0.4rem 0.6rem; font-weight:600;">${r.sku}</td>
+                <td style="padding:0.4rem 0.6rem; font-weight:600;">L${escHtml(r.line)}</td>
+                <td style="padding:0.4rem 0.6rem;">${escHtml(r.name)}</td>
+                <td style="padding:0.4rem 0.6rem; font-weight:600;">${escHtml(r.sku)}</td>
                 <td style="padding:0.4rem 0.6rem;">${statusBadge}</td>
-                <td style="padding:0.4rem 0.6rem; color:var(--text-muted);">${r.msg}</td>
+                <td style="padding:0.4rem 0.6rem; color:var(--text-muted);">${escHtml(r.msg)}</td>
             `;
             tbody.appendChild(tr);
         });

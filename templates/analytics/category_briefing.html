@@ -75,7 +75,11 @@
     </div>
 
     {% if points %}
-    {% include "analytics/partials/_briefing_points.html" %}
+    <ul style="margin:1.25rem 0 0; padding-left:1.1rem; display:flex; flex-direction:column; gap:0.6rem;">
+        {% for p in points %}
+        <li style="font-size:0.92rem; color:var(--text-main); line-height:1.55;">{{ p }}</li>
+        {% endfor %}
+    </ul>
     {% else %}
     <p style="margin:1.25rem 0 0; font-size:0.92rem; color:var(--text-main); line-height:1.6; white-space:pre-wrap;">{{ briefing.body_text }}</p>
     {% endif %}

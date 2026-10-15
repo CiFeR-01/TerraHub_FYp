@@ -586,3 +586,21 @@ class ManufacturingTests(CriticalBase):
         self.post('qa_dashboard', action='release_quarantine', batch_id=fg.id)
         self.refresh(fg, so)
         self.assertEqual((fg.status, fg.allocated_quantity, so.status), ('Active', D('10'), 'Ready to Ship'))
+
+
+class SecurityTests(CriticalBase):
+    """The System Console must not leak live SQL (session keys, password hashes) to non-Admins."""
+
+    def test_system_console_is_admin_only(self):
+        self.as_user(make_user(username='cr_nobody', password='pw'))
+        self.assertEqual(self.client.get(reverse('db_logs_api')).status_code, 403)
+        self.assertRedirects(self.client.get(reverse('system')), reverse('dashboard'), fetch_redirect_response=False)
+        self.as_user(self.admin)
+        self.assertEqual(self.client.get(reverse('db_logs_api')).status_code, 200)
+        self.assertEqual(self.client.get(reverse('system')).status_code, 200)
+
+    def test_query_log_hides_parameter_values(self):
+        from core.db_tracker import DB_QUERY_LOGS
+        DB_QUERY_LOGS.clear()
+        list(Material.objects.filter(sku='SECRET-VALUE-123'))
+        self.assertFalse(any('SECRET-VALUE-123' in log['sql'] for log in DB_QUERY_LOGS))

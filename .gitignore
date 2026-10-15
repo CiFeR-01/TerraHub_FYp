@@ -40,3 +40,6 @@ logs/
 seed_data.py
 .impeccable/
 brag-output*/
+
+# Internal notes, kept local only
+ANALYTICS_CHANGELOG.md

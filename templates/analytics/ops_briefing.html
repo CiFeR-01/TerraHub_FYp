@@ -48,6 +48,63 @@
 </div>
 {% endif %}
 
+{% if briefing %}
+<section class="animate-fade-in-up" style="background:#fff; border:1px solid var(--border-light); border-radius:12px; padding:1.75rem; margin-bottom:1.5rem;">
+    <div style="display:flex; align-items:flex-start; gap:0.75rem;">
+        <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="flex-shrink:0; margin-top:0.15rem; color:var(--accent,#4f46e5);">
+            <path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15.5 10.1 10.9 5.5 9l4.6-1.4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        </svg>
+        <div>
+            <h2 style="font-family:'Outfit',sans-serif; font-size:1.2rem; font-weight:700; margin:0; color:var(--text-main); line-height:1.4;">
+                {{ briefing.headline }}
+            </h2>
+            <p style="color:var(--text-muted); font-size:0.75rem; margin:0.35rem 0 0;">
+                {{ briefing.generated_at|naturaltime }} &middot; {{ briefing.signal_count }} open item{{ briefing.signal_count|pluralize }}
+            </p>
+        </div>
+    </div>
+
+    {% if points %}
+    {% include "analytics/partials/_briefing_points.html" %}
+    {% else %}
+    <p style="margin:1.25rem 0 0; font-size:0.92rem; color:var(--text-main); line-height:1.6; white-space:pre-wrap;">{{ briefing.body_text }}</p>
+    {% endif %}
+
+    {% if watch %}
+    <p style="margin:1.25rem 0 0; padding-top:0.9rem; border-top:1px dashed var(--border-light); font-size:0.85rem; color:var(--text-muted);">
+        <strong style="color:var(--text-main);">Watch:</strong> {{ watch }}
+    </p>
+    {% endif %}
+
+    {% if outlook %}
+    <div style="margin:1.25rem 0 0; padding:0.9rem 1rem; border:1px dashed #a78bfa; border-radius:8px; background:#faf5ff;">
+        <p style="margin:0 0 0.5rem; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:#7c3aed;">
+            Outlook &mdash; estimate, not a fact
+        </p>
+        <ul style="margin:0; padding-left:1.1rem; display:flex; flex-direction:column; gap:0.4rem;">
+            {% for o in outlook %}
+            <li style="font-size:0.85rem; color:#5b21b6; line-height:1.5;">{{ o }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <p style="margin:1.2rem 0 0; font-size:0.7rem; color:var(--text-muted);">
+        Generated with {{ briefing.model_id|default:model_setting }}{% if briefing.input_tokens %} &middot; {{ briefing.input_tokens }} in / {{ briefing.output_tokens }} out tokens{% endif %}.
+        Claude sees only the table below &mdash; it cannot query the database.
+    </p>
+</section>
+{% elif last_attempt %}
+<section class="animate-fade-in-up" style="background:#fff; border:1px solid var(--border-light); border-radius:12px; padding:1.75rem; margin-bottom:1.5rem;">
+    <h2 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin:0 0 0.5rem;">No prioritised checklist yet</h2>
+    <p style="color:var(--text-muted); font-size:0.88rem; margin:0;">
+        Your last run ({{ last_attempt.generated_at|naturaltime }}) ended
+        <strong>{{ last_attempt.get_status_display|lower }}</strong>{% if last_attempt.error_detail %} &mdash; {{ last_attempt.error_detail }}{% endif %}.
+        The live table below is unaffected.
+    </p>
+</section>
+{% endif %}
+
 <div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
     <div class="table-responsive">
         <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
@@ -95,63 +152,6 @@
         </table>
     </div>
 </div>
-
-{% if briefing %}
-<section class="animate-fade-in-up" style="background:#fff; border:1px solid var(--border-light); border-radius:12px; padding:1.75rem; margin-bottom:1.5rem;">
-    <div style="display:flex; align-items:flex-start; gap:0.75rem;">
-        <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="flex-shrink:0; margin-top:0.15rem; color:var(--accent,#4f46e5);">
-            <path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15.5 10.1 10.9 5.5 9l4.6-1.4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
-        </svg>
-        <div>
-            <h2 style="font-family:'Outfit',sans-serif; font-size:1.2rem; font-weight:700; margin:0; color:var(--text-main); line-height:1.4;">
-                {{ briefing.headline }}
-            </h2>
-            <p style="color:var(--text-muted); font-size:0.75rem; margin:0.35rem 0 0;">
-                {{ briefing.generated_at|naturaltime }} &middot; {{ briefing.signal_count }} open item{{ briefing.signal_count|pluralize }}
-            </p>
-        </div>
-    </div>
-
-    {% if points %}
-    {% include "analytics/partials/_briefing_points.html" %}
-    {% else %}
-    <p style="margin:1.25rem 0 0; font-size:0.92rem; color:var(--text-main); line-height:1.6; white-space:pre-wrap;">{{ briefing.body_text }}</p>
-    {% endif %}
-
-    {% if watch %}
-    <p style="margin:1.25rem 0 0; padding-top:0.9rem; border-top:1px dashed var(--border-light); font-size:0.85rem; color:var(--text-muted);">
-        <strong style="color:var(--text-main);">Watch:</strong> {{ watch }}
-    </p>
-    {% endif %}
-
-    {% if outlook %}
-    <div style="margin:1.25rem 0 0; padding:0.9rem 1rem; border:1px dashed #a78bfa; border-radius:8px; background:#faf5ff;">
-        <p style="margin:0 0 0.5rem; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:#7c3aed;">
-            Outlook &mdash; estimate, not a fact
-        </p>
-        <ul style="margin:0; padding-left:1.1rem; display:flex; flex-direction:column; gap:0.4rem;">
-            {% for o in outlook %}
-            <li style="font-size:0.85rem; color:#5b21b6; line-height:1.5;">{{ o }}</li>
-            {% endfor %}
-        </ul>
-    </div>
-    {% endif %}
-
-    <p style="margin:1.2rem 0 0; font-size:0.7rem; color:var(--text-muted);">
-        Generated with {{ briefing.model_id|default:model_setting }}{% if briefing.input_tokens %} &middot; {{ briefing.input_tokens }} in / {{ briefing.output_tokens }} out tokens{% endif %}.
-        Claude sees only the table above &mdash; it cannot query the database.
-    </p>
-</section>
-{% elif last_attempt %}
-<section class="animate-fade-in-up" style="background:#fff; border:1px solid var(--border-light); border-radius:12px; padding:1.75rem; margin-bottom:1.5rem;">
-    <h2 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin:0 0 0.5rem;">No prioritised checklist yet</h2>
-    <p style="color:var(--text-muted); font-size:0.88rem; margin:0;">
-        Your last run ({{ last_attempt.generated_at|naturaltime }}) ended
-        <strong>{{ last_attempt.get_status_display|lower }}</strong>{% if last_attempt.error_detail %} &mdash; {{ last_attempt.error_detail }}{% endif %}.
-        The live table above is unaffected.
-    </p>
-</section>
-{% endif %}
 
 <form method="post" class="animate-fade-in-up" style="margin-bottom:1.5rem; display:flex; align-items:center; gap:0.75rem;">
     {% csrf_token %}

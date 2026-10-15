@@ -3541,39 +3541,39 @@ class MyChecklistTests(TestCase):
 
 
 class BriefingTickTests(TestCase):
-    """Briefing bullets are a personal checklist: ticks are per user and per run."""
+    """Only My Open Jobs is a checklist: ticks are per user and per run; category briefings stay plain."""
 
     def setUp(self):
         self.a = User.objects.create_user(username='tick_a', password='pw')
         self.b = User.objects.create_user(username='tick_b', password='pw')
-        self.sales = OpsBriefing.objects.create(category='sales', status='ok', headline='H',
-                                                body_text='- one\n- two\nWatch: later')
+        self.mine = OpsBriefing.objects.create(category='my_checklist', status='ok', headline='H',
+                                               generated_by=self.a, body_text='- one\n- two\nWatch: later')
         self.client.login(username='tick_a', password='pw')
 
     def _tick(self, briefing, index, done='1'):
         return self.client.post(reverse('briefing_tick', args=[briefing.pk]), {'index': index, 'done': done})
 
-    def test_tick_untick_and_ticks_are_personal(self):
-        self.assertEqual(self._tick(self.sales, 1).json(), {'done': 1})
-        self.assertEqual(self._tick(self.sales, 1).json(), {'done': 1})  # repeat is harmless
-        resp = self.client.get(reverse('category_briefing', args=['sales']))
-        self.assertEqual(resp.context['ticked'], {1})
-        self.client.login(username='tick_b', password='pw')
-        self.assertEqual(self.client.get(reverse('category_briefing', args=['sales'])).context['ticked'], set())
-        self.client.login(username='tick_a', password='pw')
-        self.assertEqual(self._tick(self.sales, 1, done='0').json(), {'done': 0})
+    def test_tick_untick(self):
+        self.assertEqual(self._tick(self.mine, 1).json(), {'done': 1})
+        self.assertEqual(self._tick(self.mine, 1).json(), {'done': 1})  # repeat is harmless
+        self.assertEqual(self.client.get(reverse('ops_briefing')).context['ticked'], {1})
+        self.assertEqual(self._tick(self.mine, 1, done='0').json(), {'done': 0})
 
     def test_new_run_starts_unticked(self):
-        self._tick(self.sales, 0)
-        OpsBriefing.objects.create(category='sales', status='ok', headline='H2', body_text='H2\n- fresh')
-        self.assertEqual(self.client.get(reverse('category_briefing', args=['sales'])).context['ticked'], set())
+        self._tick(self.mine, 0)
+        OpsBriefing.objects.create(category='my_checklist', status='ok', headline='H2',
+                                   generated_by=self.a, body_text='- fresh')
+        self.assertEqual(self.client.get(reverse('ops_briefing')).context['ticked'], set())
 
-    def test_bad_index_and_someone_elses_checklist_rejected(self):
+    def test_bad_index_others_and_category_briefings_rejected(self):
         # 'Watch:' isn't a bullet: only 'one' and 'two' (0 and 1) can be ticked
-        self.assertEqual(self._tick(self.sales, 2).status_code, 400)
-        self.assertEqual(self._tick(self.sales, 'x').status_code, 400)
-        mine_not = OpsBriefing.objects.create(category='my_checklist', status='ok', generated_by=self.b, body_text='- x')
-        self.assertEqual(self._tick(mine_not, 0).status_code, 404)
+        self.assertEqual(self._tick(self.mine, 2).status_code, 400)
+        self.assertEqual(self._tick(self.mine, 'x').status_code, 400)
+        theirs = OpsBriefing.objects.create(category='my_checklist', status='ok', generated_by=self.b, body_text='- x')
+        self.assertEqual(self._tick(theirs, 0).status_code, 404)
+        sales = OpsBriefing.objects.create(category='sales', status='ok', headline='S', body_text='- y')
+        self.assertEqual(self._tick(sales, 0).status_code, 404)
+        self.assertNotContains(self.client.get(reverse('category_briefing', args=['sales'])), 'type="checkbox"')
 
 
 class AICopilotNavTests(TestCase):

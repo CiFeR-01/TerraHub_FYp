@@ -198,4 +198,4 @@ def denied_actions(request):
     if not request.user.is_authenticated or not match:
         return {'denied_actions': []}
     perms = ACTION_PERMS.get(match.url_name, {})
-    return {'denied_actions': sorted(a for a, perm in perms.items() if not has_any_perm(request.user, perm))}
+    return {'denied_actions': sorted(a for a, perm in perms.items() if perm and not has_any_perm(request.user, perm))}
