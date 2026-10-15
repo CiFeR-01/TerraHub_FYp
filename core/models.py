@@ -749,3 +749,14 @@ class OpsBriefing(models.Model):
     def __str__(self):
         return f"OpsBriefing #{self.pk} ({self.category}/{self.period}, {self.status}) @ {self.generated_at:%Y-%m-%d %H:%M}"
 
+
+class BriefingTick(models.Model):
+    """One user's tick on one bullet (by position) of a briefing. Personal; a new briefing run starts unticked."""
+    briefing = models.ForeignKey(OpsBriefing, on_delete=models.CASCADE, related_name='ticks')
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='briefing_ticks')
+    point_index = models.PositiveSmallIntegerField()
+    ticked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['briefing', 'user', 'point_index'], name='unique_briefing_tick')]
+
