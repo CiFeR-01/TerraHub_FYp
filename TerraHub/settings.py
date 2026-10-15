@@ -11,11 +11,17 @@ load_dotenv(BASE_DIR / '.env')
 
 # Development settings (see the Django deployment checklist before production)
 
-# SECRET_KEY: falls back to an insecure dev key locally; set the SECRET_KEY env var on Railway.
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-q-%3+dj4%@gt&773333mbq41=6abjt9j%=3@n+spibj9t#3jv0')
+from django.core.exceptions import ImproperlyConfigured
 
-# DEBUG defaults to True locally; set DEBUG=False on Railway.
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
+# DEBUG defaults to True locally and to False on Railway (which sets RAILWAY_ENVIRONMENT_NAME); DEBUG=True/False overrides.
+DEBUG = os.getenv('DEBUG', 'False' if (os.getenv('RAILWAY_ENVIRONMENT') or os.getenv('RAILWAY_ENVIRONMENT_NAME')) else 'True') == 'True'
+
+# SECRET_KEY: the insecure dev key is only allowed while DEBUG is on; production refuses to start without SECRET_KEY.
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured('SECRET_KEY must be set when DEBUG is False.')
+    SECRET_KEY = 'django-insecure-q-%3+dj4%@gt&773333mbq41=6abjt9j%=3@n+spibj9t#3jv0'
 
 # Locally: accepts all. On Railway: set ALLOWED_HOSTS=your-app.up.railway.app
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
@@ -161,3 +167,20 @@ SESSION_IDLE_WARNING = 120  # seconds of warning popup before sign-out
 SESSION_COOKIE_AGE = SESSION_IDLE_TIMEOUT
 SESSION_SAVE_EVERY_REQUEST = True
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+
+# HTTPS hardening, only when DEBUG is off so localhost over plain http keeps working.
+# Railway terminates TLS in front of the app and passes the original scheme in X-Forwarded-Proto.
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'True') == 'True'
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    # One day to start with; raise once HTTPS is confirmed working (HSTS can't be undone for browsers that saw it).
+    SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '86400'))
+
+# Login throttling (core/login_throttle.py): after this many failed sign-ins for one username from one IP
+# (or 4x that from any IPs), further attempts are refused until the window passes. Uses the default cache.
+LOGIN_FAIL_LIMIT = int(os.getenv('LOGIN_FAIL_LIMIT', '5'))
+LOGIN_LOCKOUT_SECONDS = int(os.getenv('LOGIN_LOCKOUT_MINUTES', '15')) * 60
+AUTHENTICATION_BACKENDS = ['core.login_throttle.ThrottledModelBackend']

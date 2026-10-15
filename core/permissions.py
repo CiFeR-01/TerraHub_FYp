@@ -90,7 +90,9 @@ def pending_actions(user):
     }
 
 
-# Permission needed for each form action, per page. Unlisted actions are open to any signed-in user.
+# Permission needed for each form action, per page. OWN_CHECK marks actions the view checks itself (or that are
+# open to any signed-in user). A posted action not listed for its page is refused, so new actions must be added here.
+OWN_CHECK = None
 ORDER = 'core.change_salesorder'
 PURCHASE = 'core.change_purchaseorder'
 RUN = 'core.change_productionrun'
@@ -111,12 +113,14 @@ ACTION_PERMS = {
     'po_list': {'create_po': 'core.add_purchaseorder', 'update_po_status': PURCHASE},
     'so_detail': {a: ORDER for a in ('add_so_item', 'remove_so_item', 'request_approval', 'cancel_delivery_plan',
                                      'consolidate_stock', 'send_to_manufacturing', 'unallocate_so_stock',
-                                     'update_so_header')} | {'update_so_status': SET_ORDER_STATUS, 'cancel_so': CANCEL_ORDERS},
+                                     'update_so_header')} | {'update_so_status': SET_ORDER_STATUS, 'cancel_so': CANCEL_ORDERS}
+    | {'add_follower': OWN_CHECK, 'remove_follower': OWN_CHECK},
     'po_detail': {a: PURCHASE for a in ('add_po_item', 'remove_po_item', 'request_approval', 'update_po_header',
-                                        'update_po_status')} | {'mark_received': ('core.change_purchaseorderdetail', 'core.add_batch', RECEIVE)},
+                                        'update_po_status')} | {'mark_received': ('core.change_purchaseorderdetail', 'core.add_batch', RECEIVE)}
+    | {'add_follower': OWN_CHECK, 'remove_follower': OWN_CHECK},
     'readiness': {'create_run': 'core.add_productionrun'} | {
         a: RUN for a in ('cancel_allocation', 'update_run_schedule', 'draft_po_from_shortage', 'start_run', 'complete_run')}
-    | {'draft_transfer_from_shortage': ALLOCATE_RUN_MATERIALS},
+    | {'draft_transfer_from_shortage': ALLOCATE_RUN_MATERIALS, 'approve_run': OWN_CHECK},
     'shipments': {'create_shipment': 'core.add_shipment'},
     'qa_dashboard': {a: 'core.change_batch' for a in ('extend_expiry', 'quarantine', 'release_quarantine', 'spoil_dispose')},
     'shipment_detail': {a: SHIP for a in ('update_route', 'submit_to_logistics', 'submit_for_approval', 'skip_approval',
@@ -124,13 +128,15 @@ ACTION_PERMS = {
                                           'return_to_manufacturing', 'cancel_escalation')}
     | {'request_force_close': (SHIP, RECEIVE)}
     | {'add_item': 'core.change_shipmentitem', 'remove_item': 'core.change_shipmentitem'}
-    | {a: RECEIVE for a in ('log_item_receipt', 'receive_all', 'complete_shipment', 'finalize_shipment_receiving')},
-    'user_management': {'add_location': 'core.add_warehouse'},
+    | {a: RECEIVE for a in ('log_item_receipt', 'receive_all', 'complete_shipment', 'finalize_shipment_receiving')}
+    | {a: OWN_CHECK for a in ('approve', 'reject', 'force_close_shipment', 'add_follower', 'remove_follower', 'toggle_follow')},
+    'user_management': {'add_location': 'core.add_warehouse', 'update_user': OWN_CHECK},
     'so_allocate': {'allocate_manual': ALLOCATE_ORDER_STOCK},
     'production_run_allocate': {'allocate_run': ALLOCATE_RUN_MATERIALS},
     'production_run_detail': {a: RUN for a in ('cancel_allocation', 'complete_production', 'log_yield', 'pause_production',
                                                'remove_allocation', 'resume_production', 'schedule_run', 'scrap_run',
-                                               'start_production')} | {'abort_run': CANCEL_ORDERS},
+                                               'start_production')} | {'abort_run': CANCEL_ORDERS}
+    | {'add_follower': OWN_CHECK, 'remove_follower': OWN_CHECK},
 }
 
 
@@ -144,7 +150,13 @@ def action_denied(request, page):
     """Return an error message if the user can't run the posted action, else None."""
     if request.method != 'POST':
         return None
-    perm = ACTION_PERMS.get(page, {}).get(request.POST.get('action'))
+    action = request.POST.get('action')
+    if not action:
+        return None
+    rules = ACTION_PERMS.get(page, {})
+    if action not in rules:
+        return "That action isn't available on this page."
+    perm = rules[action]
     if perm and not has_any_perm(request.user, perm):
         return "You don't have permission to do that. Ask a Manager or Admin if you need it."
     return None

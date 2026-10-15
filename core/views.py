@@ -581,6 +581,10 @@ def dashboard_view(request):
 
 @login_required
 def system_view(request):
+    # The console shows live SQL and DB details, so it's for superusers and Admins only (same rule as the clear/test buttons).
+    if not (request.user.is_superuser or is_admin_user(request.user)):
+        messages.error(request, "Permission Denied: the System Console is for Admins only.")
+        return redirect('dashboard')
     system_metrics = {
         'total_users': CustomUser.objects.count(),
         'total_warehouses': Warehouse.objects.count(),
@@ -671,6 +675,8 @@ def session_keepalive_view(request):
 
 @login_required
 def db_logs_api_view(request):
+    if not (request.user.is_superuser or is_admin_user(request.user)):
+        return JsonResponse({'status': 'error', 'message': "Permission denied."}, status=403)
     from .db_tracker import DB_QUERY_LOGS, get_db_status
     db_status = get_db_status()
     return JsonResponse({
@@ -5081,7 +5087,10 @@ def mark_notifications_read(request):
         request.user.notifications.all().delete()
         if request.headers.get('x-requested-with') == 'XMLHttpRequest':
             return JsonResponse({'status': 'ok'})
-    return redirect(request.META.get('HTTP_REFERER', 'home'))
+    back = request.META.get('HTTP_REFERER', '')
+    if not url_has_allowed_host_and_scheme(back, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
+        return redirect('home')
+    return redirect(back)
 
 
 @login_required

@@ -185,12 +185,14 @@
                     <div class="info-value">
                         {% if batch.warehouse %}
                             {{ batch.warehouse.name }}
-                            {% if batch.location %}
+                            {% if batch.location and user.is_authenticated %}
                                 <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: normal; margin-top: 0.25rem;">Zone/Aisle: {{ batch.location }}</div>
                             {% endif %}
                         {% elif batch.location %}
                             Unknown Facility
+                            {% if user.is_authenticated %}
                             <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: normal; margin-top: 0.25rem;">Zone/Aisle: {{ batch.location }}</div>
+                            {% endif %}
                         {% else %}
                             <span style="color: var(--text-muted); font-weight: normal;">In Transit / Unassigned</span>
                         {% endif %}
@@ -205,8 +207,11 @@
             <div class="info-item">
                 {% if batch.purchase_order %}
                     <span class="origin-badge">External Supplier</span>
+                    {# Supplier name and bin location are for signed-in staff only; the public QR page shows the facility #}
+                    {% if user.is_authenticated %}
                     <div class="info-label">Received From</div>
                     <div class="info-value">{{ batch.purchase_order.supplier_name }}</div>
+                    {% endif %}
                 {% elif batch.produced_in %}
                     <span class="origin-badge">In-House Manufacturing</span>
                     <div class="info-label">Produced At</div>

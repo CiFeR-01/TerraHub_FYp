@@ -35,13 +35,8 @@ def db_query_logging_wrapper(execute, sql, params, many, context):
         else:
             q_type = "OTHER"
             
-        # Format query for display
-        try:
-            formatted_sql = sql
-            if params:
-                formatted_sql = sql % params
-        except Exception:
-            formatted_sql = f"{sql} (Params: {params})"
+        # Show the SQL with its placeholders only: parameter values can hold session keys, password hashes and business data.
+        formatted_sql = sql
             
         DB_QUERY_LOGS.append({
             'timestamp': timestamp,
