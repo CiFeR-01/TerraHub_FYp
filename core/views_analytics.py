@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import Http404, HttpResponseRedirect
+from django.http import Http404, HttpResponseRedirect, JsonResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -532,6 +532,41 @@ def _parse_briefing_body(briefing):
     return points, watch, outlook
 
 
+def _ticked(briefing, user):
+    """Positions of the bullets this user has ticked on this briefing."""
+    if briefing is None:
+        return set()
+    return set(briefing.ticks.filter(user=user).values_list("point_index", flat=True))
+
+
+@login_required
+@require_POST
+def briefing_tick(request, pk):
+    """Ticks (done=1) or unticks one bullet of a briefing for the current user. Returns JSON."""
+    from django.db import IntegrityError
+    from django.shortcuts import get_object_or_404
+    from .models import BriefingTick, OpsBriefing
+
+    b = get_object_or_404(OpsBriefing.objects.exclude(category="legacy"), pk=pk, status="ok")
+    # A personal checklist is only its owner's to tick.
+    if b.category == "my_checklist" and b.generated_by_id != request.user.pk:
+        raise Http404
+    try:
+        index = int(request.POST.get("index", ""))
+    except ValueError:
+        return JsonResponse({"error": "Bad item."}, status=400)
+    if not 0 <= index < len(_parse_briefing_body(b)[0]):
+        return JsonResponse({"error": "Bad item."}, status=400)
+    if request.POST.get("done") == "1":
+        try:
+            BriefingTick.objects.get_or_create(briefing=b, user=request.user, point_index=index)
+        except IntegrityError:
+            pass  # a double click raced; it's ticked either way
+    else:
+        BriefingTick.objects.filter(briefing=b, user=request.user, point_index=index).delete()
+    return JsonResponse({"done": len(_ticked(b, request.user))})
+
+
 def _signal_sections_for(latest, links):
     sections = []
     if latest:
@@ -580,6 +615,7 @@ def category_briefing_view(request, category):
         "tabs": CATEGORY_TABS,
         "briefing": latest,
         "points": points,
+        "ticked": _ticked(latest, request.user),
         "watch": watch,
         "outlook": outlook,
         "last_attempt": last_attempt,
@@ -626,6 +662,7 @@ def ops_briefing_view(request):
         "live_items": live_items,
         "briefing": latest,
         "points": points,
+        "ticked": _ticked(latest, request.user),
         "watch": watch,
         "outlook": outlook,
         "last_attempt": last_attempt,
