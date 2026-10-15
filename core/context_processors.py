@@ -102,7 +102,7 @@ def sidebar_nav(request):
             'url_name': 'approvals_inbox',
             'show_badge': True,
         })
-    groups.append({'id': 'overview', 'label': 'Overview', 'icon': NAV_ICONS['overview'], 'items': overview_items})
+    groups.append({'id': 'overview', 'short': 'Home', 'label': 'Overview', 'icon': NAV_ICONS['overview'], 'items': overview_items})
 
     # Analytics: one collapsed link per category, landing on the first report the user can see; siblings appear as tabs on the page.
     # The AI Copilot link lives in Overview.
@@ -116,7 +116,7 @@ def sidebar_nav(request):
                 'alias_url_names': visible[1:],
             })
     if analytics_items:
-        groups.append({'id': 'analytics', 'label': 'Analytics', 'icon': NAV_ICONS['analytics'], 'items': analytics_items})
+        groups.append({'id': 'analytics', 'short': 'Analytics', 'label': 'Analytics', 'icon': NAV_ICONS['analytics'], 'items': analytics_items})
 
     # Inventory & Facilities
     inventory_items = []
@@ -128,7 +128,7 @@ def sidebar_nav(request):
     if user.has_perm('core.view_registrylog'):
         inventory_items.append({'label': 'Registry Ledger', 'url_name': 'registry'})
     if inventory_items:
-        groups.append({'id': 'inventory', 'label': 'Inventory & Facilities', 'icon': NAV_ICONS['inventory'], 'items': inventory_items})
+        groups.append({'id': 'inventory', 'short': 'Stock', 'label': 'Inventory & Facilities', 'icon': NAV_ICONS['inventory'], 'items': inventory_items})
 
     # Catalog & Directory
     catalog_items = []
@@ -141,7 +141,7 @@ def sidebar_nav(request):
     if user.has_perm('core.view_client'):
         catalog_items.append({'label': 'Clients', 'url_name': 'client_list'})
     if catalog_items:
-        groups.append({'id': 'catalog', 'label': 'Catalog & Directory', 'icon': NAV_ICONS['catalog'], 'items': catalog_items})
+        groups.append({'id': 'catalog', 'short': 'Catalog', 'label': 'Catalog & Directory', 'icon': NAV_ICONS['catalog'], 'items': catalog_items})
 
     # Operations & Logistics
     ops_items = []
@@ -154,7 +154,7 @@ def sidebar_nav(request):
     if user.has_perm('core.change_batch'):
         ops_items.append({'label': 'QA & Spoilage Control', 'url_name': 'qa_dashboard', 'css_class': 'warning-link'})
     if ops_items:
-        groups.append({'id': 'operations', 'label': 'Operations & Logistics', 'icon': NAV_ICONS['operations'], 'items': ops_items})
+        groups.append({'id': 'operations', 'short': 'Orders', 'label': 'Operations & Logistics', 'icon': NAV_ICONS['operations'], 'items': ops_items})
 
     # Admin
     admin_items = []
@@ -166,6 +166,7 @@ def sidebar_nav(request):
     if admin_items:
         groups.append({
             'id': 'admin',
+            'short': 'Admin',
             'label': 'Admin',
             'icon': NAV_ICONS['admin'],
             'items': admin_items,
