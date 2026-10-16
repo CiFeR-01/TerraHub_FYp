@@ -30,6 +30,7 @@ urlpatterns = [
     path('warehouse/rent-opportunities/', views_analytics.rent_opportunities_view, name='rent_opportunities'),
     path('warehouse/rent-opportunities/decide/', views_analytics.rent_suggestion_decide, name='rent_suggestion_decide'),
     path('assistant/briefing/', views_analytics.ops_briefing_view, name='ops_briefing'),
+    path('assistant/briefing/hub/', views_analytics.briefing_hub_view, name='briefing_hub'),
     path('assistant/briefing/<str:category>/', views_analytics.category_briefing_view, name='category_briefing'),
     path('assistant/briefing/tick/<int:pk>/', views_analytics.briefing_tick, name='briefing_tick'),
     path('warehouse/registry/', views.registry_ledger_view, name='registry'),

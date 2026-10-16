@@ -7,6 +7,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponseRedirect, JsonResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -623,6 +624,101 @@ def category_briefing_view(request, category):
         "has_api_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
         "model_setting": get_setting("ops_briefing_model"),
         "briefing_enabled": get_setting("ops_briefing_enabled"),
+    })
+
+
+def _hub_card(key, label, user_can_generate):
+    """One category card on the briefing hub: the latest attempt decides the state, the latest success supplies the content."""
+    from .models import OpsBriefing
+
+    last_attempt = OpsBriefing.objects.filter(category=key).first()
+    latest = OpsBriefing.objects.filter(category=key, status="ok").first()
+    if last_attempt is None:
+        state = "none"
+    elif last_attempt.status == "empty":
+        state, latest = "clear", None
+    elif last_attempt.status == "ok":
+        state = "ok"
+    elif last_attempt.status == "skipped":
+        state = "paused"
+    else:
+        state = "stale" if latest else "error"
+    points, watch, outlook = _parse_briefing_body(latest)
+    return {
+        "key": key,
+        "label": label,
+        "state": state,
+        "briefing": latest,
+        "last_attempt": last_attempt,
+        "points": points,
+        "watch": watch,
+        "outlook": outlook,
+        "signal_sections": _signal_sections_for(latest, _CATEGORY_SIGNAL_LINKS[key]),
+        "can_generate": user_can_generate,
+    }
+
+
+@login_required
+def briefing_hub_view(request):
+    """AI Copilot landing page: My Open Jobs plus the six category briefings as cards, each readable in a drawer.
+    POST generates one briefing (category=<key> or my_checklist); fetch() calls get JSON, so "Generate all" runs one short request per category."""
+    from .models import OpsBriefing
+
+    can_generate = request.user.has_perm("core.add_opsbriefing")
+    wants_json = request.headers.get("x-requested-with") == "XMLHttpRequest"
+
+    if request.method == "POST":
+        category = request.POST.get("category", "")
+        if category == "my_checklist":
+            from .briefing import generate_my_checklist
+            b = generate_my_checklist(user=request.user)
+        elif category in _CATEGORY_LABELS:
+            if not can_generate:
+                if wants_json:
+                    return JsonResponse({"error": "You don't have permission to generate briefings."}, status=403)
+                messages.error(request, "You don't have permission to generate a briefing.")
+                return redirect("briefing_hub")
+            from .briefing import generate_briefing
+            period = request.POST.get("period", "daily")
+            b = generate_briefing(category=category, period=period if period in ("daily", "weekly") else "daily", user=request.user)
+        else:
+            if wants_json:
+                return JsonResponse({"error": "Unknown briefing."}, status=400)
+            raise Http404("Unknown briefing.")
+        if wants_json:
+            return JsonResponse({"category": category, "status": b.status, "headline": b.headline, "error": b.error_detail})
+        if b.status == "ok":
+            messages.success(request, f"Briefing generated ({b.signal_count} item{'s' if b.signal_count != 1 else ''}).")
+        elif b.status == "empty":
+            messages.success(request, "Nothing notable to brief right now.")
+        elif b.status == "skipped":
+            messages.warning(request, f"Briefing skipped: {b.error_detail}")
+        else:
+            messages.error(request, f"Briefing failed: {b.error_detail}")
+        return redirect(f"{reverse('briefing_hub')}?open={category}")
+
+    mine = OpsBriefing.objects.filter(category="my_checklist", generated_by=request.user, status="ok").first()
+    my_points, my_watch, my_outlook = _parse_briefing_body(mine)
+    ticked = _ticked(mine, request.user)
+    next_point = next((p for i, p in enumerate(my_points) if i not in ticked), None)
+    live_items = analytics.my_open_jobs(request.user)
+
+    cards = [_hub_card(key, label, can_generate) for key, label in CATEGORY_TABS]
+    open_key = request.GET.get("open", "")
+    return render(request, "analytics/briefing_hub.html", {
+        "cards": cards,
+        "mine": mine,
+        "points": my_points,
+        "watch": my_watch,
+        "outlook": my_outlook,
+        "ticked": ticked,
+        "next_point": next_point,
+        "live_items": live_items,
+        "can_generate": can_generate,
+        "has_api_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "briefing_enabled": get_setting("ops_briefing_enabled"),
+        "open_key": open_key if open_key == "my_checklist" or open_key in _CATEGORY_LABELS else "",
+        "today": timezone.localdate(),
     })
 
 
