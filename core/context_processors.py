@@ -93,8 +93,8 @@ def sidebar_nav(request):
     # Overview
     overview_items = [{'label': 'Dashboard & Analytics', 'url_name': 'dashboard'}]
     overview_items.append({
-        'label': 'AI Copilot', 'url_name': 'ops_briefing',
-        'alias_url_names': ['category_briefing'], 'css_class': 'ai-link',
+        'label': 'AI Copilot', 'url_name': 'briefing_hub',
+        'alias_url_names': ['ops_briefing', 'category_briefing'], 'css_class': 'ai-link',
     })
     if can_approve(user):
         overview_items.append({

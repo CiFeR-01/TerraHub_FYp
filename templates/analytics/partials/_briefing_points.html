@@ -26,7 +26,10 @@ document.querySelectorAll('.briefing-checklist').forEach(function (list) {
         var body = new URLSearchParams({index: box.value, done: box.checked ? '1' : '0'});
         fetch(list.dataset.url, {method: 'POST', headers: {'X-CSRFToken': '{{ csrf_token }}'}, body: body})
             .then(function (r) { if (!r.ok) throw r; return r.json(); })
-            .then(function (d) { list.parentNode.querySelector('.briefing-done-count').textContent = d.done; })
+            .then(function (d) {
+                list.parentNode.querySelector('.briefing-done-count').textContent = d.done;
+                document.dispatchEvent(new CustomEvent('briefing:ticked', {detail: {done: d.done}}));
+            })
             .catch(function () { box.checked = !box.checked; alert("Couldn't save that tick. Please try again."); });
     });
 });
