@@ -1,12 +1,13 @@
 """Login throttling for /login/ and /admin/: refuses sign-in after repeated failures.
 
-Two counters, both kept in the default cache for LOGIN_LOCKOUT_SECONDS from the first failure:
-- username + IP: locks after LOGIN_FAIL_LIMIT failures (the normal case, one person guessing).
+Two counters, both kept in the default cache for the lockout window from the first failure:
+- username + IP: locks after the fail limit (the normal case, one person guessing).
 - username alone: locks after 4x that, so guessing spread over many IPs is still capped,
   while one stranger can't lock a real user out with just a few bad attempts.
 There is no IP-only counter because behind Railway's proxy many users can share one address.
+The limit and window are the login_fail_limit / login_lockout_minutes settings (System Settings page),
+defaulting to LOGIN_FAIL_LIMIT / LOGIN_LOCKOUT_SECONDS. Admins can clear a lockout with unlock().
 """
-from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.backends import ModelBackend
 from django.contrib.auth.forms import AuthenticationForm
@@ -30,14 +31,44 @@ def _keys(username, request):
     return f'login-fail:user:{name}', f'login-fail:pair:{name}:{_client_ip(request)}'
 
 
+def fail_limit():
+    from .settings_store import get_setting
+    return get_setting('login_fail_limit')
+
+
+def lockout_seconds():
+    from .settings_store import get_setting
+    return get_setting('login_lockout_minutes') * 60
+
+
+def _ips_key(username):
+    return f'login-fail:ips:{(username or "").strip().lower()}'
+
+
 def is_locked(username, request):
     user_key, pair_key = _keys(username, request)
-    limit = settings.LOGIN_FAIL_LIMIT
+    limit = fail_limit()
     return cache.get(pair_key, 0) >= limit or cache.get(user_key, 0) >= limit * 4
 
 
+def is_locked_anywhere(username):
+    """True if `username` is locked out from any address (for the Users page)."""
+    name = (username or '').strip().lower()
+    limit = fail_limit()
+    if cache.get(f'login-fail:user:{name}', 0) >= limit * 4:
+        return True
+    return any(cache.get(f'login-fail:pair:{name}:{ip}', 0) >= limit for ip in cache.get(_ips_key(name), ()))
+
+
+def unlock(username):
+    """Clear every failed-sign-in counter for `username`."""
+    name = (username or '').strip().lower()
+    ips = cache.get(_ips_key(name), ())
+    cache.delete_many([f'login-fail:user:{name}', _ips_key(name)] + [f'login-fail:pair:{name}:{ip}' for ip in ips])
+
+
 def _bump(key):
-    cache.add(key, 0, settings.LOGIN_LOCKOUT_SECONDS)
+    cache.add(key, 0, lockout_seconds())
     try:
         cache.incr(key)
     except ValueError:  # key expired between add and incr, or a dummy cache
@@ -49,6 +80,9 @@ def record_failure(sender, credentials, request=None, **kwargs):
     username = credentials.get('username') or credentials.get(get_user_model().USERNAME_FIELD)
     for key in _keys(username, request):
         _bump(key)
+    # Remember which addresses have counters, so unlock() can find them
+    ips = set(cache.get(_ips_key(username), ())) | {_client_ip(request)}
+    cache.set(_ips_key(username), ips, lockout_seconds())
 
 
 @receiver(user_logged_in)
@@ -72,6 +106,12 @@ class ThrottledAuthenticationForm(AuthenticationForm):
 
     def clean(self):
         if is_locked(self.cleaned_data.get('username'), self.request):
-            raise ValidationError(LOCKED_MESSAGE.format(minutes=settings.LOGIN_LOCKOUT_SECONDS // 60),
+            raise ValidationError(LOCKED_MESSAGE.format(minutes=lockout_seconds() // 60),
                                   code='locked')
         return super().clean()
+
+    def confirm_login_allowed(self, user):
+        super().confirm_login_allowed(user)
+        from .account import TEMP_PASSWORD_EXPIRED_MESSAGE, temp_password_expired
+        if temp_password_expired(user):
+            raise ValidationError(TEMP_PASSWORD_EXPIRED_MESSAGE, code='temp_password_expired')

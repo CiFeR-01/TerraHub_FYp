@@ -15,7 +15,7 @@
                     <option value="{{ p.id }}">{{ p.sku }} — {{ p.name }}</option>
                     {% endfor %}
                 </select>
-                <button onclick="document.getElementById('recipe-modal').style.display='none'" style="background:none; border:none; font-size:1.35rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+                <button onclick="closeRecipeStudio()" style="background:none; border:none; font-size:1.35rem; cursor:pointer; color:var(--text-muted);">&times;</button>
             </div>
         </div>
 
@@ -103,6 +103,12 @@
 // RECIPE STUDIO INTERACTIVE FUNCTIONS
 // ----------------------------------------------------
 var currentStudioProductId = null;
+var studioChanged = false;  // reload on close so the page behind shows saved recipes
+
+function closeRecipeStudio() {
+    document.getElementById('recipe-modal').style.display = 'none';
+    if (studioChanged) window.location.reload();
+}
 
 function openRecipeStudio(productId) {
     document.getElementById('recipe-modal').style.display = 'flex';
@@ -182,10 +188,7 @@ function deleteRecipeItem(recipeId) {
     .then(data => {
         if (data.success) {
             switchStudioProduct(currentStudioProductId);
-            // Optionally reload the page to reflect updated recipe if viewing a detail page
-            if (window.location.pathname.includes('/catalog/products/') && !window.location.pathname.endsWith('/products/')) {
-                window.location.reload();
-            }
+            studioChanged = true;
         } else {
             alert('Error deleting item: ' + data.error);
         }
@@ -253,10 +256,7 @@ function saveBatchRecipe() {
             matSelects.forEach(s => s.value = '');
             qtyInputs.forEach(q => q.value = '');
             switchStudioProduct(currentStudioProductId);
-            // Optionally reload page to show new recipe in product detail page
-            if (window.location.pathname.includes('/catalog/products/') && !window.location.pathname.endsWith('/products/')) {
-                window.location.reload();
-            }
+            studioChanged = true;
         } else {
             alert('Error saving recipe: ' + data.error);
         }
@@ -297,9 +297,7 @@ function cloneRecipe() {
         if (data.success) {
             sourceSelect.value = '';
             switchStudioProduct(currentStudioProductId);
-            if (window.location.pathname.includes('/catalog/products/') && !window.location.pathname.endsWith('/products/')) {
-                window.location.reload();
-            }
+            studioChanged = true;
         } else {
             alert('Error cloning recipe: ' + data.error);
         }

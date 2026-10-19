@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.utils.safestring import mark_safe
 
-from .permissions import can_approve, pending_actions, MANAGE_USERS, ACTION_PERMS, has_any_perm
+from .permissions import can_approve, pending_actions, MANAGE_USERS, ACTION_PERMS, has_any_perm, is_admin_user
 
 def approvals_count(request):
     """Number of items waiting on the user in the Action Center (sidebar badge), counted from the same querysets the page lists."""
@@ -38,6 +38,11 @@ NAV_ICONS = {
         '<rect x="3" y="11" width="18" height="11" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"/>'
         '<path d="M7 11V7a5 5 0 0 1 10 0v4" fill="none" stroke="currentColor" stroke-width="2"/>'
     ),
+    'dss': mark_safe(
+        '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>'
+        '<polygon points="15.5 8.5 13.5 13.5 8.5 15.5 10.5 10.5 15.5 8.5" fill="none" stroke="currentColor" stroke-width="2" '
+        'stroke-linejoin="round"/>'
+    ),
     'analytics': mark_safe(
         '<path d="M3 3v18h18" fill="none" stroke="currentColor" stroke-width="2"/>'
         '<path d="M7 14l3-4 3 3 5-7" fill="none" stroke="currentColor" stroke-width="2" '
@@ -58,17 +63,20 @@ def _perm_ok(user, perm):
     return user.has_perm(perm)
 
 
-# Analytics taxonomy: (category label, [(url_name, page label, permission), ...]).
+# Decision Support: pages that recommend what to do next (Rent Reduction also acts on it and measures the result).
+# Each gets its own sidebar link; they share one tab strip via `_analytics_tabs`.
+DECISION_SUPPORT_PAGES = [
+    ('rent_opportunities', 'Rent Reduction', 'core.view_warehouse'),
+    ('forecast', 'Stockout & Reorder', 'core.view_material'),
+    ('capacity_forecast', 'Inventory Capacity', 'core.view_warehouse'),
+    ('so_delivery_risk', 'Delivery Performance', 'core.view_shipment'),
+]
+
+# Analytics taxonomy (scorecards and trends): (category label, [(url_name, page label, permission), ...]).
 # Source for the sidebar category links and the tab strip in core/views_analytics.py's `_analytics_tabs`.
 ANALYTICS_CATEGORIES = [
-    ('Inventory', [
-        ('forecast', 'Stockout & Reorder', 'core.view_material'),
-        ('capacity_forecast', 'Inventory Capacity', 'core.view_warehouse'),
-        ('rent_opportunities', 'Rent Reduction', 'core.view_warehouse'),
-    ]),
     ('Supply Chain', [
         ('supplier_scorecard', 'Supplier Performance', 'core.view_supplier'),
-        ('so_delivery_risk', 'Delivery Performance', 'core.view_shipment'),
         ('shipment_logistics', 'Logistics Performance', 'core.view_shipment'),
     ]),
     ('Demand', [
@@ -103,6 +111,11 @@ def sidebar_nav(request):
             'show_badge': True,
         })
     groups.append({'id': 'overview', 'short': 'Home', 'label': 'Overview', 'icon': NAV_ICONS['overview'], 'items': overview_items})
+
+    # Decision Support: one link per page
+    dss_items = [{'label': label, 'url_name': name} for name, label, perm in DECISION_SUPPORT_PAGES if _perm_ok(user, perm)]
+    if dss_items:
+        groups.append({'id': 'dss', 'short': 'DSS', 'label': 'Decision Support', 'icon': NAV_ICONS['dss'], 'items': dss_items})
 
     # Analytics: one collapsed link per category, landing on the first report the user can see; siblings appear as tabs on the page.
     # The AI Copilot link lives in Overview.
@@ -160,7 +173,8 @@ def sidebar_nav(request):
     admin_items = []
     if user.has_perm(MANAGE_USERS):
         admin_items.append({'label': 'Users Management', 'url_name': 'user_management'})
-    if user.is_superuser:
+        admin_items.append({'label': 'Audit Log', 'url_name': 'user_audit_log'})
+    if user.is_superuser or is_admin_user(user):
         admin_items.append({'label': 'System Console', 'url_name': 'system'})
         admin_items.append({'label': 'System Settings', 'url_name': 'system_settings'})
     if admin_items:
@@ -186,10 +200,12 @@ def sidebar_nav(request):
 
 def session_timeout(request):
     """Idle-timeout figures for the sign-out warning in base.html."""
+    from .account import idle_timeout_seconds
+    timeout = idle_timeout_seconds(request)
     return {
-        'session_idle_timeout': settings.SESSION_IDLE_TIMEOUT,
+        'session_idle_timeout': timeout,
         'session_idle_warning': settings.SESSION_IDLE_WARNING,
-        'session_idle_timeout_minutes': settings.SESSION_IDLE_TIMEOUT // 60,
+        'session_idle_timeout_minutes': timeout // 60,
     }
 
 

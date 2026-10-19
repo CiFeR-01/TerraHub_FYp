@@ -51,6 +51,8 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
+    'core.account.IdleTimeoutMiddleware',
+    'core.account.ForcePasswordChangeMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
@@ -162,6 +164,7 @@ LOGIN_URL = 'login'
 LOGOUT_REDIRECT_URL = 'home'
 
 # Idle timeout: sessions end after this long with no requests; static/js/session-timeout.js keeps active tabs alive via session_keepalive.
+# This is the cap: the System Settings page can shorten it (core.account.IdleTimeoutMiddleware) but not raise it.
 SESSION_IDLE_TIMEOUT = int(os.getenv('SESSION_IDLE_TIMEOUT_MINUTES', '30')) * 60
 SESSION_IDLE_WARNING = 120  # seconds of warning popup before sign-out
 SESSION_COOKIE_AGE = SESSION_IDLE_TIMEOUT

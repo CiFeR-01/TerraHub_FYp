@@ -28,6 +28,7 @@ from .models import (
 from .utils import generate_next_code, format_stock_display, unexpired, read_decimal, read_date
 from .validators import normalise_phone, normalise_phone_or_email, validate_email_address, validation_messages
 from .decorators import permission_or_redirect
+from .account import log_user_change
 from .permissions import (
     is_admin_user, can_approve, can_grant_group, action_denied,
     limited_warehouse_ids, may_use_warehouse, FACILITY_REFUSED, approvers, users_with_perm, pending_actions,
@@ -610,56 +611,91 @@ def system_view(request):
     })
 
 
+def _setting_label(key):
+    return key.replace('_', ' ').title()
+
+
 @login_required
 def system_settings_view(request):
-    """In-site editor for the settings in core.settings_store.REGISTRY. Superuser-only."""
-    if not request.user.is_superuser:
-        messages.error(request, "Permission Denied. System settings are superuser-only.")
+    """In-site editor for the settings in core.settings_store, grouped by its SECTIONS. Superusers and Admins."""
+    if not (request.user.is_superuser or is_admin_user(request.user)):
+        messages.error(request, "Permission Denied. System settings are for Admins only.")
         return redirect('dashboard')
 
+    from .account import log_setting_change
     from .models import SystemSetting
-    from .settings_store import REGISTRY, cast_value, get_setting
+    from .settings_store import ALL_SETTINGS, SECTIONS, cast_value, default_value, get_setting, limits
 
     if request.method == 'POST':
-        updated = 0
-        for key, (default, value_type, description) in REGISTRY.items():
-            raw = request.POST.get(key, 'false' if value_type == 'bool' else None)
-            if raw is None:
+        reset_key = request.POST.get('reset_key')
+        if reset_key:
+            if reset_key in ALL_SETTINGS:
+                old, default = get_setting(reset_key), default_value(reset_key)
+                with transaction.atomic():
+                    SystemSetting.objects.filter(key=reset_key).delete()
+                    if str(old) != str(default):
+                        log_setting_change(request, reset_key, f"{old} -> {default} (reset to default)")
+                messages.success(request, f"{_setting_label(reset_key)} is back to its default ({default}).")
+            return redirect('system_settings')
+
+        changed, failed = 0, False
+        for key, (_, value_type, description) in ALL_SETTINGS.items():
+            raw = request.POST.get(key)
+            if raw is None:  # not on the form: leave it alone
                 continue
+            label = _setting_label(key)
             cast = cast_value(raw.strip(), value_type)
             if cast is None:
-                messages.error(request, f"'{raw}' is not a valid {value_type} value for {key}.")
+                messages.error(request, f"'{raw}' is not a valid {value_type} value for {label}.")
+                failed = True
                 continue
-            SystemSetting.objects.update_or_create(
-                key=key,
-                defaults={
-                    'value': str(cast),
-                    'value_type': value_type,
-                    'description': description,
-                    'updated_by': request.user,
-                },
-            )
-            updated += 1
-        if updated:
-            messages.success(request, f"Saved {updated} setting{'s' if updated != 1 else ''}.")
+            low, high = limits(key)
+            if (low is not None and cast < low) or (high is not None and cast > high):
+                messages.error(request, f"{label} must be between {low} and {high}.")
+                failed = True
+                continue
+            old = get_setting(key)
+            if cast == old:
+                continue
+            with transaction.atomic():
+                SystemSetting.objects.update_or_create(key=key, defaults={
+                    'value': str(cast), 'value_type': value_type,
+                    'description': description[:255], 'updated_by': request.user,
+                })
+                log_setting_change(request, key, f"{old} -> {cast}")
+            changed += 1
+        if changed:
+            messages.success(request, f"Saved {changed} change{'s' if changed != 1 else ''}.")
+        elif not failed:
+            messages.info(request, "Nothing changed.")
         return redirect('system_settings')
 
-    rows = SystemSetting.objects.in_bulk(field_name='key')
-    settings_list = [
-        {
+    rows = SystemSetting.objects.select_related('updated_by').in_bulk(field_name='key')
+
+    def item(key):
+        _, value_type, description = ALL_SETTINGS[key]
+        value, default = get_setting(key), default_value(key)
+        low, high = limits(key)
+        return {
             'key': key,
-            'label': key.replace('_', ' ').title(),
-            'value': get_setting(key),
+            'label': _setting_label(key),
+            'value': value,
             'default': default,
             'value_type': value_type,
             'description': description,
+            'min': low,
+            'max': high,
             'updated_at': rows[key].updated_at if key in rows else None,
             'updated_by': rows[key].updated_by if key in rows else None,
-            'is_overridden': key in rows and str(get_setting(key)) != str(default),
+            'is_overridden': str(value) != str(default),
         }
-        for key, (default, value_type, description) in REGISTRY.items()
-    ]
-    return render(request, 'system_settings.html', {'settings_list': settings_list})
+
+    sections = [{'title': title, 'settings': [item(k) for k in keys if k in ALL_SETTINGS]} for title, keys in SECTIONS]
+    placed = {k for _, keys in SECTIONS for k in keys}
+    leftover = [k for k in ALL_SETTINGS if k not in placed]
+    if leftover:
+        sections.append({'title': 'Other', 'settings': [item(k) for k in leftover]})
+    return render(request, 'system_settings.html', {'sections': sections})
 
 
 from django.http import JsonResponse
@@ -671,7 +707,9 @@ def session_keepalive_view(request):
         return JsonResponse({'error': 'POST required'}, status=405)
     if not request.user.is_authenticated:
         return JsonResponse({'authenticated': False}, status=401)
-    return JsonResponse({'authenticated': True, 'expires_in': request.session.get_expiry_age()})
+    from .account import idle_timeout_seconds
+    return JsonResponse({'authenticated': True,
+                         'expires_in': min(request.session.get_expiry_age(), idle_timeout_seconds(request))})
 
 @login_required
 def db_logs_api_view(request):
@@ -5105,12 +5143,86 @@ def profile_view(request):
         except ValidationError as e:
             messages.error(request, validation_messages(e))
             return redirect('profile')
+        if _email_taken(email, exclude=user):
+            messages.error(request, f"Another account already uses {email}.")
+            return redirect('profile')
+        old = CustomUser.objects.get(pk=user.pk)
         user.email = email
+        changes = [f"{label}: '{getattr(old, f)}' -> '{getattr(user, f)}'"
+                   for f, label in (('first_name', 'First name'), ('last_name', 'Last name'), ('email', 'Email'))
+                   if getattr(old, f) != getattr(user, f)]
         user.save()
+        if changes:
+            log_user_change(request, user, 'profile_changed', '; '.join(changes))
         messages.success(request, "Profile updated successfully.")
         return redirect('profile')
     
     return render(request, 'profile.html', {'user': request.user})
+
+
+@login_required
+def password_change_view(request):
+    """Change your own password. After an admin reset the old password isn't asked for: the user just signed in with it."""
+    from django.contrib.auth import update_session_auth_hash
+    from django.contrib.auth.forms import PasswordChangeForm, SetPasswordForm
+
+    forced = request.user.must_change_password
+    form_class = SetPasswordForm if forced else PasswordChangeForm
+    form = form_class(request.user, request.POST or None)
+    if request.method == 'POST' and form.is_valid():
+        if forced and request.user.check_password(form.cleaned_data['new_password1']):
+            form.add_error('new_password1', "Choose a new password, not the temporary one.")
+        else:
+            user = form.save(commit=False)
+            user.must_change_password = False
+            user.temp_password_set_at = None
+            with transaction.atomic():
+                user.save()
+                log_user_change(request, user, 'password_changed', 'New password chosen after an admin reset' if forced else '')
+            update_session_auth_hash(request, user)  # keep this session signed in
+            messages.success(request, "Your password has been changed.")
+            return redirect('dashboard' if forced else 'profile')
+    return render(request, 'password_change.html', {'form': form, 'forced': forced})
+
+
+def _names(objs):
+    """Sorted names for an audit entry, e.g. "Logistics, Sales", or "none"."""
+    return ', '.join(sorted(o.name for o in objs)) or 'none'
+
+
+def _email_taken(email, exclude=None):
+    """True if another account already uses `email` (ignoring case). Blank emails never clash."""
+    return bool(email) and CustomUser.objects.filter(email__iexact=email).exclude(pk=getattr(exclude, 'pk', None)).exists()
+
+
+def _new_user_problem(editor, form, groups):
+    """Why a new account can't be created from `form` (Users page), or None if it can."""
+    username_field = CustomUser._meta.get_field('username')
+    if not form['username']:
+        return "Enter a username."
+    try:
+        username_field.run_validators(form['username'])
+    except ValidationError:
+        return f"Username '{form['username']}' isn't allowed. Use up to {username_field.max_length} letters, digits and @ . + - _ only."
+    if CustomUser.objects.filter(username__iexact=form['username']).exists():
+        return f"The username '{form['username']}' is already taken."
+    try:
+        validate_email_address(form['email'])
+    except ValidationError as e:
+        return validation_messages(e)
+    if _email_taken(form['email']):
+        return f"Another account already uses {form['email']}."
+    too_high = sorted(g.name for g in groups if not can_grant_group(editor, g))
+    if too_high:
+        return f"You can't give the {', '.join(too_high)} role, because it has permissions you don't have."
+    return None
+
+
+def _outranks(editor, target):
+    """True if `target` has powers `editor` lacks, so `editor` may not deactivate them or reset their password."""
+    return (target.is_superuser and not editor.is_superuser) or not all(
+        can_grant_group(editor, g) for g in target.groups.all())
+
 
 @login_required
 def user_management_view(request):
@@ -5137,35 +5249,28 @@ def user_management_view(request):
     users, sort_ctx = apply_list_sort(request, users, {
         'username': 'username',
         'status': 'is_active',
+        'last_login': 'last_login',
         'updated_at': 'updated_at',
     }, default='username')
     page_size = get_page_size(request)
     users = Paginator(users, page_size).get_page(request.GET.get('page'))
+    from .login_throttle import is_locked_anywhere
+    for u in users:
+        u.is_locked = is_locked_anywhere(u.username)
 
     roles = Group.objects.order_by('name')
     warehouses = Warehouse.objects.all()
 
     if request.method == 'POST':
         action = request.POST.get('action')
-        if action == 'add_location':
-            name = request.POST.get('name')
-            loc_type = request.POST.get('location_type')
-            if name and loc_type in dict(Warehouse.LOCATION_CHOICES):
-                Warehouse.objects.create(
-                    name=name,
-                    location_type=loc_type,
-                    ownership_type='Internal'
-                )
-                messages.success(request, f"Location '{name}' added successfully.")
-            return redirect('user_management')
-
         if action == 'update_user':
             user_id = request.POST.get('user_id')
             user_obj = get_object_or_404(CustomUser, id=user_id)
 
             # Roles: only groups the editor could hold themselves may be added or removed
+            old_groups = set(user_obj.groups.all())
             new_groups = set(Group.objects.filter(id__in=request.POST.getlist('roles')))
-            changed = new_groups ^ set(user_obj.groups.all())
+            changed = new_groups ^ old_groups
             too_high = sorted(g.name for g in changed if not can_grant_group(request.user, g))
             if too_high:
                 messages.error(request, f"You can't add or remove the {', '.join(too_high)} role, because it has permissions you don't have.")
@@ -5176,24 +5281,93 @@ def user_management_view(request):
                 if user_obj == request.user:
                     messages.error(request, "You can't deactivate your own account.")
                     return redirect('user_management')
-                if (user_obj.is_superuser and not request.user.is_superuser) or not all(
-                        can_grant_group(request.user, g) for g in user_obj.groups.all()):
+                if _outranks(request.user, user_obj):
                     messages.error(request, f"You can't deactivate {user_obj.username}, because they have permissions you don't have.")
                     return redirect('user_management')
 
-            user_obj.is_active = is_active
-            user_obj.groups.set(new_groups)
-            
-            # Locations
-            location_ids = request.POST.getlist('locations')
-            user_obj.allowed_locations.set(Warehouse.objects.filter(id__in=location_ids))
-            
-            user_obj.updated_by = request.user
-            user_obj.save()
+            old_locations = set(user_obj.allowed_locations.all())
+            new_locations = set(Warehouse.objects.filter(id__in=request.POST.getlist('locations')))
+            was_active = user_obj.is_active
+            with transaction.atomic():
+                user_obj.is_active = is_active
+                user_obj.groups.set(new_groups)
+                user_obj.allowed_locations.set(new_locations)
+                user_obj.updated_by = request.user
+                user_obj.save()
+                if was_active != is_active:
+                    log_user_change(request, user_obj, 'activated' if is_active else 'deactivated')
+                if changed:
+                    log_user_change(request, user_obj, 'roles_changed', f"{_names(old_groups)} -> {_names(new_groups)}")
+                if old_locations != new_locations:
+                    log_user_change(request, user_obj, 'locations_changed', f"{_names(old_locations)} -> {_names(new_locations)}")
             messages.success(request, f"User {user_obj.username} updated successfully.")
             return redirect('user_management')
-            
+
+        if action == 'reset_password':
+            from .account import issue_temp_password
+            user_obj = get_object_or_404(CustomUser, id=request.POST.get('user_id'))
+            if user_obj == request.user:
+                messages.error(request, "To change your own password, use Change password on My Profile.")
+            elif not user_obj.is_active:
+                messages.error(request, f"{user_obj.username} is inactive. Activate the account before resetting the password.")
+            elif _outranks(request.user, user_obj):
+                messages.error(request, f"You can't reset {user_obj.username}'s password, because they have permissions you don't have.")
+            else:
+                with transaction.atomic():
+                    password = issue_temp_password(user_obj, request.user)
+                    log_user_change(request, user_obj, 'password_reset')
+                # Shown once on the next page load, then dropped from the session
+                request.session['temp_password_issued'] = {
+                    'username': user_obj.username, 'password': password, 'new_account': False}
+            return redirect('user_management')
+
+        if action == 'unlock_user':
+            from .login_throttle import unlock
+            user_obj = get_object_or_404(CustomUser, id=request.POST.get('user_id'))
+            unlock(user_obj.username)
+            log_user_change(request, user_obj, 'unlocked')
+            messages.success(request, f"{user_obj.username} can sign in again.")
+            return redirect('user_management')
+
+        if action == 'sign_out_everywhere':
+            from .account import sign_out_everywhere
+            user_obj = get_object_or_404(CustomUser, id=request.POST.get('user_id'))
+            if _outranks(request.user, user_obj):
+                messages.error(request, f"You can't sign out {user_obj.username}, because they have permissions you don't have.")
+                return redirect('user_management')
+            # Signing yourself out everywhere keeps this browser signed in
+            keep = request.session.session_key if user_obj == request.user else None
+            ended = sign_out_everywhere(user_obj, keep_session_key=keep)
+            log_user_change(request, user_obj, 'signed_out_everywhere', f"{ended} session{'s' if ended != 1 else ''} ended")
+            where = 'other devices' if keep else 'every device'
+            messages.success(request, f"{user_obj.username} was signed out on {where} ({ended} session{'s' if ended != 1 else ''}).")
+            return redirect('user_management')
+
+        if action == 'create_user':
+            from .account import issue_temp_password
+            form = {k: request.POST.get(k, '').strip() for k in ('username', 'first_name', 'last_name', 'email')}
+            groups = set(Group.objects.filter(id__in=request.POST.getlist('roles')))
+            problem = _new_user_problem(request.user, form, groups)
+            if problem:
+                messages.error(request, problem)
+                return redirect('user_management')
+            with transaction.atomic():
+                user_obj = CustomUser(username=form['username'], first_name=form['first_name'],
+                                      last_name=form['last_name'], email=form['email'], updated_by=request.user)
+                user_obj.set_unusable_password()
+                user_obj.save()
+                user_obj.groups.set(groups)
+                locations = Warehouse.objects.filter(id__in=request.POST.getlist('locations'))
+                user_obj.allowed_locations.set(locations)
+                password = issue_temp_password(user_obj, request.user)
+                log_user_change(request, user_obj, 'created',
+                                f"Roles: {_names(groups)}. Facilities: {_names(locations)}.")
+            request.session['temp_password_issued'] = {
+                'username': user_obj.username, 'password': password, 'new_account': True}
+            return redirect('user_management')
+
     context = {
+        'temp_password_issued': request.session.pop('temp_password_issued', None),
         'users': users,
         'roles': roles,
         'warehouses': warehouses,
@@ -5203,6 +5377,42 @@ def user_management_view(request):
     }
     return render(request, 'user_management.html', context)
 
+
+
+@login_required
+def user_audit_log_view(request):
+    """History of account changes (created, password resets, roles, facilities, activation), newest first."""
+    if not request.user.has_perm(MANAGE_USERS):
+        messages.error(request, "Permission Denied. You don't have permission to manage users.")
+        return redirect('dashboard')
+    from .models import UserAuditLog
+
+    entries = UserAuditLog.objects.select_related('actor', 'target')
+    target = None
+    user_id = request.GET.get('user', '')
+    if user_id.isdigit():
+        target = CustomUser.objects.filter(pk=user_id).first()
+        entries = entries.filter(target_id=user_id)
+    action = request.GET.get('action', '')
+    if action in dict(UserAuditLog.ACTION_CHOICES):
+        entries = entries.filter(action=action)
+    query = request.GET.get('q', '').strip()
+    if query:
+        entries = entries.filter(Q(target_username__icontains=query) | Q(actor__username__icontains=query)
+                                 | Q(action='setting_changed', details__icontains=query))
+
+    page_size = get_page_size(request, default=50)
+    keep = request.GET.copy()
+    keep.pop('page', None)
+    return render(request, 'user_audit_log.html', {
+        'entries': Paginator(entries, page_size).get_page(request.GET.get('page')),
+        'target': target,
+        'action': action,
+        'query': query,
+        'action_choices': UserAuditLog.ACTION_CHOICES,
+        'page_size': page_size,
+        'page_qs': keep.urlencode(),
+    })
 
 
 def _fg_fefo_batches(product):

@@ -145,6 +145,71 @@ REGISTRY: dict[str, tuple[object, str, str]] = {
 }
 
 
+# Sign-in and session settings. Their defaults come from environment variables (TerraHub/settings.py), so a row here
+# overrides the environment. Kept out of REGISTRY because old seed migrations write every REGISTRY default into the table.
+SECURITY_REGISTRY: dict[str, tuple[object, str, str]] = {
+    "login_fail_limit": (
+        lambda: _django_settings().LOGIN_FAIL_LIMIT,
+        "int",
+        "Failed sign-ins allowed for one username from one computer before it is locked out "
+        "(any computers together get four times this). Default comes from LOGIN_FAIL_LIMIT.",
+    ),
+    "login_lockout_minutes": (
+        lambda: _django_settings().LOGIN_LOCKOUT_SECONDS // 60,
+        "int",
+        "How long a locked-out username has to wait before trying again. "
+        "Admins can unlock someone sooner from the Users page. Default comes from LOGIN_LOCKOUT_MINUTES.",
+    ),
+    "session_idle_timeout_minutes": (
+        lambda: _django_settings().SESSION_IDLE_TIMEOUT // 60,
+        "int",
+        "Signed-in users are signed out after this many minutes without using the app. "
+        "It can be shortened here; it can't go above SESSION_IDLE_TIMEOUT_MINUTES, which sets the default.",
+    ),
+}
+
+# Smallest and largest allowed value; a callable bound is read from the environment when checked.
+LIMITS = {
+    "login_fail_limit": (3, 50),
+    "login_lockout_minutes": (1, 24 * 60),
+    "session_idle_timeout_minutes": (5, lambda: _django_settings().SESSION_IDLE_TIMEOUT // 60),
+}
+
+ALL_SETTINGS = {**SECURITY_REGISTRY, **REGISTRY}
+
+# How the settings page groups them, in order. Every key in ALL_SETTINGS appears exactly once.
+SECTIONS = [
+    ("Security & sign-in", ["login_fail_limit", "login_lockout_minutes", "session_idle_timeout_minutes"]),
+    ("Purchasing & sales", ["po_default_lead_time_days", "so_at_risk_window_days"]),
+    ("Logistics", ["logistics_at_risk_window_days", "logistics_stall_days"]),
+    ("Quality", ["qa_hold_new_finished_goods"]),
+    ("Stockout & reorder", ["stockout_reorder_now_days", "stockout_watch_days"]),
+    ("Inventory capacity", ["capacity_trend_window_days", "capacity_critical_percent", "capacity_critical_days",
+                            "capacity_watch_days", "capacity_flat_slope_pp"]),
+    ("Suppliers", ["supplier_good_on_time_pct", "supplier_good_fill_pct", "supplier_poor_on_time_pct",
+                   "supplier_poor_fill_pct"]),
+    ("Demand trends", ["trend_significant_pct"]),
+    ("Rent opportunities", ["dss_min_total_saving_rm", "dss_dismiss_snooze_days", "dss_saving_horizon_days"]),
+    ("AI Copilot", ["ops_briefing_enabled", "ops_briefing_model"]),
+]
+
+
+def _django_settings():
+    from django.conf import settings
+    return settings
+
+
+def default_value(key):
+    default = ALL_SETTINGS[key][0]
+    return default() if callable(default) else default
+
+
+def limits(key):
+    """(min, max) for `key`, either end None when unbounded."""
+    low, high = LIMITS.get(key, (None, None))
+    return (low() if callable(low) else low), (high() if callable(high) else high)
+
+
 def cast_value(raw, value_type):
     """Coerce a raw string to ``value_type``; return None if it does not parse."""
     try:
@@ -161,9 +226,10 @@ def cast_value(raw, value_type):
 
 def get_setting(key):
     """Typed value for ``key``: DB override if present and valid, else the default."""
-    if key not in REGISTRY:
+    if key not in ALL_SETTINGS:
         raise KeyError(f"Unknown system setting: {key!r}")
-    default, value_type, _ = REGISTRY[key]
+    _, value_type, _ = ALL_SETTINGS[key]
+    default = default_value(key)
 
     from .models import SystemSetting
 
