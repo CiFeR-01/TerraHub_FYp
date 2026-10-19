@@ -130,7 +130,8 @@ ACTION_PERMS = {
     | {'add_item': 'core.change_shipmentitem', 'remove_item': 'core.change_shipmentitem'}
     | {a: RECEIVE for a in ('log_item_receipt', 'receive_all', 'complete_shipment', 'finalize_shipment_receiving')}
     | {a: OWN_CHECK for a in ('approve', 'reject', 'force_close_shipment', 'add_follower', 'remove_follower', 'toggle_follow')},
-    'user_management': {'add_location': 'core.add_warehouse', 'update_user': OWN_CHECK},
+    'user_management': {'update_user': OWN_CHECK, 'reset_password': OWN_CHECK,
+                        'create_user': OWN_CHECK, 'unlock_user': OWN_CHECK, 'sign_out_everywhere': OWN_CHECK},
     'so_allocate': {'allocate_manual': ALLOCATE_ORDER_STOCK},
     'production_run_allocate': {'allocate_run': ALLOCATE_RUN_MATERIALS},
     'production_run_detail': {a: RUN for a in ('cancel_allocation', 'complete_production', 'log_yield', 'pause_production',

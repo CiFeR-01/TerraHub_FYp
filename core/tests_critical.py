@@ -1,7 +1,7 @@
 """Critical-path tests: a small, fast suite covering the business rules that would hurt most if broken.
 
 Run on its own with:  python manage.py test core.tests_critical
-The full suite in core/tests.py is untouched and still the complete safety net.
+The full suite in core/tests.py is the complete safety net; CriticalBase lives there.
 """
 from datetime import date, timedelta
 from decimal import Decimal
@@ -15,78 +15,10 @@ from core.models import (
     Batch, Material, Product, ProductionRun, ProductRecipe, PurchaseOrder, PurchaseOrderDetail,
     RegistryLog, SalesOrder, SalesOrderDetail, Shipment, ShipmentItem, StockAllocation, StockAudit, Warehouse,
 )
-from core.tests import make_user
+from core.tests import CriticalBase, make_user
 from core.utils import allocate_stock, deduct_stock_from_allocation
 
 D = Decimal
-
-
-class CriticalBase(TestCase):
-    """Shared fixtures: an Admin, two Managers, a store, a plant, one product made from one material."""
-
-    def setUp(self):
-        self.admin = make_user(username='cr_admin', password='pw', role='Admin')
-        self.manager = make_user(username='cr_mgr', password='pw', role='Manager')
-        self.manager2 = make_user(username='cr_mgr2', password='pw', role='Manager')
-        self.store = Warehouse.objects.create(name='CR Store', location_type='Storage')
-        self.plant = Warehouse.objects.create(name='CR Plant', location_type='Manufacturing')
-        self.product = Product.objects.create(name='CR Product', sku='PRD-CR', unit_of_measure='kg', price_per_unit=1)
-        self.material = Material.objects.create(name='CR Mat', sku='MAT-CR', category='Bulk',
-                                                unit_of_measure='kg', safe_storage_days=365)
-        ProductRecipe.objects.create(product=self.product, material=self.material, quantity_required=2)
-        self.client.force_login(self.admin)
-
-    def as_user(self, user):
-        self.client.force_login(user)
-
-    def batch(self, number, qty, allocated=0, expires_in=200, wh=None, material=False, status='Active'):
-        item = {'material': self.material} if material else {'product': self.product}
-        return Batch.objects.create(batch_number=number, status=status, quantity=D(qty), allocated_quantity=D(allocated),
-                                    manufacturing_date=date.today() - timedelta(days=10),
-                                    expiry_date=date.today() + timedelta(days=expires_in),
-                                    warehouse=wh or self.store, **item)
-
-    def so(self, qty, status='Draft'):
-        so = SalesOrder.objects.create(so_number=f'SO-CR-{SalesOrder.objects.count()}', client_name='C',
-                                       origin_warehouse=self.store, status=status)
-        line = SalesOrderDetail.objects.create(sales_order=so, product=self.product, quantity_ordered=D(qty))
-        return so, line
-
-    def po(self, qty, status='Draft'):
-        po = PurchaseOrder.objects.create(po_number=f'PO-CR-{PurchaseOrder.objects.count()}', supplier_name='S',
-                                          target_warehouse=self.store, status=status)
-        line = PurchaseOrderDetail.objects.create(purchase_order=po, material=self.material, quantity_ordered=D(qty))
-        return po, line
-
-    def outbound(self, so, batch, qty, status='Arrived', **kw):
-        s = Shipment.objects.create(tracking_number=f'SHP-CR-{Shipment.objects.count()}', direction='Outbound',
-                                    status=status, origin_warehouse=batch.warehouse, sales_order=so, **kw)
-        item = ShipmentItem.objects.create(shipment=s, product=self.product, batch=batch, quantity=D(qty))
-        StockAllocation.objects.create(batch=batch, shipment=s, quantity=D(qty))
-        return s, item
-
-    def transfer(self, batch, qty, status='Arrived'):
-        s = Shipment.objects.create(tracking_number=f'SHP-CR-T{Shipment.objects.count()}', direction='Transfer',
-                                    status=status, origin_warehouse=batch.warehouse, destination_warehouse=self.plant)
-        item = ShipmentItem.objects.create(shipment=s, material=self.material, batch=batch, quantity=D(qty))
-        StockAllocation.objects.create(batch=batch, shipment=s, quantity=D(qty))
-        return s, item
-
-    def post(self, name, pk=None, **data):
-        return self.client.post(reverse(name, args=[pk] if pk is not None else []), data)
-
-    def decide(self, user, item_type, obj, action='approve'):
-        self.as_user(user)
-        self.post('approvals_inbox', action=action, item_type=item_type, item_id=obj.id)
-        obj.refresh_from_db()
-        return obj.status
-
-    def allocate_so(self, so, line, batch, qty, **extra):
-        return self.post('so_allocate', so.pk, action='allocate_manual', **{f'batch_qty_{line.id}_{batch.id}': qty}, **extra)
-
-    def refresh(self, *objs):
-        for o in objs:
-            o.refresh_from_db()
 
 
 class EndToEndFlowTests(CriticalBase):

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Audit Log - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span class="separator">/</span>
+            <a href="{% url 'user_management' %}">User Management</a>
+            <span class="separator">/</span>
+            <span class="current-page">Audit Log</span>
+        </nav>
+        <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
+            {% if target %}History for {{ target.username }}{% else %}Audit Log{% endif %}
+        </h1>
+        <p style="font-size:0.9rem; color:var(--text-muted); margin-top:0.25rem;">Who created, reset, or changed each account or system setting, and when.</p>
+    </div>
+</header>
+
+<section class="animate-fade-in-up" style="margin-bottom:2rem; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <form method="get" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:1.25rem;">
+        {% if target %}<input type="hidden" name="user" value="{{ target.id }}">{% endif %}
+        {% if not target %}
+        <input type="text" name="q" value="{{ query }}" placeholder="Search by username or setting..." class="form-input" style="padding:0.4rem 0.75rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem; width:220px;">
+        {% endif %}
+        <select name="action" class="form-input" style="padding:0.4rem 0.75rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
+            <option value="">All changes</option>
+            {% for value, label in action_choices %}
+            <option value="{{ value }}" {% if value == action %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-secondary" style="padding:0.4rem 0.75rem; font-size:0.85rem;">Filter</button>
+        {% if target or action or query %}
+        <a href="{% url 'user_audit_log' %}" class="btn" style="padding:0.4rem 0.75rem; font-size:0.85rem; color:var(--text-muted);">Show everything</a>
+        {% endif %}
+    </form>
+
+    <div style="overflow-x:auto;">
+        <table style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted);">
+                    <th style="padding:0.75rem 1rem; text-align:left;">When</th>
+                    <th style="padding:0.75rem 1rem; text-align:left;">User</th>
+                    <th style="padding:0.75rem 1rem; text-align:left;">Change</th>
+                    <th style="padding:0.75rem 1rem; text-align:left;">Details</th>
+                    <th style="padding:0.75rem 1rem; text-align:left;">Done by</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in entries %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem; vertical-align:top;">
+                    <td style="padding:0.85rem 1rem; white-space:nowrap;">{{ e.created_at|date:"M d, Y H:i" }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">
+                        {% if e.target %}<a href="{% url 'user_audit_log' %}?user={{ e.target_id }}">{{ e.target_username }}</a>{% elif e.action == 'setting_changed' %}<span style="color:var(--text-muted); font-weight:600;">System setting</span>{% else %}{{ e.target_username }}{% endif %}
+                    </td>
+                    <td style="padding:0.85rem 1rem;">{{ e.get_action_display }}</td>
+                    <td style="padding:0.85rem 1rem; color:var(--text-muted);">{{ e.details|default:"-" }}</td>
+                    <td style="padding:0.85rem 1rem;">
+                        {{ e.actor.username|default:"System" }}
+                        {% if e.ip_address %}<div style="font-size:0.75rem; color:var(--text-muted);">{{ e.ip_address }}</div>{% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5" style="padding:1.5rem 1rem; text-align:center; color:var(--text-muted);">No changes recorded yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% include "partials/_pagination.html" with page_obj=entries page_qs=page_qs page_size=page_size noun='entries' %}
+</section>
+{% endblock %}

@@ -3,6 +3,17 @@
 {% block title %}User Management - TerraHub{% endblock %}
 
 {% block content %}
+<style>
+    .row-menu { display:inline-block; }
+    .row-menu-btn { padding:0.3rem 0.6rem; font-size:0.78rem; font-weight:700; letter-spacing:0.05em; }
+    .row-menu-list { position:fixed; z-index:1000; min-width:190px; padding:0.35rem; background:#fff; border:1px solid var(--border-light); border-radius:10px; box-shadow:0 10px 28px rgba(15,23,42,0.14); text-align:left; }
+    .row-menu-list form { margin:0; }
+    .row-menu-item { display:block; width:100%; padding:0.5rem 0.75rem; border:0; background:none; border-radius:6px; font:inherit; font-size:0.85rem; color:var(--text-main); text-align:left; text-decoration:none; cursor:pointer; }
+    .row-menu-item:hover, .row-menu-item:focus-visible { background:rgba(79,70,229,0.08); outline:none; }
+    .row-menu-item.danger { color:#dc2626; }
+    .row-menu-item.danger:hover, .row-menu-item.danger:focus-visible { background:rgba(220,38,38,0.08); }
+    .row-menu-divider { height:1px; margin:0.3rem 0.25rem; background:var(--border-light); }
+</style>
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
@@ -28,14 +39,29 @@
 </div>
 {% endif %}
 
+{% if temp_password_issued %}
+<div class="animate-fade-in-up" role="status" style="margin-bottom:1.5rem; padding:1.25rem 1.5rem; border-radius:10px; background:rgba(79,70,229,0.06); border:1px solid rgba(79,70,229,0.25);">
+    <div style="font-weight:700; margin-bottom:0.5rem;">{% if temp_password_issued.new_account %}Account {{ temp_password_issued.username }} created. Temporary password:{% else %}New temporary password for {{ temp_password_issued.username }}{% endif %}</div>
+    <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+        <code id="temp-password" style="font-size:1.5rem; letter-spacing:0.15em; padding:0.35rem 0.75rem; background:#fff; border:1px solid var(--border-light); border-radius:6px;">{{ temp_password_issued.password }}</code>
+        <button type="button" class="btn btn-secondary" style="padding:0.4rem 0.8rem; font-size:0.8rem;" onclick="navigator.clipboard.writeText(document.getElementById('temp-password').innerText); this.innerText='Copied';">Copy</button>
+    </div>
+    <p style="margin-top:0.6rem; font-size:0.85rem; color:var(--text-muted);">
+        Give this to {{ temp_password_issued.username }}. It works for 24 hours, and they will choose their own password when they sign in.
+        This is the only time it is shown.
+    </p>
+</div>
+{% endif %}
+
 <section class="animate-fade-in-up" style="margin-bottom:2rem; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
         <div style="display:flex; align-items:center; gap:1.5rem;">
             <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700;">System Users</h3>
-            <button onclick="openLocationModal()" class="btn btn-primary" style="padding:0.4rem 0.85rem; font-size:0.8rem; border-radius:6px; display:flex; align-items:center; gap:0.4rem;">
+            <button onclick="openCreateUserModal()" class="btn btn-primary" style="padding:0.4rem 0.85rem; font-size:0.8rem; border-radius:6px; display:flex; align-items:center; gap:0.4rem;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-                Add Location
+                Add User
             </button>
+            <a href="{% url 'user_audit_log' %}" class="btn btn-secondary" style="padding:0.4rem 0.85rem; font-size:0.8rem; border-radius:6px;">Audit Log</a>
         </div>
         <form method="get" style="display:flex; gap:0.5rem; align-items:center;">
             <input type="text" name="q" value="{{ query }}" placeholder="Search by name, email, or username..." class="form-input" style="padding:0.4rem 0.75rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem; width:250px;">
@@ -54,6 +80,7 @@
                     <th style="padding:0.75rem 1rem;">Roles</th>
                     <th style="padding:0.75rem 1rem;">Locations Allowed</th>
                     {% include "partials/_sort_th.html" with key="status" label="Status" %}
+                    {% include "partials/_sort_th.html" with key="last_login" label="Last Sign-in" %}
                     {% include "partials/_sort_th.html" with key="updated_at" label="Last Updated" %}
                     <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
                 </tr>
@@ -89,6 +116,15 @@
                         {% else %}
                         <span class="badge badge-rose">Inactive</span>
                         {% endif %}
+                        {% if u.is_locked %}
+                        <span class="badge badge-rose" title="Too many wrong passwords">Locked out</span>
+                        {% endif %}
+                        {% if u.must_change_password %}
+                        <div style="font-size:0.72rem; color:var(--text-muted); margin-top:0.25rem;">Temporary password</div>
+                        {% endif %}
+                    </td>
+                    <td style="padding:0.85rem 1rem;">
+                        <div style="font-size:0.82rem;">{{ u.last_login|date:"M d, Y H:i"|default:"Never" }}</div>
                     </td>
                     <td style="padding:0.85rem 1rem;">
                         <div style="font-size:0.82rem;">{{ u.updated_at|date:"M d, Y"|default:"-" }}</div>
@@ -96,6 +132,35 @@
                     </td>
                     <td style="padding:0.85rem 1rem; text-align:right;">
                         <button onclick="openUserModal('{{ u.id }}', '{{ u.username }}', '{{ u.is_active|yesno:'true,false' }}', [{% for r in u.groups.all %}'{{ r.id }}'{% if not forloop.last %},{% endif %}{% endfor %}], [{% for w in u.allowed_locations.all %}'{{ w.id }}'{% if not forloop.last %},{% endif %}{% endfor %}])" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem;">Edit</button>
+                        {% if u.is_locked %}
+                        <form method="post" style="display:inline;">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="unlock_user">
+                            <input type="hidden" name="user_id" value="{{ u.id }}">
+                            <button type="submit" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem;">Unlock</button>
+                        </form>
+                        {% endif %}
+                        <div class="row-menu">
+                            <button type="button" class="btn btn-secondary row-menu-btn" aria-haspopup="true" aria-expanded="false" aria-label="More actions for {{ u.username }}" title="More actions" onclick="toggleRowMenu(this, event)">&#8943;</button>
+                            <div class="row-menu-list" role="menu" hidden>
+                                <a href="{% url 'user_audit_log' %}?user={{ u.id }}" class="row-menu-item" role="menuitem">History</a>
+                                {% if u != request.user and u.is_active %}
+                                <form method="post" onsubmit="return confirm('Reset the password for {{ u.username|escapejs }}? They will be signed out and need the new temporary password to sign in.');">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="reset_password">
+                                    <input type="hidden" name="user_id" value="{{ u.id }}">
+                                    <button type="submit" class="row-menu-item" role="menuitem">Reset password</button>
+                                </form>
+                                {% endif %}
+                                <div class="row-menu-divider" role="separator"></div>
+                                <form method="post" onsubmit="return confirm('{% if u == request.user %}Sign yourself out on all other devices?{% else %}Sign {{ u.username|escapejs }} out on every device? They will need to sign in again.{% endif %}');">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="sign_out_everywhere">
+                                    <input type="hidden" name="user_id" value="{{ u.id }}">
+                                    <button type="submit" class="row-menu-item danger" role="menuitem">Sign out everywhere</button>
+                                </form>
+                            </div>
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}
@@ -156,34 +221,63 @@
     </div>
 </div>
 
-<!-- Add Location Modal -->
-<div id="location-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); z-index:999; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
-    <div class="animate-fade-in-up" style="background:#fff; border-radius:12px; width:90%; max-width:400px; padding:2rem; box-shadow:0 10px 25px rgba(0,0,0,0.1); position:relative;">
-        <button onclick="closeLocationModal()" style="position:absolute; top:1.25rem; right:1.25rem; background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--text-muted);">&times;</button>
-        <h3 style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:700; margin-bottom:0.5rem;">Add New Location</h3>
-        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Register a new Warehouse or Manufacturing Facility in the system.</p>
+<!-- Add User Modal -->
+<div id="create-user-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); z-index:999; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
+    <div class="animate-fade-in-up" style="background:#fff; border-radius:12px; width:90%; max-width:600px; padding:2rem; box-shadow:0 10px 25px rgba(0,0,0,0.1); position:relative; max-height:90vh; overflow-y:auto;">
+        <button onclick="closeCreateUserModal()" style="position:absolute; top:1.25rem; right:1.25rem; background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        <h3 style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:700; margin-bottom:0.5rem;">Add User</h3>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">The app makes a temporary password and shows it to you once. The new user chooses their own password when they first sign in.</p>
 
         <form method="post">
             {% csrf_token %}
-            <input type="hidden" name="action" value="add_location">
+            <input type="hidden" name="action" value="create_user">
 
-            <div style="margin-bottom:1.25rem;">
-                <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">Location Name</label>
-                <input type="text" name="name" required class="form-input" placeholder="e.g. Facility Alpha" style="width:100%; padding:0.6rem 0.8rem; font-size:0.9rem; border-radius:6px; border:1px solid var(--border-light);">
+            <div style="margin-bottom:1rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">Username</label>
+                <input type="text" name="username" required maxlength="150" autocomplete="off" class="form-input" placeholder="e.g. aisyah" style="width:100%; padding:0.6rem 0.8rem; font-size:0.9rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem;">
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">First Name</label>
+                    <input type="text" name="first_name" maxlength="150" class="form-input" style="width:100%; padding:0.6rem 0.8rem; font-size:0.9rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">Last Name</label>
+                    <input type="text" name="last_name" maxlength="150" class="form-input" style="width:100%; padding:0.6rem 0.8rem; font-size:0.9rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
+            </div>
+            <div style="margin-bottom:1.5rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">Email (optional)</label>
+                <input type="email" name="email" data-email-field class="form-input" style="width:100%; padding:0.6rem 0.8rem; font-size:0.9rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
+
+            <div style="margin-bottom:1.5rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:0.75rem;">Roles</label>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
+                    {% for r in roles %}
+                    <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; cursor:pointer; padding:0.5rem; border:1px solid var(--border-light); border-radius:6px; background:#f8fafc;">
+                        <input type="checkbox" name="roles" value="{{ r.id }}">
+                        {{ r.name }}
+                    </label>
+                    {% endfor %}
+                </div>
             </div>
 
             <div style="margin-bottom:2rem;">
-                <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">Location Type</label>
-                <select name="location_type" required class="form-select" style="width:100%; padding:0.6rem 0.8rem; font-size:0.9rem; border-radius:6px; border:1px solid var(--border-light);">
-                    <option value="Storage">Storage (Warehouse)</option>
-                    <option value="Manufacturing">Manufacturing</option>
-                    <option value="Both">Storage &amp; Manufacturing</option>
-                </select>
+                <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:0.75rem;">Allowed Facilities</label>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; max-height:200px; overflow-y:auto; padding-right:0.5rem;">
+                    {% for w in warehouses %}
+                    <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; cursor:pointer; padding:0.5rem; border:1px solid var(--border-light); border-radius:6px; background:#f8fafc;">
+                        <input type="checkbox" name="locations" value="{{ w.id }}">
+                        {{ w.name }} <span style="font-size:0.7rem; color:var(--text-muted);">({{ w.get_location_type_display|default:w.location_type }})</span>
+                    </label>
+                    {% endfor %}
+                </div>
             </div>
 
-            <div style="display:flex; gap:1rem; justify-content:flex-end;">
-                <button type="button" class="btn btn-secondary" onclick="closeLocationModal()">Cancel</button>
-                <button type="submit" class="btn btn-primary">Add Location</button>
+            <div style="display:flex; gap:1rem; justify-content:flex-end; border-top:1px solid var(--border-light); padding-top:1.5rem;">
+                <button type="button" class="btn btn-secondary" onclick="closeCreateUserModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create User</button>
             </div>
         </form>
     </div>
@@ -208,16 +302,49 @@
         document.getElementById('user-modal').style.display = 'flex';
     }
     
+    function openCreateUserModal() {
+        document.getElementById('create-user-modal').style.display = 'flex';
+    }
+
+    function closeCreateUserModal() {
+        document.getElementById('create-user-modal').style.display = 'none';
+    }
+
     function closeUserModal() {
         document.getElementById('user-modal').style.display = 'none';
     }
-
-    function openLocationModal() {
-        document.getElementById('location-modal').style.display = 'flex';
+    // Row "more actions" menu: moved to <body> while open so the page's fade-in transforms can't clip or cover it.
+    let openRowMenu = null;
+    function closeRowMenu() {
+        if (!openRowMenu) return;
+        const { btn, list, home } = openRowMenu;
+        list.hidden = true;
+        home.appendChild(list);
+        btn.setAttribute('aria-expanded', 'false');
+        openRowMenu = null;
     }
-
-    function closeLocationModal() {
-        document.getElementById('location-modal').style.display = 'none';
+    function toggleRowMenu(btn, event) {
+        event.stopPropagation();
+        const wasOpen = openRowMenu && openRowMenu.btn === btn;
+        closeRowMenu();
+        if (wasOpen) return;
+        const home = btn.parentElement;
+        const list = home.querySelector('.row-menu-list');
+        document.body.appendChild(list);
+        list.hidden = false;
+        const r = btn.getBoundingClientRect();
+        const below = r.bottom + 6 + list.offsetHeight <= window.innerHeight;
+        list.style.top = (below ? r.bottom + 6 : r.top - 6 - list.offsetHeight) + 'px';
+        list.style.left = Math.max(8, r.right - list.offsetWidth) + 'px';
+        btn.setAttribute('aria-expanded', 'true');
+        openRowMenu = { btn, list, home };
+        list.querySelector('.row-menu-item').focus();
     }
+    document.addEventListener('click', e => { if (openRowMenu && !openRowMenu.list.contains(e.target)) closeRowMenu(); });
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && openRowMenu) { const b = openRowMenu.btn; closeRowMenu(); b.focus(); }
+    });
+    window.addEventListener('resize', closeRowMenu);
+    window.addEventListener('scroll', closeRowMenu, true);
 </script>
 {% endblock %}

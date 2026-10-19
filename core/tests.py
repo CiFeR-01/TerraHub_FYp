@@ -1912,7 +1912,6 @@ class ProductionRunDetailTests(TestCase):
         self.assertContains(resp, 'Allocate Materials')
 
 
-
 class StockoutForecastTests(TestCase):
     """Phase 2a: stockout_forecast() days-of-cover + reorder-by."""
 
@@ -5524,7 +5523,6 @@ class SOCommitmentTests(TestCase):
         self.assertEqual(extra.allocated_quantity, 0)
 
 
-
 # Material and product detail pages
 class MaterialDetailPageTests(TestCase):
     def setUp(self):
@@ -7332,3 +7330,825 @@ class RemainingPermissionTests(TestCase):
             so.refresh_from_db()
             self.assertEqual(so.status, status)
             self.assertFalse(StockAllocation.objects.filter(sales_order=so).exists())
+
+
+# ============================================================================
+# Shared fixtures for the critical-path tests (core/tests_critical.py) and the security tests below
+# ============================================================================
+from datetime import date, timedelta
+from decimal import Decimal
+from django.contrib.auth.models import Group
+from django.test import TestCase
+from django.urls import reverse
+from django.utils import timezone
+from core.models import (
+    Batch, Material, Product, ProductionRun, ProductRecipe, PurchaseOrder, PurchaseOrderDetail,
+    RegistryLog, SalesOrder, SalesOrderDetail, Shipment, ShipmentItem, StockAllocation, StockAudit, Warehouse,
+)
+from core.utils import allocate_stock, deduct_stock_from_allocation
+
+D = Decimal
+
+
+class CriticalBase(TestCase):
+    """Shared fixtures: an Admin, two Managers, a store, a plant, one product made from one material."""
+
+    def setUp(self):
+        self.admin = make_user(username='cr_admin', password='pw', role='Admin')
+        self.manager = make_user(username='cr_mgr', password='pw', role='Manager')
+        self.manager2 = make_user(username='cr_mgr2', password='pw', role='Manager')
+        self.store = Warehouse.objects.create(name='CR Store', location_type='Storage')
+        self.plant = Warehouse.objects.create(name='CR Plant', location_type='Manufacturing')
+        self.product = Product.objects.create(name='CR Product', sku='PRD-CR', unit_of_measure='kg', price_per_unit=1)
+        self.material = Material.objects.create(name='CR Mat', sku='MAT-CR', category='Bulk',
+                                                unit_of_measure='kg', safe_storage_days=365)
+        ProductRecipe.objects.create(product=self.product, material=self.material, quantity_required=2)
+        self.client.force_login(self.admin)
+
+    def as_user(self, user):
+        self.client.force_login(user)
+
+    def batch(self, number, qty, allocated=0, expires_in=200, wh=None, material=False, status='Active'):
+        item = {'material': self.material} if material else {'product': self.product}
+        return Batch.objects.create(batch_number=number, status=status, quantity=D(qty), allocated_quantity=D(allocated),
+                                    manufacturing_date=date.today() - timedelta(days=10),
+                                    expiry_date=date.today() + timedelta(days=expires_in),
+                                    warehouse=wh or self.store, **item)
+
+    def so(self, qty, status='Draft'):
+        so = SalesOrder.objects.create(so_number=f'SO-CR-{SalesOrder.objects.count()}', client_name='C',
+                                       origin_warehouse=self.store, status=status)
+        line = SalesOrderDetail.objects.create(sales_order=so, product=self.product, quantity_ordered=D(qty))
+        return so, line
+
+    def po(self, qty, status='Draft'):
+        po = PurchaseOrder.objects.create(po_number=f'PO-CR-{PurchaseOrder.objects.count()}', supplier_name='S',
+                                          target_warehouse=self.store, status=status)
+        line = PurchaseOrderDetail.objects.create(purchase_order=po, material=self.material, quantity_ordered=D(qty))
+        return po, line
+
+    def outbound(self, so, batch, qty, status='Arrived', **kw):
+        s = Shipment.objects.create(tracking_number=f'SHP-CR-{Shipment.objects.count()}', direction='Outbound',
+                                    status=status, origin_warehouse=batch.warehouse, sales_order=so, **kw)
+        item = ShipmentItem.objects.create(shipment=s, product=self.product, batch=batch, quantity=D(qty))
+        StockAllocation.objects.create(batch=batch, shipment=s, quantity=D(qty))
+        return s, item
+
+    def transfer(self, batch, qty, status='Arrived'):
+        s = Shipment.objects.create(tracking_number=f'SHP-CR-T{Shipment.objects.count()}', direction='Transfer',
+                                    status=status, origin_warehouse=batch.warehouse, destination_warehouse=self.plant)
+        item = ShipmentItem.objects.create(shipment=s, material=self.material, batch=batch, quantity=D(qty))
+        StockAllocation.objects.create(batch=batch, shipment=s, quantity=D(qty))
+        return s, item
+
+    def post(self, name, pk=None, **data):
+        return self.client.post(reverse(name, args=[pk] if pk is not None else []), data)
+
+    def decide(self, user, item_type, obj, action='approve'):
+        self.as_user(user)
+        self.post('approvals_inbox', action=action, item_type=item_type, item_id=obj.id)
+        obj.refresh_from_db()
+        return obj.status
+
+    def allocate_so(self, so, line, batch, qty, **extra):
+        return self.post('so_allocate', so.pk, action='allocate_manual', **{f'batch_qty_{line.id}_{batch.id}': qty}, **extra)
+
+    def refresh(self, *objs):
+        for o in objs:
+            o.refresh_from_db()
+
+
+# ============================================================================
+# Security hardening (review items 4-9)
+# ============================================================================
+# Security hardening tests (review items 4-9): settings guard, login throttling, deny-by-default actions,
+# public batch page and the notifications redirect.
+import ast
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+from django.conf import settings
+from django.core.cache import cache
+from django.test import RequestFactory, TestCase, override_settings
+from django.urls import reverse
+from core.permissions import ACTION_PERMS, action_denied
+
+LOCMEM = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache', 'LOCATION': 'login-throttle-tests'}}
+
+
+class SettingsGuardTests(TestCase):
+    def test_production_refuses_to_start_without_secret_key(self):
+        env = {**os.environ, 'DEBUG': 'False', 'SECRET_KEY': ''}
+        result = subprocess.run([sys.executable, '-c', 'import TerraHub.settings'], cwd=settings.BASE_DIR,
+                                env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('SECRET_KEY must be set', result.stderr)
+
+
+@override_settings(CACHES=LOCMEM, LOGIN_FAIL_LIMIT=3, LOGIN_LOCKOUT_SECONDS=900)
+class LoginThrottleTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = make_user(username='victim', password='right-pw')
+
+    def post_login(self, password, ip='10.0.0.1'):
+        return self.client.post(reverse('login'), {'username': 'victim', 'password': password}, REMOTE_ADDR=ip)
+
+    def test_locks_after_repeated_failures_even_with_right_password(self):
+        for _ in range(3):
+            self.post_login('wrong')
+        response = self.post_login('right-pw')
+        self.assertContains(response, 'Too many failed sign-in attempts')
+        self.assertNotIn('_auth_user_id', self.client.session)
+
+    def test_lock_also_applies_to_admin_login(self):
+        self.user.is_staff = True
+        self.user.save()
+        for _ in range(3):
+            self.post_login('wrong')
+        response = self.client.post('/admin/login/', {'username': 'victim', 'password': 'right-pw'},
+                                    REMOTE_ADDR='10.0.0.1')
+        self.assertEqual(response.status_code, 200)  # form shown again, not a redirect into admin
+        self.assertNotIn('_auth_user_id', self.client.session)
+
+    def test_other_ip_can_still_sign_in_until_username_cap(self):
+        for _ in range(3):
+            self.post_login('wrong', ip='10.0.0.1')
+        response = self.post_login('right-pw', ip='10.0.0.2')
+        self.assertEqual(response.status_code, 302)
+
+    def test_username_cap_applies_across_ips(self):
+        for i in range(12):  # 4x the limit, spread over many addresses
+            self.post_login('wrong', ip=f'10.0.1.{i}')
+        response = self.post_login('right-pw', ip='10.0.9.9')
+        self.assertContains(response, 'Too many failed sign-in attempts')
+
+    def test_success_clears_failures(self):
+        for _ in range(2):
+            self.post_login('wrong')
+        self.assertEqual(self.post_login('right-pw').status_code, 302)
+        self.client.logout()
+        for _ in range(2):
+            self.post_login('wrong')
+        self.assertEqual(self.post_login('right-pw').status_code, 302)
+
+
+class DenyByDefaultActionTests(CriticalBase):
+    def post(self, page, action):
+        request = RequestFactory().post('/', {'action': action})
+        request.user = self.admin
+        return action_denied(request, page)
+
+    def test_unlisted_action_is_refused(self):
+        self.assertIsNotNone(self.post('so_detail', 'some_new_action'))
+
+    def test_listed_actions_still_allowed(self):
+        self.assertIsNone(self.post('so_detail', 'add_so_item'))
+        self.assertIsNone(self.post('shipment_detail', 'approve'))  # checked inside the view
+
+    def test_posts_without_action_are_untouched(self):
+        request = RequestFactory().post('/', {})
+        request.user = self.admin
+        self.assertIsNone(action_denied(request, 'so_detail'))
+
+    def test_every_action_a_view_handles_is_listed(self):
+        """Guards the deny-by-default list: a new `action == '...'` branch must be added to ACTION_PERMS."""
+        src = (Path(settings.BASE_DIR) / 'core' / 'views.py').read_text(encoding='utf-8')
+        missing = {}
+        for node in ast.parse(src).body:
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            body = ast.get_source_segment(src, node)
+            page = re.search(r"action_denied\(request, '(\w+)'\)", body)
+            if not page:
+                continue
+            handled = set()
+            for cmp in ast.walk(node):
+                if isinstance(cmp, ast.Compare) and 'action' in ast.get_source_segment(src, cmp.left):
+                    for c in cmp.comparators:
+                        elts = c.elts if isinstance(c, (ast.Tuple, ast.List, ast.Set)) else [c]
+                        handled |= {e.value for e in elts if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+            unlisted = handled - set(ACTION_PERMS.get(page.group(1), {}))
+            if unlisted:
+                missing[page.group(1)] = sorted(unlisted)
+        self.assertEqual(missing, {})
+
+    def test_own_check_actions_are_not_hidden(self):
+        viewer = make_user(username='sec_viewer', password='pw')
+        self.as_user(viewer)
+        so, _ = self.so(1)
+        response = self.client.get(reverse('so_detail', args=[so.pk]))
+        self.assertNotIn('add_follower', response.context['denied_actions'])
+
+
+class PublicBatchPageTests(CriticalBase):
+    def setUp(self):
+        super().setUp()
+        po, _ = self.po(5, status='Received')
+        po.supplier_name = 'Secret Supplier Sdn Bhd'
+        po.save()
+        self.lot = self.batch('BATCH-SEC-1', 5, material=True)
+        self.lot.purchase_order = po
+        self.lot.location = 'Aisle 7 Bin 3'
+        self.lot.save()
+        self.url = reverse('batch_public_info', args=[self.lot.batch_number])
+
+    def test_anonymous_sees_no_supplier_or_bin(self):
+        self.client.logout()
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Secret Supplier')
+        self.assertNotContains(response, 'Aisle 7 Bin 3')
+        self.assertContains(response, 'CR Store')
+
+    def test_signed_in_staff_still_see_everything(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Secret Supplier')
+        self.assertContains(response, 'Aisle 7 Bin 3')
+
+
+class NotificationRedirectTests(CriticalBase):
+    def test_external_referer_is_not_followed(self):
+        response = self.client.post(reverse('mark_notifications_read'), HTTP_REFERER='https://evil.example/phish')
+        self.assertEqual(response.url, reverse('home'))
+
+    def test_same_site_referer_is_followed(self):
+        response = self.client.post(reverse('mark_notifications_read'), HTTP_REFERER='http://testserver/dashboard/')
+        self.assertEqual(response.url, 'http://testserver/dashboard/')
+
+
+# ============================================================================
+# AI Copilot briefing hub
+# ============================================================================
+# Tests for the AI Copilot briefing hub (assistant/briefing/hub/).
+#
+# Kept apart from core/tests.py on purpose; run with
+# `python manage.py test core.tests_briefing_hub`.
+import os
+from unittest import mock
+from django.test import TestCase, Client
+from django.urls import reverse
+from core.models import OpsBriefing
+from core import briefing as briefing_mod
+
+def _fake_signals(category, **kwargs):
+    return {"category": category, "signal_count": 1, "sections": {}}
+
+
+class BriefingHubTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.url = reverse('briefing_hub')
+        self.plain = make_user(username='hubplain', password='pw')
+        self.manager = make_user(username='hubmgr', password='pw', role='Manager')
+
+    def _ajax_post(self, data):
+        return self.client.post(self.url, data, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+
+    def test_login_required(self):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn('login', resp['Location'])
+
+    def test_plain_user_sees_six_cards_without_generate_all(self):
+        self.client.login(username='hubplain', password='pw')
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        for label in ('Materials', 'Products', 'Sales', 'Purchase', 'Logistics', 'Warehouse'):
+            self.assertContains(resp, label)
+        self.assertNotContains(resp, 'Generate all six')
+
+    def test_manager_sees_generate_all(self):
+        self.client.login(username='hubmgr', password='pw')
+        resp = self.client.get(self.url)
+        self.assertContains(resp, 'Generate all six')
+
+    def test_failed_run_after_good_one_shows_stale(self):
+        OpsBriefing.objects.create(category='sales', status='ok', headline='Sales fine', signal_count=1)
+        OpsBriefing.objects.create(category='sales', status='error', error_detail='Boom from API')
+        self.client.login(username='hubplain', password='pw')
+        resp = self.client.get(self.url)
+        self.assertContains(resp, 'Last run failed')
+        self.assertContains(resp, 'Boom from API')
+        self.assertContains(resp, 'Sales fine')
+
+    def test_empty_run_shows_all_clear(self):
+        OpsBriefing.objects.create(category='warehouse', status='empty', headline='All clear')
+        self.client.login(username='hubplain', password='pw')
+        resp = self.client.get(self.url)
+        self.assertContains(resp, 'All clear')
+
+    def test_plain_user_cannot_generate_category(self):
+        self.client.login(username='hubplain', password='pw')
+        resp = self._ajax_post({'category': 'sales'})
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(OpsBriefing.objects.filter(category='sales').exists())
+
+    def test_manager_generates_category_as_json(self):
+        self.client.login(username='hubmgr', password='pw')
+        with mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
+                mock.patch.object(briefing_mod, 'collect_signals', _fake_signals), \
+                mock.patch.object(briefing_mod, 'render_prompt', lambda s, period='daily': 'x'), \
+                mock.patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            resp = self._ajax_post({'category': 'sales', 'period': 'daily'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['category'], 'sales')
+        self.assertEqual(data['status'], 'ok')
+        self.assertTrue(OpsBriefing.objects.filter(category='sales', status='ok').exists())
+
+    def test_unknown_category_rejected(self):
+        self.client.login(username='hubmgr', password='pw')
+        resp = self._ajax_post({'category': 'nonsense'})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_any_user_can_generate_own_checklist(self):
+        self.client.login(username='hubplain', password='pw')
+        resp = self._ajax_post({'category': 'my_checklist'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(OpsBriefing.objects.filter(category='my_checklist', generated_by=self.plain).exists())
+
+    def test_plain_form_post_redirects_back_to_hub(self):
+        self.client.login(username='hubplain', password='pw')
+        resp = self.client.post(self.url, {'category': 'my_checklist'})
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(resp['Location'].startswith(self.url))
+
+    def test_sidebar_links_to_hub(self):
+        self.client.login(username='hubplain', password='pw')
+        resp = self.client.get(reverse('dashboard'))
+        self.assertContains(resp, self.url)
+
+    def test_bogus_open_param_ignored(self):
+        self.client.login(username='hubplain', password='pw')
+        resp = self.client.get(self.url + '?open=<script>')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, '<script>"')
+        self.assertEqual(resp.context['open_key'], '')
+
+
+# ============================================================================
+# Decision Support sidebar group
+# ============================================================================
+# Decision Support sidebar group: the four recommending pages sit together, apart from the Analytics scorecards.
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
+from django.test import TestCase
+from django.urls import reverse
+
+User = get_user_model()
+
+DSS_ORDER = ['rent_opportunities', 'forecast', 'capacity_forecast', 'so_delivery_risk']
+
+
+def _group(resp, group_id):
+    return next((g for g in resp.context['nav_groups'] if g['id'] == group_id), None)
+
+
+class DecisionSupportNavTests(TestCase):
+
+    def setUp(self):
+        self.admin = User.objects.create_user(username='dssadmin', password='pw', is_superuser=True)
+
+    def test_dss_group_lists_four_pages_rent_first(self):
+        self.client.login(username='dssadmin', password='pw')
+        dss = _group(self.client.get(reverse('dashboard')), 'dss')
+        self.assertEqual([i['url_name'] for i in dss['items']], DSS_ORDER)
+        self.assertEqual(dss['label'], 'Decision Support')
+
+    def test_analytics_group_no_longer_holds_dss_pages(self):
+        self.client.login(username='dssadmin', password='pw')
+        analytics = _group(self.client.get(reverse('dashboard')), 'analytics')
+        names = set()
+        for item in analytics['items']:
+            names.add(item['url_name'])
+            names.update(item.get('alias_url_names', []))
+        self.assertFalse(names & set(DSS_ORDER))
+        self.assertIn('supplier_scorecard', names)
+
+    def test_dss_page_tabs_show_dss_siblings_and_active_link(self):
+        self.client.login(username='dssadmin', password='pw')
+        resp = self.client.get(reverse('rent_opportunities'))
+        self.assertEqual(resp.context['analytics_category'], 'Decision Support')
+        self.assertEqual([u for u, _ in resp.context['analytics_tabs']], DSS_ORDER)
+        active = [i['url_name'] for i in _group(resp, 'dss')['items'] if i['active']]
+        self.assertEqual(active, ['rent_opportunities'])
+
+    def test_dss_items_follow_permissions(self):
+        user = User.objects.create_user(username='dsswh', password='pw')
+        user.user_permissions.add(Permission.objects.get(codename='view_warehouse', content_type__app_label='core'))
+        self.client.login(username='dsswh', password='pw')
+        dss = _group(self.client.get(reverse('dashboard')), 'dss')
+        self.assertEqual([i['url_name'] for i in dss['items']], ['rent_opportunities', 'capacity_forecast'])
+
+
+# ============================================================================
+# Admin password reset and changing your own password
+# ============================================================================
+# Admin password reset with a temporary password, and the forced change at next sign-in.
+from datetime import timedelta
+from django.test import TestCase
+from django.urls import reverse
+from django.utils import timezone
+from core.account import TEMP_PASSWORD_ALPHABET, TEMP_PASSWORD_LENGTH
+from core.models import CustomUser
+
+class PasswordResetTests(TestCase):
+    def setUp(self):
+        self.admin = make_user(username='pr_admin', password='admin-pw-123', role='Admin')
+        self.worker = make_user(username='pr_worker', password='old-pw-12345', role='Sales')
+        self.client.force_login(self.admin)
+
+    def reset(self, user):
+        return self.client.post(reverse('user_management'), {'action': 'reset_password', 'user_id': user.id})
+
+    def issue(self):
+        self.reset(self.worker)
+        page = self.client.get(reverse('user_management'))
+        return page, page.context['temp_password_issued']['password']
+
+    def test_reset_makes_readable_nine_char_password_shown_once(self):
+        page, temp = self.issue()
+        self.assertEqual(len(temp), TEMP_PASSWORD_LENGTH)
+        self.assertTrue(set(temp) <= set(TEMP_PASSWORD_ALPHABET))
+        self.assertContains(page, temp)
+        self.assertNotContains(self.client.get(reverse('user_management')), temp)
+        self.worker.refresh_from_db()
+        self.assertTrue(self.worker.must_change_password)
+        self.assertTrue(self.worker.check_password(temp))
+        self.assertFalse(self.worker.check_password('old-pw-12345'))
+
+    def test_reset_signs_the_user_out_everywhere(self):
+        other = self.client_class()
+        other.force_login(self.worker)
+        self.issue()
+        self.assertEqual(other.get(reverse('dashboard')).status_code, 302)
+        self.assertNotIn('_auth_user_id', other.session)
+
+    def test_user_must_choose_new_password_before_anything_else(self):
+        _, temp = self.issue()
+        self.client.logout()
+        self.assertTrue(self.client.login(username='pr_worker', password=temp))
+        self.assertRedirects(self.client.get(reverse('dashboard')), reverse('password_change'))
+        page = self.client.get(reverse('password_change'))
+        self.assertNotContains(page, 'name="old_password"')  # just signed in with it, not asked again
+
+        same = self.client.post(reverse('password_change'), {'new_password1': temp, 'new_password2': temp})
+        self.assertContains(same, 'not the temporary one')
+
+        new = 'river-stone-42'
+        done = self.client.post(reverse('password_change'), {'new_password1': new, 'new_password2': new})
+        self.assertRedirects(done, reverse('dashboard'), fetch_redirect_response=False)
+        self.assertEqual(self.client.get(reverse('dashboard')).status_code, 200)  # still signed in, no redirect
+        self.worker.refresh_from_db()
+        self.assertFalse(self.worker.must_change_password)
+        self.assertTrue(self.worker.check_password(new))
+
+    def test_logout_still_works_while_change_is_pending(self):
+        _, temp = self.issue()
+        self.client.logout()
+        self.client.login(username='pr_worker', password=temp)
+        self.client.post(reverse('logout'))
+        self.assertNotIn('_auth_user_id', self.client.session)
+
+    def test_unused_temporary_password_expires(self):
+        _, temp = self.issue()
+        CustomUser.objects.filter(pk=self.worker.pk).update(temp_password_set_at=timezone.now() - timedelta(hours=25))
+        self.client.logout()
+        response = self.client.post(reverse('login'), {'username': 'pr_worker', 'password': temp})
+        self.assertContains(response, 'temporary password has expired')
+        self.assertNotIn('_auth_user_id', self.client.session)
+
+    def test_cannot_reset_own_password_from_users_page(self):
+        self.reset(self.admin)
+        self.admin.refresh_from_db()
+        self.assertFalse(self.admin.must_change_password)
+        self.assertTrue(self.admin.check_password('admin-pw-123'))
+
+    def test_cannot_reset_someone_with_more_powers(self):
+        boss = make_user(username='pr_boss', password='boss-pw-123', is_superuser=True)
+        self.reset(boss)
+        boss.refresh_from_db()
+        self.assertTrue(boss.check_password('boss-pw-123'))
+
+    def test_user_without_manage_users_cannot_reset(self):
+        self.client.force_login(self.worker)
+        victim = make_user(username='pr_victim', password='victim-pw-1', role='Sales')
+        self.reset(victim)
+        victim.refresh_from_db()
+        self.assertTrue(victim.check_password('victim-pw-1'))
+
+
+class OwnPasswordChangeTests(TestCase):
+    def setUp(self):
+        self.user = make_user(username='pc_user', password='old-pw-12345', role='Sales')
+        self.client.force_login(self.user)
+
+    def test_normal_change_needs_current_password(self):
+        wrong = self.client.post(reverse('password_change'), {
+            'old_password': 'nope', 'new_password1': 'river-stone-42', 'new_password2': 'river-stone-42'})
+        self.assertEqual(wrong.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('old-pw-12345'))
+
+        ok = self.client.post(reverse('password_change'), {
+            'old_password': 'old-pw-12345', 'new_password1': 'river-stone-42', 'new_password2': 'river-stone-42'})
+        self.assertRedirects(ok, reverse('profile'), fetch_redirect_response=False)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('river-stone-42'))
+
+    def test_profile_links_to_change_password(self):
+        self.assertContains(self.client.get(reverse('profile')), reverse('password_change'))
+
+
+# ============================================================================
+# Users page: creating accounts, unique emails and the user audit log
+# ============================================================================
+# Users page: creating accounts, the edit guard, unique emails, and the user audit log.
+from django.contrib.auth.models import Group, Permission
+from django.test import TestCase
+from django.urls import reverse
+from core.models import CustomUser, UserAuditLog, Warehouse
+
+class UserAdminBase(TestCase):
+    def setUp(self):
+        self.admin = make_user(username='ua_admin', password='admin-pw-123', role='Admin')
+        self.store = Warehouse.objects.create(name='UA Store', location_type='Storage')
+        self.sales = Group.objects.get(name='Sales')
+        self.admin_group = Group.objects.get(name='Admin')
+        self.client.force_login(self.admin)
+
+    def post(self, **data):
+        return self.client.post(reverse('user_management'), data)
+
+    def limited_editor(self):
+        """Someone who may manage users but holds no other powers."""
+        group, _ = Group.objects.get_or_create(name='UA User Managers')
+        group.permissions.set([Permission.objects.get(codename='manage_users')])
+        return make_user(username='ua_limited', password='pw-limited-1', role='UA User Managers')
+
+    def actions(self, user):
+        return list(UserAuditLog.objects.filter(target=user).order_by('id').values_list('action', flat=True))
+
+
+class CreateUserTests(UserAdminBase):
+    def create(self, **extra):
+        data = {'action': 'create_user', 'username': 'newbie', 'first_name': 'New', 'last_name': 'Bie',
+                'email': 'newbie@example.com', 'roles': [self.sales.id], 'locations': [self.store.id]}
+        data.update(extra)
+        return self.client.post(reverse('user_management'), data)
+
+    def test_creates_account_with_temporary_password_shown_once(self):
+        self.create()
+        page = self.client.get(reverse('user_management'))
+        issued = page.context['temp_password_issued']
+        self.assertTrue(issued['new_account'])
+        self.assertContains(page, 'Account newbie created')
+        user = CustomUser.objects.get(username='newbie')
+        self.assertTrue(user.must_change_password)
+        self.assertTrue(user.check_password(issued['password']))
+        self.assertEqual(list(user.groups.all()), [self.sales])
+        self.assertEqual(list(user.allowed_locations.all()), [self.store])
+        self.assertEqual(self.actions(user), ['created'])
+        entry = UserAuditLog.objects.get(target=user)
+        self.assertEqual(entry.actor, self.admin)
+        self.assertIn('Sales', entry.details)
+
+    def test_new_user_must_choose_password_at_first_sign_in(self):
+        self.create()
+        password = self.client.get(reverse('user_management')).context['temp_password_issued']['password']
+        self.client.logout()
+        self.client.login(username='newbie', password=password)
+        self.assertRedirects(self.client.get(reverse('dashboard')), reverse('password_change'))
+
+    def test_username_taken_ignoring_case(self):
+        make_user(username='Newbie', password='x-pw-12345')
+        self.create()
+        self.assertEqual(CustomUser.objects.filter(username__iexact='newbie').count(), 1)
+
+    def test_bad_username_refused(self):
+        self.create(username='has space')
+        self.assertFalse(CustomUser.objects.filter(username='has space').exists())
+
+    def test_email_taken_refused(self):
+        make_user(username='other', password='x-pw-12345', email='NEWBIE@example.com')
+        self.create()
+        self.assertFalse(CustomUser.objects.filter(username='newbie').exists())
+
+    def test_cannot_give_role_with_powers_you_lack(self):
+        self.client.force_login(self.limited_editor())
+        self.create(roles=[self.admin_group.id])
+        self.assertFalse(CustomUser.objects.filter(username='newbie').exists())
+
+    def test_needs_manage_users(self):
+        self.client.force_login(make_user(username='ua_sales', password='pw-sales-12', role='Sales'))
+        self.create()
+        self.assertFalse(CustomUser.objects.filter(username='newbie').exists())
+
+
+class EditUserTests(UserAdminBase):
+    def setUp(self):
+        super().setUp()
+        self.worker = make_user(username='ua_worker', password='pw-worker-1', role='Sales')
+
+    def test_edit_logs_roles_facilities_and_deactivation(self):
+        logistics = Group.objects.get(name='Logistics')
+        self.post(action='update_user', user_id=self.worker.id, roles=[self.sales.id, logistics.id],
+                  locations=[self.store.id], is_active='on')
+        self.assertEqual(self.actions(self.worker), ['roles_changed', 'locations_changed'])
+        roles = UserAuditLog.objects.get(target=self.worker, action='roles_changed')
+        self.assertEqual(roles.details, 'Sales -> Logistics, Sales')
+
+        self.post(action='update_user', user_id=self.worker.id, roles=[self.sales.id, logistics.id],
+                  locations=[self.store.id], is_active='')
+        self.assertEqual(self.actions(self.worker)[-1], 'deactivated')
+
+    def test_saving_without_changes_logs_nothing(self):
+        self.post(action='update_user', user_id=self.worker.id, roles=[self.sales.id], is_active='on')
+        self.assertEqual(self.actions(self.worker), [])
+
+    def test_cannot_deactivate_someone_with_more_powers(self):
+        self.client.force_login(self.limited_editor())
+        self.post(action='update_user', user_id=self.admin.id, roles=[self.admin_group.id])
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_active)
+        self.assertEqual(self.actions(self.admin), [])
+
+    def test_reset_and_forced_change_are_logged(self):
+        self.post(action='reset_password', user_id=self.worker.id)
+        password = self.client.get(reverse('user_management')).context['temp_password_issued']['password']
+        self.client.logout()
+        self.client.login(username='ua_worker', password=password)
+        self.client.post(reverse('password_change'), {'new_password1': 'river-stone-42', 'new_password2': 'river-stone-42'})
+        self.assertEqual(self.actions(self.worker), ['password_reset', 'password_changed'])
+        self.assertEqual(UserAuditLog.objects.get(action='password_changed').actor, self.worker)
+
+
+class ProfileTests(UserAdminBase):
+    def test_email_already_used_is_refused(self):
+        make_user(username='other', password='x-pw-12345', email='taken@example.com')
+        self.client.post(reverse('profile'), {'first_name': '', 'last_name': '', 'email': 'TAKEN@example.com'})
+        self.admin.refresh_from_db()
+        self.assertNotEqual(self.admin.email.lower(), 'taken@example.com')
+
+    def test_profile_change_is_logged(self):
+        self.client.post(reverse('profile'), {'first_name': 'Ada', 'last_name': '', 'email': 'ada@example.com'})
+        entry = UserAuditLog.objects.get(target=self.admin, action='profile_changed')
+        self.assertIn("Email: '' -> 'ada@example.com'", entry.details)
+
+
+class AuditLogPageTests(UserAdminBase):
+    def test_lists_and_filters_by_user(self):
+        worker = make_user(username='ua_worker', password='pw-worker-1', role='Sales')
+        self.post(action='reset_password', user_id=worker.id)
+        self.post(action='create_user', username='someone', roles=[self.sales.id])
+        page = self.client.get(reverse('user_audit_log'))
+        self.assertEqual([e.action for e in page.context['entries']], ['created', 'password_reset'])
+        self.assertContains(page, 'someone')
+        only_worker = self.client.get(reverse('user_audit_log'), {'user': worker.id})
+        self.assertContains(only_worker, 'History for ua_worker')
+        self.assertEqual([e.action for e in only_worker.context['entries']], ['password_reset'])
+
+    def test_needs_manage_users(self):
+        self.client.force_login(make_user(username='ua_sales', password='pw-sales-12', role='Sales'))
+        self.assertRedirects(self.client.get(reverse('user_audit_log')), reverse('dashboard'), fetch_redirect_response=False)
+
+
+# ============================================================================
+# System Settings page (sections, Admin access, change log, reset) and Users page extras
+# (last sign-in, Unlock, Sign out everywhere)
+# ============================================================================
+import time
+
+from django.core.cache import cache
+
+from core.settings_store import ALL_SETTINGS, SECTIONS
+
+
+class SettingsPageTests(TestCase):
+    def setUp(self):
+        self.admin = make_user(username='sp_admin', password='admin-pw-123', role='Admin')
+        self.client.force_login(self.admin)
+
+    def save(self, **data):
+        return self.client.post(reverse('system_settings'), data, follow=True)
+
+    def test_admin_without_superuser_can_open_grouped_page(self):
+        page = self.client.get(reverse('system_settings'))
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, 'Security &amp; sign-in')
+        self.assertContains(page, 'login_fail_limit')
+        self.assertContains(page, 'Rent opportunities')
+
+    def test_non_admin_is_refused(self):
+        self.client.force_login(make_user(username='sp_sales', password='pw-sales-12', role='Sales'))
+        self.assertRedirects(self.client.get(reverse('system_settings')), reverse('dashboard'))
+
+    def test_every_setting_is_in_exactly_one_section(self):
+        placed = [k for _, keys in SECTIONS for k in keys]
+        self.assertEqual(sorted(placed), sorted(ALL_SETTINGS))
+
+    def test_change_is_logged_and_unchanged_values_are_not(self):
+        self.save(po_default_lead_time_days='21')
+        entry = UserAuditLog.objects.get(action='setting_changed')
+        self.assertEqual(entry.details, 'po_default_lead_time_days: 14 -> 21')
+        self.assertEqual(entry.actor, self.admin)
+        self.save(po_default_lead_time_days='21', so_at_risk_window_days='7')
+        self.assertEqual(UserAuditLog.objects.filter(action='setting_changed').count(), 1)
+
+    def test_reset_to_default(self):
+        self.save(login_fail_limit='8')
+        self.assertEqual(get_setting('login_fail_limit'), 8)
+        self.save(reset_key='login_fail_limit', login_fail_limit='9')  # other posted values are ignored on reset
+        self.assertEqual(get_setting('login_fail_limit'), 5)
+        self.assertFalse(SystemSetting.objects.filter(key='login_fail_limit').exists())
+        self.assertIn('reset to default', UserAuditLog.objects.filter(action='setting_changed').latest('id').details)
+
+    def test_out_of_range_values_refused(self):
+        page = self.save(login_fail_limit='1', session_idle_timeout_minutes='45')
+        self.assertContains(page, 'must be between')
+        self.assertEqual(get_setting('login_fail_limit'), 5)
+        self.assertEqual(get_setting('session_idle_timeout_minutes'), 30)
+
+    @override_settings(CACHES=LOCMEM)
+    def test_fail_limit_setting_drives_lockout(self):
+        cache.clear()
+        self.save(login_fail_limit='3')
+        make_user(username='sp_target', password='right-pw-123')
+        self.client.logout()
+        for _ in range(3):
+            self.client.post(reverse('login'), {'username': 'sp_target', 'password': 'wrong'}, REMOTE_ADDR='10.1.1.1')
+        response = self.client.post(reverse('login'), {'username': 'sp_target', 'password': 'right-pw-123'},
+                                    REMOTE_ADDR='10.1.1.1')
+        self.assertContains(response, 'Too many failed sign-in attempts')
+
+    def test_shorter_idle_timeout_signs_out(self):
+        self.save(session_idle_timeout_minutes='5')
+        self.assertEqual(self.client.get(reverse('dashboard')).status_code, 200)
+        session = self.client.session
+        session['_last_seen'] = int(time.time()) - 6 * 60
+        session.save()
+        response = self.client.get(reverse('dashboard'))
+        self.assertRedirects(response, reverse('login') + '?reason=idle', fetch_redirect_response=False)
+        self.assertNotIn('_auth_user_id', self.client.session)
+
+    def test_default_idle_timeout_keeps_active_user(self):
+        session = self.client.session
+        session['_last_seen'] = int(time.time()) - 6 * 60
+        session.save()
+        self.assertEqual(self.client.get(reverse('dashboard')).status_code, 200)
+
+
+@override_settings(CACHES=LOCMEM)
+class UsersPageExtrasTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.admin = make_user(username='ux_admin', password='admin-pw-123', role='Admin')
+        self.worker = make_user(username='ux_worker', password='worker-pw-12', role='Sales')
+        self.client.force_login(self.admin)
+
+    def post(self, **data):
+        return self.client.post(reverse('user_management'), data)
+
+    def test_last_sign_in_column(self):
+        page = self.client.get(reverse('user_management'))
+        self.assertContains(page, 'Last Sign-in')
+        self.assertContains(page, 'Never')
+
+    def test_unlock_clears_lockout(self):
+        other = self.client_class()
+        for _ in range(5):
+            other.post(reverse('login'), {'username': 'ux_worker', 'password': 'wrong'}, REMOTE_ADDR='10.2.2.2')
+        self.assertContains(self.client.get(reverse('user_management')), 'Locked out')
+        self.post(action='unlock_user', user_id=self.worker.id)
+        self.assertNotContains(self.client.get(reverse('user_management')), 'Locked out')
+        response = other.post(reverse('login'), {'username': 'ux_worker', 'password': 'worker-pw-12'}, REMOTE_ADDR='10.2.2.2')
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(UserAuditLog.objects.filter(target=self.worker, action='unlocked').exists())
+
+    def test_sign_out_everywhere(self):
+        other = self.client_class()
+        other.force_login(self.worker)
+        self.post(action='sign_out_everywhere', user_id=self.worker.id)
+        self.assertEqual(other.get(reverse('dashboard')).status_code, 302)
+        entry = UserAuditLog.objects.get(target=self.worker, action='signed_out_everywhere')
+        self.assertEqual(entry.details, '1 session ended')
+
+    def test_sign_out_everywhere_on_yourself_keeps_this_browser(self):
+        other = self.client_class()
+        other.force_login(self.admin)
+        self.post(action='sign_out_everywhere', user_id=self.admin.id)
+        self.assertEqual(self.client.get(reverse('dashboard')).status_code, 200)
+        self.assertEqual(other.get(reverse('dashboard')).status_code, 302)
+
+    def test_cannot_sign_out_someone_with_more_powers(self):
+        boss = make_user(username='ux_boss', password='boss-pw-123', is_superuser=True)
+        boss_client = self.client_class()
+        boss_client.force_login(boss)
+        limited, _ = Group.objects.get_or_create(name='UX User Managers')
+        limited.permissions.set([Permission.objects.get(codename='manage_users')])
+        self.client.force_login(make_user(username='ux_limited', password='pw-limited-1', role='UX User Managers'))
+        self.post(action='sign_out_everywhere', user_id=boss.id)
+        self.assertEqual(boss_client.get(reverse('dashboard')).status_code, 200)

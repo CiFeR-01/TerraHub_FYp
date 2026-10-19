@@ -13,7 +13,7 @@ from django.views.decorators.http import require_POST
 
 from . import analytics
 from .analytics_cache import invalidate as invalidate_analytics_cache
-from .context_processors import ANALYTICS_CATEGORIES, _perm_ok
+from .context_processors import ANALYTICS_CATEGORIES, DECISION_SUPPORT_PAGES, _perm_ok
 from .models import RentSuggestion, Warehouse
 from .settings_store import get_setting
 from .utils import create_rent_transfer, dismiss_rent_suggestions
@@ -61,8 +61,8 @@ def _estimate_note(parts, total):
 
 
 def _analytics_tabs(request, url_name):
-    """(category_label, [(url_name, label), ...]) for the sibling reports in `url_name`'s category that `request.user` can see (source: ANALYTICS_CATEGORIES in core/context_processors.py)."""
-    for category_label, items in ANALYTICS_CATEGORIES:
+    """(category_label, [(url_name, label), ...]) for the sibling reports in `url_name`'s category that `request.user` can see (source: DECISION_SUPPORT_PAGES and ANALYTICS_CATEGORIES in core/context_processors.py)."""
+    for category_label, items in [("Decision Support", DECISION_SUPPORT_PAGES)] + ANALYTICS_CATEGORIES:
         names = [item[0] for item in items]
         if url_name in names:
             visible = [(u, label) for u, label, perm in items if _perm_ok(request.user, perm)]

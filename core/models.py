@@ -32,6 +32,9 @@ class CustomUser(AbstractUser):
     allowed_locations = models.ManyToManyField('Warehouse', blank=True, related_name='allowed_users')
     updated_by = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_users')
     updated_at = models.DateTimeField(auto_now=True)
+    # Set by an admin password reset (core.account): the user must choose a new password at next sign-in.
+    must_change_password = models.BooleanField(default=False)
+    temp_password_set_at = models.DateTimeField(null=True, blank=True)
 
     @property
     def role_label(self):
@@ -612,6 +615,38 @@ class StockAllocation(models.Model):
 
     def __str__(self):
         return f"Allocated {self.quantity} from {self.batch.batch_number}"
+
+
+class UserAuditLog(models.Model):
+    """History of account and System Settings changes: who did what, to which user, and when.
+    Written by core.account.log_user_change / log_setting_change (setting rows have no target user)."""
+    ACTION_CHOICES = (
+        ('created', 'Account created'),
+        ('password_reset', 'Password reset by admin'),
+        ('password_changed', 'Password changed'),
+        ('roles_changed', 'Roles changed'),
+        ('locations_changed', 'Facilities changed'),
+        ('activated', 'Account activated'),
+        ('deactivated', 'Account deactivated'),
+        ('profile_changed', 'Profile changed'),
+        ('unlocked', 'Sign-in lockout cleared'),
+        ('signed_out_everywhere', 'Signed out everywhere'),
+        ('setting_changed', 'System setting changed'),
+    )
+    # The username is copied so the history still reads right if the account is later renamed or deleted.
+    target = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='audit_entries')
+    target_username = models.CharField(max_length=150)
+    actor = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    action = models.CharField(max_length=30, choices=ACTION_CHOICES)
+    details = models.TextField(blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+    def __str__(self):
+        return f"{self.created_at:%Y-%m-%d %H:%M} {self.get_action_display()}: {self.target_username}"
 
 
 class SystemSetting(models.Model):
