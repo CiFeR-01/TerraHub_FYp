@@ -153,9 +153,11 @@
 <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.05s;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700;">Material Line Items</h3>
+        {% if not items_locked %}
         <button onclick="var f=document.getElementById('add-po-item'); f.style.display=f.style.display==='none'?'block':'none';" class="btn btn-primary" style="padding:0.4rem 0.9rem; font-size:0.82rem;">
             ✚ Add Line Item
         </button>
+        {% endif %}
     </div>
 
     <!-- Add Item Form -->
@@ -231,12 +233,14 @@
                         {% if po.status not in unapproved_statuses %}
                         <button onclick="(function(){var el=document.getElementById('recv-{{ row.item.id }}');el.style.display=el.style.display==='none'?'block':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--text-muted); margin-right:0.3rem;">📥 Receive</button>
                         {% endif %}
+                        {% if not items_locked %}
                         <form method="post" style="display:inline;">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="remove_po_item">
                             <input type="hidden" name="item_id" value="{{ row.item.id }}">
                             <button type="submit" onclick="return confirm('Remove {{ row.item.material.name }} from this order?')" style="background:none; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:#dc2626;">✕</button>
                         </form>
+                        {% endif %}
                     </td>
                 </tr>
                 <!-- Receive quantity mini-form -->

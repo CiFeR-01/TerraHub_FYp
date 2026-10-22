@@ -344,7 +344,7 @@
         </div>
         
         <!-- Add Item Form -->
-        {% if shipment.status not in 'Cancelled,Completed,Arrived,Delivered' %}
+        {% if not cargo_locked %}
           <div style="padding: 1.5rem; background:#f8fafc; border-top: 1px solid var(--border-light);">
               <h4 style="margin-top:0; margin-bottom:1rem; font-size:0.95rem;">➕ Add Cargo Line Item</h4>
               <form method="POST" style="display:grid; grid-template-columns: auto 1fr 1.2fr 100px 100px; gap: 1rem; align-items:start;">
@@ -423,7 +423,7 @@
                         {% endfor %}
                     </tbody>
                 </table>
-                <div id="no_stock_msg" style="display:none; text-align:center; padding:1rem; color:var(--text-muted);">No stock available.</div>
+                <div id="no_stock_msg" style="display:none; text-align:center; padding:1rem; color:var(--text-muted);">No stock available{% if shipment.origin_warehouse and shipment.direction != 'Inbound' %} at {{ shipment.origin_warehouse.name }}. Stock held elsewhere has to be moved here with an internal transfer first{% endif %}.</div>
             </div>
         </div>
         {% endif %}

@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% load static quantity_extras %}
+
+{% block title %}{{ supplier.name }} - Supplier - TerraHub{% endblock %}
+
+{% block content %}
+<div class="party-page">
+<header class="dashboard-header-row animate-fade-in-up">
+    <div style="display:flex; justify-content:space-between; align-items:center; width:100%; flex-wrap:wrap; gap:1rem;">
+        <div>
+            <nav class="breadcrumb-nav">
+                <a href="{% url 'dashboard' %}">Dashboard</a>
+                <span class="separator">/</span>
+                <a href="{% url 'supplier_list' %}">Suppliers</a>
+                <span class="separator">/</span>
+                <span class="current-page">{{ supplier.name }}</span>
+            </nav>
+            <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
+                {{ supplier.name }}
+                {% if not supplier.is_active %}<span class="badge badge-danger" style="vertical-align:middle; margin-left:0.5rem;">Archived</span>{% endif %}
+            </h1>
+        </div>
+        {% if perms.core.change_supplier %}
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="toggle_active">
+            <button type="submit" class="btn btn-secondary" style="padding:0.4rem 0.85rem; font-size:0.8rem;">{% if supplier.is_active %}Archive supplier{% else %}Restore supplier{% endif %}</button>
+        </form>
+        {% endif %}
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="kpi-strip">
+    <div class="kpi-card"><div class="kpi-label">Purchase orders</div><div class="kpi-value">{{ po_rows|length }}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Value ordered</div><div class="kpi-value">RM {{ total_value|floatformat:2 }}</div><div class="kpi-sub">Approved POs, priced lines</div></div>
+    <div class="kpi-card"><div class="kpi-label">On time</div><div class="kpi-value">{% if on_time_rate is not None %}{{ on_time_rate }}%{% else %}&mdash;{% endif %}</div><div class="kpi-sub">Of POs with goods received</div></div>
+    <div class="kpi-card"><div class="kpi-label">Materials supplied</div><div class="kpi-value">{{ supplied|length }}</div></div>
+</div>
+
+<div class="detail-grid">
+    <div class="detail-card">
+        <div class="section-title">Supplier details</div>
+        {% if perms.core.change_supplier %}
+        <form method="post" action="{% url 'supplier_edit' supplier.pk %}" id="party-form">
+            {% csrf_token %}
+            <label class="field-label">Supplier name</label>
+            <input type="text" name="name" required value="{{ supplier.name }}" class="form-input field-input">
+            <label class="field-label">Contact person</label>
+            <input type="text" name="contact_person" value="{{ supplier.contact_person|default:'' }}" class="form-input field-input">
+            <label class="field-label">Phone</label>
+            <div class="phone-field" data-phone-field id="party_phone_field"><select name="phone_country" aria-label="Country code"></select><input type="tel" name="phone" autocomplete="tel" aria-label="Phone number" class="form-input field-input"></div>
+            <label class="field-label">Email</label>
+            <input type="email" name="email" data-email-field autocomplete="email" value="{{ supplier.email|default:'' }}" class="form-input field-input">
+            <label class="field-label">Address</label>
+            <textarea name="address" rows="2" class="form-input field-input" style="resize:vertical;">{{ supplier.address|default:'' }}</textarea>
+            <div style="text-align:right; margin-top:0.75rem;"><button type="submit" class="btn btn-primary">Save details</button></div>
+        </form>
+        {% else %}
+        <dl class="info-list">
+            <dt>Contact person</dt><dd>{{ supplier.contact_person|default:"—" }}</dd>
+            <dt>Phone</dt><dd>{{ supplier.phone|default:"—" }}</dd>
+            <dt>Email</dt><dd>{{ supplier.email|default:"—" }}</dd>
+            <dt>Address</dt><dd>{{ supplier.address|default:"—" }}</dd>
+        </dl>
+        {% endif %}
+    </div>
+
+    <div class="detail-card">
+        <div class="section-title">Materials supplied</div>
+        <p class="kpi-sub" style="margin:0;">Usual price and lead time. The lead time feeds the supplier scorecard and the stock-out forecast.</p>
+        <div class="table-scroll">
+            <table class="mini-table">
+                <thead><tr><th>Material</th><th class="num">Unit price (RM)</th><th class="num">Lead time (days)</th>{% if perms.core.change_supplier %}<th></th>{% endif %}</tr></thead>
+                <tbody>
+                    {% for sm in supplied %}
+                    <tr>
+                        <td><a href="{% url 'material_detail' sm.material.pk %}" style="color:var(--primary); text-decoration:none; font-weight:600;">{{ sm.material.name }}</a> <span class="kpi-sub">{{ sm.material.sku }}</span></td>
+                        {% if perms.core.change_supplier %}
+                        <td class="num"><input form="sm-{{ sm.pk }}" type="number" name="unit_price" min="0" step="0.01" value="{{ sm.unit_price|default_if_none:'' }}" class="form-input num-input"></td>
+                        <td class="num"><input form="sm-{{ sm.pk }}" type="number" name="lead_time_days" min="0" step="1" value="{{ sm.lead_time_days|default_if_none:'' }}" class="form-input num-input"></td>
+                        <td class="num" style="white-space:nowrap;">
+                            <form id="sm-{{ sm.pk }}" method="post" style="display:inline;">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="save_material">
+                                <input type="hidden" name="material_id" value="{{ sm.material.pk }}">
+                                <button type="submit" class="btn btn-secondary btn-xs">Save</button>
+                            </form>
+                            <form method="post" style="display:inline;" onsubmit="return confirm('Remove {{ sm.material.name|escapejs }} from this supplier?')">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="remove_material">
+                                <input type="hidden" name="supplier_material_id" value="{{ sm.pk }}">
+                                <button type="submit" class="btn btn-xs btn-remove">✕</button>
+                            </form>
+                        </td>
+                        {% else %}
+                        <td class="num">{{ sm.unit_price|default_if_none:"—" }}</td>
+                        <td class="num">{{ sm.lead_time_days|default_if_none:"—" }}</td>
+                        {% endif %}
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="4" class="empty-note">No materials recorded for this supplier yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if perms.core.change_supplier and materials %}
+        <form method="post" class="add-row">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="save_material">
+            <select name="material_id" required class="form-select field-input" style="flex:2;">
+                <option value="">Add a material…</option>
+                {% for m in materials %}<option value="{{ m.pk }}">{{ m.name }} ({{ m.sku }})</option>{% endfor %}
+            </select>
+            <input type="number" name="unit_price" min="0" step="0.01" placeholder="Price" class="form-input num-input">
+            <input type="number" name="lead_time_days" min="0" step="1" placeholder="Days" class="form-input num-input">
+            <button type="submit" class="btn btn-primary btn-xs">Add</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<div class="detail-card" style="margin-top:1.5rem;">
+    <div class="section-title">Purchase history</div>
+    <div class="table-scroll">
+        <table class="mini-table">
+            <thead><tr><th>PO</th><th>Ordered</th><th>Status</th><th>Expected</th><th>Arrived</th><th>Delivery</th><th class="num">Value (RM)</th></tr></thead>
+            <tbody>
+                {% for r in po_rows %}
+                <tr class="row-link" onclick="if (!event.target.closest('a, button')) window.location.href='{% url 'po_detail' r.po.pk %}'">
+                    <td><a href="{% url 'po_detail' r.po.pk %}" style="color:var(--primary); font-weight:700; text-decoration:none;">{{ r.po.po_number }}</a></td>
+                    <td>{{ r.po.order_date }}</td>
+                    <td>{{ r.po.status }}</td>
+                    <td>{{ r.expected|default:"—" }}{% if r.estimated %} <span class="kpi-sub" title="No expected date on the PO; estimated from the lead time">(est.)</span>{% endif %}</td>
+                    <td>{{ r.arrival|default:"—" }}</td>
+                    <td>{% if r.late_days is None %}<span class="kpi-sub">&mdash;</span>{% elif r.late_days <= 0 %}<span class="badge badge-success">On time</span>{% else %}<span class="badge badge-warning">{{ r.late_days }}d late</span>{% endif %}</td>
+                    <td class="num">{{ r.po.total_value|floatformat:2 }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7" class="empty-note">No purchase orders from this supplier yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="detail-card" style="margin-top:1.5rem;">
+    <div class="section-title">Materials bought</div>
+    <div class="table-scroll">
+        <table class="mini-table">
+            <thead><tr><th>Material</th><th class="num">Ordered</th><th class="num">Received</th><th class="num">Value (RM)</th></tr></thead>
+            <tbody>
+                {% for b in bought %}
+                <tr>
+                    <td><a href="{% url 'material_detail' b.material.pk %}" style="color:var(--primary); text-decoration:none; font-weight:600;">{{ b.material.name }}</a></td>
+                    <td class="num">{{ b.ordered|qty_display:2 }} {{ b.material.unit_of_measure }}</td>
+                    <td class="num">{{ b.received|qty_display:2 }} {{ b.material.unit_of_measure }}</td>
+                    <td class="num">{{ b.value|floatformat:2 }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="4" class="empty-note">Nothing bought from this supplier yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% if perms.core.change_supplier %}
+<script src="{% static 'js/vendor/libphonenumber-max.js' %}"></script>
+<script src="{% static 'js/vendor/phone-examples.js' %}"></script>
+<script src="{% static 'js/contact-validation.js' %}"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        ContactValidation.setPhone(document.getElementById('party_phone_field'), '{{ supplier.phone|default:""|escapejs }}');
+    });
+</script>
+{% endif %}
+{% endblock %}

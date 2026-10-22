@@ -19,7 +19,7 @@ Usage: {% include "partials/_pagination.html" with page_obj=suppliers page_qs=pa
         <span>Showing {{ page_obj.start_index }}&ndash;{{ page_obj.end_index }} of {{ page_obj.paginator.count }} {{ noun|default:"results" }}</span>
         <label style="display:flex; align-items:center; gap:0.35rem;">
             Rows per page
-            <select onchange="var u=new URL(window.location); u.searchParams.set('page_size', this.value); u.searchParams.delete('page'); window.location=u;" class="form-select" style="padding:0.2rem 0.4rem; border-radius:4px; border:1px solid var(--border-light); font-size:0.8rem;">
+            <select onchange="var u=new window.URL(window.location.href); u.searchParams.set('page_size', this.value); u.searchParams.delete('page'); window.location=u;" class="form-select" style="padding:0.2rem 0.4rem; border-radius:4px; border:1px solid var(--border-light); font-size:0.8rem;">
                 <option value="25" {% if page_size == 25 %}selected{% endif %}>25</option>
                 <option value="50" {% if page_size == 50 %}selected{% endif %}>50</option>
                 <option value="100" {% if page_size == 100 %}selected{% endif %}>100</option>

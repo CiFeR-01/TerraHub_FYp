@@ -3895,6 +3895,12 @@ class FinishedGoodsFefoAllocationTests(TestCase):
         self.assertEqual(self._allocated(), {'FG-NEW': Decimal('400')})
         self.assertTrue(OrderTimeline.objects.filter(sales_order=self.so, action__contains='Client wants the later expiry').exists())
 
+    def test_batches_with_the_same_expiry_are_interchangeable(self):
+        self.newer.expiry_date = self.older.expiry_date
+        self.newer.save()
+        self._post('', '284')
+        self.assertEqual(self._allocated(), {'FG-NEW': Decimal('284')})
+
     def test_cannot_allocate_more_than_order_needs(self):
         self._post('284', '200', reason='x')
         self.assertEqual(self._allocated(), {})
@@ -4015,6 +4021,12 @@ class ProcessControlTests(TestCase):
         return so
 
     # --- approvals
+    def test_following_tab_shows_unassigned_po(self):
+        po = self.PurchaseOrder.objects.create(po_number='PO-PC-F', target_warehouse=self.wh, status='Pending')
+        po.followers.add(self.manager)
+        r = self._as(self.manager).get(reverse('approvals_inbox') + '?tab=following')
+        self.assertContains(r, 'Unassigned')
+
     def test_manager_can_self_approve_and_it_is_marked(self):
         from core.models import OrderTimeline
         so = self._so()
@@ -5773,6 +5785,19 @@ class ShipmentsPaginationTests(TestCase):
         self.assertEqual(resp.context['shipments'].paginator.count, 1)
         resp = self.client.get(reverse('shipments'), {'sort': 'tracking_number'})
         self.assertEqual(resp.context['shipments'][0].tracking_number, 'TRK-00')
+
+    def test_row_flags_overdue_eta_and_empty_items_and_sorts_by_eta(self):
+        today = timezone.localdate()
+        Shipment.objects.filter(tracking_number='TRK-05').update(expected_eta_date=today - timedelta(days=2))
+        Shipment.objects.filter(tracking_number='TRK-06').update(expected_eta_date=today - timedelta(days=5),
+                                                                 status='Arrived')
+        resp = self.client.get(reverse('shipments'), {'q': 'TRK-05'})
+        self.assertContains(resp, 'title="ETA has passed"')
+        self.assertContains(resp, 'NO ITEMS')
+        resp = self.client.get(reverse('shipments'), {'q': 'TRK-06'})
+        self.assertNotContains(resp, 'title="ETA has passed"')
+        resp = self.client.get(reverse('shipments'), {'sort': 'expected_eta_date'})
+        self.assertEqual(resp.context['shipments'][0].tracking_number, 'TRK-06')
 
 
 class RegistryLedgerPaginationTests(TestCase):
@@ -8152,3 +8177,111 @@ class UsersPageExtrasTests(TestCase):
         self.client.force_login(make_user(username='ux_limited', password='pw-limited-1', role='UX User Managers'))
         self.post(action='sign_out_everywhere', user_id=boss.id)
         self.assertEqual(boss_client.get(reverse('dashboard')).status_code, 200)
+
+
+class PoLineRemovalTests(TestCase):
+    """PO lines lock once goods arrive, and a line can't go while a delivery still carries it."""
+
+    def setUp(self):
+        from core.models import Shipment, ShipmentItem
+        self.user = make_user(username='poboss', password='pw', role='Manager')
+        self.client = Client()
+        self.client.login(username='poboss', password='pw')
+        wh = Warehouse.objects.create(name='PO Lines WH', location_type='Storage')
+        self.mat = Material.objects.create(name='Line Mat', sku='MAT-LINE', unit_of_measure='kg', safe_storage_days=365)
+        self.po = PurchaseOrder.objects.create(po_number='PO-LINES', supplier_name='S', target_warehouse=wh, status='Pending')
+        self.line = PurchaseOrderDetail.objects.create(purchase_order=self.po, material=self.mat, quantity_ordered=Decimal('10'))
+        self.ship = Shipment.objects.create(tracking_number='SHP-LINES', direction='Inbound', status='Dispatched',
+                                            purchase_order=self.po, destination_warehouse=wh)
+        ShipmentItem.objects.create(shipment=self.ship, material=self.mat, quantity=Decimal('10'))
+
+    def _remove(self):
+        return self.client.post(reverse('po_detail', args=[self.po.pk]), {'action': 'remove_po_item', 'item_id': self.line.id})
+
+    def test_line_on_an_open_delivery_cannot_be_removed(self):
+        self._remove()
+        self.assertTrue(PurchaseOrderDetail.objects.filter(pk=self.line.pk).exists())
+
+    def test_line_can_go_once_the_delivery_is_cancelled(self):
+        self.ship.status = 'Cancelled'
+        self.ship.save()
+        self._remove()
+        self.assertFalse(PurchaseOrderDetail.objects.filter(pk=self.line.pk).exists())
+
+    def test_partially_received_po_hides_the_remove_button(self):
+        self.po.status = 'Partially Received'
+        self.po.save()
+        resp = self.client.get(reverse('po_detail', args=[self.po.pk]))
+        self.assertNotContains(resp, 'value="remove_po_item"')
+
+    def test_delivery_only_takes_materials_on_its_po(self):
+        from core.models import ShipmentItem
+        other = Material.objects.create(name='Stray Mat', sku='MAT-STRAY', unit_of_measure='kg', safe_storage_days=365)
+        url = reverse('shipment_detail', args=[self.ship.pk])
+        self.client.post(url, {'action': 'add_item', 'material_id': other.id, 'quantity': '5'})
+        self.assertFalse(ShipmentItem.objects.filter(shipment=self.ship, material=other).exists())
+        self.client.post(url, {'action': 'add_item', 'material_id': self.mat.id, 'quantity': '5'})
+        self.assertEqual(ShipmentItem.objects.filter(shipment=self.ship, material=self.mat).count(), 2)
+
+
+class PartyDetailPageTests(TestCase):
+    """Supplier page: editable materials supplied + PO history. Client page: read-only order history."""
+
+    def setUp(self):
+        from core.models import Client as ClientModel
+        self.client = Client()
+        self.boss = make_user(username='partyboss', password='pw', role='Manager')
+        self.viewer = make_user(username='partyview', password='pw', role='Staff (Viewer)')
+        self.client.force_login(self.boss)
+        self.wh = Warehouse.objects.create(name='Party WH', location_type='Storage')
+        self.mat = Material.objects.create(name='Party Mat', sku='MAT-PARTY', unit_of_measure='kg', safe_storage_days=365)
+        self.supplier = Supplier.objects.create(name='Party Supplier')
+        self.customer = ClientModel.objects.create(name='Party Client')
+        self.po = PurchaseOrder.objects.create(po_number='PO-PARTY', supplier_name='Party Supplier', supplier=self.supplier,
+                                               target_warehouse=self.wh, status='Pending')
+        PurchaseOrderDetail.objects.create(purchase_order=self.po, material=self.mat, quantity_ordered=Decimal('10'), unit_price=Decimal('3'))
+        PurchaseOrder.objects.create(po_number='PO-OTHER', supplier_name='Party Supplier', target_warehouse=self.wh, status='Pending')
+        self.so = SalesOrder.objects.create(so_number='SO-PARTY', client_name='Party Client', client=self.customer,
+                                            origin_warehouse=self.wh, status='Pending')
+
+    def _url(self):
+        return reverse('supplier_detail', args=[self.supplier.pk])
+
+    def test_supplier_page_lists_only_linked_pos(self):
+        resp = self.client.get(self._url())
+        self.assertContains(resp, 'PO-PARTY')
+        self.assertNotContains(resp, 'PO-OTHER')
+        self.assertEqual(resp.context['total_value'], Decimal('30'))
+
+    def test_materials_supplied_can_be_added_updated_and_removed(self):
+        from core.models import SupplierMaterial
+        self.client.post(self._url(), {'action': 'save_material', 'material_id': self.mat.pk, 'unit_price': '4.50', 'lead_time_days': '7'})
+        sm = SupplierMaterial.objects.get(supplier=self.supplier, material=self.mat)
+        self.assertEqual((sm.unit_price, sm.lead_time_days), (Decimal('4.50'), 7))
+        self.client.post(self._url(), {'action': 'save_material', 'material_id': self.mat.pk, 'unit_price': '', 'lead_time_days': '10'})
+        sm.refresh_from_db()
+        self.assertEqual((sm.unit_price, sm.lead_time_days), (None, 10))
+        self.client.post(self._url(), {'action': 'remove_material', 'supplier_material_id': sm.pk})
+        self.assertFalse(SupplierMaterial.objects.filter(pk=sm.pk).exists())
+
+    def test_bad_lead_time_is_rejected(self):
+        from core.models import SupplierMaterial
+        self.client.post(self._url(), {'action': 'save_material', 'material_id': self.mat.pk, 'lead_time_days': '2.5'})
+        self.assertFalse(SupplierMaterial.objects.exists())
+
+    def test_viewer_cannot_change_materials(self):
+        from core.models import SupplierMaterial
+        self.client.force_login(self.viewer)
+        self.client.post(self._url(), {'action': 'save_material', 'material_id': self.mat.pk, 'lead_time_days': '7'})
+        self.assertFalse(SupplierMaterial.objects.exists())
+        self.assertNotContains(self.client.get(self._url()), 'value="save_material"')
+
+    def test_editing_details_returns_to_the_page(self):
+        resp = self.client.post(reverse('supplier_edit', args=[self.supplier.pk]), {'name': 'Party Supplier Ltd'})
+        self.assertRedirects(resp, self._url())
+
+    def test_client_page_shows_its_orders_and_list_rows_link_to_it(self):
+        url = reverse('client_detail', args=[self.customer.pk])
+        self.assertContains(self.client.get(url), 'SO-PARTY')
+        self.assertContains(self.client.get(reverse('client_list')), url)
+        self.assertContains(self.client.get(reverse('supplier_list')), self._url())

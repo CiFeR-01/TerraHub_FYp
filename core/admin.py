@@ -2,12 +2,27 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from .models import (
     CustomUser, Warehouse, WarehouseLocation, Material, Product,
-    ProductRecipe, ProductionRun, ProductionConsumption, Batch,
+    ProductRecipe, ProductionRun, Batch,
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
-    Shipment, StockAudit, RegistryLog, OrderTimeline, Notification,
-    Supplier, SupplierMaterial, Client, SystemSetting, WarehouseUtilizationSnapshot,
+    Shipment, ShipmentItem, StockAllocation,
+    Supplier, SupplierMaterial, Client, SystemSetting,
     OpsBriefing, RentSuggestion,
 )
+
+
+class ReadOnlyAdmin(admin.ModelAdmin):
+    """View-only: these rows are written by the app's own flows (stock moves, status rules, timeline),
+    so editing them here would bypass that logic and leave stock out of step."""
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 class CustomUserAdmin(UserAdmin):
     model = CustomUser
@@ -28,28 +43,29 @@ class CustomUserAdmin(UserAdmin):
         return super().get_queryset(request).prefetch_related('groups')
 
 admin.site.register(CustomUser, CustomUserAdmin)
+
+# Master data: safe to fix by hand.
 admin.site.register(Warehouse)
 admin.site.register(WarehouseLocation)
 admin.site.register(Material)
 admin.site.register(Product)
 admin.site.register(ProductRecipe)
-admin.site.register(ProductionRun)
-admin.site.register(ProductionConsumption)
-admin.site.register(PurchaseOrder)
-admin.site.register(SalesOrder)
-admin.site.register(SalesOrderDetail)
-admin.site.register(Shipment)
-admin.site.register(StockAudit)
-admin.site.register(RegistryLog)
-admin.site.register(OrderTimeline)
-admin.site.register(Notification)
 admin.site.register(Supplier)
 admin.site.register(SupplierMaterial)
 admin.site.register(Client)
 
+# Transactions: view-only, for checking data while debugging.
+for _model in (ProductionRun, PurchaseOrder, SalesOrder, SalesOrderDetail,
+               Shipment, ShipmentItem, StockAllocation):
+    admin.site.register(_model, ReadOnlyAdmin)
+
+# Left out on purpose: logs and ledgers (ProductionConsumption, ShipmentItemReceipt, StockAudit,
+# RegistryLog, OrderTimeline, Notification, UserAuditLog,
+# WarehouseUtilizationSnapshot, BriefingTick) and run detail rows. Editing them desyncs stock or history.
+
 
 @admin.register(Batch)
-class BatchAdmin(admin.ModelAdmin):
+class BatchAdmin(ReadOnlyAdmin):
     list_display = ('batch_number', 'status', 'material', 'product', 'quantity',
                      'warehouse', 'rental_rate_per_mt', 'closed_date', 'expiry_date')
     list_filter = ('status', 'warehouse')
@@ -57,18 +73,11 @@ class BatchAdmin(admin.ModelAdmin):
 
 
 @admin.register(PurchaseOrderDetail)
-class PurchaseOrderDetailAdmin(admin.ModelAdmin):
+class PurchaseOrderDetailAdmin(ReadOnlyAdmin):
     list_display = ('purchase_order', 'material', 'quantity_ordered', 'quantity_received',
                      'unit_price', 'negotiated_rental_rate_per_mt')
     list_filter = ('purchase_order__status',)
     search_fields = ('purchase_order__po_number', 'material__sku')
-
-
-@admin.register(WarehouseUtilizationSnapshot)
-class WarehouseUtilizationSnapshotAdmin(admin.ModelAdmin):
-    list_display = ('warehouse', 'snapshot_date', 'utilization_percent', 'used_mt', 'capacity_mt')
-    list_filter = ('warehouse', 'snapshot_date')
-    date_hierarchy = 'snapshot_date'
 
 
 @admin.register(SystemSetting)
@@ -90,23 +99,17 @@ class SystemSettingAdmin(admin.ModelAdmin):
         super().save_model(request, obj, form, change)
 
 
+# History the app only partly shows (last 8 briefings per page; dismissed rent moves only as a count).
 @admin.register(OpsBriefing)
-class OpsBriefingAdmin(admin.ModelAdmin):
+class OpsBriefingAdmin(ReadOnlyAdmin):
     list_display = ('generated_at', 'category', 'period', 'status', 'model_id',
                     'signal_count', 'input_tokens', 'output_tokens', 'generated_by', 'headline')
     list_filter = ('category', 'status', 'period', 'model_id')
     date_hierarchy = 'generated_at'
-    readonly_fields = ('generated_at', 'category', 'period', 'status', 'headline', 'body_text',
-                       'signals_json', 'signal_count', 'model_id', 'input_tokens',
-                       'output_tokens', 'error_detail', 'generated_by')
-
-    def has_add_permission(self, request):
-        # Created by generate_ops_briefing / the briefing page, never hand-typed.
-        return False
 
 
 @admin.register(RentSuggestion)
-class RentSuggestionAdmin(admin.ModelAdmin):
+class RentSuggestionAdmin(ReadOnlyAdmin):
     list_display = ('decided_at', 'decision', 'batch_number', 'origin_warehouse', 'destination_warehouse',
                     'move_mt', 'est_daily_saving', 'dismiss_reason', 'decided_by', 'shipment')
     list_filter = ('decision', 'dismiss_reason', 'origin_warehouse')

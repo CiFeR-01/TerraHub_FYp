@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% load static quantity_extras %}
+
+{% block title %}{{ client.name }} - Client - TerraHub{% endblock %}
+
+{% block content %}
+<div class="party-page">
+<header class="dashboard-header-row animate-fade-in-up">
+    <div style="display:flex; justify-content:space-between; align-items:center; width:100%; flex-wrap:wrap; gap:1rem;">
+        <div>
+            <nav class="breadcrumb-nav">
+                <a href="{% url 'dashboard' %}">Dashboard</a>
+                <span class="separator">/</span>
+                <a href="{% url 'client_list' %}">Clients</a>
+                <span class="separator">/</span>
+                <span class="current-page">{{ client.name }}</span>
+            </nav>
+            <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
+                {{ client.name }}
+                {% if not client.is_active %}<span class="badge badge-danger" style="vertical-align:middle; margin-left:0.5rem;">Archived</span>{% endif %}
+            </h1>
+        </div>
+        {% if perms.core.change_client %}
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="toggle_active">
+            <button type="submit" class="btn btn-secondary" style="padding:0.4rem 0.85rem; font-size:0.8rem;">{% if client.is_active %}Archive client{% else %}Restore client{% endif %}</button>
+        </form>
+        {% endif %}
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="kpi-strip">
+    <div class="kpi-card"><div class="kpi-label">Sales orders</div><div class="kpi-value">{{ sales_orders|length }}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Value ordered</div><div class="kpi-value">RM {{ total_value|floatformat:2 }}</div><div class="kpi-sub">Approved orders, priced lines</div></div>
+    <div class="kpi-card"><div class="kpi-label">Products bought</div><div class="kpi-value">{{ bought|length }}</div></div>
+</div>
+
+<div class="detail-grid">
+    <div class="detail-card">
+        <div class="section-title">Client details</div>
+        {% if perms.core.change_client %}
+        <form method="post" action="{% url 'client_edit' client.pk %}">
+            {% csrf_token %}
+            <label class="field-label">Client name</label>
+            <input type="text" name="name" required value="{{ client.name }}" class="form-input field-input">
+            <label class="field-label">Contact person</label>
+            <input type="text" name="contact_person" value="{{ client.contact_person|default:'' }}" class="form-input field-input">
+            <label class="field-label">Phone</label>
+            <div class="phone-field" data-phone-field id="party_phone_field"><select name="phone_country" aria-label="Country code"></select><input type="tel" name="phone" autocomplete="tel" aria-label="Phone number" class="form-input field-input"></div>
+            <label class="field-label">Email</label>
+            <input type="email" name="email" data-email-field autocomplete="email" value="{{ client.email|default:'' }}" class="form-input field-input">
+            <label class="field-label">Delivery address</label>
+            <textarea name="delivery_address" rows="2" class="form-input field-input" style="resize:vertical;">{{ client.delivery_address|default:'' }}</textarea>
+            <div style="text-align:right; margin-top:0.75rem;"><button type="submit" class="btn btn-primary">Save details</button></div>
+        </form>
+        {% else %}
+        <dl class="info-list">
+            <dt>Contact person</dt><dd>{{ client.contact_person|default:"—" }}</dd>
+            <dt>Phone</dt><dd>{{ client.phone|default:"—" }}</dd>
+            <dt>Email</dt><dd>{{ client.email|default:"—" }}</dd>
+            <dt>Delivery address</dt><dd>{{ client.delivery_address|default:"—" }}</dd>
+        </dl>
+        {% endif %}
+    </div>
+
+    <div class="detail-card">
+        <div class="section-title">Products bought</div>
+        <div class="table-scroll">
+            <table class="mini-table">
+                <thead><tr><th>Product</th><th class="num">Ordered</th><th class="num">Shipped</th><th class="num">Value (RM)</th></tr></thead>
+                <tbody>
+                    {% for b in bought %}
+                    <tr>
+                        <td style="font-weight:600;">{{ b.product.name }} <span class="kpi-sub">{{ b.product.sku }}</span></td>
+                        <td class="num">{{ b.ordered|qty_display:2 }} {{ b.product.unit_of_measure }}</td>
+                        <td class="num">{{ b.shipped|qty_display:2 }} {{ b.product.unit_of_measure }}</td>
+                        <td class="num">{{ b.value|floatformat:2 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="4" class="empty-note">No approved orders from this client yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="detail-card" style="margin-top:1.5rem;">
+    <div class="section-title">Order history</div>
+    <div class="table-scroll">
+        <table class="mini-table">
+            <thead><tr><th>Order</th><th>Ordered</th><th>Status</th><th>Deadline</th><th>From</th><th class="num">Value (RM)</th></tr></thead>
+            <tbody>
+                {% for so in sales_orders %}
+                <tr class="row-link" onclick="if (!event.target.closest('a, button')) window.location.href='{% url 'so_detail' so.pk %}'">
+                    <td><a href="{% url 'so_detail' so.pk %}" style="color:var(--primary); font-weight:700; text-decoration:none;">{{ so.so_number }}</a></td>
+                    <td>{{ so.order_date }}</td>
+                    <td>{{ so.status }}</td>
+                    <td>{{ so.fulfillment_deadline|default:"—" }}</td>
+                    <td>{{ so.origin_warehouse.name }}</td>
+                    <td class="num">{{ so.total_value|floatformat:2 }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" class="empty-note">No sales orders for this client yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% if perms.core.change_client %}
+<script src="{% static 'js/vendor/libphonenumber-max.js' %}"></script>
+<script src="{% static 'js/vendor/phone-examples.js' %}"></script>
+<script src="{% static 'js/contact-validation.js' %}"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        ContactValidation.setPhone(document.getElementById('party_phone_field'), '{{ client.phone|default:""|escapejs }}');
+    });
+</script>
+{% endif %}
+{% endblock %}
