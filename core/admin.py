@@ -4,7 +4,7 @@ from .models import (
     CustomUser, Warehouse, WarehouseLocation, Material, Product,
     ProductRecipe, ProductionRun, ProductionConsumption, Batch,
     PurchaseOrder, PurchaseOrderDetail, SalesOrder, SalesOrderDetail,
-    Shipment, StockAudit, RegistryLog, OrderTimeline, Notification,
+    Shipment, ShipmentItem, ShipmentItemReceipt, StockAllocation, StockAudit, RegistryLog, OrderTimeline, Notification,
     Supplier, SupplierMaterial, Client, SystemSetting, WarehouseUtilizationSnapshot,
     OpsBriefing, RentSuggestion,
 )
@@ -39,6 +39,9 @@ admin.site.register(PurchaseOrder)
 admin.site.register(SalesOrder)
 admin.site.register(SalesOrderDetail)
 admin.site.register(Shipment)
+admin.site.register(ShipmentItem)
+admin.site.register(ShipmentItemReceipt)
+admin.site.register(StockAllocation)
 admin.site.register(StockAudit)
 admin.site.register(RegistryLog)
 admin.site.register(OrderTimeline)

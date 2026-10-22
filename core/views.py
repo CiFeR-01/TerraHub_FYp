@@ -5122,6 +5122,8 @@ def shipment_detail_view(request, pk):
         'materials': materials,
         'products': products,
         'batches': batches,
+        # Same rule as the add_item/remove_item guard above
+        'cargo_locked': shipment.status in ('Cancelled', 'Completed', 'Arrived') or (shipment.direction != 'Inbound' and shipment.status in SHIPMENT_CARGO_LOCKED),
         'managers': managers,
         'all_users': all_users,
         'can_self_approve': request.user.has_perm(APPROVE_SHIPMENTS),
