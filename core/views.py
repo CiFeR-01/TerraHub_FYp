@@ -49,7 +49,8 @@ def apply_list_sort(request, qs, fields, default):
     expr = fields[key]
     if isinstance(expr, str):
         expr = F(expr)
-    qs = qs.order_by(expr.desc() if desc else expr.asc(), '-id')
+    # Blank values (e.g. no ETA) sit at the bottom either way, on SQLite and Postgres alike.
+    qs = qs.order_by(expr.desc(nulls_last=True) if desc else expr.asc(nulls_last=True), '-id')
 
     keep = request.GET.copy()
     keep.pop('page', None)
@@ -3129,15 +3130,15 @@ def so_detail_view(request, pk):
             status__in=['Pending Approval', 'Pending Allocation', 'Awaiting Materials', 'Planned', 'InProgress', 'Paused']
         ).aggregate(s=Sum('expected_yield'))['s'] or 0)
 
+        # Deficit is always what this order still lacks; free stock only drives the Draft badge
         if so.status in ['Ready to Ship', 'Shipped', 'Delivered', 'Cancelled']:
             deficit = 0.0
         else:
-            if so.status in ['Draft', 'Pending Approval']:
-                deficit = float(item.quantity_ordered) - global_avail - incoming_production
-            else:
-                deficit = float(item.quantity_ordered) - float(commit['total']) - incoming_production
-                
-            deficit = max(0.0, deficit)
+            deficit = max(0.0, float(item.quantity_ordered) - float(commit['total']) - incoming_production)
+        if so.status in ['Draft', 'Pending Approval']:
+            stock_short = float(item.quantity_ordered) - global_avail - incoming_production > 0
+        else:
+            stock_short = deficit > 0
 
         recipes = item.product.recipe_items.select_related('material').all()
         bom_rows = []
@@ -3165,6 +3166,8 @@ def so_detail_view(request, pk):
             'allocated': allocated,
             'in_logistics': in_logistics,
             'deficit': deficit,
+            'stock_short': stock_short,
+            'free_stock': global_avail if so.status in ['Draft', 'Pending Approval'] else None,
             'fulfilled': fulfilled,
             'incoming_production': incoming_production,
             'subtotal': (item.quantity_ordered * item.unit_price) if item.unit_price is not None else None,
@@ -3274,6 +3277,12 @@ def po_detail_view(request, pk):
             try:
                 item = get_object_or_404(PurchaseOrderDetail, id=item_id, purchase_order=po)
                 name = item.material.name
+                # Receipts are credited by material, so a line can't go while a delivery still carries it
+                carrying = po.shipments.filter(direction='Inbound', items__material=item.material).exclude(status__in=['Completed', 'Cancelled'])
+                if carrying.exists():
+                    messages.error(request, f"{name} is on delivery {', '.join(carrying.values_list('tracking_number', flat=True).distinct())}. "
+                                            "Receive or cancel that delivery before removing the line.")
+                    return redirect('po_detail', pk=pk)
                 item.delete()
                 OrderTimeline.objects.create(purchase_order=po, action=f"Line item removed: {name}", user=request.user)
                 messages.success(request, f"Removed {name} from {po.po_number}.")
@@ -3408,6 +3417,7 @@ def po_detail_view(request, pk):
         'warehouses': warehouses,
         'po_status_choices': [c for c in PurchaseOrder.STATUS_CHOICES if c[0] == po.status or c[0] in PO_MANUAL_TRANSITIONS.get(po.status, [])],
         'unapproved_statuses': UNAPPROVED_STATUSES,
+        'items_locked': po.status in PO_ITEMS_LOCKED,
         'managers': approvers(APPROVE_PURCHASE_ORDERS),
         'can_decide_approval': may_decide_approval(request.user, po),
         'all_users': CustomUser.objects.all().order_by('username'),
@@ -3937,6 +3947,7 @@ def shipments_view(request):
         'tracking_number': 'tracking_number',
         'direction': 'direction',
         'status': 'status',
+        'expected_eta_date': 'expected_eta_date',
         'id': 'id',
     }, default='-id')
     page_size = get_page_size(request)
@@ -4513,6 +4524,9 @@ def shipment_detail_view(request, pk):
                             StockAllocation.objects.create(batch=batch, shipment=shipment, quantity=qty_dec)
                         OrderTimeline.objects.create(shipment=shipment, action=f"Added item {mat.sku if mat else prod.sku} (Qty: {qty_val}) and locked stock.", user=request.user)
                         messages.success(request, "Item added and stock locked.")
+                elif shipment.purchase_order and not (mat and shipment.purchase_order.items.filter(material=mat).exists()):
+                    # Receipts are credited to the PO line by material; anything else would arrive without becoming stock
+                    messages.error(request, f"Only materials on {shipment.purchase_order.po_number} can be added to this delivery. Add the line to the PO first.")
                 else:
                     ShipmentItem.objects.create(
                         shipment=shipment,
@@ -5421,7 +5435,7 @@ def _fg_fefo_batches(product):
     return [
         b for b in unexpired(Batch.objects.filter(product=product, status='Active'))
         .select_related('warehouse')
-        .order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
+        .order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date', 'id')
         if b.quantity - b.allocated_quantity > 0
     ]
 
@@ -5498,7 +5512,11 @@ def so_allocate_view(request, pk):
                 if total > needed:
                     messages.error(request, f"{item.product.name}: allocating {total} is more than the {needed} this order still needs.")
                     return redirect('so_allocate', pk=so.pk)
-                if {b.id: amt for b, amt in chosen} != _fefo_plan(batches, total):
+                # Compare per expiry date: batches expiring the same day are interchangeable
+                plan = _fefo_plan(batches, total)
+                by_expiry = lambda amounts: {e: sum((amounts.get(b.id, 0) for b in batches if b.expiry_date == e), Decimal('0'))
+                                             for e in {b.expiry_date for b in batches}}
+                if by_expiry({b.id: amt for b, amt in chosen}) != by_expiry(plan):
                     off_fefo.append(item.product.name)
                 plans.append((item, needed, chosen))
 
@@ -5728,7 +5746,7 @@ def production_run_allocate_view(request, pk):
         # Get all active batches globally, ordered by expiry date (FEFO)
         batches = unexpired(Batch.objects.filter(material=req.material, status='Active')).annotate(
             avail=F('quantity') - F('allocated_quantity')
-        ).filter(avail__gt=0).order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
+        ).filter(avail__gt=0).order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date', 'id')
         
         remaining = needed
         batch_list = []

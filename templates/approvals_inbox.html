@@ -256,7 +256,7 @@
                     </div>
                     <div style="text-align:right;">
                         <span class="badge badge-sky">{{ po.status }}</span>
-                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.5rem;">Assigned to: {{ po.assigned_to.get_full_name|default:po.assigned_to.username|default:"Unassigned" }}</div>
+                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.5rem;">Assigned to: {% if po.assigned_to %}{{ po.assigned_to.get_full_name|default:po.assigned_to.username }}{% else %}Unassigned{% endif %}</div>
                     </div>
                 </div>
                 {% endfor %}

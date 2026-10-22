@@ -258,9 +258,9 @@
                         RM {{ row.subtotal|floatformat:2 }}
                         {% else %}<span style="color:var(--text-muted);">—</span>{% endif %}
                     </td>
-                    <td style="padding:0.85rem 1rem;">
+                    <td style="padding:0.85rem 1rem;"{% if row.free_stock is not None %} title="{{ row.free_stock|floatformat:1 }} units free across all warehouses"{% endif %}>
                         {% if row.fulfilled %}<span class="badge badge-emerald">Fulfilled</span>
-                        {% elif row.deficit > 0 %}<span class="badge badge-rose">Insufficient</span>
+                        {% elif row.stock_short %}<span class="badge badge-rose">Insufficient</span>
                         {% elif row.incoming_production > 0 %}<span class="badge badge-amber">In Production</span>
                         {% else %}<span class="badge badge-sky">In Stock</span>{% endif %}
                     </td>

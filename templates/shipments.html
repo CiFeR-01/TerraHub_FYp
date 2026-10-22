@@ -92,18 +92,40 @@
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
                     {% include "partials/_sort_th.html" with key="tracking_number" label="Tracking #" %}
-                    <th style="padding:0.75rem 1.5rem; text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Direction & Status</th>
-                    <th style="padding:0.75rem 1.5rem; text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Items</th>
+                    {% include "partials/_sort_th.html" with key="direction" label="Direction" %}
+                    {% include "partials/_sort_th.html" with key="status" label="Status" %}
+                    <th style="padding:0.75rem 1rem; text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Route</th>
+                    <th style="padding:0.75rem 1rem; text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Order</th>
+                    {% include "partials/_sort_th.html" with key="expected_eta_date" label="Dates" %}
+                    <th style="padding:0.75rem 1rem; text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Items</th>
                     <th style="padding:0.75rem 1.5rem; text-align:right; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Actions</th>
                 </tr>
             </thead>
             <tbody>
+                {% now "Y-m-d" as today %}
                 {% for s in shipments %}
-                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem; cursor:pointer; transition:background-color 0.2s;" onmouseover="this.style.backgroundColor='#f8fafc';" onmouseout="this.style.backgroundColor='transparent';" onclick="if (!event.target.closest('a, button')) window.location.href='{% url 'shipment_detail' s.pk %}'">
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ s.tracking_number }}</td>
-                    <td style="padding:0.85rem 1rem;"><span class="badge badge-sky" style="margin-right:0.3rem;">{{ s.get_direction_display }}</span> <span class="badge {% if s.status in 'Draft,Logistics Review' %}badge-slate{% elif s.status in 'Pending Approval,Delayed' %}badge-amber{% elif s.status in 'Preparing,Dispatched' %}badge-sky{% elif s.status in 'Arrived,Completed' %}badge-emerald{% elif s.status in 'Cancelled,Discrepant,Rejected' %}badge-rose{% else %}badge-slate{% endif %}">{{ s.status|upper }}</span></td>
-                    <td style="padding:1rem 1.5rem; font-weight:500;">
-                        {{ s.items.count }} Item(s)
+                    <td style="padding:0.85rem 1rem;"><span class="badge badge-sky">{{ s.get_direction_display }}</span></td>
+                    <td style="padding:0.85rem 1rem;"><span class="badge {% if s.status in 'Draft,Logistics Review' %}badge-slate{% elif s.status in 'Pending Approval,Delayed' %}badge-amber{% elif s.status in 'Preparing,Dispatched' %}badge-sky{% elif s.status in 'Arrived,Completed' %}badge-emerald{% elif s.status in 'Cancelled,Discrepant,Rejected' %}badge-rose{% else %}badge-slate{% endif %}">{{ s.status|upper }}</span>{% if s.has_discrepancy and s.status != 'Discrepant' %} <span class="badge badge-rose" title="{{ s.discrepancy_remarks|default:'' }}">DISCREPANCY</span>{% endif %}</td>
+                    <td style="padding:0.85rem 1rem; font-size:0.825rem;">
+                        {% firstof s.origin_warehouse.name s.external_origin s.purchase_order.supplier_name "—" %}
+                        <span style="color:var(--text-muted);">→</span>
+                        {% firstof s.destination_warehouse.name s.sales_order.client_name "—" %}
+                    </td>
+                    <td style="padding:0.85rem 1rem; font-size:0.825rem; white-space:nowrap;">
+                        {% if s.purchase_order %}<a href="{% url 'po_detail' s.purchase_order.pk %}" style="color:var(--primary); font-weight:600;">{{ s.purchase_order.po_number }}</a>
+                        {% elif s.sales_order %}<a href="{% url 'so_detail' s.sales_order.pk %}" style="color:var(--primary); font-weight:600;">{{ s.sales_order.so_number }}</a>
+                        {% else %}<span style="color:var(--text-muted);">—</span>{% endif %}
+                    </td>
+                    <td style="padding:0.85rem 1rem; font-size:0.8rem; white-space:nowrap; color:var(--text-muted);">
+                        {% if s.dispatch_date %}<div>Dispatched {{ s.dispatch_date|date:"M d, Y" }}</div>{% endif %}
+                        {% if s.actual_arrival_date %}<div style="color:var(--success-strong); font-weight:600;">Arrived {{ s.actual_arrival_date|date:"M d, Y" }}</div>
+                        {% elif s.expected_eta_date %}{% with eta=s.expected_eta_date|date:"Y-m-d" %}<div{% if eta < today and s.status not in 'Arrived,Completed,Cancelled,Discrepant' %} style="color:#dc2626; font-weight:600;" title="ETA has passed"{% endif %}>ETA {{ s.expected_eta_date|date:"M d, Y" }}</div>{% endwith %}{% endif %}
+                        {% if not s.dispatch_date and not s.expected_eta_date and not s.actual_arrival_date %}—{% endif %}
+                    </td>
+                    <td style="padding:0.85rem 1rem; font-weight:500; white-space:nowrap;">
+                        {% with n=s.items.all|length %}{% if n %}{{ n }} Item(s){% else %}<span class="badge badge-amber" title="No items added yet">NO ITEMS</span>{% endif %}{% endwith %}
                     </td>
                     <td style="padding:1rem 1.5rem; text-align:right;">
                         <a href="{% url 'shipment_detail' s.pk %}" class="btn btn-secondary" style="padding:0.35rem 0.75rem; font-size:0.8rem;">Manage</a>
@@ -111,7 +133,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="4" style="padding:2rem; text-align:center; color:var(--text-muted);">No logistics shipment records found.</td>
+                    <td colspan="8"style="padding:2rem; text-align:center; color:var(--text-muted);">No logistics shipment records found.</td>
                 </tr>
                 {% endfor %}
             </tbody>
