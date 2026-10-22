@@ -54,7 +54,7 @@
             </thead>
             <tbody>
                 {% for client in clients %}
-                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem; cursor:pointer; transition:background-color 0.2s;" onmouseover="this.style.backgroundColor='#f8fafc';" onmouseout="this.style.backgroundColor='transparent';" onclick="if (!event.target.closest('a, button, form')) window.location.href='{% url 'client_detail' client.pk %}'">
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">
                         {{ client.name }}
                         {% if not client.is_active %}
@@ -76,13 +76,6 @@
                                     {% if client.is_active %}Archive{% else %}Restore{% endif %}
                                 </button>
                             </form>
-                            <button class="btn btn-secondary" onclick="openEditClientModal({{ client.id }}, '{{ client.name|escapejs }}', '{{ client.contact_person|default:''|escapejs }}', '{{ client.email|default:''|escapejs }}', '{{ client.phone|default:''|escapejs }}', '{{ client.delivery_address|default:''|escapejs }}')" style="padding:0.35rem 0.65rem; font-size:0.775rem;">
-                                ✏️ Edit
-                            </button>
-                            {% else %}
-                            <button class="btn btn-secondary" disabled style="padding:0.35rem 0.65rem; font-size:0.775rem; opacity:0.5; cursor:not-allowed;" title="Only Managers can edit">
-                                ✏️ Edit
-                            </button>
                             {% endif %}
                         </div>
                     </td>
@@ -137,61 +130,6 @@
     </div>
 </div>
 
-<!-- Modal: Edit Client -->
-<div id="edit-client-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:12px; width:100%; max-width:520px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
-            <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;" id="edit_client_modal_title">Edit Client</h3>
-            <button onclick="document.getElementById('edit-client-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
-        </div>
-        <form id="edit-client-form" method="post">
-            {% csrf_token %}
-            <div style="margin-bottom:0.85rem;">
-                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Client Name</label>
-                <input type="text" id="edit_cli_name" name="name" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-            </div>
-            <div style="display:grid; grid-template-columns:1fr 1.4fr; gap:0.75rem; margin-bottom:0.85rem;">
-                <div>
-                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Contact Person</label>
-                    <input type="text" id="edit_cli_contact" name="contact_person" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-                </div>
-                <div>
-                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Phone</label>
-                    <div class="phone-field" data-phone-field id="edit_cli_phone_field"><select name="phone_country" aria-label="Country code"></select><input type="tel" id="edit_cli_phone" name="phone" autocomplete="tel" aria-label="Phone number" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);"></div>
-                </div>
-            </div>
-            <div style="margin-bottom:0.85rem;">
-                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Email</label>
-                <input type="email" id="edit_cli_email" name="email" data-email-field autocomplete="email" placeholder="name@company.com" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-            </div>
-            <div style="margin-bottom:1.25rem;">
-                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Delivery Address</label>
-                <textarea id="edit_cli_address" name="delivery_address" rows="2" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); resize:vertical;"></textarea>
-            </div>
-            <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
-                <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-client-modal').style.display='none'">Cancel</button>
-                <button type="submit" class="btn btn-primary">Save Changes</button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<script>
-function openEditClientModal(id, name, contact, email, phone, address) {
-    document.getElementById('edit_client_modal_title').innerText = "Edit Client: " + name;
-    document.getElementById('edit_cli_name').value = name;
-    document.getElementById('edit_cli_contact').value = contact;
-    document.getElementById('edit_cli_email').value = email;
-    ContactValidation.setPhone(document.getElementById('edit_cli_phone_field'), phone);
-    document.getElementById('edit_cli_address').value = address;
-
-    var form = document.getElementById('edit-client-form');
-    ContactValidation.refresh(form);
-    form.action = "/catalog/clients/" + id + "/edit/";
-
-    document.getElementById('edit-client-modal').style.display = 'flex';
-}
-</script>
 {% endblock %}
 
 {% block extra_js %}

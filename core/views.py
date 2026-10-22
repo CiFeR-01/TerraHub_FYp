@@ -2472,12 +2472,12 @@ def supplier_edit_view(request, pk):
     if request.method == 'POST':
         if not request.user.has_perm('core.change_supplier'):
             messages.error(request, "You don't have permission to edit suppliers.")
-            return redirect('supplier_list')
+            return redirect('supplier_detail', pk=supplier.pk)
         name = request.POST.get('name', '').strip()
         try:
             if not name:
                 messages.error(request, "Supplier name is required.")
-                return redirect('supplier_list')
+                return redirect('supplier_detail', pk=supplier.pk)
 
             supplier.name = name
             supplier.contact_person = request.POST.get('contact_person', '').strip()
@@ -2493,7 +2493,7 @@ def supplier_edit_view(request, pk):
         except Exception as e:
             messages.error(request, f"Error updating supplier: {e}")
 
-    return redirect('supplier_list')
+    return redirect('supplier_detail', pk=supplier.pk)
 
 
 # Clients
@@ -2566,12 +2566,12 @@ def client_edit_view(request, pk):
     if request.method == 'POST':
         if not request.user.has_perm('core.change_client'):
             messages.error(request, "You don't have permission to edit clients.")
-            return redirect('client_list')
+            return redirect('client_detail', pk=client.pk)
         name = request.POST.get('name', '').strip()
         try:
             if not name:
                 messages.error(request, "Client name is required.")
-                return redirect('client_list')
+                return redirect('client_detail', pk=client.pk)
 
             client.name = name
             client.contact_person = request.POST.get('contact_person', '').strip()
@@ -2587,7 +2587,104 @@ def client_edit_view(request, pk):
         except Exception as e:
             messages.error(request, f"Error updating client: {e}")
 
-    return redirect('client_list')
+    return redirect('client_detail', pk=client.pk)
+
+@login_required
+def supplier_detail_view(request, pk):
+    denied = action_denied(request, 'supplier_detail')
+    if denied:
+        messages.error(request, denied)
+        return redirect(request.get_full_path())
+    supplier = get_object_or_404(Supplier, pk=pk)
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'toggle_active':
+            supplier.is_active = not supplier.is_active
+            supplier.save(update_fields=['is_active'])
+            messages.success(request, f"{supplier.name} is now {'Active' if supplier.is_active else 'Archived'}.")
+        elif action == 'save_material':
+            material = get_object_or_404(Material, pk=request.POST.get('material_id'))
+            price, err = read_decimal(request.POST, 'unit_price', "Unit price", min_value=0, required=False)
+            lead, lead_err = read_decimal(request.POST, 'lead_time_days', "Lead time", min_value=0, required=False)
+            err = err or lead_err or (lead is not None and lead != int(lead) and "Lead time must be whole days.")
+            if err:
+                messages.error(request, err)
+            else:
+                _, created = SupplierMaterial.objects.update_or_create(
+                    supplier=supplier, material=material,
+                    defaults={'unit_price': price, 'lead_time_days': int(lead) if lead is not None else None})
+                messages.success(request, f"{'Added' if created else 'Updated'} {material.name}.")
+        elif action == 'remove_material':
+            sm = get_object_or_404(SupplierMaterial, pk=request.POST.get('supplier_material_id'), supplier=supplier)
+            sm.delete()
+            messages.success(request, f"Removed {sm.material.name} from {supplier.name}.")
+        return redirect('supplier_detail', pk=supplier.pk)
+
+    from .analytics import _expected_delivery, _po_actual_arrival, _supplier_lead_map
+    from .settings_store import get_setting
+    lead_map, default_lead = _supplier_lead_map(), get_setting('po_default_lead_time_days')
+
+    pos = (supplier.purchase_orders
+           .prefetch_related('items__material', 'shipments', 'received_batches').order_by('-order_date', '-id'))
+    po_rows, bought, on_time, assessed = [], {}, 0, 0
+    for po in pos:
+        arrival = _po_actual_arrival(po)
+        expected, estimated = _expected_delivery(po, lead_map, default_lead)
+        late = (arrival - expected).days if arrival and expected else None
+        if late is not None:
+            assessed += 1
+            on_time += late <= 0
+        po_rows.append({'po': po, 'arrival': arrival, 'expected': expected, 'estimated': estimated, 'late_days': late})
+        if po.status in ('Draft', 'Pending Approval', 'Rejected'):
+            continue
+        for it in po.items.all():
+            row = bought.setdefault(it.material_id, {'material': it.material, 'ordered': Decimal('0'), 'received': Decimal('0'), 'value': Decimal('0')})
+            row['ordered'] += it.quantity_ordered
+            row['received'] += it.quantity_received
+            row['value'] += it.quantity_ordered * (it.unit_price or 0)
+
+    supplied = SupplierMaterial.objects.filter(supplier=supplier).select_related('material').order_by('material__name')
+    return render(request, 'supplier_detail.html', {
+        'supplier': supplier,
+        'supplied': supplied,
+        'materials': Material.objects.filter(is_active=True).exclude(pk__in=supplied.values('material_id')).order_by('name'),
+        'po_rows': po_rows,
+        'bought': sorted(bought.values(), key=lambda r: r['material'].name),
+        'total_value': sum((r['po'].total_value for r in po_rows if r['po'].status not in ('Draft', 'Pending Approval', 'Rejected')), Decimal('0')),
+        'on_time_rate': round(on_time / assessed * 100) if assessed else None,
+    })
+
+
+@login_required
+def client_detail_view(request, pk):
+    denied = action_denied(request, 'client_detail')
+    if denied:
+        messages.error(request, denied)
+        return redirect(request.get_full_path())
+    client = get_object_or_404(Client, pk=pk)
+    if request.method == 'POST' and request.POST.get('action') == 'toggle_active':
+        client.is_active = not client.is_active
+        client.save(update_fields=['is_active'])
+        messages.success(request, f"{client.name} is now {'Active' if client.is_active else 'Archived'}.")
+        return redirect('client_detail', pk=client.pk)
+
+    sos = client.sales_orders.prefetch_related('items__product').order_by('-order_date', '-id')
+    bought = {}
+    for so in sos:
+        if so.status in ('Draft', 'Pending Approval', 'Rejected', 'Cancelled'):
+            continue
+        for it in so.items.all():
+            row = bought.setdefault(it.product_id, {'product': it.product, 'ordered': Decimal('0'), 'shipped': Decimal('0'), 'value': Decimal('0')})
+            row['ordered'] += it.quantity_ordered
+            row['shipped'] += it.quantity_shipped or 0
+            row['value'] += it.quantity_ordered * (it.unit_price or 0)
+    return render(request, 'client_detail.html', {
+        'client': client,
+        'sales_orders': sos,
+        'bought': sorted(bought.values(), key=lambda r: r['product'].name),
+        'total_value': sum((r['value'] for r in bought.values()), Decimal('0')),
+    })
 
 
 # Sales orders

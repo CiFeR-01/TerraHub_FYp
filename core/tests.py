@@ -8222,3 +8222,66 @@ class PoLineRemovalTests(TestCase):
         self.assertFalse(ShipmentItem.objects.filter(shipment=self.ship, material=other).exists())
         self.client.post(url, {'action': 'add_item', 'material_id': self.mat.id, 'quantity': '5'})
         self.assertEqual(ShipmentItem.objects.filter(shipment=self.ship, material=self.mat).count(), 2)
+
+
+class PartyDetailPageTests(TestCase):
+    """Supplier page: editable materials supplied + PO history. Client page: read-only order history."""
+
+    def setUp(self):
+        from core.models import Client as ClientModel
+        self.client = Client()
+        self.boss = make_user(username='partyboss', password='pw', role='Manager')
+        self.viewer = make_user(username='partyview', password='pw', role='Staff (Viewer)')
+        self.client.force_login(self.boss)
+        self.wh = Warehouse.objects.create(name='Party WH', location_type='Storage')
+        self.mat = Material.objects.create(name='Party Mat', sku='MAT-PARTY', unit_of_measure='kg', safe_storage_days=365)
+        self.supplier = Supplier.objects.create(name='Party Supplier')
+        self.customer = ClientModel.objects.create(name='Party Client')
+        self.po = PurchaseOrder.objects.create(po_number='PO-PARTY', supplier_name='Party Supplier', supplier=self.supplier,
+                                               target_warehouse=self.wh, status='Pending')
+        PurchaseOrderDetail.objects.create(purchase_order=self.po, material=self.mat, quantity_ordered=Decimal('10'), unit_price=Decimal('3'))
+        PurchaseOrder.objects.create(po_number='PO-OTHER', supplier_name='Party Supplier', target_warehouse=self.wh, status='Pending')
+        self.so = SalesOrder.objects.create(so_number='SO-PARTY', client_name='Party Client', client=self.customer,
+                                            origin_warehouse=self.wh, status='Pending')
+
+    def _url(self):
+        return reverse('supplier_detail', args=[self.supplier.pk])
+
+    def test_supplier_page_lists_only_linked_pos(self):
+        resp = self.client.get(self._url())
+        self.assertContains(resp, 'PO-PARTY')
+        self.assertNotContains(resp, 'PO-OTHER')
+        self.assertEqual(resp.context['total_value'], Decimal('30'))
+
+    def test_materials_supplied_can_be_added_updated_and_removed(self):
+        from core.models import SupplierMaterial
+        self.client.post(self._url(), {'action': 'save_material', 'material_id': self.mat.pk, 'unit_price': '4.50', 'lead_time_days': '7'})
+        sm = SupplierMaterial.objects.get(supplier=self.supplier, material=self.mat)
+        self.assertEqual((sm.unit_price, sm.lead_time_days), (Decimal('4.50'), 7))
+        self.client.post(self._url(), {'action': 'save_material', 'material_id': self.mat.pk, 'unit_price': '', 'lead_time_days': '10'})
+        sm.refresh_from_db()
+        self.assertEqual((sm.unit_price, sm.lead_time_days), (None, 10))
+        self.client.post(self._url(), {'action': 'remove_material', 'supplier_material_id': sm.pk})
+        self.assertFalse(SupplierMaterial.objects.filter(pk=sm.pk).exists())
+
+    def test_bad_lead_time_is_rejected(self):
+        from core.models import SupplierMaterial
+        self.client.post(self._url(), {'action': 'save_material', 'material_id': self.mat.pk, 'lead_time_days': '2.5'})
+        self.assertFalse(SupplierMaterial.objects.exists())
+
+    def test_viewer_cannot_change_materials(self):
+        from core.models import SupplierMaterial
+        self.client.force_login(self.viewer)
+        self.client.post(self._url(), {'action': 'save_material', 'material_id': self.mat.pk, 'lead_time_days': '7'})
+        self.assertFalse(SupplierMaterial.objects.exists())
+        self.assertNotContains(self.client.get(self._url()), 'value="save_material"')
+
+    def test_editing_details_returns_to_the_page(self):
+        resp = self.client.post(reverse('supplier_edit', args=[self.supplier.pk]), {'name': 'Party Supplier Ltd'})
+        self.assertRedirects(resp, self._url())
+
+    def test_client_page_shows_its_orders_and_list_rows_link_to_it(self):
+        url = reverse('client_detail', args=[self.customer.pk])
+        self.assertContains(self.client.get(url), 'SO-PARTY')
+        self.assertContains(self.client.get(reverse('client_list')), url)
+        self.assertContains(self.client.get(reverse('supplier_list')), self._url())
