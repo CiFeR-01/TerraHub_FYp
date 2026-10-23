@@ -6,11 +6,13 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span>Catalog &amp; Directory</span>
             <span class="separator">/</span>
             <a href="{% url 'material_list' %}">Materials Hub</a>
             <span class="separator">/</span>
-            <span class="current-page">Edit Raw Material</span>
+            <a href="{% url 'material_detail' material.pk %}">{{ material.sku }}</a>
+            <span class="separator">/</span>
+            <span class="current-page">Edit</span>
         </nav>
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
             Edit Raw Material: {{ material.name }}

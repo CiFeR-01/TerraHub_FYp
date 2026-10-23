@@ -1857,6 +1857,16 @@ def get_product_recipe_api(request, product_id):
     })
 
 
+def recipe_locked(product):
+    """Error message if the product has a run holding materials or under way (its usage form is built from the recipe), else None."""
+    runs = list(ProductionRun.objects.filter(
+        target_product=product, status__in=('Planned', 'Awaiting Materials', 'InProgress', 'Paused')
+    ).values_list('run_number', flat=True))
+    if runs:
+        return f"{product.sku}'s recipe can't change while run(s) {', '.join(runs)} hold materials or are in progress. Finish, abort or scrap them first."
+    return None
+
+
 @login_required
 def save_product_recipe_api(request):
     """API endpoint for live inline recipe modifications (add, update, delete, clone)."""
@@ -1873,6 +1883,9 @@ def save_product_recipe_api(request):
         recipe_id = request.POST.get('recipe_id')
         try:
             item = get_object_or_404(ProductRecipe, id=recipe_id)
+            locked = recipe_locked(item.product)
+            if locked:
+                return JsonResponse({'success': False, 'error': locked}, status=400)
             p_id = item.product.id
             item.delete()
             return JsonResponse({'success': True, 'message': 'Recipe item deleted successfully.', 'product_id': p_id})
@@ -1885,7 +1898,10 @@ def save_product_recipe_api(request):
         try:
             source_prod = get_object_or_404(Product, id=source_id)
             target_prod = get_object_or_404(Product, id=target_id)
-            
+            locked = recipe_locked(target_prod)
+            if locked:
+                return JsonResponse({'success': False, 'error': locked}, status=400)
+
             source_items = ProductRecipe.objects.filter(product=source_prod)
             cloned_count = 0
             for item in source_items:
@@ -1907,6 +1923,9 @@ def save_product_recipe_api(request):
     elif action == 'save_batch':
         try:
             product = get_object_or_404(Product, id=product_id)
+            locked = recipe_locked(product)
+            if locked:
+                return JsonResponse({'success': False, 'error': locked}, status=400)
             material_ids = request.POST.getlist('material_ids[]')
             quantities = request.POST.getlist('quantities[]')
             
@@ -1984,6 +2003,7 @@ def product_list_view(request):
                 prod = get_object_or_404(Product, id=product_id)
                 mat = get_object_or_404(Material, id=material_id)
                 qty, err = read_decimal(request.POST, 'quantity_required', "Quantity", above=0)
+                err = err or recipe_locked(prod)
                 if err:
                     messages.error(request, err)
                     return redirect('product_list')
@@ -3722,7 +3742,7 @@ def manufacturing_view(request):
                     Notification.objects.create(
                         user=purchaser,
                         message=f"Draft PO {po.po_number} created for materials short in Production Run {run.run_number}. Please complete and submit for approval.",
-                        link=f"/operations/orders/po/{po.pk}/"
+                        link=reverse('po_detail', args=[po.pk])
                     )
                     
                 messages.success(request, f"Draft PO {po.po_number} created successfully and assigned to Purchasing.")
@@ -6251,10 +6271,11 @@ def production_run_detail_view(request, pk):
                 messages.error(request, "A reason is required to scrap a production run.")
                 return redirect('production_run_detail', pk=pk)
 
-            from .utils import release_production_run_allocations
+            from .utils import release_production_run_allocations, release_order_after_run_stopped
             release_production_run_allocations(run, request.user)
             run.status = 'Cancelled'
             run.save()
+            release_order_after_run_stopped(run, request.user)
             OrderTimeline.objects.create(production_run=run, action=f"Run scrapped before starting. Reason: {reason}", user=request.user)
             messages.success(request, f"Production Run {run.run_number} scrapped.")
             return redirect('readiness')
@@ -6271,11 +6292,14 @@ def production_run_detail_view(request, pk):
             used = {}
             for bom in bom_materials:
                 qty, err = read_decimal(request.POST, f"used_qty_{bom['material'].id}", f"{bom['material'].name} used", min_value=0, required=False)
+                allocated = Decimal(str(bom['allocated'])).quantize(Decimal('0.01'))
+                if not err and qty and qty > allocated + Decimal('0.005'):
+                    err = f"{bom['material'].name}: {qty} used is more than the {allocated} allocated. An aborted run can only use what was allocated to it."
                 if err:
                     messages.error(request, err)
                     return redirect('production_run_detail', pk=pk)
                 used[bom['material']] = (qty or Decimal('0'), Decimal(str(bom['needed'])))
-            from .utils import finalize_production_run
+            from .utils import finalize_production_run, release_order_after_run_stopped
             with transaction.atomic():
                 # Unlike completion, nothing counts as used unless entered: an aborted run may have poured nothing.
                 for material, (qty, expected) in used.items():
@@ -6283,9 +6307,12 @@ def production_run_detail_view(request, pk):
                                                               defaults={'expected_qty': expected, 'actual_qty': qty})
                 made = run.yield_logs.aggregate(s=Sum('quantity'))['s'] or Decimal('0')
                 run.actual_yield = made if made > 0 else None
-                fg_batch = finalize_production_run(run, request.user)
+                fg_batch = finalize_production_run(run, request.user, verb='aborted')
                 run.status = 'Cancelled'
                 run.save(update_fields=['status'])
+                if run.sales_order:
+                    run.sales_order.refresh_from_db()
+                release_order_after_run_stopped(run, request.user)
                 OrderTimeline.objects.create(
                     production_run=run, user=request.user,
                     action=f"Run aborted. Reason: {reason}. Unused materials released"
@@ -6429,7 +6456,7 @@ def production_run_detail_view(request, pk):
                         Notification.objects.create(
                             user=run.assigned_to,
                             message=f"Variance Approval Required: Production Run {run.run_number} exceeded 3% material variance. Review required.",
-                            link=f"/operations/approvals/",
+                            link=reverse('approvals_inbox'),
                         )
                     for follower_id in follower_ids:
                         Notification.objects.create(

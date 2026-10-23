@@ -876,8 +876,8 @@ class SupplierHubNavTests(TestCase):
         self.assertContains(resp, reverse('supplier_scorecard'))
         self.assertContains(resp, 'Supplier performance')
 
-    def test_scorecard_lives_under_suppliers_path(self):
-        self.assertEqual(reverse('supplier_scorecard'), '/catalog/suppliers/scorecard/')
+    def test_scorecard_lives_under_analytics_path(self):
+        self.assertEqual(reverse('supplier_scorecard'), '/analytics/supplier-performance/')
 
 
 class SystemSettingsViewTests(TestCase):
@@ -6763,6 +6763,46 @@ class StockAndDeliveryTests(TestCase):
         self.assertEqual((mat.quantity, mat.allocated_quantity), (Decimal('46'), Decimal('0')))
         self.assertEqual(Batch.objects.get(produced_in=run).quantity, Decimal('2'))
 
+    def test_aborting_a_run_refuses_more_than_allocated_and_frees_the_order(self):
+        from core.models import ProductionRun, ProductRecipe, OrderTimeline
+        so, _ = self._so('5', status='In Production')
+        mat = self._material_batch('SD-AB2-M', '50', allocated='10')
+        ProductRecipe.objects.create(product=self.product, material=mat.material, quantity_required=2)
+        run = ProductionRun.objects.create(run_number='RUN-SD-AB2', target_product=self.product, expected_yield=Decimal('5'),
+                                           status='InProgress', manufacturing_plant=self.wh, sales_order=so)
+        StockAllocation.objects.create(batch=mat, production_run=run, quantity=Decimal('10'))
+        url = reverse('production_run_detail', args=[run.pk])
+        self.client.post(url, {'action': 'abort_run', 'reason': 'x', f'used_qty_{mat.material.id}': '12'})
+        run.refresh_from_db(); mat.refresh_from_db()
+        self.assertEqual((run.status, mat.quantity), ('InProgress', Decimal('50')))
+        self.client.post(url, {'action': 'abort_run', 'reason': 'x', f'used_qty_{mat.material.id}': '10'})
+        run.refresh_from_db(); so.refresh_from_db()
+        self.assertEqual((run.status, so.status), ('Cancelled', 'Pending'))
+        self.assertFalse(OrderTimeline.objects.filter(sales_order=so, action__contains='completed').exists())
+
+    def test_scrapping_a_run_frees_the_order(self):
+        from core.models import ProductionRun
+        so, _ = self._so('5', status='In Production')
+        run = ProductionRun.objects.create(run_number='RUN-SD-SC', target_product=self.product, expected_yield=Decimal('5'),
+                                           status='Planned', sales_order=so)
+        self.client.post(reverse('production_run_detail', args=[run.pk]), {'action': 'scrap_run', 'reason': 'x'})
+        so.refresh_from_db()
+        self.assertEqual(so.status, 'Pending')
+
+    def test_recipe_is_locked_while_a_run_holds_materials(self):
+        from core.models import ProductionRun, ProductRecipe
+        mat = self._material_batch('SD-RL-M', '50').material
+        line = ProductRecipe.objects.create(product=self.product, material=mat, quantity_required=2)
+        run = ProductionRun.objects.create(run_number='RUN-SD-RL', target_product=self.product, expected_yield=Decimal('5'),
+                                           status='InProgress', manufacturing_plant=self.wh)
+        url = reverse('save_product_recipe_api')
+        resp = self.client.post(url, {'action': 'delete_item', 'recipe_id': line.id})
+        self.assertEqual(resp.status_code, 400)
+        self.assertTrue(ProductRecipe.objects.filter(pk=line.pk).exists())
+        ProductionRun.objects.filter(pk=run.pk).update(status='Completed')
+        self.client.post(url, {'action': 'delete_item', 'recipe_id': line.id})
+        self.assertFalse(ProductRecipe.objects.filter(pk=line.pk).exists())
+
     def test_shipment_numbers_ignore_old_random_codes(self):
         from core.utils import generate_next_code
         Shipment.objects.create(tracking_number='SHP-AUTO-52967249', direction='Transfer')
@@ -7811,6 +7851,16 @@ class DecisionSupportNavTests(TestCase):
         self.client.login(username='dsswh', password='pw')
         dss = _group(self.client.get(reverse('dashboard')), 'dss')
         self.assertEqual([i['url_name'] for i in dss['items']], ['rent_opportunities', 'capacity_forecast'])
+
+    def test_detail_page_highlights_its_list_link(self):
+        from core.models import Supplier
+        supplier = Supplier.objects.create(name='GreenGrow Biotech')
+        self.client.login(username='dssadmin', password='pw')
+        resp = self.client.get(reverse('supplier_detail', args=[supplier.pk]))
+        catalog = _group(resp, 'catalog')
+        self.assertTrue(catalog['active'])
+        self.assertEqual([i['url_name'] for i in catalog['items'] if i['active']], ['supplier_list'])
+        self.assertContains(resp, 'Catalog &amp; Directory')
 
 
 # ============================================================================

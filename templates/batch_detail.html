@@ -7,9 +7,11 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
+            <span>Inventory &amp; Facilities</span>
+            <span class="separator">/</span>
             <a href="{% url 'warehouse_inventory' %}">Warehouse Inventory</a>
             <span class="separator">/</span>
-            <span class="current-page">Batch Details</span>
+            <span class="current-page">{{ batch.batch_number }}</span>
         </nav>
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
             Batch {{ batch.batch_number }}

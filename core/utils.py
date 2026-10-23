@@ -686,7 +686,23 @@ def mark_order_in_production(run, user):
         OrderTimeline.objects.create(sales_order=so, action=f"In production: Run {run.run_number} is {run.get_status_display()}.", user=user)
 
 
-def finalize_production_run(run, user):
+def release_order_after_run_stopped(run, user):
+    """After a run is scrapped or aborted, an order left In Production with nothing else being made for it goes back to Pending."""
+    from .models import ProductionRun, Batch, OrderTimeline
+    so = run.sales_order
+    if not so or so.status != 'In Production':
+        return
+    if ProductionRun.objects.filter(sales_order=so, status__in=UNSTARTED_RUN_STATUSES + STARTED_RUN_STATUSES).exclude(pk=run.pk).exists():
+        return
+    if Batch.objects.filter(produced_in__sales_order=so, status='Quarantined', allocations__isnull=True).exists():
+        return   # finished goods are waiting on QA release, which moves the order on
+    so.status = 'Pending'
+    so.save(update_fields=['status'])
+    OrderTimeline.objects.create(sales_order=so, user=user,
+                                 action=f"Back to Pending: Run {run.run_number} stopped and nothing else is in production for this order.")
+
+
+def finalize_production_run(run, user, verb='completed'):
     """Completes a run: creates the finished-goods batch and, if linked to a SalesOrder, allocates it to the order line.
     With qa_hold_new_finished_goods on, the batch starts Quarantined and the order allocation waits for QA release. Returns the batch, or None if no yield."""
     import uuid
@@ -732,7 +748,7 @@ def finalize_production_run(run, user):
         if run.sales_order:
             OrderTimeline.objects.create(
                 sales_order=run.sales_order,
-                action=f"Production Run {run.run_number} completed. FG batch {fg_batch.batch_number} is awaiting QA release before it can be allocated.",
+                action=f"Production Run {run.run_number} {verb}. FG batch {fg_batch.batch_number} is awaiting QA release before it can be allocated.",
                 user=user
             )
         from .permissions import approvers, APPROVE_PRODUCTION_RUNS
@@ -743,7 +759,7 @@ def finalize_production_run(run, user):
                 link=reverse("qa_dashboard")
             )
     elif fg_batch and run.sales_order:
-        allocate_finished_batch_to_order(run, fg_batch, user, event=f"Production Run {run.run_number} completed. FG batch {fg_batch.batch_number} created.")
+        allocate_finished_batch_to_order(run, fg_batch, user, event=f"Production Run {run.run_number} {verb}. FG batch {fg_batch.batch_number} created.")
 
     return fg_batch
 

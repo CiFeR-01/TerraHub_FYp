@@ -6,13 +6,13 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span>Operations &amp; Logistics</span>
             <span class="separator">/</span>
             <a href="{% url 'so_list' %}">Sales Orders</a>
             <span class="separator">/</span>
             <a href="{% url 'so_detail' so.pk %}">{{ so.so_number }}</a>
             <span class="separator">/</span>
-            <span class="current-page">Allocate Finished Goods</span>
+            <span class="current-page">Allocate</span>
         </nav>
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
             Allocate Finished Goods

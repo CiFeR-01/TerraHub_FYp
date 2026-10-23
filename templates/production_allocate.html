@@ -6,11 +6,13 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span>Operations &amp; Logistics</span>
             <span class="separator">/</span>
-            <a href="{% url 'readiness' %}">Manufacturing</a>
+            <a href="{% url 'readiness' %}">Manufacture</a>
             <span class="separator">/</span>
-            <span class="current-page">Acknowledge Order</span>
+            <a href="{% url 'production_run_detail' run.pk %}">{{ run.run_number }}</a>
+            <span class="separator">/</span>
+            <span class="current-page">Acknowledge</span>
         </nav>
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
             Acknowledge &amp; Allocate Materials

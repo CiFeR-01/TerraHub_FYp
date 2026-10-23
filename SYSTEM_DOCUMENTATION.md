@@ -102,8 +102,8 @@ D:\TerraHub
 | `/warehouse/batch/<batch_number>/print/` | `batch_print_label` | `batch_print_label_view` | Printable batch label |
 | `/public/batch/<batch_number>/` | `batch_public_info` | `batch_public_info_view` | Public batch lookup |
 | `/warehouse/facilities/` | `warehouse_list` | `facility_management_view` | Warehouse facility list |
-| `/warehouse/create/` | `warehouse_create` | `warehouse_create_view` | Create warehouse |
-| `/warehouse/<pk>/edit/` | `warehouse_edit` | `warehouse_edit_view` | Edit warehouse |
+| `/warehouse/facilities/new/` | `warehouse_create` | `warehouse_create_view` | Create warehouse |
+| `/warehouse/facilities/<pk>/edit/` | `warehouse_edit` | `warehouse_edit_view` | Edit warehouse |
 | `/warehouse/stock-audit/` | `stock_audit` | `stock_audit_view` | Stock audit workflow |
 | `/warehouse/registry/` | `registry` | `registry_ledger_view` | Registry/audit ledger |
 | `/catalog/products/` | `product_list` | `product_list_view` | Product catalog |
@@ -111,7 +111,7 @@ D:\TerraHub
 | `/catalog/products/export/` | `export_products_csv` | `export_products_csv` | Export products (CSV) |
 | `/catalog/products/template/` | `export_product_template` | `export_product_template` | Product import template |
 | `/catalog/products/import/` | `import_products` | `import_products` | Bulk import products |
-| `/catalog/products/sales-trend/` | `product_sales_trend` | `views_analytics.product_sales_trend_view` | Monthly sales-volume trend per product — "Analytics → Demand" (see §8.12) |
+| `/analytics/sales-trends/` | `product_sales_trend` | `views_analytics.product_sales_trend_view` | Monthly sales-volume trend per product — "Analytics → Demand" (see §8.12) |
 | `/catalog/products/<id>/recipe/get/` | `get_product_recipe_api` | `get_product_recipe_api` | Fetch product recipe (JSON) |
 | `/catalog/products/recipe/save/` | `save_product_recipe_api` | `save_product_recipe_api` | Save product recipe (JSON) |
 | `/catalog/materials/` | `material_list` | `material_list_view` | Material catalog |
@@ -122,11 +122,11 @@ D:\TerraHub
 | `/catalog/materials/import/` | `import_materials` | `import_materials` | Bulk import materials |
 | `/catalog/recipes/export/` | `export_recipes_csv` | `export_product_recipes_csv` | Export product recipes (CSV) |
 | `/operations/sales-orders/` | `so_list` | `sales_order_list_view` | Sales order list |
-| `/operations/orders/so/<pk>/` | `so_detail` | `so_detail_view` | Sales order detail |
-| `/operations/orders/so/<pk>/allocate/` | `so_allocate` | `so_allocate_view` | FEFO batch allocation for SO |
-| `/operations/orders/so/<pk>/create_shipment/` | `so_create_shipment` | `so_create_shipment_view` | Create shipment from SO |
+| `/operations/sales-orders/<pk>/` | `so_detail` | `so_detail_view` | Sales order detail |
+| `/operations/sales-orders/<pk>/allocate/` | `so_allocate` | `so_allocate_view` | FEFO batch allocation for SO |
+| `/operations/sales-orders/<pk>/create_shipment/` | `so_create_shipment` | `so_create_shipment_view` | Create shipment from SO |
 | `/operations/purchase-orders/` | `po_list` | `purchase_order_list_view` | Purchase order list |
-| `/operations/orders/po/<pk>/` | `po_detail` | `po_detail_view` | Purchase order detail |
+| `/operations/purchase-orders/<pk>/` | `po_detail` | `po_detail_view` | Purchase order detail |
 | `/operations/shipments/` | `shipments` | `shipments_view` | Shipment list |
 | `/operations/shipments/<pk>/` | `shipment_detail` | `shipment_detail_view` | Shipment detail |
 | `/operations/shipments/<pk>/picklist/` | `shipment_pick_list` | `shipment_pick_list_view` | Shipment pick list |
@@ -134,17 +134,17 @@ D:\TerraHub
 | `/operations/manufacture/run/<pk>/` | `production_run_detail` | `production_run_detail_view` | Production run detail |
 | `/operations/manufacture/run/<pk>/allocate/` | `production_run_allocate` | `production_run_allocate_view` | Material allocation for a run |
 | `/operations/qa/` | `qa_dashboard` | `qa_dashboard_view` | QA dashboard |
-| `/operations/approvals/` | `approvals_inbox` | `approvals_inbox_view` | Pending approvals inbox |
+| `/approvals/` | `approvals_inbox` | `approvals_inbox_view` | Pending approvals inbox |
 | `/operations/notifications/read/` | `mark_notifications_read` | `mark_notifications_read` | Mark notifications read |
-| `/catalog/suppliers/scorecard/` | `supplier_scorecard` | `views_analytics.supplier_scorecard_view` | Supplier reliability scorecard — "Scorecard" tab of the Suppliers hub (see §8) |
-| `/operations/sales-orders/risk/` | `so_delivery_risk` | `views_analytics.sales_order_delivery_risk_view` | Sales-order delivery-risk board — "Delivery Risk" tab of the Sales Orders hub (see §8) |
-| `/warehouse/stock-audit/accuracy/` | `audit_accuracy` | `views_analytics.audit_accuracy_view` | Stock-audit accuracy roll-up — "Accuracy" tab of the Stock Audit hub (see §8) |
-| `/operations/manufacture/yield/` | `production_yield` | `views_analytics.production_yield_view` | Production yield variance — "Yield" tab of the Manufacturing hub (see §8) |
-| `/warehouse/forecast/` | `forecast` | `views_analytics.forecast_view` | Consumption-rate stockout & reorder forecast (see §8) |
-| `/warehouse/capacity/` | `capacity_forecast` | `views_analytics.capacity_forecast_view` | Warehouse capacity runway — daily-snapshot trend (see §8) |
+| `/analytics/supplier-performance/` | `supplier_scorecard` | `views_analytics.supplier_scorecard_view` | Supplier reliability scorecard — "Scorecard" tab of the Suppliers hub (see §8) |
+| `/decision-support/delivery/` | `so_delivery_risk` | `views_analytics.sales_order_delivery_risk_view` | Sales-order delivery-risk board — "Delivery Risk" tab of the Sales Orders hub (see §8) |
+| `/analytics/audit-accuracy/` | `audit_accuracy` | `views_analytics.audit_accuracy_view` | Stock-audit accuracy roll-up — "Accuracy" tab of the Stock Audit hub (see §8) |
+| `/analytics/yield/` | `production_yield` | `views_analytics.production_yield_view` | Production yield variance — "Yield" tab of the Manufacturing hub (see §8) |
+| `/decision-support/stockout/` | `forecast` | `views_analytics.forecast_view` | Consumption-rate stockout & reorder forecast (see §8) |
+| `/decision-support/capacity/` | `capacity_forecast` | `views_analytics.capacity_forecast_view` | Warehouse capacity runway — daily-snapshot trend (see §8) |
 | `/assistant/briefing/` | `ops_briefing` | `views_analytics.ops_briefing_view` | My Open Jobs — the personal checklist; *Overview → AI Copilot* (see §8.11) |
 | `/assistant/briefing/<category>/` | `category_briefing` | `views_analytics.category_briefing_view` | One of the six domain briefings (materials/products/sales/purchase/logistics/warehouse) — Claude narration of that category's Tier 1/2 signals (see §8.9) |
-| `/operations/shipments/logistics/` | `shipment_logistics` | `views_analytics.shipment_logistics_view` | In-flight shipment risk roll-up — "Analytics → Supply Chain" (see §8.10) |
+| `/analytics/logistics-performance/` | `shipment_logistics` | `views_analytics.shipment_logistics_view` | In-flight shipment risk roll-up — "Analytics → Supply Chain" (see §8.10) |
 | `/admin/` | — | Django admin | Django admin site |
 
 ---
@@ -318,7 +318,7 @@ current flat degradation threshold in `dashboard_view`
 ### 8.3. Supplier reliability scorecard  *(Phase 1 — implemented)*
 
 `supplier_reliability(since=None, until=None)` → `views_analytics.supplier_scorecard_view`
-→ `/catalog/suppliers/scorecard/` (nav: *Analytics → Supply Chain*, tab: Supplier Performance; Suppliers links to it via a header call-out).
+→ `/analytics/supplier-performance/` (nav: *Analytics → Supply Chain*, tab: Supplier Performance; Suppliers links to it via a header call-out).
 
 Considers POs in status `Pending` / `Partially Received` / `Completed`, optionally
 bounded by `order_date`. Grouped by the `supplier` FK, with free-text
@@ -359,7 +359,7 @@ migration seeds one row per registry entry so they are all editable from day one
 ### 8.4. Sales-order delivery risk  *(Phase 1 — implemented)*
 
 `sales_order_delivery_risk()` → `views_analytics.sales_order_delivery_risk_view`
-→ `/operations/sales-orders/risk/` (nav: *Analytics → Supply Chain*, tab: Delivery Performance; Sales Orders links to it via a header call-out).
+→ `/decision-support/delivery/` (nav: *Analytics → Supply Chain*, tab: Delivery Performance; Sales Orders links to it via a header call-out).
 
 ```
 arrival(so)   = max outbound Shipment.actual_arrival_date          -> is_actual
@@ -384,7 +384,7 @@ Ship / Partially Shipped / Shipped. Sorted `(risk rank, days_slack, so_number)`.
 ### 8.5. Stock-audit accuracy  *(Phase 1 — implemented)*
 
 `audit_accuracy(since=None)` → `views_analytics.audit_accuracy_view` →
-`/warehouse/stock-audit/accuracy/` (nav: *Analytics → Operations*, tab: Inventory Audit Accuracy; Stock Tally links to it via a header call-out).
+`/analytics/audit-accuracy/` (nav: *Analytics → Operations*, tab: Inventory Audit Accuracy; Stock Tally links to it via a header call-out).
 
 `variance = actual_quantity − expected_quantity` per `StockAudit`. Rolled up
 `by_warehouse` and `by_item` (`accuracy_rate` = zero-variance share, `shrinkage` =
@@ -395,7 +395,7 @@ Ship / Partially Shipped / Shipped. Sorted `(risk rank, days_slack, so_number)`.
 ### 8.6. Production yield variance  *(Phase 1 — implemented)*
 
 `production_yield_variance()` → `views_analytics.production_yield_view` →
-`/operations/manufacture/yield/` (nav: *Analytics → Operations*, tab: Yield Performance; Manufacture links to it via a header call-out).
+`/analytics/yield/` (nav: *Analytics → Operations*, tab: Yield Performance; Manufacture links to it via a header call-out).
 
 For `status='Completed'` runs with an `actual_yield`, grouped `by_product` and
 `by_supervisor`:
@@ -426,7 +426,7 @@ Sorted highest share first (unknown share last), then window quantity, then name
 ### 8.7. Stockout & reorder forecast  *(Phase 2a — implemented)*
 
 `stockout_forecast(window_days=30)` → `views_analytics.forecast_view` →
-`/warehouse/forecast/` (nav: *Analytics → Inventory*, tab: Stockout & Reorder; Materials Hub links to it via a header call-out).
+`/decision-support/stockout/` (nav: *Analytics → Inventory*, tab: Stockout & Reorder; Materials Hub links to it via a header call-out).
 
 ```
 burn/day    = Σ Consumed_For_Manufacturing qty over window / window_days   (consumption_rates())
@@ -460,7 +460,7 @@ materials.
 ### 8.8. Capacity runway  *(Phase 2b — implemented)*
 
 `capacity_forecast()` → `views_analytics.capacity_forecast_view` →
-`/warehouse/capacity/` (nav: *Analytics → Inventory*, tab: Inventory Capacity; Facility Management
+`/decision-support/capacity/` (nav: *Analytics → Inventory*, tab: Inventory Capacity; Facility Management
 links to it via a header call-out).
 
 One `WarehouseUtilizationSnapshot` per warehouse per day (idempotent on
@@ -580,7 +580,7 @@ page. `--dry-run` prints the signal payload(s) without calling the API.
 ### 8.10. Shipment logistics  *(Phase 4 — implemented)*
 
 `analytics.shipment_logistics()` → `views_analytics.shipment_logistics_view` →
-`/operations/shipments/logistics/` (nav: *Analytics → Supply Chain*, tab: Logistics
+`/analytics/logistics-performance/` (nav: *Analytics → Supply Chain*, tab: Logistics
 Performance). Also feeds the Logistics category briefing (§8.9).
 
 Before this, `Shipment` was only read indirectly — the outbound leg inside
@@ -654,7 +654,7 @@ produces `my_checklist` rows.
 ### 8.12. Product sales trend  *(Phase 5 — implemented)*
 
 `analytics.product_sales_trend()` → `views_analytics.product_sales_trend_view`
-→ `/catalog/products/sales-trend/` (nav: *Analytics → Demand*; the category's
+→ `/analytics/sales-trends/` (nav: *Analytics → Demand*; the category's
 only report, so no tab strip).
 Also feeds the Sales category briefing (§8.9) and is the trend field that
 unlocks its Outlook section.

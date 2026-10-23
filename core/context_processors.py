@@ -134,8 +134,8 @@ def sidebar_nav(request):
     # Inventory & Facilities
     inventory_items = []
     if user.has_perm('core.view_warehouse'):
-        inventory_items.append({'label': 'Warehouse Inventory', 'url_name': 'warehouse_inventory', 'css_class': 'emerald-link'})
-        inventory_items.append({'label': 'Facility Management', 'url_name': 'warehouse_list'})
+        inventory_items.append({'label': 'Warehouse Inventory', 'url_name': 'warehouse_inventory', 'css_class': 'emerald-link', 'alias_url_names': ['batch_detail']})
+        inventory_items.append({'label': 'Facility Management', 'url_name': 'warehouse_list', 'alias_url_names': ['warehouse_create', 'warehouse_edit']})
     if user.has_perm('core.view_stockaudit') or user.has_perm('core.add_stockaudit'):
         inventory_items.append({'label': 'Stock Tally (Audit)', 'url_name': 'stock_audit'})
     if user.has_perm('core.view_registrylog'):
@@ -146,24 +146,24 @@ def sidebar_nav(request):
     # Catalog & Directory
     catalog_items = []
     if user.has_perm('core.view_product'):
-        catalog_items.append({'label': 'Products Catalog', 'url_name': 'product_list'})
+        catalog_items.append({'label': 'Products Catalog', 'url_name': 'product_list', 'alias_url_names': ['product_detail']})
     if user.has_perm('core.view_material'):
-        catalog_items.append({'label': 'Materials Hub', 'url_name': 'material_list'})
+        catalog_items.append({'label': 'Materials Hub', 'url_name': 'material_list', 'alias_url_names': ['material_detail', 'material_edit']})
     if user.has_perm('core.view_supplier'):
-        catalog_items.append({'label': 'Suppliers', 'url_name': 'supplier_list'})
+        catalog_items.append({'label': 'Suppliers', 'url_name': 'supplier_list', 'alias_url_names': ['supplier_detail']})
     if user.has_perm('core.view_client'):
-        catalog_items.append({'label': 'Clients', 'url_name': 'client_list'})
+        catalog_items.append({'label': 'Clients', 'url_name': 'client_list', 'alias_url_names': ['client_detail']})
     if catalog_items:
         groups.append({'id': 'catalog', 'short': 'Catalog', 'label': 'Catalog & Directory', 'icon': NAV_ICONS['catalog'], 'items': catalog_items})
 
     # Operations & Logistics
     ops_items = []
     if user.has_perm('core.view_shipment'):
-        ops_items.append({'label': 'Sales Orders', 'url_name': 'so_list'})
-        ops_items.append({'label': 'Purchase Orders', 'url_name': 'po_list'})
-        ops_items.append({'label': 'Logistics Tracker', 'url_name': 'shipments'})
+        ops_items.append({'label': 'Sales Orders', 'url_name': 'so_list', 'alias_url_names': ['so_detail', 'so_allocate']})
+        ops_items.append({'label': 'Purchase Orders', 'url_name': 'po_list', 'alias_url_names': ['po_detail']})
+        ops_items.append({'label': 'Logistics Tracker', 'url_name': 'shipments', 'alias_url_names': ['shipment_detail']})
     if user.has_perm('core.view_productrecipe') or user.has_perm('core.add_batch'):
-        ops_items.append({'label': 'Manufacture', 'url_name': 'readiness'})
+        ops_items.append({'label': 'Manufacture', 'url_name': 'readiness', 'alias_url_names': ['production_run_detail', 'production_run_allocate']})
     if user.has_perm('core.change_batch'):
         ops_items.append({'label': 'QA & Spoilage Control', 'url_name': 'qa_dashboard', 'css_class': 'warning-link'})
     if ops_items:
