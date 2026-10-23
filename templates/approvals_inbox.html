@@ -7,7 +7,7 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span>Overview</span>
             <span class="separator">/</span>
             <span class="current-page">Action Center</span>
         </nav>
@@ -20,7 +20,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:var(--danger);{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -47,7 +47,7 @@
 
 <div class="action-center-grid animate-fade-in-up">
     <!-- Tasks Section -->
-    <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <div style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
         <div style="display:flex; gap:1.5rem; margin-bottom:1.5rem; border-bottom:1px solid var(--border-light);">
             <button type="button" id="btn-tasks" onclick="switchTab('tasks')" style="background:none; border:none; padding-bottom:0.75rem; font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; cursor:pointer;">Assigned Tasks & Approvals</button>
             <button type="button" id="btn-following" onclick="switchTab('following')" style="background:none; border:none; padding-bottom:0.75rem; font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:600; cursor:pointer;">Following</button>
@@ -57,7 +57,7 @@
         <div style="display:flex; flex-direction:column; gap:1rem;">
             <!-- Sales Orders -->
             {% for so in pending_sos %}
-            <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
+            <div style="background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
                 <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
                     <div>
                         <div style="font-size:0.75rem; font-weight:700; color:var(--primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Sales Order Approval</div>
@@ -68,7 +68,7 @@
                 </div>
                 
                 {% if so.approval_remarks %}
-                <div style="background:#fff; border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">
+                <div style="background:var(--bg-surface); border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">
                     "{{ so.approval_remarks }}"
                 </div>
                 {% endif %}
@@ -78,7 +78,7 @@
                     <input type="hidden" name="item_type" value="sales_order">
                     <input type="hidden" name="item_id" value="{{ so.id }}">
                     <input type="text" name="comment" placeholder="Add comment..." class="form-input" style="flex:1; padding:0.4rem 0.6rem; font-size:0.85rem; border-radius:6px; border:1px solid var(--border-light);">
-                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject</button>
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:var(--danger); color:var(--danger); padding:0.4rem 1rem;">Reject</button>
                     <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem;">Approve</button>
                 </form>
             </div>
@@ -87,18 +87,18 @@
             <!-- Production Runs: variance sign-off (run finished) or pre-production approval -->
             {% for run in pending_runs %}
             {% if run.actual_yield is not None %}
-            <div style="background:#fefce8; border:1px solid #fde047; border-radius:10px; padding:1.25rem;">
+            <div style="background:var(--warning-soft); border:1px solid var(--warning-border); border-radius:10px; padding:1.25rem;">
                 <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
                     <div>
-                        <div style="font-size:0.75rem; font-weight:700; color:#a16207; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Variance Approval</div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--warning-strong); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Variance Approval</div>
                         <a href="{% url 'production_run_detail' run.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ run.run_number }}</a>
                         <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Product: {{ run.target_product.name }} &middot; Expected: {{ run.expected_yield }} units (≈ {{ run.expected_yield|weight_display:run.target_product }}) &middot; Actual Yield: {{ run.actual_yield }} units (≈ {{ run.actual_yield|weight_display:run.target_product }})</div>
                     </div>
-                    <span class="badge badge-amber" style="background:#fde047; color:#854d0e;">Pending Approval</span>
+                    <span class="badge badge-amber" style="background:var(--warning-soft); color:var(--warning-strong);">Pending Approval</span>
                 </div>
 
                 {% if run.signoff_reason %}
-                <div style="background:#fff; border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">
+                <div style="background:var(--bg-surface); border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">
                     <strong>Variance Remark:</strong> "{{ run.signoff_reason }}"
                 </div>
                 {% endif %}
@@ -108,12 +108,12 @@
                     <input type="hidden" name="item_type" value="production_run">
                     <input type="hidden" name="item_id" value="{{ run.id }}">
                     <input type="text" name="comment" placeholder="Add comment..." class="form-input" style="flex:1; padding:0.4rem 0.6rem; font-size:0.85rem; border-radius:6px; border:1px solid var(--border-light);">
-                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;" title="Returns the run to In Progress for rework">Reject (Rework)</button>
-                    <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem; background:#854d0e; border-color:#854d0e;">Approve & Complete</button>
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:var(--danger); color:var(--danger); padding:0.4rem 1rem;" title="Returns the run to In Progress for rework">Reject (Rework)</button>
+                    <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem; background:var(--warning-strong); border-color:var(--warning-strong);">Approve & Complete</button>
                 </form>
             </div>
             {% else %}
-            <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
+            <div style="background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
                 <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
                     <div>
                         <div style="font-size:0.75rem; font-weight:700; color:var(--primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Production Approval</div>
@@ -128,7 +128,7 @@
                     <input type="hidden" name="item_type" value="production_run">
                     <input type="hidden" name="item_id" value="{{ run.id }}">
                     <input type="text" name="comment" placeholder="Add comment..." class="form-input" style="flex:1; padding:0.4rem 0.6rem; font-size:0.85rem; border-radius:6px; border:1px solid var(--border-light);">
-                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;" onclick="return confirm('Rejecting cancels {{ run.run_number }} and releases any allocated stock. Continue?');">Reject &amp; Cancel Run</button>
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:var(--danger); color:var(--danger); padding:0.4rem 1rem;" onclick="return confirm('Rejecting cancels {{ run.run_number }} and releases any allocated stock. Continue?');">Reject &amp; Cancel Run</button>
                     <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem;">Approve</button>
                 </form>
             </div>
@@ -137,17 +137,17 @@
 
             <!-- Discrepancy Approvals -->
             {% for ship in pending_shipments %}
-            <div style="background:#fef2f2; border:1px solid rgba(239,68,68,0.2); border-radius:10px; padding:1.25rem;">
+            <div style="background:var(--danger-soft); border:1px solid rgba(239,68,68,0.2); border-radius:10px; padding:1.25rem;">
                 <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
                     <div>
-                        <div style="font-size:0.75rem; font-weight:700; color:#dc2626; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Discrepancy Escalation</div>
+                        <div style="font-size:0.75rem; font-weight:700; color:var(--danger); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Discrepancy Escalation</div>
                         <a href="{% url 'shipment_detail' ship.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ ship.tracking_number }}</a>
                         <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Direction: {{ ship.get_direction_display }}</div>
                     </div>
-                    <span class="badge badge-amber" style="background:rgba(239,68,68,0.1); color:#dc2626;">Needs Force Close</span>
+                    <span class="badge badge-amber" style="background:rgba(239,68,68,0.1); color:var(--danger);">Needs Force Close</span>
                 </div>
                 
-                <div style="background:#fff; border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">
+                <div style="background:var(--bg-surface); border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">
                     <strong>Remarks:</strong><br/>
                     {{ ship.discrepancy_remarks|linebreaksbr }}
                 </div>
@@ -160,7 +160,7 @@
 
             <!-- Shipment Approvals -->
             {% for ship in pending_shipment_approvals %}
-            <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
+            <div style="background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
                 <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
                     <div>
                         <div style="font-size:0.75rem; font-weight:700; color:var(--primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Logistics Approval</div>
@@ -175,7 +175,7 @@
                     <input type="hidden" name="item_type" value="shipment">
                     <input type="hidden" name="item_id" value="{{ ship.id }}">
                     <input type="text" name="comment" placeholder="Add comment..." class="form-input" style="flex:1; padding:0.4rem 0.6rem; font-size:0.85rem; border-radius:6px; border:1px solid var(--border-light);">
-                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject</button>
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:var(--danger); color:var(--danger); padding:0.4rem 1rem;">Reject</button>
                     <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem;">Approve</button>
                 </form>
             </div>
@@ -183,7 +183,7 @@
 
             <!-- Purchase Orders -->
             {% for po in pending_pos %}
-            <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
+            <div style="background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
                 <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.75rem;">
                     <div>
                         <div style="font-size:0.75rem; font-weight:700; color:var(--success-strong); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Purchase Order Approval</div>
@@ -197,7 +197,7 @@
                 </div>
 
                 {% if po.approval_remarks %}
-                <div style="background:#fff; border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">
+                <div style="background:var(--bg-surface); border:1px dashed var(--border-light); padding:0.75rem; border-radius:6px; font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem; font-style:italic;">
                     "{{ po.approval_remarks }}"
                 </div>
                 {% endif %}
@@ -207,7 +207,7 @@
                     <input type="hidden" name="item_type" value="purchase_order">
                     <input type="hidden" name="item_id" value="{{ po.id }}">
                     <input type="text" name="comment" placeholder="Add comment..." class="form-input" style="flex:1; padding:0.4rem 0.6rem; font-size:0.85rem; border-radius:6px; border:1px solid var(--border-light);">
-                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject</button>
+                    <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:var(--danger); color:var(--danger); padding:0.4rem 1rem;">Reject</button>
                     <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem;">Approve</button>
                 </form>
             </div>
@@ -234,7 +234,7 @@
                 {% else %}
                 <!-- Followed Sales Orders -->
                 {% for so in followed_sos %}
-                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+                <div style="background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
                     <div>
                         <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Sales Order</div>
                         <a href="{% url 'so_detail' so.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ so.so_number }}</a>
@@ -248,7 +248,7 @@
 
                 <!-- Followed Purchase Orders -->
                 {% for po in followed_pos %}
-                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+                <div style="background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
                     <div>
                         <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Purchase Order</div>
                         <a href="{% url 'po_detail' po.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ po.po_number }}</a>
@@ -263,7 +263,7 @@
 
                 <!-- Followed Production Runs -->
                 {% for run in followed_runs %}
-                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+                <div style="background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
                     <div>
                         <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Production Run</div>
                         <a href="{% url 'production_run_detail' run.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ run.run_number }}</a>
@@ -277,7 +277,7 @@
 
                 <!-- Followed Shipments -->
                 {% for ship in followed_shipments %}
-                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
+                <div style="background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:10px; padding:1.25rem; display:flex; justify-content:space-between; align-items:center;">
                     <div>
                         <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Shipment</div>
                         <a href="{% url 'shipment_detail' ship.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ ship.tracking_number }}</a>
@@ -294,7 +294,7 @@
     </div>
 
     <!-- Notifications Section -->
-    <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <div style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem; border-bottom:1px solid var(--border-light); padding-bottom:0.75rem;">
             <h3 style="font-family:'Outfit',sans-serif; font-size:1.2rem; font-weight:700;">Notifications</h3>
             {% if notifications %}
@@ -307,7 +307,7 @@
         
         <div style="display:flex; flex-direction:column; gap:0.75rem;">
             {% for note in notifications %}
-            <div style="background:#f0f9ff; border-left:3px solid var(--primary); padding:1rem; border-radius:0 8px 8px 0;">
+            <div style="background:var(--info-soft); border-left:3px solid var(--primary); padding:1rem; border-radius:0 8px 8px 0;">
                 <div style="font-size:0.85rem; font-weight:600; color:var(--text-main); margin-bottom:0.25rem;">
                     {{ note.message }}
                 </div>
@@ -327,7 +327,7 @@
     </div>
 
     <!-- History Section -->
-    <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:1.5rem;">
+    <div style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:1.5rem;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.2rem; font-weight:700; margin-bottom:1.5rem; border-bottom:1px solid var(--border-light); padding-bottom:0.75rem;">Your Approval History</h3>
         <div style="display:flex; flex-direction:column; gap:0.75rem; max-height:400px; overflow-y:auto; padding-right:0.5rem; margin-bottom:1rem;">
             {% for item in history_page %}

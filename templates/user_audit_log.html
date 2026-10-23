@@ -6,9 +6,7 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
-            <span class="separator">/</span>
-            <a href="{% url 'user_management' %}">User Management</a>
+            <span>Admin</span>
             <span class="separator">/</span>
             <span class="current-page">Audit Log</span>
         </nav>
@@ -19,7 +17,7 @@
     </div>
 </header>
 
-<section class="animate-fade-in-up" style="margin-bottom:2rem; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<section class="animate-fade-in-up" style="margin-bottom:2rem; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <form method="get" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:1.25rem;">
         {% if target %}<input type="hidden" name="user" value="{{ target.id }}">{% endif %}
         {% if not target %}

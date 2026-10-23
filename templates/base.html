@@ -12,6 +12,8 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap"
         rel="stylesheet">
+    <script>/* Theme colour for canvas charts, which cannot read CSS variables: themeColor('--success') */
+        window.themeColor = function (name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); };</script>
     <!-- Main Style Sheet -->
     <link rel="stylesheet" href="{% static 'css/style.css' %}">
     {% block extra_css %}{% endblock %}

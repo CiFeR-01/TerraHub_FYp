@@ -8,7 +8,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div class="alert {% if message.tags == 'error' %}alert-danger{% else %}alert-success{% endif %}" style="padding: 1rem; border-radius: 8px; margin-bottom: 0.5rem; background: {% if message.tags == 'error' %}#fee2e2; color: #991b1b; border: 1px solid #f87171;{% else %}#dcfce7; color: #166534; border: 1px solid #4ade80;{% endif %}">
+    <div class="alert {% if message.tags == 'error' %}alert-danger{% else %}alert-success{% endif %}" style="padding: 1rem; border-radius: 8px; margin-bottom: 0.5rem; background: {% if message.tags == 'error' %}var(--danger-soft); color: var(--danger-strong); border: 1px solid var(--danger-border);{% else %}#dcfce7; color: var(--success-strong); border: 1px solid var(--success-border);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -18,7 +18,7 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span>Operations &amp; Logistics</span>
             <span class="separator">/</span>
             <a href="{% url 'shipments' %}">Logistics Tracker</a>
             <span class="separator">/</span>
@@ -71,24 +71,24 @@
 </header>
 
 <!-- Horizontal Stepper -->
-<div class="stepper-container animate-fade-in-up" style="display: flex; justify-content: space-between; align-items: center; background: #fff; padding: 1.5rem 2rem; border-radius: 8px; border: 1px solid var(--border-light); margin-bottom: 1.5rem;">
+<div class="stepper-container animate-fade-in-up" style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-surface); padding: 1.5rem 2rem; border-radius: 8px; border: 1px solid var(--border-light); margin-bottom: 1.5rem;">
     <style>
         .step-item { flex: 1; text-align: center; position: relative; }
         .step-item:not(:last-child)::after {
             content: ''; position: absolute; top: 12px; left: 50%; width: 100%; height: 2px;
-            background: #e2e8f0; z-index: 1;
+            background: var(--surface-strong); z-index: 1;
         }
         .step-item.active:not(:last-child)::after, .step-item.completed:not(:last-child)::after {
             background: var(--primary);
         }
         .step-circle {
-            width: 24px; height: 24px; border-radius: 50%; background: #e2e8f0; color: #64748b;
+            width: 24px; height: 24px; border-radius: 50%; background: var(--surface-strong); color: var(--text-muted);
             display: flex; align-items: center; justify-content: center; margin: 0 auto 0.5rem;
             font-size: 0.75rem; font-weight: bold; position: relative; z-index: 2;
         }
-        .step-item.active .step-circle { background: var(--primary); color: #fff; box-shadow: 0 0 0 3px #bfdbfe; }
-        .step-item.completed .step-circle { background: var(--primary); color: #fff; }
-        .step-label { font-size: 0.75rem; font-weight: 600; color: #64748b; }
+        .step-item.active .step-circle { background: var(--primary); color: #fff; box-shadow: 0 0 0 3px var(--primary-soft); }
+        .step-item.completed .step-circle { background: var(--primary); color: var(--on-primary); }
+        .step-label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); }
         .step-item.active .step-label { color: var(--primary); }
         .step-item.completed .step-label { color: var(--primary); }
     </style>
@@ -120,7 +120,7 @@
 </div>
 
 <!-- Shipment Info Panel -->
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1.25rem;">
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Direction</div>
@@ -289,7 +289,7 @@
         <div class="table-responsive">
             <table class="sortable" style="width:100%; border-collapse:collapse;">
                 <thead>
-                    <tr style="background:#f8fafc; border-bottom:1px solid var(--border-light);">
+                    <tr style="background:var(--surface-sunken); border-bottom:1px solid var(--border-light);">
                         <th style="padding:0.75rem 1.5rem; text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Item</th>
                         <th style="padding:0.75rem 1.5rem; text-align:left; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Batch Ref</th>
                         <th style="padding:0.75rem 1.5rem; text-align:right; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Qty</th>
@@ -304,9 +304,9 @@
                     <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
                         <td style="padding:1rem 1.5rem; font-weight:500; color:var(--text-main);">
                             {% if item.material %}
-                                <span class="badge" style="background:#e0e7ff; color:#3730a3; margin-right:0.5rem;">Raw Mat</span> {{ item.material.name }}
+                                <span class="badge" style="background:var(--primary-soft); color:var(--primary-strong); margin-right:0.5rem;">Raw Mat</span> {{ item.material.name }}
                             {% elif item.product %}
-                                <span class="badge" style="background:#dcfce7; color:#166534; margin-right:0.5rem;">Product</span> {{ item.product.name }}
+                                <span class="badge" style="background:var(--success-soft); color:var(--success-strong); margin-right:0.5rem;">Product</span> {{ item.product.name }}
                             {% endif %}
                         </td>
                         <td style="padding:1rem 1.5rem; color:var(--text-muted);">
@@ -326,7 +326,7 @@
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="remove_item">
                                 <input type="hidden" name="item_id" value="{{ item.id }}">
-                                <button type="submit" class="btn" style="padding:0.25rem 0.5rem; font-size:0.75rem; color:var(--text-danger); background:#fee2e2;">Remove</button>
+                                <button type="submit" class="btn" style="padding:0.25rem 0.5rem; font-size:0.75rem; color:var(--text-danger); background:var(--danger-soft);">Remove</button>
                             </form>
                             {% endif %}
                         </td>
@@ -345,7 +345,7 @@
         
         <!-- Add Item Form -->
         {% if not cargo_locked %}
-          <div style="padding: 1.5rem; background:#f8fafc; border-top: 1px solid var(--border-light);">
+          <div style="padding: 1.5rem; background:var(--surface-sunken); border-top: 1px solid var(--border-light);">
               <h4 style="margin-top:0; margin-bottom:1rem; font-size:0.95rem;">➕ Add Cargo Line Item</h4>
               <form method="POST" style="display:grid; grid-template-columns: auto 1fr 1.2fr 100px 100px; gap: 1rem; align-items:start;">
                   {% csrf_token %}
@@ -403,7 +403,7 @@
               </form>
 
             <!-- Available Stock Table (hidden by default) -->
-            <div id="stock_table_container" style="display:none; margin-top:1.5rem; background:#f8fafc; padding:1rem; border-radius:8px; border:1px solid var(--border-light);">
+            <div id="stock_table_container" style="display:none; margin-top:1.5rem; background:var(--surface-sunken); padding:1rem; border-radius:8px; border:1px solid var(--border-light);">
                 <h4 style="font-size:0.85rem; font-weight:700; margin-bottom:0.75rem; color:var(--text-main);">Available Stock</h4>
                 <table class="sortable" style="width:100%; font-size:0.75rem; border-collapse:collapse;">
                     <thead>
@@ -415,7 +415,7 @@
                     </thead>
                     <tbody id="stock_table_body">
                         {% for b in batches %}
-                        <tr class="stock-row" data-mat="{{ b.material.id|default:'' }}" data-prod="{{ b.product.id|default:'' }}" style="border-bottom:1px solid #e2e8f0; display:none;">
+                        <tr class="stock-row" data-mat="{{ b.material.id|default:'' }}" data-prod="{{ b.product.id|default:'' }}" style="border-bottom:1px solid var(--border-light); display:none;">
                             <td style="padding:0.35rem 0.25rem; font-family:monospace; color:var(--primary);">{{ b.batch_number }}</td>
                             <td style="padding:0.35rem 0.25rem;">{{ b.location.name|default:"-" }} ({{ b.location|default:"Unassigned" }})</td>
                             <td style="padding:0.35rem 0.25rem; text-align:right; font-weight:600;">{{ b.quantity|floatformat:1 }}</td>
@@ -431,9 +431,9 @@
 
         <!-- Confirm Receipt Panel (Only if Arrived or Completed) -->
         {% if shipment.status in 'Arrived,Completed,Discrepant' %}
-        <div class="pane-card" style="padding: 1.5rem; background:#f0fdf4; border: 1px solid var(--border-light); border-radius: 8px;">
-            <h4 style="margin-top:0; margin-bottom:0.25rem; font-size:0.95rem; color:#166534;">✅ {% if shipment.status == 'Completed' %}Receiving Complete{% else %}Log Received Quantities{% endif %}</h4>
-            <p style="font-size:0.8rem; color:#166534; opacity:0.8; margin-top:0; margin-bottom:1.25rem;">
+        <div class="pane-card" style="padding: 1.5rem; background:var(--success-soft); border: 1px solid var(--border-light); border-radius: 8px;">
+            <h4 style="margin-top:0; margin-bottom:0.25rem; font-size:0.95rem; color:var(--success-strong);">✅ {% if shipment.status == 'Completed' %}Receiving Complete{% else %}Log Received Quantities{% endif %}</h4>
+            <p style="font-size:0.8rem; color:var(--success-strong); opacity:0.8; margin-top:0; margin-bottom:1.25rem;">
                 {% if shipment.direction == 'Inbound' %}
                 Goods can arrive in more than one round — log each delivery as it comes in, then finalize once nothing more is expected.
                 {% elif shipment.direction == 'Transfer' %}
@@ -444,50 +444,50 @@
             </p>
             <div style="display:flex; flex-direction:column; gap:0.85rem; margin-bottom:1.25rem;">
                 {% for item in shipment.items.all %}
-                <div style="background:#fff; border:1px solid #bbf7d0; border-radius:8px; padding:1rem 1.25rem;">
+                <div style="background:var(--bg-surface); border:1px solid var(--success-border); border-radius:8px; padding:1rem 1.25rem;">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem;">
                         <div>
-                            <strong style="color:#166534; font-size:0.9rem;">
+                            <strong style="color:var(--success-strong); font-size:0.9rem;">
                                 {% if item.material %}{{ item.material.name }}{% elif item.product %}{{ item.product.name }}{% endif %}
                             </strong>
-                            <div style="font-size:0.75rem; color:#166534; opacity:0.7; margin-top:0.15rem;">Batch: {{ item.batch.batch_number|default:"-" }}</div>
+                            <div style="font-size:0.75rem; color:var(--success-strong); opacity:0.7; margin-top:0.15rem;">Batch: {{ item.batch.batch_number|default:"-" }}</div>
                         </div>
                         <div style="display:flex; gap:1.75rem;">
                             <div style="text-align:right;">
-                                <div style="font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:#166534; opacity:0.65;">{% if shipment.direction == 'Inbound' %}Expected{% else %}Shipped Qty{% endif %}</div>
-                                <div style="font-weight:700; color:#166534;">{{ item.quantity|floatformat:2 }}</div>
+                                <div style="font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--success-strong); opacity:0.65;">{% if shipment.direction == 'Inbound' %}Expected{% else %}Shipped Qty{% endif %}</div>
+                                <div style="font-weight:700; color:var(--success-strong);">{{ item.quantity|floatformat:2 }}</div>
                             </div>
                             <div style="text-align:right;">
-                                <div style="font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:#166534; opacity:0.65;">Received So Far</div>
-                                <div style="font-weight:700; color:{% if item.received_quantity == item.quantity %}#166534{% else %}#b45309{% endif %};">{{ item.received_quantity|floatformat:2 }}</div>
+                                <div style="font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--success-strong); opacity:0.65;">Received So Far</div>
+                                <div style="font-weight:700; color:{% if item.received_quantity == item.quantity %}var(--success-strong){% else %}var(--warning-strong){% endif %};">{{ item.received_quantity|floatformat:2 }}</div>
                             </div>
                         </div>
                     </div>
 
-                    <div style="margin-top:0.85rem; padding-top:0.75rem; border-top:1px dashed #bbf7d0;">
-                        <div style="font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:#166534; opacity:0.65; margin-bottom:0.5rem;">History</div>
+                    <div style="margin-top:0.85rem; padding-top:0.75rem; border-top:1px dashed var(--success-border);">
+                        <div style="font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--success-strong); opacity:0.65; margin-bottom:0.5rem;">History</div>
                         {% if item.receipts.all %}
                         <div style="display:flex; flex-wrap:wrap; gap:0.5rem;">
                             {% for r in item.receipts.all reversed %}
-                            <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:0.3rem 0.65rem; font-size:0.75rem; color:#166534; white-space:nowrap;">
+                            <div style="background:var(--success-soft); border:1px solid var(--success-border); border-radius:6px; padding:0.3rem 0.65rem; font-size:0.75rem; color:var(--success-strong); white-space:nowrap;">
                                 <strong>+{{ r.quantity|floatformat:2 }}</strong>
                                 <span style="opacity:0.75;">· {{ r.received_date|date:"Y-m-d" }} · {{ r.received_by.get_full_name|default:r.received_by.username|default:"—" }}</span>
                             </div>
                             {% endfor %}
                         </div>
                         {% else %}
-                        <span style="font-size:0.8rem; color:#166534; opacity:0.5;">No receipts logged yet.</span>
+                        <span style="font-size:0.8rem; color:var(--success-strong); opacity:0.5;">No receipts logged yet.</span>
                         {% endif %}
                     </div>
 
                     {% if shipment.status != 'Completed' %}
-                    <form method="POST" style="display:flex; align-items:center; flex-wrap:wrap; gap:0.6rem; margin-top:0.85rem; padding-top:0.75rem; border-top:1px dashed #bbf7d0;">
+                    <form method="POST" style="display:flex; align-items:center; flex-wrap:wrap; gap:0.6rem; margin-top:0.85rem; padding-top:0.75rem; border-top:1px dashed var(--success-border);">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="log_item_receipt">
                         <input type="hidden" name="item_id" value="{{ item.id }}">
-                        <input type="number" step="0.01" min="0.01" name="quantity" placeholder="Qty" required class="form-input" style="width:100px; padding:0.4rem; border:1px solid #bbf7d0; background:#fff;">
-                        <input type="date" name="received_date" value="{% now 'Y-m-d' %}" required class="form-input" style="width:150px; padding:0.4rem; border:1px solid #bbf7d0; background:#fff;">
-                        <button type="submit" class="btn" style="padding:0.4rem 0.9rem; font-size:0.78rem; font-weight:700; background:#166534; color:white; border-radius:6px; border:none;">+ Log Receipt</button>
+                        <input type="number" step="0.01" min="0.01" name="quantity" placeholder="Qty" required class="form-input" style="width:100px; padding:0.4rem; border:1px solid var(--success-border); background:var(--bg-surface);">
+                        <input type="date" name="received_date" value="{% now 'Y-m-d' %}" required class="form-input" style="width:150px; padding:0.4rem; border:1px solid var(--success-border); background:var(--bg-surface);">
+                        <button type="submit" class="btn" style="padding:0.4rem 0.9rem; font-size:0.78rem; font-weight:700; background:var(--success-strong); color:white; border-radius:6px; border:none;">+ Log Receipt</button>
                     </form>
                     {% endif %}
                 </div>
@@ -498,14 +498,14 @@
                 <form method="POST" onsubmit="return confirm('Log the remaining quantity on every line as received today, then finalize?');">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="receive_all">
-                    <button type="submit" class="btn" style="padding: 0.65rem 1.5rem; font-weight:700; background:#fff; color:#166534; border:1px solid #166534; border-radius:6px; cursor:pointer;">
+                    <button type="submit" class="btn" style="padding: 0.65rem 1.5rem; font-weight:700; background:var(--bg-surface); color:var(--success-strong); border:1px solid var(--success-strong); border-radius:6px; cursor:pointer;">
                         Receive All as Expected
                     </button>
                 </form>
                 <form method="POST">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="finalize_shipment_receiving">
-                    <button type="submit" class="btn" style="padding: 0.65rem 1.5rem; font-weight:700; background:#166534; color:white; border-radius:6px; cursor:pointer; border:none;">
+                    <button type="submit" class="btn" style="padding: 0.65rem 1.5rem; font-weight:700; background:var(--success-strong); color:white; border-radius:6px; cursor:pointer; border:none;">
                         Finalize Receiving
                     </button>
                 </form>
@@ -558,14 +558,14 @@
                 </div>
                 <button type="submit" class="btn btn-primary" style="width:100%; padding:0.65rem; margin-bottom:0.75rem;">Submit for Approval</button>
                 {% if can_self_approve %}
-                <button type="submit" name="approve_now" value="1" formnovalidate class="btn" style="width:100%; padding:0.65rem; margin-bottom:0.75rem; background:#fff; border:1px solid #16a34a; color:#16a34a; border-radius:6px; font-weight:600;">Submit &amp; Approve</button>
+                <button type="submit" name="approve_now" value="1" formnovalidate class="btn" style="width:100%; padding:0.65rem; margin-bottom:0.75rem; background:var(--bg-surface); border:1px solid var(--success); color:var(--success-strong); border-radius:6px; font-weight:600;">Submit &amp; Approve</button>
                 {% endif %}
             </form>
             {% endif %}
             <form method="POST">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="return_to_manufacturing">
-                <button type="submit" class="btn" style="width:100%; padding:0.65rem; background:#fff; border:1px solid #dc2626; color:#dc2626; border-radius:6px; font-weight:600;">Return to Manufacturing</button>
+                <button type="submit" class="btn" style="width:100%; padding:0.65rem; background:var(--bg-surface); border:1px solid var(--danger); color:var(--danger); border-radius:6px; font-weight:600;">Return to Manufacturing</button>
             </form>
             {% endif %}
         
@@ -574,12 +574,12 @@
             <form method="POST">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="approve">
-                <button type="submit" class="btn btn-primary" style="width:100%; padding:0.65rem; background:#16a34a; border-color:#16a34a; margin-bottom:0.75rem;">Approve Shipment</button>
+                <button type="submit" class="btn btn-primary" style="width:100%; padding:0.65rem; background:var(--success); border-color:var(--success); margin-bottom:0.75rem;">Approve Shipment</button>
             </form>
             <form method="POST">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="reject">
-                <button type="submit" class="btn" style="width:100%; padding:0.65rem; background:#fff; border:1px solid #dc2626; color:#dc2626; border-radius:6px; font-weight:600;">Reject / Request Changes</button>
+                <button type="submit" class="btn" style="width:100%; padding:0.65rem; background:var(--bg-surface); border:1px solid var(--danger); color:var(--danger); border-radius:6px; font-weight:600;">Reject / Request Changes</button>
             </form>
             {% endif %}
         
@@ -606,42 +606,42 @@
 
             {% if shipment.status == 'Discrepant' %}
                 {% if not shipment.assigned_manager or request.user != shipment.assigned_manager %}
-                <form method="POST" style="margin-top: 1.5rem; padding: 1.5rem; border: 1px solid #fca5a5; border-radius: 8px; background: #fef2f2;">
+                <form method="POST" style="margin-top: 1.5rem; padding: 1.5rem; border: 1px solid var(--danger-border); border-radius: 8px; background: var(--danger-soft);">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="request_force_close">
-                    <h4 style="margin-top:0; color:#991b1b; font-size:0.95rem; margin-bottom:1rem;">🚨 Escalate & Request Force Close</h4>
+                    <h4 style="margin-top:0; color:var(--danger-strong); font-size:0.95rem; margin-bottom:1rem;">🚨 Escalate & Request Force Close</h4>
                     
-                    <label style="display:block; font-size:0.85rem; font-weight:600; color:#991b1b; margin-bottom:0.5rem;">Discrepancy Remarks</label>
-                    <textarea name="discrepancy_remarks" required class="form-input" style="width:100%; height:60px; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:1rem;">{{ shipment.discrepancy_remarks|default:'' }}</textarea>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--danger-strong); margin-bottom:0.5rem;">Discrepancy Remarks</label>
+                    <textarea name="discrepancy_remarks" required class="form-input" style="width:100%; height:60px; padding:0.5rem; border:1px solid var(--danger-border); margin-bottom:1rem;">{{ shipment.discrepancy_remarks|default:'' }}</textarea>
                     
-                    <label style="display:block; font-size:0.85rem; font-weight:600; color:#991b1b; margin-bottom:0.5rem;">Assign Manager</label>
-                    <select name="assigned_manager_id" required class="form-select" style="width:100%; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:1.5rem;">
+                    <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--danger-strong); margin-bottom:0.5rem;">Assign Manager</label>
+                    <select name="assigned_manager_id" required class="form-select" style="width:100%; padding:0.5rem; border:1px solid var(--danger-border); margin-bottom:1.5rem;">
                         <option value="">-- Select Manager --</option>
                         {% for mgr in managers %}
                         <option value="{{ mgr.id }}" {% if shipment.assigned_manager_id == mgr.id %}selected{% endif %}>{{ mgr.get_full_name|default:mgr.username }} ({{ mgr.role_label }})</option>
                         {% endfor %}
                     </select>
                     
-                    <button type="submit" class="btn" style="width:100%; padding: 0.65rem; background: #b91c1c; color:white; font-weight:bold; border:none; border-radius:6px;">Escalate to Manager</button>
+                    <button type="submit" class="btn" style="width:100%; padding: 0.65rem; background: var(--danger-strong); color:white; font-weight:bold; border:none; border-radius:6px;">Escalate to Manager</button>
                 </form>
                 {% endif %}
                 
                 {% if shipment.assigned_manager and request.user == shipment.assigned_manager %}
-                <form method="POST" style="margin-top: 1.5rem; padding: 1.5rem; border: 1px solid #fca5a5; border-radius: 8px; background: #fef2f2;">
+                <form method="POST" style="margin-top: 1.5rem; padding: 1.5rem; border: 1px solid var(--danger-border); border-radius: 8px; background: var(--danger-soft);">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="force_close_shipment">
-                    <h4 style="margin-top:0; color:#991b1b; font-size:0.95rem; margin-bottom:1rem;">🛠️ Manager Sign-Off</h4>
-                    <p style="font-size:0.85rem; margin-bottom:1rem; color:#7f1d1d;"><strong>Remarks:</strong><br>{{ shipment.discrepancy_remarks }}</p>
+                    <h4 style="margin-top:0; color:var(--danger-strong); font-size:0.95rem; margin-bottom:1rem;">🛠️ Manager Sign-Off</h4>
+                    <p style="font-size:0.85rem; margin-bottom:1rem; color:var(--danger-strong);"><strong>Remarks:</strong><br>{{ shipment.discrepancy_remarks }}</p>
                     
-                    <label style="display:block; font-size:0.85rem; font-weight:600; color:#991b1b; margin-bottom:0.5rem;">Manager Acknowledgment Comment</label>
-                    <textarea name="manager_comment" class="form-input" placeholder="Type acknowledgment comment..." style="width:100%; height:60px; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:1.5rem;"></textarea>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--danger-strong); margin-bottom:0.5rem;">Manager Acknowledgment Comment</label>
+                    <textarea name="manager_comment" class="form-input" placeholder="Type acknowledgment comment..." style="width:100%; height:60px; padding:0.5rem; border:1px solid var(--danger-border); margin-bottom:1.5rem;"></textarea>
 
                     {% if shipment.direction == 'Transfer' or shipment.direction == 'Outbound' %}
                     {% for item in shipment.items.all %}{% if item.batch and item.shortage_quantity > 0 %}
-                    <label style="display:block; font-size:0.85rem; font-weight:600; color:#991b1b; margin-bottom:0.5rem;">
+                    <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--danger-strong); margin-bottom:0.5rem;">
                         Missing {{ item.shortage_quantity }} of {% if item.material %}{{ item.material.name }}{% else %}{{ item.product.name }}{% endif %} (Batch {{ item.batch.batch_number }}): where did they go?
                     </label>
-                    <select name="shortage_reason_{{ item.id }}" required class="form-select" style="width:100%; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:1rem;">
+                    <select name="shortage_reason_{{ item.id }}" required class="form-select" style="width:100%; padding:0.5rem; border:1px solid var(--danger-border); margin-bottom:1rem;">
                         <option value="">-- Select --</option>
                         <option value="origin">{% if shipment.direction == 'Outbound' %}Never left or came back to origin, keep on batch{% else %}Still at origin (not loaded / miscount), keep on batch{% endif %}</option>
                         <option value="lost">Lost or damaged in transit, write off</option>
@@ -649,7 +649,7 @@
                     {% endif %}{% endfor %}
                     {% endif %}
 
-                    <button type="submit" class="btn" style="width:100%; padding: 0.65rem; background: #b91c1c; color:white; font-weight:bold; border:none; border-radius:6px;">Sign-Off & Force Close</button>
+                    <button type="submit" class="btn" style="width:100%; padding: 0.65rem; background: var(--danger-strong); color:white; font-weight:bold; border:none; border-radius:6px;">Sign-Off & Force Close</button>
                 </form>
                 {% endif %}
                 
@@ -657,13 +657,13 @@
                 <form method="POST" style="margin-top: 1rem;">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="cancel_escalation">
-                    <button type="submit" class="btn" style="width:100%; padding: 0.65rem; background: #fff; color:#991b1b; font-weight:bold; border:1px solid #fca5a5; border-radius:6px;">Cancel Escalation</button>
+                    <button type="submit" class="btn" style="width:100%; padding: 0.65rem; background: var(--bg-surface); color:var(--danger-strong); font-weight:bold; border:1px solid var(--danger-border); border-radius:6px;">Cancel Escalation</button>
                 </form>
                 {% endif %}
             {% endif %}
             
             {% else %}
-            <div style="padding: 1rem; background: #f8fafc; border-radius: 8px; border: 1px solid var(--border-light); text-align: center;">
+            <div style="padding: 1rem; background: var(--surface-sunken); border-radius: 8px; border: 1px solid var(--border-light); text-align: center;">
                 <div style="font-size: 1.25rem; font-weight: 700; color: var(--primary);">✅ Completed</div>
                 {% if shipment.acknowledged_by %}
                 <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.5rem;">
@@ -681,7 +681,7 @@
             <form method="POST">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="reopen_shipment">
-                <button type="submit" class="btn" style="width:100%; padding: 0.65rem; background: #fff; border: 1px solid var(--border-light); color: var(--text-muted);">Reopen Shipment</button>
+                <button type="submit" class="btn" style="width:100%; padding: 0.65rem; background: var(--bg-surface); border: 1px solid var(--border-light); color: var(--text-muted);">Reopen Shipment</button>
             </form>
             {% endif %}
         </div>
@@ -689,17 +689,17 @@
         <!-- Route Info has been moved to the top panel -->
         
         <!-- Followers Panel -->
-        <div class="pane-card animate-fade-in-up" style="margin-top: 1.5rem; background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+        <div class="pane-card animate-fade-in-up" style="margin-top: 1.5rem; background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
             <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main); display:flex; justify-content:space-between; align-items:center;">
                 Followers
-                <span style="background:var(--primary); color:#fff; border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem;">{{ shipment.followers.count }}</span>
+                <span style="background:var(--primary); color:var(--on-primary); border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem;">{{ shipment.followers.count }}</span>
             </h3>
             
             <div style="display:flex; flex-direction:column; gap:0.75rem; margin-bottom:1rem;">
                 {% for follower in shipment.followers.all %}
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:#f8fafc; border-radius:8px; border:1px solid var(--border-light);">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:var(--surface-sunken); border-radius:8px; border:1px solid var(--border-light);">
                     <div style="display:flex; align-items:center; gap:0.5rem;">
-                        <div style="width:28px; height:28px; border-radius:50%; background:var(--primary); color:#fff; display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700;">
+                        <div style="width:28px; height:28px; border-radius:50%; background:var(--primary); color:var(--on-primary); display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700;">
                             {{ follower.username|make_list|first|upper }}
                         </div>
                         <span style="font-size:0.85rem; font-weight:600;">{{ follower.get_full_name|default:follower.username }}</span>
@@ -709,7 +709,7 @@
                         {% csrf_token %}
                         <input type="hidden" name="action" value="remove_follower">
                         <input type="hidden" name="user_id" value="{{ follower.id }}">
-                        <button type="submit" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:0.75rem; font-weight:600;">Unfollow</button>
+                        <button type="submit" style="background:none; border:none; color:var(--danger); cursor:pointer; font-size:0.75rem; font-weight:600;">Unfollow</button>
                     </form>
                     {% endif %}
                 </div>
@@ -736,14 +736,14 @@
 </div>
 
 <!-- Timeline -->
-<div class="animate-fade-in-up" style="margin-top:2rem; background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<div class="animate-fade-in-up" style="margin-top:2rem; background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:700; margin-bottom:1.5rem; color:var(--text-main);">Order Timeline</h3>
     <div style="display:flex; flex-direction:column; gap:1rem; position:relative;">
         <div style="position:absolute; left:11px; top:10px; bottom:10px; width:2px; background:var(--border-light); z-index:0;"></div>
         {% for event in shipment.timeline.all %}
         <div style="display:flex; gap:1rem; position:relative; z-index:1;">
             <div style="width:24px; height:24px; border-radius:50%; background:var(--primary); display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:2px;">
-                <div style="width:10px; height:10px; border-radius:50%; background:#fff;"></div>
+                <div style="width:10px; height:10px; border-radius:50%; background:var(--bg-surface);"></div>
             </div>
             <div>
                 <div style="font-weight:600; color:var(--text-main); font-size:0.95rem;">{{ event.action }}</div>

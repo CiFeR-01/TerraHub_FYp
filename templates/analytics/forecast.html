@@ -6,11 +6,9 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span>Decision Support</span>
             <span class="separator">/</span>
-            <a href="{% url 'material_list' %}">Materials Hub</a>
-            <span class="separator">/</span>
-            <span class="current-page">Stockout & Reorder Forecast</span>
+            <span class="current-page">Stockout &amp; Reorder</span>
         </nav>
         <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
             Stockout &amp; Reorder Forecast
@@ -30,7 +28,7 @@
         {% for w in window_choices %}
         <a href="?window={{ w }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if query %}&q={{ query|urlencode }}{% endif %}"
            style="font-size:0.8rem; padding:0.3rem 0.7rem; border-radius:6px; text-decoration:none; border:1px solid var(--border-light);
-                  {% if w == window %}background:var(--primary); color:#fff; font-weight:700;{% else %}color:var(--text-muted); background:#fff;{% endif %}">
+                  {% if w == window %}background:var(--primary); color:var(--on-primary); font-weight:700;{% else %}color:var(--text-muted); background:var(--bg-surface);{% endif %}">
             {{ w }}d
         </a>
         {% endfor %}
@@ -40,7 +38,7 @@
         {% for key, label in status_choices %}
         <a href="?window={{ window }}{% if key %}&status={{ key }}{% endif %}{% if query %}&q={{ query|urlencode }}{% endif %}"
            style="font-size:0.8rem; padding:0.3rem 0.7rem; border-radius:6px; text-decoration:none; border:1px solid var(--border-light);
-                  {% if key == status_filter %}background:var(--primary); color:#fff; font-weight:700;{% else %}color:var(--text-muted); background:#fff;{% endif %}">
+                  {% if key == status_filter %}background:var(--primary); color:var(--on-primary); font-weight:700;{% else %}color:var(--text-muted); background:var(--bg-surface);{% endif %}">
             {{ label }}
         </a>
         {% endfor %}
@@ -61,26 +59,26 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Critical</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.critical %}#dc2626{% else %}var(--text-main){% endif %};">{{ summary.critical }}</span>
+            <span class="kpi-value" style="color:{% if summary.critical %}var(--danger){% else %}var(--text-main){% endif %};">{{ summary.critical }}</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Reorder Required</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.reorder_now %}#c2410c{% else %}var(--text-main){% endif %};">{{ summary.reorder_now }}</span>
+            <span class="kpi-value" style="color:{% if summary.reorder_now %}var(--warning-strong){% else %}var(--text-main){% endif %};">{{ summary.reorder_now }}</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">On Watch</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.watch %}#b45309{% else %}var(--text-main){% endif %};">{{ summary.watch }}</span>
+            <span class="kpi-value" style="color:{% if summary.watch %}var(--warning-strong){% else %}var(--text-main){% endif %};">{{ summary.watch }}</span>
         </div>
     </div>
 </section>
 {% include "analytics/partials/_estimate_note.html" %}
 
 {% if coverage_rows %}
-<section class="animate-fade-in-up" style="animation-delay:0.08s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.25rem 1.5rem; margin-bottom:1.5rem;">
+<section class="animate-fade-in-up" style="animation-delay:0.08s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.25rem 1.5rem; margin-bottom:1.5rem;">
     <h2 style="font-size:0.95rem; font-weight:700; color:var(--text-main); margin:0 0 0.15rem;">Projected Stock Coverage</h2>
     <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 1rem;">Days of cover remaining per material, with a marker at the reorder threshold.</p>
     <div style="display:flex; flex-direction:column; gap:0.55rem;">
@@ -98,7 +96,7 @@
 </section>
 {% endif %}
 
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
     <div class="table-responsive">
         <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
@@ -124,12 +122,13 @@
                     <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.status == 'critical' %}0{% elif r.status == 'reorder_now' %}1{% elif r.status == 'watch' %}2{% elif r.status == 'ok' %}3{% else %}4{% endif %}">
                         <span class="badge badge-{{ r.display_color }}">{{ r.display_emoji }} {{ r.display_status }}</span>
                     </td>
-                    <td style="padding:0.6rem 1rem; font-weight:600; {% if r.action_label == 'Reorder' %}color:#dc2626;{% else %}color:var(--text-muted);{% endif %}">
+                    <td style="padding:0.6rem 1rem; font-weight:600; {% if r.action_label == 'Reorder' %}color:var(--danger);{% else %}color:var(--text-muted);{% endif %}">
                         {{ r.action_label }}
                     </td>
                     <td style="padding:0.6rem 1rem; text-align:right;">
                         {{ r.available|floatformat:1 }}
                         <span style="color:var(--text-muted); font-size:0.72rem;">{{ r.unit }}</span>
+                        {% if r.reorder_point is not None %}<div style="font-size:0.72rem; {% if r.below_reorder_point %}color:var(--danger); font-weight:700;{% else %}color:var(--text-muted);{% endif %}">{% if r.below_reorder_point %}below {% endif %}reorder point {{ r.reorder_point|floatformat:0 }}</div>{% endif %}
                     </td>
                     <td style="padding:0.6rem 1rem; text-align:right;" data-sort-value="{{ r.daily_rate }}">
                         {% if r.daily_rate %}{{ r.daily_rate|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">&mdash;</span>{% endif %}
@@ -141,20 +140,20 @@
                     <td style="padding:0.6rem 1rem; text-align:right;" data-sort-value="{{ r.stockout_date|date:'Y-m-d' }}">
                         {{ r.stockout_date|date:"d M Y"|default:"&mdash;" }}
                     </td>
-                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; color:{% if r.status == 'critical' or r.status == 'reorder_now' %}#dc2626{% endif %};"
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; color:{% if r.status == 'critical' or r.status == 'reorder_now' %}var(--danger){% endif %};"
                         data-sort-value="{{ r.reorder_by_date|date:'Y-m-d' }}">
                         {{ r.reorder_by_date|date:"d M Y"|default:"&mdash;" }}
                         {% if r.lead_time_estimated and r.status != 'no_usage' %}
                         <span title="Lead time estimated from the po_default_lead_time_days setting - no supplier lead time on file for this material"
-                              style="font-size:0.6rem; font-weight:700; background:#eef2ff; color:#4338ca; padding:0.05rem 0.35rem; border-radius:4px; margin-left:0.3rem;">EST</span>
+                              style="font-size:0.6rem; font-weight:700; background:var(--primary-softer); color:var(--primary-strong); padding:0.05rem 0.35rem; border-radius:4px; margin-left:0.3rem;">EST</span>
                         {% endif %}
                     </td>
                     <td style="padding:0.6rem 1rem; text-align:right; color:var(--text-muted);">
                         {% if r.on_order %}{{ r.on_order|floatformat:1 }}
                         <div style="font-size:0.72rem; line-height:1.35;">
-                            {% if r.on_order_late %}<div style="color:#b91c1c; font-weight:600;">{{ r.on_order_late|floatformat:0 }} arrives after run-out</div>
+                            {% if r.on_order_late %}<div style="color:var(--danger-strong); font-weight:600;">{{ r.on_order_late|floatformat:0 }} arrives after run-out</div>
                             {% elif r.on_order_counted %}<div style="color:var(--success-strong);">counted in cover</div>{% endif %}
-                            {% if r.po_overdue %}<div style="color:#b91c1c;">PO overdue</div>{% endif %}
+                            {% if r.po_overdue %}<div style="color:var(--danger-strong);">PO overdue</div>{% endif %}
                             {% if r.next_po_date %}<div>next: {{ r.next_po_number }} &middot; {{ r.next_po_date|date:"d M" }}{% if r.next_po_date_estimated %} (est.){% endif %}</div>{% endif %}
                         </div>
                         {% else %}&mdash;{% endif %}
@@ -179,14 +178,16 @@
     &divide; burn. <em>Runs out</em> = today + days cover. <em>Reorder by</em> = runs
     out &minus; lead time (the largest supplier lead time on file for the material,
     else the <code>po_default_lead_time_days</code> setting, tagged
-    <span style="font-size:0.6rem; font-weight:700; background:#eef2ff; color:#4338ca; padding:0.05rem 0.35rem; border-radius:4px;">EST</span>).
-    <span style="color:#b91c1c;">&#128308; Action Required</span> = already out of stock, or
-    the reorder-by date is {% if reorder_now_days %}within {{ reorder_now_days }} day{{ reorder_now_days|pluralize }} or{% else %}today or{% endif %} in the past. <span style="color:#b45309;">&#128992; Watch</span>
-    = reorder-by within {{ reorder_watch_days }} days. <span style="color:#065f46;">&#128994; Healthy</span> = beyond that.
+    <span style="font-size:0.6rem; font-weight:700; background:var(--primary-softer); color:var(--primary-strong); padding:0.05rem 0.35rem; border-radius:4px;">EST</span>).
+    <span style="color:var(--danger-strong);">&#128308; Action Required</span> = already out of stock, or
+    the reorder-by date is {% if reorder_now_days %}within {{ reorder_now_days }} day{{ reorder_now_days|pluralize }} or{% else %}today or{% endif %} in the past. <span style="color:var(--warning-strong);">&#128992; Watch</span>
+    = reorder-by within {{ reorder_watch_days }} days. <span style="color:var(--success-strong);">&#128994; Healthy</span> = beyond that.
     <em>On order</em> (open POs) is added to the projection on each PO's expected
     delivery date (its own date, else order date + lead time, marked <em>est.</em>).
     A delivery that lands before the stock runs out extends <em>days cover</em>;
     one that lands after is flagged <em>arrives after run-out</em> because it won't
     prevent the stockout. Overdue POs count as arriving today.
+    A material with a <em>reorder point</em> set (on its material page) is also
+    Action Required once available stock is at or below that point, whatever the forecast says.
 </p>
 {% endblock %}

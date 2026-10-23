@@ -6,9 +6,9 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span>Analytics</span>
             <span class="separator">/</span>
-            <a href="{% url 'stock_audit' %}">Stock Audit</a>
+            <span>Operations</span>
             <span class="separator">/</span>
             <span class="current-page">Inventory Audit Accuracy</span>
         </nav>
@@ -30,7 +30,7 @@
     {% for w in window_choices %}
     <a href="?window={{ w }}"
        style="font-size:0.8rem; padding:0.3rem 0.7rem; border-radius:6px; text-decoration:none; border:1px solid var(--border-light);
-              {% if w == window_days %}background:var(--primary); color:#fff; font-weight:700;{% else %}color:var(--text-muted); background:#fff;{% endif %}">
+              {% if w == window_days %}background:var(--primary); color:var(--on-primary); font-weight:700;{% else %}color:var(--text-muted); background:var(--bg-surface);{% endif %}">
         {% if w == 0 %}All time{% else %}{{ w }} days{% endif %}
     </a>
     {% endfor %}
@@ -50,19 +50,19 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Net Variance</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.net_variance < 0 %}#dc2626{% elif summary.net_variance > 0 %}var(--success-strong){% else %}var(--text-main){% endif %};">{{ summary.net_variance|floatformat:1 }}</span>
+            <span class="kpi-value" style="color:{% if summary.net_variance < 0 %}var(--danger){% elif summary.net_variance > 0 %}var(--success-strong){% else %}var(--text-main){% endif %};">{{ summary.net_variance|floatformat:1 }}</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Shrinkage (losses)</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.shrinkage < 0 %}#dc2626{% else %}var(--text-main){% endif %};">{{ summary.shrinkage|floatformat:1 }}</span>
+            <span class="kpi-value" style="color:{% if summary.shrinkage < 0 %}var(--danger){% else %}var(--text-main){% endif %};">{{ summary.shrinkage|floatformat:1 }}</span>
         </div>
     </div>
 </section>
 
 {% if trend %}
-<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:700; margin:0 0 1rem;">Monthly trend</h3>
     <div class="table-responsive">
         <table class="modern-table" style="width:100%; border-collapse:collapse;">
@@ -80,7 +80,7 @@
                     <td style="padding:0.6rem 1rem; font-weight:600;">{{ t.bucket }}</td>
                     <td style="padding:0.6rem 1rem; text-align:right;">{{ t.audit_count }}</td>
                     <td style="padding:0.6rem 1rem; text-align:right;">{{ t.mean_abs_variance|floatformat:2 }}</td>
-                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if t.net_variance < 0 %}#dc2626{% elif t.net_variance > 0 %}var(--success-strong){% endif %};">{{ t.net_variance|floatformat:1 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if t.net_variance < 0 %}var(--danger){% elif t.net_variance > 0 %}var(--success-strong){% endif %};">{{ t.net_variance|floatformat:1 }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -90,7 +90,7 @@
 {% endif %}
 
 {% for section in sections %}
-<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:700; margin:0 0 1rem;">{{ section.title }}</h3>
     <div class="table-responsive">
         <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
@@ -110,16 +110,16 @@
                     <td style="padding:0.6rem 1rem; font-weight:700; color:var(--primary);">
                         {{ r.name }}
                         {% if r.chronic_shrinkage %}
-                        <span style="font-size:0.6rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.05rem 0.4rem; border-radius:4px; margin-left:0.3rem;">chronic loss</span>
+                        <span style="font-size:0.6rem; font-weight:700; background:var(--danger-soft); color:var(--danger-strong); padding:0.05rem 0.4rem; border-radius:4px; margin-left:0.3rem;">chronic loss</span>
                         {% endif %}
                     </td>
                     <td style="padding:0.6rem 1rem; text-align:right;">{{ r.audit_count }}</td>
-                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; {% if r.accuracy_rate < 0.75 %}color:#dc2626;{% endif %}">
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; {% if r.accuracy_rate < 0.75 %}color:var(--danger);{% endif %}">
                         {% if r.accuracy_rate is not None %}{% widthratio r.accuracy_rate 1 100 %}%{% else %}&mdash;{% endif %}
                     </td>
                     <td style="padding:0.6rem 1rem; text-align:right;">{{ r.mean_abs_variance|floatformat:2 }}</td>
-                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if r.shrinkage < 0 %}#dc2626;{% endif %}">{{ r.shrinkage|floatformat:1 }}</td>
-                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if r.net_variance < 0 %}#dc2626{% elif r.net_variance > 0 %}var(--success-strong){% endif %};">{{ r.net_variance|floatformat:1 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if r.shrinkage < 0 %}var(--danger);{% endif %}">{{ r.shrinkage|floatformat:1 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if r.net_variance < 0 %}var(--danger){% elif r.net_variance > 0 %}var(--success-strong){% endif %};">{{ r.net_variance|floatformat:1 }}</td>
                 </tr>
                 {% empty %}
                 <tr><td colspan="6" style="padding:1.5rem 1rem; text-align:center; color:var(--text-muted);">No audits in this window.</td></tr>

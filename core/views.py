@@ -1857,6 +1857,16 @@ def get_product_recipe_api(request, product_id):
     })
 
 
+def recipe_locked(product):
+    """Error message if the product has a run holding materials or under way (its usage form is built from the recipe), else None."""
+    runs = list(ProductionRun.objects.filter(
+        target_product=product, status__in=('Planned', 'Awaiting Materials', 'InProgress', 'Paused')
+    ).values_list('run_number', flat=True))
+    if runs:
+        return f"{product.sku}'s recipe can't change while run(s) {', '.join(runs)} hold materials or are in progress. Finish, abort or scrap them first."
+    return None
+
+
 @login_required
 def save_product_recipe_api(request):
     """API endpoint for live inline recipe modifications (add, update, delete, clone)."""
@@ -1873,6 +1883,9 @@ def save_product_recipe_api(request):
         recipe_id = request.POST.get('recipe_id')
         try:
             item = get_object_or_404(ProductRecipe, id=recipe_id)
+            locked = recipe_locked(item.product)
+            if locked:
+                return JsonResponse({'success': False, 'error': locked}, status=400)
             p_id = item.product.id
             item.delete()
             return JsonResponse({'success': True, 'message': 'Recipe item deleted successfully.', 'product_id': p_id})
@@ -1885,7 +1898,10 @@ def save_product_recipe_api(request):
         try:
             source_prod = get_object_or_404(Product, id=source_id)
             target_prod = get_object_or_404(Product, id=target_id)
-            
+            locked = recipe_locked(target_prod)
+            if locked:
+                return JsonResponse({'success': False, 'error': locked}, status=400)
+
             source_items = ProductRecipe.objects.filter(product=source_prod)
             cloned_count = 0
             for item in source_items:
@@ -1907,6 +1923,9 @@ def save_product_recipe_api(request):
     elif action == 'save_batch':
         try:
             product = get_object_or_404(Product, id=product_id)
+            locked = recipe_locked(product)
+            if locked:
+                return JsonResponse({'success': False, 'error': locked}, status=400)
             material_ids = request.POST.getlist('material_ids[]')
             quantities = request.POST.getlist('quantities[]')
             
@@ -1984,6 +2003,7 @@ def product_list_view(request):
                 prod = get_object_or_404(Product, id=product_id)
                 mat = get_object_or_404(Material, id=material_id)
                 qty, err = read_decimal(request.POST, 'quantity_required', "Quantity", above=0)
+                err = err or recipe_locked(prod)
                 if err:
                     messages.error(request, err)
                     return redirect('product_list')
@@ -2160,13 +2180,18 @@ def material_list_view(request):
             sku = generate_next_code(Material, 'sku', 'MAT', 1001, pad=4)
         category = request.POST.get('category')
         uom = request.POST.get('unit_of_measure', 'MT')
+        reorder_point, err = read_decimal(request.POST, 'reorder_point', 'Reorder point', min_value=0, required=False)
+        if err:
+            messages.error(request, err)
+            return redirect('material_list')
         try:
             safe_days = int(request.POST.get('safe_storage_days', 90))
             weight = float(request.POST.get('weight_mt_per_unit', 1.0))
             cost = float(request.POST.get('cost_per_unit', 0.0))
             Material.objects.create(
                 name=name, sku=sku, category=category, unit_of_measure=uom,
-                safe_storage_days=safe_days, weight_mt_per_unit=weight, cost_per_unit=cost
+                safe_storage_days=safe_days, weight_mt_per_unit=weight, cost_per_unit=cost,
+                reorder_point=reorder_point,
             )
             messages.success(request, f"Material '{name}' (SKU: {sku}) registered.")
         except Exception as e:
@@ -2211,6 +2236,11 @@ def _apply_material_update(request, material):
             messages.error(request, "Material name is required.")
             return False
 
+        reorder_point, err = read_decimal(request.POST, 'reorder_point', 'Reorder point', min_value=0, required=False)
+        if err:
+            messages.error(request, err)
+            return False
+
         if not sku:
             sku = material.sku
 
@@ -2226,6 +2256,7 @@ def _apply_material_update(request, material):
         material.safe_storage_days = safe_days
         material.weight_mt_per_unit = weight
         material.cost_per_unit = cost
+        material.reorder_point = reorder_point
         material.save()
 
         RegistryLog.objects.create(
@@ -2268,6 +2299,7 @@ def material_edit_view(request, pk):
             'safe_storage_days': material.safe_storage_days,
             'weight_mt_per_unit': float(material.weight_mt_per_unit),
             'cost_per_unit': float(material.cost_per_unit),
+            'reorder_point': float(material.reorder_point) if material.reorder_point is not None else None,
         })
 
     from .utils import get_batch_reservations
@@ -3710,7 +3742,7 @@ def manufacturing_view(request):
                     Notification.objects.create(
                         user=purchaser,
                         message=f"Draft PO {po.po_number} created for materials short in Production Run {run.run_number}. Please complete and submit for approval.",
-                        link=f"/operations/orders/po/{po.pk}/"
+                        link=reverse('po_detail', args=[po.pk])
                     )
                     
                 messages.success(request, f"Draft PO {po.po_number} created successfully and assigned to Purchasing.")
@@ -5635,11 +5667,18 @@ def so_allocate_view(request, pk):
                 messages.error(request, f"Batches for {', '.join(off_fefo)} don't follow FEFO (earliest expiry first). Give an override reason to continue.")
                 return redirect('so_allocate', pk=so.pk)
 
+            from .utils import StockTaken, lock_free_batch
             with transaction.atomic():
                 total_unfulfilled_across_so = Decimal('0')
                 from .utils import sync_production_run_yield
                 for item, needed, chosen in plans:
                     for batch, amt in chosen:
+                        try:
+                            batch = lock_free_batch(batch.id, amt)
+                        except StockTaken as e:
+                            transaction.set_rollback(True)   # undo anything already reserved in this submit
+                            messages.error(request, str(e))
+                            return redirect('so_allocate', pk=so.pk)
                         StockAllocation.objects.create(batch=batch, sales_order=so, quantity=amt)
                         batch.allocated_quantity += amt
                         batch.save(update_fields=['allocated_quantity'])
@@ -5973,8 +6012,14 @@ def production_run_allocate_view(request, pk):
             with transaction.atomic():
                 warehouse_groups = {} # warehouse_id -> [ {batch, qty} ]
 
+                from .utils import StockTaken, lock_free_batch
                 for batch_id, qty in selected_allocations.items():
-                    batch = Batch.objects.select_for_update().get(id=batch_id)
+                    try:
+                        batch = lock_free_batch(batch_id, qty)
+                    except StockTaken as e:
+                        transaction.set_rollback(True)
+                        messages.error(request, str(e))
+                        return redirect('production_run_allocate', pk=pk)
                     wh = batch.warehouse if batch.warehouse else None
                     wh_key = wh.id if wh else None
                     if wh_key not in warehouse_groups:
@@ -6226,10 +6271,11 @@ def production_run_detail_view(request, pk):
                 messages.error(request, "A reason is required to scrap a production run.")
                 return redirect('production_run_detail', pk=pk)
 
-            from .utils import release_production_run_allocations
+            from .utils import release_production_run_allocations, release_order_after_run_stopped
             release_production_run_allocations(run, request.user)
             run.status = 'Cancelled'
             run.save()
+            release_order_after_run_stopped(run, request.user)
             OrderTimeline.objects.create(production_run=run, action=f"Run scrapped before starting. Reason: {reason}", user=request.user)
             messages.success(request, f"Production Run {run.run_number} scrapped.")
             return redirect('readiness')
@@ -6246,11 +6292,14 @@ def production_run_detail_view(request, pk):
             used = {}
             for bom in bom_materials:
                 qty, err = read_decimal(request.POST, f"used_qty_{bom['material'].id}", f"{bom['material'].name} used", min_value=0, required=False)
+                allocated = Decimal(str(bom['allocated'])).quantize(Decimal('0.01'))
+                if not err and qty and qty > allocated + Decimal('0.005'):
+                    err = f"{bom['material'].name}: {qty} used is more than the {allocated} allocated. An aborted run can only use what was allocated to it."
                 if err:
                     messages.error(request, err)
                     return redirect('production_run_detail', pk=pk)
                 used[bom['material']] = (qty or Decimal('0'), Decimal(str(bom['needed'])))
-            from .utils import finalize_production_run
+            from .utils import finalize_production_run, release_order_after_run_stopped
             with transaction.atomic():
                 # Unlike completion, nothing counts as used unless entered: an aborted run may have poured nothing.
                 for material, (qty, expected) in used.items():
@@ -6258,9 +6307,12 @@ def production_run_detail_view(request, pk):
                                                               defaults={'expected_qty': expected, 'actual_qty': qty})
                 made = run.yield_logs.aggregate(s=Sum('quantity'))['s'] or Decimal('0')
                 run.actual_yield = made if made > 0 else None
-                fg_batch = finalize_production_run(run, request.user)
+                fg_batch = finalize_production_run(run, request.user, verb='aborted')
                 run.status = 'Cancelled'
                 run.save(update_fields=['status'])
+                if run.sales_order:
+                    run.sales_order.refresh_from_db()
+                release_order_after_run_stopped(run, request.user)
                 OrderTimeline.objects.create(
                     production_run=run, user=request.user,
                     action=f"Run aborted. Reason: {reason}. Unused materials released"
@@ -6404,7 +6456,7 @@ def production_run_detail_view(request, pk):
                         Notification.objects.create(
                             user=run.assigned_to,
                             message=f"Variance Approval Required: Production Run {run.run_number} exceeded 3% material variance. Review required.",
-                            link=f"/operations/approvals/",
+                            link=reverse('approvals_inbox'),
                         )
                     for follower_id in follower_ids:
                         Notification.objects.create(

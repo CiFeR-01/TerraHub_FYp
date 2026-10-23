@@ -6,7 +6,7 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span>Operations &amp; Logistics</span>
             <span class="separator">/</span>
             <a href="{% url 'po_list' %}">Purchase Orders</a>
             <span class="separator">/</span>
@@ -40,7 +40,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom:1.5rem;">
     {% for message in messages %}
-    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:var(--danger);{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -48,7 +48,7 @@
 {% endif %}
 
 <!-- Invoice Header Card -->
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:2rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:2rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <div style="display:grid; grid-template-columns:1fr 280px; gap:2rem; align-items:start;">
         <div>
             <div style="display:flex; align-items:center; gap:1rem; margin-bottom:1.25rem;">
@@ -120,7 +120,7 @@
             </div>
         </div>
         <!-- Edit header panel -->
-        <div style="background:#f8fafc; border-radius:10px; border:1px solid var(--border-light); padding:1.25rem;">
+        <div style="background:var(--surface-sunken); border-radius:10px; border:1px solid var(--border-light); padding:1.25rem;">
             <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.75rem; text-transform:uppercase; letter-spacing:0.05em;">Edit Details</div>
             <form method="post">
                 {% csrf_token %}
@@ -150,7 +150,7 @@
 
 
         <!-- Line Items Table -->
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.05s;">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.05s;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700;">Material Line Items</h3>
         {% if not items_locked %}
@@ -161,7 +161,7 @@
     </div>
 
     <!-- Add Item Form -->
-    <div id="add-po-item" style="display:none; background:#f8fafc; border-radius:10px; border:1px solid var(--border-light); padding:1.25rem; margin-bottom:1.25rem;">
+    <div id="add-po-item" style="display:none; background:var(--surface-sunken); border-radius:10px; border:1px solid var(--border-light); padding:1.25rem; margin-bottom:1.25rem;">
         <form method="post">
             {% csrf_token %}
             <input type="hidden" name="action" value="add_po_item">
@@ -220,8 +220,8 @@
                         {{ row.item.quantity_received|floatformat:1 }}
                     </td>
                     <td style="padding:0.85rem 1rem; min-width:120px;">
-                        <div style="background:#e2e8f0; border-radius:4px; height:6px; overflow:hidden;">
-                            <div style="background:{% if row.pct_received >= 100 %}#059669{% elif row.pct_received > 0 %}#d97706{% else %}#e2e8f0{% endif %}; width:{{ row.pct_received }}%; height:100%; border-radius:4px; transition:width 0.4s;"></div>
+                        <div style="background:var(--surface-strong); border-radius:4px; height:6px; overflow:hidden;">
+                            <div style="background:{% if row.pct_received >= 100 %}var(--success){% elif row.pct_received > 0 %}var(--warning){% else %}var(--surface-strong){% endif %}; width:{{ row.pct_received }}%; height:100%; border-radius:4px; transition:width 0.4s;"></div>
                         </div>
                         <div style="font-size:0.72rem; color:var(--text-muted); margin-top:0.2rem;">{{ row.pct_received }}% received</div>
                     </td>
@@ -238,13 +238,13 @@
                             {% csrf_token %}
                             <input type="hidden" name="action" value="remove_po_item">
                             <input type="hidden" name="item_id" value="{{ row.item.id }}">
-                            <button type="submit" onclick="return confirm('Remove {{ row.item.material.name }} from this order?')" style="background:none; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:#dc2626;">✕</button>
+                            <button type="submit" onclick="return confirm('Remove {{ row.item.material.name }} from this order?')" style="background:none; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--danger);">✕</button>
                         </form>
                         {% endif %}
                     </td>
                 </tr>
                 <!-- Receive quantity mini-form -->
-                <tr id="recv-{{ row.item.id }}" style="display:none; background:#fafff8;">
+                <tr id="recv-{{ row.item.id }}" style="display:none; background:var(--success-soft);">
                     <td colspan="10" style="padding:0.5rem 1rem 0.75rem 2rem;">
                         <form method="post" style="display:inline-flex; gap:0.75rem; align-items:center;">
                             {% csrf_token %}
@@ -282,14 +282,14 @@
 <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; align-items: start; margin-bottom: 1.5rem;">
     <div style="display: flex; flex-direction: column; gap: 1.5rem; min-width: 0;">
         <!-- Audit Timeline -->
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem;">Order Timeline</h3>
     {% if po.timeline.all %}
     <div style="position:relative; padding-left:1.5rem;">
         <div style="position:absolute; left:0.45rem; top:0.35rem; bottom:0; width:2px; background:var(--border-light);"></div>
         {% for event in po.timeline.all %}
         <div style="position:relative; margin-bottom:1rem;">
-            <div style="position:absolute; left:-1.5rem; top:0.25rem; width:10px; height:10px; border-radius:50%; background:var(--secondary); border:2px solid #fff; box-shadow:0 0 0 2px var(--secondary);"></div>
+            <div style="position:absolute; left:-1.5rem; top:0.25rem; width:10px; height:10px; border-radius:50%; background:var(--secondary); border:2px solid var(--bg-surface); box-shadow:0 0 0 2px var(--secondary);"></div>
             <div style="font-size:0.875rem; font-weight:600; color:var(--text-main);">{{ event.action }}</div>
             <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.1rem;">{{ event.timestamp|date:"d M Y, H:i" }}{% if event.user %} · {{ event.user.get_full_name|default:event.user.username }}{% endif %}</div>
         </div>
@@ -306,9 +306,9 @@
     <div style="display: flex; flex-direction: column; gap: 1.5rem;">
         <!-- Request Approval Panel -->
 {% if po.status == 'Pending Approval' and po.assigned_to %}
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:0.75rem; color:var(--text-main); display:flex; align-items:center; gap:0.5rem;">
-        <span style="width:9px; height:9px; border-radius:50%; background:#f59e0b; display:inline-block;"></span>
+        <span style="width:9px; height:9px; border-radius:50%; background:var(--warning); display:inline-block;"></span>
         Pending Approval
     </h3>
     <p style="font-size:0.9rem; color:var(--text-main); margin-bottom:0.25rem;">
@@ -326,7 +326,7 @@
         <textarea name="comment" rows="2" class="form-input" placeholder="Comment (optional)" style="width:100%; padding:0.5rem 0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.85rem; resize:vertical; font-family:inherit; margin-bottom:0.6rem;"></textarea>
         <div style="display:flex; gap:0.5rem;">
             <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.45rem 1.1rem; font-size:0.85rem;">Approve</button>
-            <button type="submit" name="action" value="reject" class="btn btn-secondary" style="padding:0.45rem 1.1rem; font-size:0.85rem; border-color:#dc2626; color:#dc2626;" onclick="return confirm('Reject this order? It will return to Draft.')">Reject</button>
+            <button type="submit" name="action" value="reject" class="btn btn-secondary" style="padding:0.45rem 1.1rem; font-size:0.85rem; border-color:var(--danger); color:var(--danger);" onclick="return confirm('Reject this order? It will return to Draft.')">Reject</button>
         </div>
     </form>
     {% endif %}
@@ -359,7 +359,7 @@
     </div>
 </div>
 {% elif po.status == 'Draft' or po.status == 'Pending Approval' or po.status == 'Rejected' %}
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem; color:var(--text-main);">Request Manager Approval</h3>
     <form method="post" style="display:flex; flex-direction:column; gap:1rem; max-width:500px;">
         {% csrf_token %}
@@ -392,17 +392,17 @@
 
         
 <!-- Followers Panel -->
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main); display:flex; justify-content:space-between; align-items:center;">
         Followers
-        <span style="background:var(--primary); color:#fff; border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem;">{{ po.followers.count }}</span>
+        <span style="background:var(--primary); color:var(--on-primary); border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem;">{{ po.followers.count }}</span>
     </h3>
     
     <div style="display:flex; flex-direction:column; gap:0.75rem; margin-bottom:1rem;">
         {% for follower in po.followers.all %}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:#f8fafc; border-radius:8px; border:1px solid var(--border-light);">
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:var(--surface-sunken); border-radius:8px; border:1px solid var(--border-light);">
             <div style="display:flex; align-items:center; gap:0.5rem;">
-                <div style="width:28px; height:28px; border-radius:50%; background:var(--primary); color:#fff; display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700;">
+                <div style="width:28px; height:28px; border-radius:50%; background:var(--primary); color:var(--on-primary); display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700;">
                     {{ follower.username|make_list|first|upper }}
                 </div>
                 <span style="font-size:0.85rem; font-weight:600;">{{ follower.get_full_name|default:follower.username }}</span>
@@ -412,7 +412,7 @@
                 {% csrf_token %}
                 <input type="hidden" name="action" value="remove_follower">
                 <input type="hidden" name="user_id" value="{{ follower.id }}">
-                <button type="submit" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:0.75rem; font-weight:600;">Unfollow</button>
+                <button type="submit" style="background:none; border:none; color:var(--danger); cursor:pointer; font-size:0.75rem; font-weight:600;">Unfollow</button>
             </form>
             {% endif %}
         </div>

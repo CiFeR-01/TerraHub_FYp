@@ -7,9 +7,9 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span>Operations &amp; Logistics</span>
             <span class="separator">/</span>
-            <span class="current-page">Manufacturing</span>
+            <span class="current-page">Manufacture</span>
         </nav>
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
             Production Readiness &amp; Manufacturing
@@ -38,7 +38,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:var(--danger);{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -64,7 +64,7 @@
     <div id="so-queue-list" style="display:flex; flex-direction:column; gap:1rem;">
         {% for entry in so_queue %}
         <div class="so-queue-card" data-so="{{ entry.so.so_number|lower }}" data-client="{{ entry.so.client_name|lower }}" data-status="{{ entry.so.status }}"
-             style="background:#fff; border-radius:12px; border:1px solid {% if entry.all_ready %}rgba(16,185,129,0.3){% else %}rgba(239,68,68,0.2){% endif %}; overflow:hidden; box-shadow:0 2px 8px rgba(15,23,42,0.04);">
+             style="background:var(--bg-surface); border-radius:12px; border:1px solid {% if entry.all_ready %}rgba(16,185,129,0.3){% else %}rgba(239,68,68,0.2){% endif %}; overflow:hidden; box-shadow:0 2px 8px rgba(15,23,42,0.04);">
             <div style="display:flex; justify-content:space-between; align-items:center; padding:1rem 1.25rem; cursor:pointer; background:{% if entry.all_ready %}rgba(16,185,129,0.04){% else %}rgba(239,68,68,0.03){% endif %};" onclick="toggleSoCard('so-body-{{ entry.so.id }}')">
                 <div style="display:flex; align-items:center; gap:1rem;">
                     <div>
@@ -78,7 +78,7 @@
                 </div>
                 <div style="display:flex; align-items:center; gap:0.75rem;">
                     {% if entry.all_ready %}<span style="font-size:0.8rem; font-weight:700; color:var(--success-strong);">All Materials Ready</span>
-                    {% else %}<span style="font-size:0.8rem; font-weight:700; color:#dc2626;">Material Shortages</span>{% endif %}
+                    {% else %}<span style="font-size:0.8rem; font-weight:700; color:var(--danger);">Material Shortages</span>{% endif %}
                     <a href="{% url 'so_detail' entry.so.pk %}" class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem; text-decoration:none;" onclick="event.stopPropagation()">Detail</a>
                     <span style="color:var(--text-muted);">&#9660;</span>
                 </div>
@@ -93,7 +93,7 @@
                             <span style="font-size:0.82rem; font-weight:600; color:var(--text-muted);">{{ si.deficit|floatformat:0 }} units still needed <span style="font-weight:400;">(of {{ si.item.quantity_ordered|floatformat:0 }} ordered{% if si.allocated > 0 %}, {{ si.allocated|floatformat:0 }} already allocated{% endif %})</span></span>
                             {% if si.bom_ready %}<span class="badge badge-emerald" style="font-size:0.72rem;">BOM OK</span>
                             {% else %}<span class="badge badge-rose" style="font-size:0.72rem;">Shortage</span>{% endif %}
-                            <span style="font-size:0.78rem; color:{% if si.bom_ready %}var(--success-strong){% else %}#dc2626{% endif %}; font-weight:700;">Can make: {{ si.can_make }} units</span>
+                            <span style="font-size:0.78rem; color:{% if si.bom_ready %}var(--success-strong){% else %}var(--danger){% endif %}; font-weight:700;">Can make: {{ si.can_make }} units</span>
                         </div>
                         {% if si.bom_rows %}
                         <table style="font-size:0.78rem; border-collapse:collapse; width:100%; max-width:600px;">
@@ -104,13 +104,13 @@
                                 <td style="padding:0.2rem 0.5rem;">Status</td>
                             </tr>
                             {% for br in si.bom_rows %}
-                            <tr style="border-top:1px solid #f1f5f9;">
+                            <tr style="border-top:1px solid var(--border-light);">
                                 <td style="padding:0.25rem 0.5rem; font-weight:600;">{{ br.material.name }}</td>
                                 <td style="padding:0.25rem 0.5rem;">{{ br.required_total|floatformat:2 }} {{ br.material.unit_of_measure }}</td>
                                 <td style="padding:0.25rem 0.5rem;">{{ br.available|floatformat:2 }} {{ br.material.unit_of_measure }}</td>
                                 <td style="padding:0.25rem 0.5rem;">
                                     {% if br.sufficient %}<span style="color:var(--success-strong); font-weight:700;">OK</span>
-                                    {% else %}<span style="color:#dc2626; font-weight:700;">Short</span>{% endif %}
+                                    {% else %}<span style="color:var(--danger); font-weight:700;">Short</span>{% endif %}
                                 </td>
                             </tr>
                             {% endfor %}
@@ -121,7 +121,7 @@
                     </div>
                     <div style="min-width:200px;">
                         {% if si.existing_run %}
-                        <div style="background:#f8fafc; border-radius:8px; border:1px solid var(--border-light); padding:0.75rem; text-align:center;">
+                        <div style="background:var(--surface-sunken); border-radius:8px; border:1px solid var(--border-light); padding:0.75rem; text-align:center;">
                             <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); margin-bottom:0.25rem; text-transform:uppercase;">Production Run</div>
                             <div style="font-weight:700; font-size:0.85rem; color:var(--primary); margin-bottom:0.5rem;">{{ si.existing_run.run_number }}</div>
                             
@@ -142,10 +142,10 @@
                                             <input type="hidden" name="run_id" value="{{ si.existing_run.id }}">
                                             {% if si.bom_ready %}
                                                 <input type="hidden" name="action" value="draft_transfer_from_shortage">
-                                                <button type="submit" class="btn btn-secondary" style="width:100%; font-size:0.75rem; padding:0.4rem; border-color:#d97706; color:var(--warning-strong);">Request Internal Transfer</button>
+                                                <button type="submit" class="btn btn-secondary" style="width:100%; font-size:0.75rem; padding:0.4rem; border-color:var(--warning); color:var(--warning-strong);">Request Internal Transfer</button>
                                             {% else %}
                                                 <input type="hidden" name="action" value="draft_po_from_shortage">
-                                                <button type="submit" class="btn btn-secondary" style="width:100%; font-size:0.75rem; padding:0.4rem; border-color:#dc2626; color:#dc2626;">Draft PO for Shortage</button>
+                                                <button type="submit" class="btn btn-secondary" style="width:100%; font-size:0.75rem; padding:0.4rem; border-color:var(--danger); color:var(--danger);">Draft PO for Shortage</button>
                                             {% endif %}
                                         </form>
                                     {% endif %}
@@ -181,7 +181,7 @@
         {% endfor %}
     </div>
     {% else %}
-    <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:2.5rem; text-align:center; color:var(--text-muted);">
+    <div style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:2.5rem; text-align:center; color:var(--text-muted);">
         <div style="font-size:2.5rem; margin-bottom:0.75rem;">&#127919;</div>
         <div style="font-weight:600; margin-bottom:0.25rem;">No pending production orders</div>
         <div style="font-size:0.85rem;">Sales orders with status Pending, Awaiting Acknowledgement, or In Production will appear here.</div>
@@ -190,7 +190,7 @@
 </section>
 
 <!-- SECTION 3: Production Runs Ledger -->
-<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:2rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:2rem;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700;">Production Runs Ledger</h3>
         <button type="button" class="btn btn-primary js-open-run-modal" style="padding:0.4rem 1rem; font-size:0.85rem;">+ New Production Run</button>
@@ -226,11 +226,11 @@
                     <td style="padding:0.85rem 1rem;">{{ run.supervisor.username|default:"System" }}{% if run.approved_by %}<div style="font-size:0.72rem; color:var(--text-muted);">Approved by {{ run.approved_by.username }}</div>{% endif %}</td>
                     <td style="padding:0.85rem 1rem;">
                         <span class="badge" style="
-                            {% if run.status == 'Pending Approval' %}background:#fef3c7;color:#b45309;
-                            {% elif run.status == 'Planned' or run.status == 'Pending Allocation' or run.status == 'Awaiting Materials' %}background:#e0f2fe;color:#0369a1;
-                            {% elif run.status == 'InProgress' %}background:#dbeafe;color:#1e40af;
-                            {% elif run.status == 'Completed' %}background:#dcfce7;color:#15803d;
-                            {% else %}background:#f1f5f9;color:#475569;{% endif %}
+                            {% if run.status == 'Pending Approval' %}background:var(--warning-soft);color:var(--warning-strong);
+                            {% elif run.status == 'Planned' or run.status == 'Pending Allocation' or run.status == 'Awaiting Materials' %}background:var(--info-soft);color:var(--info-strong);
+                            {% elif run.status == 'InProgress' %}background:var(--info-soft);color:var(--info-strong);
+                            {% elif run.status == 'Completed' %}background:var(--success-soft);color:var(--success-strong);
+                            {% else %}background:var(--surface-muted);color:var(--text-secondary);{% endif %}
                         ">{{ run.status }}</span>
                     </td>
                     <td style="padding:0.85rem 1rem; text-align:right;">
@@ -240,7 +240,7 @@
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_run">
                             <input type="hidden" name="run_id" value="{{ run.id }}">
-                            <button type="submit" class="btn btn-primary" style="padding:0.3rem 0.6rem; font-size:0.78rem; background:#10b981; border-color:#10b981;">Approve</button>
+                            <button type="submit" class="btn btn-primary" style="padding:0.3rem 0.6rem; font-size:0.78rem; background:var(--success); border-color:var(--success);">Approve</button>
                         </form>
                         {% else %}
                         <span style="font-size:0.75rem; color:var(--text-muted); font-style:italic;">Requires Manager Approval</span>
@@ -248,7 +248,7 @@
                         {% elif run.status == 'Planned' or run.status == 'Pending Allocation' %}
                         {% if perms.core.allocate_run_materials %}<a href="{% url 'production_run_allocate' run.id %}" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem; border-color:var(--primary); color:var(--primary); text-decoration:none;">Allocate Materials</a>{% endif %}
                         {% elif run.status == 'InProgress' %}
-                        <a href="{% url 'production_run_detail' run.pk %}#finalize" class="btn btn-primary" style="padding:0.3rem 0.6rem; font-size:0.78rem; background:#059669; text-decoration:none;">Complete &amp; Yield</a>
+                        <a href="{% url 'production_run_detail' run.pk %}#finalize" class="btn btn-primary" style="padding:0.3rem 0.6rem; font-size:0.78rem; background:var(--success); text-decoration:none;">Complete &amp; Yield</a>
                         {% else %}
                         <span style="font-size:0.78rem; color:var(--text-muted);">-</span>
                         {% endif %}
@@ -299,7 +299,7 @@
     <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700; margin-bottom:1rem;">Bill of Materials - Raw Material Inventory</h3>
     <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:1.25rem;">
         {% for r in recipe_readiness %}
-        <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.25rem;">
+        <div style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.25rem;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
                 <h4 style="font-family:'Outfit',sans-serif; font-size:1rem; font-weight:700;">{{ r.product.name }}</h4>
                 {% if r.is_ready %}<span class="badge badge-emerald">BOM Ready</span>
@@ -309,10 +309,10 @@
             <div style="background:{% if r.is_ready %}rgba(16,185,129,0.07){% else %}rgba(239,68,68,0.06){% endif %}; border-radius:8px; padding:0.6rem 0.85rem; margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem;">
                 <div>
                     <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em;">Max Producible</div>
-                    <div style="font-size:1.1rem; font-weight:800; color:{% if r.is_ready %}var(--success-strong){% else %}#dc2626{% endif %};">{{ r.max_producible }} units</div>
+                    <div style="font-size:1.1rem; font-weight:800; color:{% if r.is_ready %}var(--success-strong){% else %}var(--danger){% endif %};">{{ r.max_producible }} units</div>
                 </div>
             </div>
-            <div style="background:#f8fafc; border-radius:8px; padding:0.75rem;">
+            <div style="background:var(--surface-sunken); border-radius:8px; padding:0.75rem;">
                 <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); margin-bottom:0.4rem; text-transform:uppercase; letter-spacing:0.04em;">Materials (per unit)</div>
                 {% for item in r.items %}
                 <div style="display:flex; justify-content:space-between; font-size:0.82rem; margin-bottom:0.3rem; align-items:center;">
@@ -320,7 +320,7 @@
                     <span style="display:flex; align-items:center; gap:0.35rem;">
                         <span style="color:var(--text-muted);">{{ item.available|qty_display }} / {{ item.required|qty_display }} {{ item.material.unit_of_measure }}</span>
                         {% if item.sufficient %}<span style="color:var(--success-strong); font-weight:700;">OK</span>
-                        {% else %}<span style="color:#ef4444; font-weight:700;">Low</span>{% endif %}
+                        {% else %}<span style="color:var(--danger); font-weight:700;">Low</span>{% endif %}
                     </span>
                 </div>
                 {% empty %}
@@ -333,7 +333,7 @@
 </section>
 
 <!-- SECTION 2.5: Production Run Calendar -->
-<section class="animate-fade-in-up" style="margin-bottom:2rem; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<section class="animate-fade-in-up" style="margin-bottom:2rem; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Production Schedule</h3>
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
     <div id="calendar" style="min-height: 400px; font-size:0.85rem;"></div>
@@ -341,7 +341,7 @@
 
 <!-- Modal: Schedule Run -->
 <div id="run-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); backdrop-filter:blur(4px); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:14px; width:100%; max-width:500px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.15); margin:1rem;">
+    <div style="background:var(--bg-surface); border-radius:14px; width:100%; max-width:500px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.15); margin:1rem;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
             <h3 style="font-family:'Outfit',sans-serif; font-size:1.2rem; font-weight:700;">Schedule Production Run</h3>
             <button onclick="closeRunModal()" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
@@ -359,7 +359,7 @@
                             Auto
                         </label>
                     </div>
-                    <input type="text" id="modal-run-num" name="run_number" value="{{ next_run_number }}" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background:#f8fafc;" readonly>
+                    <input type="text" id="modal-run-num" name="run_number" value="{{ next_run_number }}" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background:var(--surface-sunken);" readonly>
                 </div>
                 <div>
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.3rem; gap:0.4rem;">
@@ -401,8 +401,8 @@
                     {% endfor %}
                 </select>
             </div>
-            <div id="modal-so-display" style="display:none; background:#f0f9ff; border-radius:8px; border:1px solid #bae6fd; padding:0.6rem 0.85rem; margin-bottom:0.85rem; font-size:0.82rem;">
-                <span style="font-weight:700; color:#0369a1;">Linked to SO:</span> <span id="modal-so-label"></span>
+            <div id="modal-so-display" style="display:none; background:var(--info-soft); border-radius:8px; border:1px solid var(--info-border); padding:0.6rem 0.85rem; margin-bottom:0.85rem; font-size:0.82rem;">
+                <span style="font-weight:700; color:var(--info-strong);">Linked to SO:</span> <span id="modal-so-label"></span>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
                 <button type="button" class="btn btn-secondary" onclick="closeRunModal()">Cancel</button>
@@ -433,7 +433,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     title: '{{ run.run_number }}',
                     start: '{{ run.start_time|date:"c" }}',
                     {% if run.end_time %}end: '{{ run.end_time|date:"c" }}',{% endif %}
-                    color: '{% if run.status == "Pending Approval" %}#f59e0b{% elif run.status == "Planned" %}#0ea5e9{% elif run.status == "InProgress" %}#10b981{% else %}#94a3b8{% endif %}'
+                    color: '{% if run.status == "Pending Approval" %}var(--warning){% elif run.status == "Planned" %}var(--info){% elif run.status == "InProgress" %}var(--success){% else %}var(--text-soft){% endif %}'
                 },
                 {% endif %}
                 {% endfor %}
@@ -473,7 +473,7 @@ document.querySelectorAll('.js-open-run-modal').forEach(function(btn) { btn.addE
     document.getElementById('modal-yield').value = '';
     document.getElementById('run_number_auto').checked = true;
     document.getElementById('modal-run-num').readOnly = true;
-    document.getElementById('modal-run-num').style.background = '#f8fafc';
+    document.getElementById('modal-run-num').style.background = 'var(--surface-sunken)';
     document.getElementById('run-modal').style.display = 'flex';
     resetYieldMode();
 }); });
@@ -505,13 +505,13 @@ function toggleYieldMode() {
     if (mode === 'weight') {
         weightRow.style.display = 'flex';
         yieldInput.readOnly = true;
-        yieldInput.style.background = '#f8fafc';
+        yieldInput.style.background = 'var(--surface-sunken)';
         yieldInput.placeholder = 'auto-calculated';
         computeYieldFromWeight();
     } else {
         weightRow.style.display = 'none';
         yieldInput.readOnly = false;
-        yieldInput.style.background = '#ffffff';
+        yieldInput.style.background = 'var(--bg-surface)';
         yieldInput.placeholder = 'e.g. 10';
         updateYieldHint();
     }
@@ -569,10 +569,10 @@ function toggleRunAutoId() {
     if (toggle.checked) {
         input.value = "{{ next_run_number }}";
         input.readOnly = true;
-        input.style.background = '#f8fafc';
+        input.style.background = 'var(--surface-sunken)';
     } else {
         input.readOnly = false;
-        input.style.background = '#ffffff';
+        input.style.background = 'var(--bg-surface)';
         input.focus();
     }
 }
@@ -590,7 +590,7 @@ function openScheduleModal(soId, productId, productName, qty) {
     document.getElementById('modal-run-num').value = "{{ next_run_number }}";
     document.getElementById('run_number_auto').checked = true;
     document.getElementById('modal-run-num').readOnly = true;
-    document.getElementById('modal-run-num').style.background = '#f8fafc';
+    document.getElementById('modal-run-num').style.background = 'var(--surface-sunken)';
     document.getElementById('modal-so-label').textContent = 'SO ' + soId;
     document.getElementById('modal-so-display').style.display = 'block';
     document.getElementById('run-modal').style.display = 'flex';

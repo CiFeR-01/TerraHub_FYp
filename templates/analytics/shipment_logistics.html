@@ -6,9 +6,9 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span>Analytics</span>
             <span class="separator">/</span>
-            <a href="{% url 'shipments' %}">Logistics Tracker</a>
+            <span>Supply Chain</span>
             <span class="separator">/</span>
             <span class="current-page">Logistics Performance</span>
         </nav>
@@ -28,7 +28,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: var(--danger);{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -43,13 +43,13 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Discrepant</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.discrepant %}#dc2626{% else %}var(--text-main){% endif %};">{{ summary.discrepant }}</span>
+            <span class="kpi-value" style="color:{% if summary.discrepant %}var(--danger){% else %}var(--text-main){% endif %};">{{ summary.discrepant }}</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Overdue</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.overdue %}#c2410c{% else %}var(--text-main){% endif %};">{{ summary.overdue }}</span>
+            <span class="kpi-value" style="color:{% if summary.overdue %}var(--warning-strong){% else %}var(--text-main){% endif %};">{{ summary.overdue }}</span>
             <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.4rem;">+ {{ summary.at_risk }} at risk</span>
         </div>
     </div>
@@ -59,7 +59,7 @@
     </div>
 </section>
 
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
     <div class="table-responsive">
         <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
@@ -82,17 +82,17 @@
                     <td style="padding:0.6rem 1rem; color:var(--text-muted);">{{ r.direction }}</td>
                     <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.risk == 'discrepant' %}0{% elif r.risk == 'overdue' %}1{% elif r.risk == 'at_risk' %}2{% elif r.risk == 'stalled' %}3{% elif r.risk == 'pending' %}4{% else %}5{% endif %}">
                         {% if r.risk == 'discrepant' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px;">Discrepant</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--danger-soft); color:var(--danger-strong); padding:0.15rem 0.55rem; border-radius:999px;">Discrepant</span>
                         {% elif r.risk == 'overdue' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#ffedd5; color:#c2410c; padding:0.15rem 0.55rem; border-radius:999px;">Overdue</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--warning-soft); color:var(--warning-strong); padding:0.15rem 0.55rem; border-radius:999px;">Overdue</span>
                         {% elif r.risk == 'at_risk' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px;">At risk</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--warning-soft); color:var(--warning-strong); padding:0.15rem 0.55rem; border-radius:999px;">At risk</span>
                         {% elif r.risk == 'stalled' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#e0e7ff; color:#4338ca; padding:0.15rem 0.55rem; border-radius:999px;">Stalled</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--primary-soft); color:var(--primary-strong); padding:0.15rem 0.55rem; border-radius:999px;">Stalled</span>
                         {% elif r.risk == 'pending' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#f1f5f9; color:#64748b; padding:0.15rem 0.55rem; border-radius:999px;">Pending</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--surface-muted); color:var(--text-muted); padding:0.15rem 0.55rem; border-radius:999px;">Pending</span>
                         {% else %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px;">On track</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--success-soft); color:var(--success-strong); padding:0.15rem 0.55rem; border-radius:999px;">On track</span>
                         {% endif %}
                     </td>
                     <td style="padding:0.6rem 1rem; color:var(--text-muted);">

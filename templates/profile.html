@@ -20,7 +20,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:var(--danger);{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -29,13 +29,13 @@
 
 <section class="animate-fade-in-up" style="display:grid; grid-template-columns: 1fr 1fr; gap:2rem; max-width:1000px;">
     <!-- Profile Edit Form -->
-    <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:2rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+    <div style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:2rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:700; margin-bottom:1.5rem;">Personal Information</h3>
         <form method="post">
             {% csrf_token %}
             <div style="margin-bottom:1.25rem;">
                 <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-muted); margin-bottom:0.5rem;">Username (Read-Only)</label>
-                <input type="text" value="{{ user.username }}" class="form-input" disabled style="width:100%; padding:0.65rem; border-radius:8px; border:1px solid var(--border-light); background:#f8fafc; color:var(--text-muted); cursor:not-allowed;">
+                <input type="text" value="{{ user.username }}" class="form-input" disabled style="width:100%; padding:0.65rem; border-radius:8px; border:1px solid var(--border-light); background:var(--surface-sunken); color:var(--text-muted); cursor:not-allowed;">
             </div>
             
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin-bottom:1.25rem;">
@@ -61,21 +61,21 @@
 
     <!-- Assigned Roles and Locations (Read-Only) -->
     <div style="display:flex; flex-direction:column; gap:2rem;">
-        <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:2rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+        <div style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:2rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
             <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1.25rem; display:flex; align-items:center; gap:0.5rem;">
                 <span style="color:var(--primary); font-size:1.2rem;">&#128100;</span> Assigned Roles
             </h3>
             <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">Your system roles dictate your permissions across TerraHub. Contact an Admin to request changes.</p>
             <div style="display:flex; flex-wrap:wrap; gap:0.5rem;">
                 {% for r in user.groups.all %}
-                    <span class="badge" style="background:var(--primary-light); color:var(--primary); border:1px solid rgba(79,70,229,0.2); font-size:0.85rem; padding:0.35rem 0.75rem;">{{ r.name }}</span>
+                    <span class="badge" style="background:var(--primary-light); color:var(--primary); border:1px solid rgba(var(--primary-rgb), 0.2); font-size:0.85rem; padding:0.35rem 0.75rem;">{{ r.name }}</span>
                 {% empty %}
                     <span style="font-size:0.85rem; color:var(--text-muted); font-style:italic;">No roles assigned.</span>
                 {% endfor %}
             </div>
         </div>
 
-        <div style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:2rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+        <div style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:2rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
             <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1.25rem; display:flex; align-items:center; gap:0.5rem;">
                 <span style="color:var(--success-strong); font-size:1.2rem;">&#127981;</span> Allowed Locations
             </h3>
@@ -83,9 +83,9 @@
             <div style="display:flex; flex-direction:column; gap:0.5rem;">
                 {% if user.allowed_locations.all %}
                     {% for wh in user.allowed_locations.all %}
-                    <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:6px; padding:0.75rem 1rem; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:6px; padding:0.75rem 1rem; display:flex; justify-content:space-between; align-items:center;">
                         <span style="font-weight:600; font-size:0.85rem;">{{ wh.name }}</span>
-                        <span class="badge" style="background:#fff; border:1px solid #e2e8f0; color:var(--text-muted); font-size:0.7rem;">{{ wh.get_type_display|default:wh.type }}</span>
+                        <span class="badge" style="background:var(--bg-surface); border:1px solid var(--border-light); color:var(--text-muted); font-size:0.7rem;">{{ wh.get_type_display|default:wh.type }}</span>
                     </div>
                     {% endfor %}
                 {% else %}

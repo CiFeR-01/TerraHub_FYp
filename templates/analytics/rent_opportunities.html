@@ -7,9 +7,7 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
-            <span class="separator">/</span>
-            <a href="{% url 'warehouse_list' %}">Facility Management</a>
+            <span>Decision Support</span>
             <span class="separator">/</span>
             <span class="current-page">Rent Reduction</span>
         </nav>
@@ -29,12 +27,12 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom:1.25rem;">
     {% for message in messages %}
-    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.2); color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.2); color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.2); color:var(--success-strong);{% endif %}">{{ message }}</div>
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.2); color:var(--danger);{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.2); color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.2); color:var(--success-strong);{% endif %}">{{ message }}</div>
     {% endfor %}
 </div>
 {% endif %}
 
-<div class="animate-fade-in-up" style="background:#fef3c7; border:1px solid rgba(180,83,9,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.85rem; color:#854d0e;">
+<div class="animate-fade-in-up" style="background:var(--warning-soft); border:1px solid rgba(180,83,9,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.85rem; color:var(--warning-strong);">
     <strong>Estimated potential savings only.</strong> <em>Total saving</em> counts rent only for as
     long as each batch would otherwise stay: until it expires or is used up (oldest stock first, at
     the current usage or sales rate). Moves saving less than the <em>minimum total saving</em>
@@ -57,7 +55,7 @@
     </div>
 </section>
 
-<section class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+<section class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
     <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:0.75rem; margin-bottom:1rem;">
         <div>
             <h2 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin:0; color:var(--text-main);">Rent History</h2>
@@ -70,15 +68,15 @@
     </div>
 
     <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:0.75rem; margin-bottom:1rem;">
-        <div style="background:#f8fafc; border-radius:8px; padding:0.75rem 1rem;">
+        <div style="background:var(--surface-sunken); border-radius:8px; padding:0.75rem 1rem;">
             <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">This month so far</div>
             <div style="font-size:1.15rem; font-weight:700; color:var(--text-main);">RM {{ history.this_month|floatformat:2 }}</div>
         </div>
-        <div style="background:#f8fafc; border-radius:8px; padding:0.75rem 1rem;">
+        <div style="background:var(--surface-sunken); border-radius:8px; padding:0.75rem 1rem;">
             <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Last month</div>
             <div style="font-size:1.15rem; font-weight:700; color:var(--text-main);">{% if history.last_month is not None %}RM {{ history.last_month|floatformat:2 }}{% else %}&mdash;{% endif %}</div>
         </div>
-        <div style="background:#f8fafc; border-radius:8px; padding:0.75rem 1rem;">
+        <div style="background:var(--surface-sunken); border-radius:8px; padding:0.75rem 1rem;">
             <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Average per day (30 days)</div>
             <div style="font-size:1.15rem; font-weight:700; color:var(--text-main);">RM {{ history.avg_per_day_30d|floatformat:2 }}</div>
         </div>
@@ -98,7 +96,7 @@
     {% endif %}
 </section>
 
-<section class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+<section class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
     <h2 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin:0; color:var(--text-main);">Results</h2>
     <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.9rem;">Did the moves you accepted save what was promised?</div>
 
@@ -163,18 +161,18 @@
 
 {% if rows %}
     {% for o in rows %}
-    <div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.25rem;">
+    <div class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.25rem;">
         <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:0.5rem; margin-bottom:1rem;">
             <div>
                 <a href="{% url 'warehouse_edit' o.warehouse_id %}" style="font-weight:700; font-size:1.05rem; color:var(--primary); text-decoration:none;">{{ o.name }}</a>
                 {% if o.status == 'critical' %}
-                <span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">Critical</span>
+                <span style="font-size:0.7rem; font-weight:700; background:var(--danger-soft); color:var(--danger-strong); padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">Critical</span>
                 {% elif o.status == 'watch' %}
-                <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">Watch</span>
+                <span style="font-size:0.7rem; font-weight:700; background:var(--warning-soft); color:var(--warning-strong); padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">Watch</span>
                 {% elif o.status == 'no_data' %}
-                <span style="font-size:0.7rem; font-weight:700; background:#f1f5f9; color:#475569; padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">No trend yet</span>
+                <span style="font-size:0.7rem; font-weight:700; background:var(--surface-muted); color:var(--text-secondary); padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">No trend yet</span>
                 {% else %}
-                <span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">{% if o.status == 'ok' %}OK{% else %}Stable{% endif %}</span>
+                <span style="font-size:0.7rem; font-weight:700; background:var(--success-soft); color:var(--success-strong); padding:0.15rem 0.55rem; border-radius:999px; margin-left:0.5rem;">{% if o.status == 'ok' %}OK{% else %}Stable{% endif %}</span>
                 {% endif %}
             </div>
             <div style="text-align:right;">
@@ -262,7 +260,7 @@
     </div>
     {% endfor %}
 {% else %}
-<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:2.5rem; text-align:center; color:var(--text-muted);">
+<div class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:2.5rem; text-align:center; color:var(--text-muted);">
     No rent-reduction opportunities right now &mdash; either no warehouse is rented by usage,
     or none of your own storage facilities has spare capacity to move stock into.
 </div>
@@ -294,7 +292,7 @@
 (function () {
     const data = JSON.parse(document.getElementById('rent-history-data').textContent);
     const css = getComputedStyle(document.documentElement);
-    const palette = [css.getPropertyValue('--primary').trim() || '#2563eb', '#d97706', '#059669', '#dc2626', '#7c3aed', '#0891b2'];
+    const palette = [css.getPropertyValue('--primary').trim() || '#2563eb', css.getPropertyValue('--warning').trim(), css.getPropertyValue('--success').trim(), css.getPropertyValue('--danger').trim(), '#7c3aed', '#0891b2'];
     const withAlpha = (hex, a) => {
         const h = hex.replace('#', '');
         if (h.length !== 6) return hex;

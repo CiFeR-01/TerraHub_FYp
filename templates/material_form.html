@@ -6,11 +6,13 @@
 <header class="dashboard-header-row animate-fade-in-up">
     <div>
         <nav class="breadcrumb-nav">
-            <a href="{% url 'dashboard' %}">Dashboard</a>
+            <span>Catalog &amp; Directory</span>
             <span class="separator">/</span>
             <a href="{% url 'material_list' %}">Materials Hub</a>
             <span class="separator">/</span>
-            <span class="current-page">Edit Raw Material</span>
+            <a href="{% url 'material_detail' material.pk %}">{{ material.sku }}</a>
+            <span class="separator">/</span>
+            <span class="current-page">Edit</span>
         </nav>
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
             Edit Raw Material: {{ material.name }}
@@ -18,7 +20,7 @@
     </div>
 </header>
 
-<div class="pane-card animate-fade-in-up" style="max-width: 650px; margin: 1.5rem auto 3rem; padding: 2.25rem; background:#fff; border-radius:12px; border:1px solid var(--border-light);">
+<div class="pane-card animate-fade-in-up" style="max-width: 650px; margin: 1.5rem auto 3rem; padding: 2.25rem; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light);">
     <h3 style="margin-bottom: 0.5rem; font-family: 'Outfit', sans-serif; font-weight: 700; color: var(--text-main);">🧪 Material Configuration</h3>
     <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.75rem;">
         Modify specifications, storage threshold, units of measure, and valuation metrics for {{ material.sku }}.
@@ -71,6 +73,11 @@
             </div>
         </div>
 
+        <div style="margin-bottom: 1.75rem;">
+            <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.35rem;">Reorder Point ({{ material.unit_of_measure }}) <span style="font-weight:400; color:var(--text-muted);">optional</span></label>
+            <input type="number" step="0.01" min="0" name="reorder_point" value="{% if material.reorder_point is not None %}{{ material.reorder_point|floatformat:2 }}{% endif %}" placeholder="Blank = forecast only" class="form-input" style="width:100%; padding:0.6rem; border-radius:8px; border:1px solid var(--border-light);">
+        </div>
+
         <div style="display: flex; justify-content: flex-end; gap: 1rem; border-top: 1px solid var(--border-light); padding-top: 1.25rem;">
             <a href="{% url 'material_list' %}" class="btn btn-secondary" style="padding: 0.6rem 1.5rem;">
                 Cancel
@@ -82,7 +89,7 @@
     </form>
 </div>
 
-<div class="pane-card animate-fade-in-up" style="max-width: 900px; margin: 0 auto 3rem; padding: 2.25rem; background:#fff; border-radius:12px; border:1px solid var(--border-light);">
+<div class="pane-card animate-fade-in-up" style="max-width: 900px; margin: 0 auto 3rem; padding: 2.25rem; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light);">
     <h3 style="margin-bottom: 0.5rem; font-family: 'Outfit', sans-serif; font-weight: 700; color: var(--text-main);">📦 Batch Traceability</h3>
     <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.5rem;">
         Every active batch of {{ material.sku }} — where it is, how much is reserved, and what it's reserved for.
