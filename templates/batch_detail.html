@@ -17,7 +17,7 @@
     </div>
 
     <div class="header-action-tray">
-        <a href="{% url 'batch_print_label' batch.batch_number %}" target="_blank" class="btn" style="background:#fff; color:var(--text-main); border:1px solid var(--border-main);">
+        <a href="{% url 'batch_print_label' batch.batch_number %}" target="_blank" class="btn" style="background:var(--bg-surface); color:var(--text-main); border:1px solid var(--border-main);">
             🖨️ Print QR Label
         </a>
         <a href="{% url 'stock_audit' %}?batch={{ batch.batch_number }}" class="btn btn-secondary">
@@ -65,7 +65,7 @@
             </div>
 
             <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 1.5rem;">
-                <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
+                <div style="padding: 1rem; background: var(--surface-sunken); border-radius: 8px;">
                     <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Current Quantity</span>
                     <div style="font-size: 1.5rem; font-weight: 700; color: var(--text-main); margin-top: 0.25rem;">
                         {% if batch.material %}
@@ -75,19 +75,19 @@
                         {% endif %}
                     </div>
                 </div>
-                <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
+                <div style="padding: 1rem; background: var(--surface-sunken); border-radius: 8px;">
                     <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Expiry Date</span>
                     <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-main); margin-top: 0.25rem;">
                         {{ batch.expiry_date|date:"Y-m-d"|default:"-" }}
                     </div>
                 </div>
-                <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
+                <div style="padding: 1rem; background: var(--surface-sunken); border-radius: 8px;">
                     <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Days Remaining</span>
                     <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-main); margin-top: 0.25rem;">
                         {{ batch.days_until_expiry|default:"-" }} Days
                     </div>
                 </div>
-                <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
+                <div style="padding: 1rem; background: var(--surface-sunken); border-radius: 8px;">
                     <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Est. Value</span>
                     <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-main); margin-top: 0.25rem;">
                         {% if est_value is not None %}RM {{ est_value|floatformat:2 }}{% else %}—{% endif %}
@@ -226,14 +226,14 @@
             <h3 style="margin-bottom: 1rem;">🔍 Genealogy</h3>
             
             {% if batch.purchase_order %}
-            <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
+            <div style="padding: 1rem; background: var(--surface-sunken); border-radius: 8px;">
                 <span class="badge badge-sky" style="margin-bottom: 0.5rem;">Received via Purchase Order</span>
                 <div style="font-weight: 600; color: var(--text-main);">{{ batch.purchase_order.po_number }}</div>
                 <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">Supplier: {{ batch.purchase_order.supplier_name }}</div>
                 <a href="{% url 'po_detail' batch.purchase_order.id %}" class="btn btn-secondary" style="width: 100%; margin-top: 1rem; padding: 0.4rem; font-size: 0.85rem;">View PO Details</a>
             </div>
             {% elif batch.produced_in %}
-            <div style="padding: 1rem; background: #f8fafc; border-radius: 8px;">
+            <div style="padding: 1rem; background: var(--surface-sunken); border-radius: 8px;">
                 <span class="badge badge-emerald" style="margin-bottom: 0.5rem;">Manufactured In-House</span>
                 <div style="font-weight: 600; color: var(--text-main);">Run #{{ batch.produced_in.run_number }}</div>
                 <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">Plant: {{ batch.produced_in.manufacturing_plant.name }}</div>
@@ -250,7 +250,7 @@
             {% if shipment_history %}
             <div style="display: flex; flex-direction: column; gap: 0.6rem;">
                 {% for sh in shipment_history %}
-                <div style="padding: 0.6rem 0.85rem; background: #f8fafc; border-radius: 8px; border: 1px solid var(--border-light);">
+                <div style="padding: 0.6rem 0.85rem; background: var(--surface-sunken); border-radius: 8px; border: 1px solid var(--border-light);">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <a href="{% url 'shipment_detail' sh.shipment.pk %}" style="color: var(--primary); text-decoration: none; font-weight: 600; font-size: 0.85rem;">{{ sh.shipment.tracking_number }}</a>
                         <span style="font-weight: 700; font-size: 0.85rem; color: var(--text-main);">{{ sh.quantity|floatformat:2 }}</span>

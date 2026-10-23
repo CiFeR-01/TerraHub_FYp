@@ -660,7 +660,7 @@ def _hub_card(key, label, user_can_generate):
 
 @login_required
 def briefing_hub_view(request):
-    """AI Copilot landing page: My Open Jobs plus the six category briefings as cards, each readable in a drawer.
+    """AI Copilot landing page: My Open Jobs (read in a drawer) plus the six category briefings as cards linking to their full pages.
     POST generates one briefing (category=<key> or my_checklist); fetch() calls get JSON, so "Generate all" runs one short request per category."""
     from .models import OpsBriefing
 
@@ -695,7 +695,9 @@ def briefing_hub_view(request):
             messages.warning(request, f"Briefing skipped: {b.error_detail}")
         else:
             messages.error(request, f"Briefing failed: {b.error_detail}")
-        return redirect(f"{reverse('briefing_hub')}?open={category}")
+        if category == "my_checklist":
+            return redirect(f"{reverse('briefing_hub')}?open=my_checklist")
+        return redirect("category_briefing", category=category)
 
     mine = OpsBriefing.objects.filter(category="my_checklist", generated_by=request.user, status="ok").first()
     my_points, my_watch, my_outlook = _parse_briefing_body(mine)
@@ -717,7 +719,7 @@ def briefing_hub_view(request):
         "can_generate": can_generate,
         "has_api_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
         "briefing_enabled": get_setting("ops_briefing_enabled"),
-        "open_key": open_key if open_key == "my_checklist" or open_key in _CATEGORY_LABELS else "",
+        "open_key": open_key if open_key == "my_checklist" else "",
         "today": timezone.localdate(),
     })
 

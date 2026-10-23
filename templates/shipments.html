@@ -26,7 +26,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: var(--danger);{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -66,7 +66,7 @@
 </section>
 
 <!-- Table Container -->
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
     <form method="get" style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:0.75rem; margin-bottom:1.25rem;">
         <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; margin:0;">Freight Tracking Logs</h3>
         <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
@@ -104,7 +104,7 @@
             <tbody>
                 {% now "Y-m-d" as today %}
                 {% for s in shipments %}
-                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem; cursor:pointer; transition:background-color 0.2s;" onmouseover="this.style.backgroundColor='#f8fafc';" onmouseout="this.style.backgroundColor='transparent';" onclick="if (!event.target.closest('a, button')) window.location.href='{% url 'shipment_detail' s.pk %}'">
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem; cursor:pointer; transition:background-color 0.2s;" onmouseover="this.style.backgroundColor='var(--surface-sunken)';" onmouseout="this.style.backgroundColor='transparent';" onclick="if (!event.target.closest('a, button')) window.location.href='{% url 'shipment_detail' s.pk %}'">
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ s.tracking_number }}</td>
                     <td style="padding:0.85rem 1rem;"><span class="badge badge-sky">{{ s.get_direction_display }}</span></td>
                     <td style="padding:0.85rem 1rem;"><span class="badge {% if s.status in 'Draft,Logistics Review' %}badge-slate{% elif s.status in 'Pending Approval,Delayed' %}badge-amber{% elif s.status in 'Preparing,Dispatched' %}badge-sky{% elif s.status in 'Arrived,Completed' %}badge-emerald{% elif s.status in 'Cancelled,Discrepant,Rejected' %}badge-rose{% else %}badge-slate{% endif %}">{{ s.status|upper }}</span>{% if s.has_discrepancy and s.status != 'Discrepant' %} <span class="badge badge-rose" title="{{ s.discrepancy_remarks|default:'' }}">DISCREPANCY</span>{% endif %}</td>
@@ -121,7 +121,7 @@
                     <td style="padding:0.85rem 1rem; font-size:0.8rem; white-space:nowrap; color:var(--text-muted);">
                         {% if s.dispatch_date %}<div>Dispatched {{ s.dispatch_date|date:"M d, Y" }}</div>{% endif %}
                         {% if s.actual_arrival_date %}<div style="color:var(--success-strong); font-weight:600;">Arrived {{ s.actual_arrival_date|date:"M d, Y" }}</div>
-                        {% elif s.expected_eta_date %}{% with eta=s.expected_eta_date|date:"Y-m-d" %}<div{% if eta < today and s.status not in 'Arrived,Completed,Cancelled,Discrepant' %} style="color:#dc2626; font-weight:600;" title="ETA has passed"{% endif %}>ETA {{ s.expected_eta_date|date:"M d, Y" }}</div>{% endwith %}{% endif %}
+                        {% elif s.expected_eta_date %}{% with eta=s.expected_eta_date|date:"Y-m-d" %}<div{% if eta < today and s.status not in 'Arrived,Completed,Cancelled,Discrepant' %} style="color:var(--danger); font-weight:600;" title="ETA has passed"{% endif %}>ETA {{ s.expected_eta_date|date:"M d, Y" }}</div>{% endwith %}{% endif %}
                         {% if not s.dispatch_date and not s.expected_eta_date and not s.actual_arrival_date %}—{% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem; font-weight:500; white-space:nowrap;">
@@ -144,7 +144,7 @@
 
 <!-- Modal: New Shipment -->
 <div id="shipment-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); backdrop-filter: blur(4px); z-index:1000; align-items:center; justify-content:center; padding: 1.5rem; transition: var(--transition-smooth);">
-    <div style="background:#fff; border-radius:16px; width:100%; max-width:750px; padding:2rem; box-shadow:0 25px 50px -12px rgba(15, 23, 42, 0.25); border: 1px solid var(--border-light); max-height: 90vh; overflow-y: auto;">
+    <div style="background:var(--bg-surface); border-radius:16px; width:100%; max-width:750px; padding:2rem; box-shadow:0 25px 50px -12px rgba(15, 23, 42, 0.25); border: 1px solid var(--border-light); max-height: 90vh; overflow-y: auto;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem; border-bottom: 1px solid var(--border-light); padding-bottom: 1rem;">
             <h3 style="font-family:'Outfit', sans-serif; font-size:1.35rem; font-weight:700; color: var(--text-main);">Dispatch New Shipment / Fleet</h3>
             <button onclick="document.getElementById('shipment-modal').style.display='none'" style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--text-muted);">&times;</button>
@@ -173,7 +173,7 @@
             </div>
 
             <!-- Tracking number generation -->
-            <div style="background: #f8fafc; border: 1px solid var(--border-light); border-radius: 8px; padding: 1rem; margin-bottom: 1.25rem;">
+            <div style="background: var(--surface-sunken); border: 1px solid var(--border-light); border-radius: 8px; padding: 1rem; margin-bottom: 1.25rem;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
                     <span style="font-size: 0.85rem; font-weight: 600;">Tracking / Fleet ID</span>
                     <label style="display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.8rem; font-weight: 500; color: var(--primary);">
@@ -181,7 +181,7 @@
                         Auto-generate Tracking ID
                     </label>
                 </div>
-                <input type="text" name="tracking_number" id="id_tracking_number" value="{{ next_tracking_number }}" placeholder="TRK-0101" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background: #f8fafc; font-weight: 500;" readonly>
+                <input type="text" name="tracking_number" id="id_tracking_number" value="{{ next_tracking_number }}" placeholder="TRK-0101" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background: var(--surface-sunken); font-weight: 500;" readonly>
             </div>
 
 
@@ -321,11 +321,11 @@
         trackingMode.addEventListener("change", function() {
             if (this.checked) {
                 trackingNumber.readOnly = true;
-                trackingNumber.style.background = "#f8fafc";
+                trackingNumber.style.background = "var(--surface-sunken)";
                 trackingNumber.value = "{{ next_tracking_number }}";
             } else {
                 trackingNumber.readOnly = false;
-                trackingNumber.style.background = "#ffffff";
+                trackingNumber.style.background = "var(--bg-surface)";
                 trackingNumber.placeholder = "e.g. FLEET-TX-990";
                 trackingNumber.focus();
             }

@@ -49,7 +49,7 @@
 </section>
 
 <!-- Filter Bar & Table -->
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
     <form method="get" style="display:flex; flex-wrap:wrap; gap:1rem; align-items:center; justify-content:space-between; margin-bottom:1.25rem;">
         <div style="display:flex; gap:0.5rem; align-items:center; flex:1; max-width:400px;">
             <input type="text" name="q" value="{{ search_query }}" placeholder="Search by item name or warehouse..." class="form-input" style="width:100%; padding:0.55rem 0.8rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.875rem;">
@@ -103,7 +103,7 @@
                         {% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem; font-weight:600; color:var(--text-main);">{{ log.item_name }}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:700; {% if log.action_type in 'Inbound,Produced,QA_Extension' %}color:#10b981;{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal' %}color:#ef4444;{% endif %}">
+                    <td style="padding:0.85rem 1rem; font-weight:700; {% if log.action_type in 'Inbound,Produced,QA_Extension' %}color:var(--success);{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal' %}color:var(--danger);{% endif %}">
                         {% if log.action_type in 'Inbound,Produced' %}+{{ log.quantity_changed|floatformat:2|cut:"-" }}{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal' %}-{{ log.quantity_changed|floatformat:2|cut:"-" }}{% else %}{{ log.quantity_changed|floatformat:2 }}{% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem;">{{ log.warehouse.name|default:"—" }}</td>

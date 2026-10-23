@@ -19,7 +19,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: var(--danger);{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -51,7 +51,7 @@
 </section>
 
 <!-- Section 1: Near Expiry Risk Table -->
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
     <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; color:var(--warning-strong); margin-bottom:1rem;">⚠️ Degrading &amp; Near-Expiry Batches</h3>
     {% include "partials/_table_search.html" with target='#nearExpiryTable' placeholder='Search batch #, item, warehouse...' %}
     <div class="table-responsive">
@@ -89,7 +89,7 @@
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="quarantine">
                                 <input type="hidden" name="batch_id" value="{{ b.id }}">
-                                <button type="submit" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem; border-color:#f59e0b; color:#f59e0b;">
+                                <button type="submit" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem; border-color:var(--warning); color:var(--warning);">
                                     Quarantine
                                 </button>
                             </form>
@@ -98,7 +98,7 @@
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="spoil_dispose">
                                 <input type="hidden" name="batch_id" value="{{ b.id }}">
-                                <button type="submit" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem; border-color:#ef4444; color:#ef4444;">
+                                <button type="submit" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem; border-color:var(--danger); color:var(--danger);">
                                     Dispose
                                 </button>
                             </form>
@@ -116,8 +116,8 @@
 </div>
 
 <!-- Section 2: Quarantined Batches -->
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.15s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
-    <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; color:#dc2626; margin-bottom:1rem;">🛑 Quarantined Inventory</h3>
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.15s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
+    <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; color:var(--danger); margin-bottom:1rem;">🛑 Quarantined Inventory</h3>
     {% include "partials/_table_search.html" with target='#quarantinedTable' placeholder='Search batch #, item, location...' %}
     <div class="table-responsive">
         <table id="quarantinedTable" class="modern-table sortable" style="width:100%; border-collapse:collapse;">
@@ -133,7 +133,7 @@
             <tbody>
                 {% for b in quarantined %}
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
-                    <td style="padding:0.85rem 1rem; font-weight:700; color:#dc2626;">{{ b.batch_number }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--danger);">{{ b.batch_number }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{% if b.material %}{{ b.material.name }}{% elif b.product %}{{ b.product.name }}{% else %}Batch Item{% endif %}</td>
                     <td style="padding:0.85rem 1rem;">{{ b.quantity|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem;">{% if b.warehouse %}{{ b.warehouse.name }}{% if b.location %} ({{ b.location }}){% endif %}{% else %}Unassigned{% endif %}</td>
@@ -142,7 +142,7 @@
                             {% csrf_token %}
                             <input type="hidden" name="action" value="release_quarantine">
                             <input type="hidden" name="batch_id" value="{{ b.id }}">
-                            <button type="submit" class="btn btn-primary" style="padding:0.3rem 0.6rem; font-size:0.78rem; background:#059669;">
+                            <button type="submit" class="btn btn-primary" style="padding:0.3rem 0.6rem; font-size:0.78rem; background:var(--success);">
                                 ✓ Release to Active
                             </button>
                         </form>
@@ -160,7 +160,7 @@
 
 <!-- Modal: Extend Expiry -->
 <div id="extend-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:12px; width:100%; max-width:440px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
+    <div style="background:var(--bg-surface); border-radius:12px; width:100%; max-width:440px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
             <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Extend Batch Shelf Life</h3>
             <button onclick="document.getElementById('extend-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>

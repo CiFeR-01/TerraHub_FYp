@@ -33,7 +33,7 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Mean Yield Variance</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.mean_yield_variance_pct and summary.mean_yield_variance_pct < 0 %}#dc2626{% else %}var(--text-main){% endif %};">
+            <span class="kpi-value" style="color:{% if summary.mean_yield_variance_pct and summary.mean_yield_variance_pct < 0 %}var(--danger){% else %}var(--text-main){% endif %};">
                 {% if summary.mean_yield_variance_pct is not None %}{{ summary.mean_yield_variance_pct|floatformat:1 }}%{% else %}&mdash;{% endif %}
             </span>
         </div>
@@ -45,21 +45,21 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Needs Attention</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.poor_count %}#dc2626{% else %}var(--text-main){% endif %};">{{ summary.poor_count }}</span>
+            <span class="kpi-value" style="color:{% if summary.poor_count %}var(--danger){% else %}var(--text-main){% endif %};">{{ summary.poor_count }}</span>
             <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.4rem;">poor &middot; {{ summary.watch_count }} watch</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Unrecorded Usage ({{ unrecorded.recent_days }} days)</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if unrecorded.events_recent %}#b45309{% else %}var(--text-main){% endif %};">{{ unrecorded.events_recent }}</span>
+            <span class="kpi-value" style="color:{% if unrecorded.events_recent %}var(--warning-strong){% else %}var(--text-main){% endif %};">{{ unrecorded.events_recent }}</span>
             <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.4rem;">across {{ unrecorded.materials_recent }} material{{ unrecorded.materials_recent|pluralize }}</span>
         </div>
     </div>
 </section>
 
 {% for section in sections %}
-<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:700; margin:0 0 1rem;">{{ section.title }}</h3>
     <div class="table-responsive">
         <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
@@ -79,22 +79,22 @@
                     <td style="padding:0.6rem 1rem; font-weight:700; color:var(--primary);">{{ r.name }}</td>
                     <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.rating == 'poor' %}0{% elif r.rating == 'watch' %}1{% elif r.rating == 'good' %}2{% else %}3{% endif %}">
                         {% if r.rating == 'good' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px;">On plan</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--success-soft); color:var(--success-strong); padding:0.15rem 0.55rem; border-radius:999px;">On plan</span>
                         {% elif r.rating == 'watch' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px;">Watch</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--warning-soft); color:var(--warning-strong); padding:0.15rem 0.55rem; border-radius:999px;">Watch</span>
                         {% elif r.rating == 'poor' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px;">Poor</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--danger-soft); color:var(--danger-strong); padding:0.15rem 0.55rem; border-radius:999px;">Poor</span>
                         {% else %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#f1f5f9; color:#64748b; padding:0.15rem 0.55rem; border-radius:999px;">No data</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--surface-muted); color:var(--text-muted); padding:0.15rem 0.55rem; border-radius:999px;">No data</span>
                         {% endif %}
                     </td>
                     <td style="padding:0.6rem 1rem; text-align:right;">
                         {% if r.mean_yield_pct is not None %}{{ r.mean_yield_pct|floatformat:1 }}%{% else %}&mdash;{% endif %}
                     </td>
-                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; color:{% if r.mean_yield_variance_pct and r.mean_yield_variance_pct < 0 %}#dc2626{% elif r.mean_yield_variance_pct and r.mean_yield_variance_pct > 0 %}var(--success-strong){% endif %};">
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; color:{% if r.mean_yield_variance_pct and r.mean_yield_variance_pct < 0 %}var(--danger){% elif r.mean_yield_variance_pct and r.mean_yield_variance_pct > 0 %}var(--success-strong){% endif %};">
                         {% if r.mean_yield_variance_pct is not None %}{{ r.mean_yield_variance_pct|floatformat:1 }}%{% else %}&mdash;{% endif %}
                     </td>
-                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if r.mean_material_overuse_pct and r.mean_material_overuse_pct > 5 %}#dc2626{% endif %};">
+                    <td style="padding:0.6rem 1rem; text-align:right; color:{% if r.mean_material_overuse_pct and r.mean_material_overuse_pct > 5 %}var(--danger){% endif %};">
                         {% if r.mean_material_overuse_pct is not None %}{{ r.mean_material_overuse_pct|floatformat:1 }}%{% else %}&mdash;{% endif %}
                     </td>
                 </tr>
@@ -107,7 +107,7 @@
 </div>
 {% endfor %}
 
-<div class="table-card-wrapper animate-fade-in-up" style="background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:700; margin:0 0 0.35rem;">Unrecorded material usage</h3>
     <p style="color:var(--text-muted); font-size:0.82rem; margin:0 0 1rem; max-width:80ch;">
         Extra material poured into a run from a batch that isn't in the records. Nothing is deducted from stock for it,
@@ -136,7 +136,7 @@
                     <td style="padding:0.6rem 1rem; text-align:right;" data-sort-value="{{ r.qty_window|floatformat:2 }}">
                         {{ r.qty_window|floatformat:2 }} {{ r.unit }}<div style="font-size:0.72rem; color:var(--text-muted);">{{ r.events_window }} event{{ r.events_window|pluralize }}</div>
                     </td>
-                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; color:{% if r.share_pct and r.share_pct > 5 %}#dc2626{% elif r.share_pct and r.share_pct > 2 %}#b45309{% endif %};" data-sort-value="{% if r.share_pct is not None %}{{ r.share_pct|floatformat:2 }}{% endif %}">
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; color:{% if r.share_pct and r.share_pct > 5 %}var(--danger){% elif r.share_pct and r.share_pct > 2 %}var(--warning-strong){% endif %};" data-sort-value="{% if r.share_pct is not None %}{{ r.share_pct|floatformat:2 }}{% endif %}">
                         {% if r.share_pct is not None %}{{ r.share_pct|floatformat:1 }}%{% else %}&mdash;{% endif %}
                     </td>
                     <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.top_reasons %}{{ r.top_reasons.0.0 }}{% endif %}">

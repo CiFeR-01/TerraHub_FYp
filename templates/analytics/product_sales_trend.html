@@ -28,7 +28,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: var(--danger);{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -43,13 +43,13 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Declining</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.declining %}#dc2626{% else %}var(--text-main){% endif %};">{{ summary.declining }}</span>
+            <span class="kpi-value" style="color:{% if summary.declining %}var(--danger){% else %}var(--text-main){% endif %};">{{ summary.declining }}</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Rising</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.rising %}#15803d{% else %}var(--text-main){% endif %};">{{ summary.rising }}</span>
+            <span class="kpi-value" style="color:{% if summary.rising %}var(--success-strong){% else %}var(--text-main){% endif %};">{{ summary.rising }}</span>
         </div>
     </div>
     <div class="kpi-item-card">
@@ -58,7 +58,7 @@
     </div>
 </section>
 
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
     <div class="table-responsive">
         <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
@@ -82,18 +82,18 @@
                     </td>
                     <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.status == 'declining' %}0{% elif r.status == 'rising' %}1{% elif r.status == 'flat' %}2{% elif r.status == 'new' %}3{% else %}4{% endif %}">
                         {% if r.status == 'declining' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px;">Declining</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--danger-soft); color:var(--danger-strong); padding:0.15rem 0.55rem; border-radius:999px;">Declining</span>
                         {% elif r.status == 'rising' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px;">Rising</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--success-soft); color:var(--success-strong); padding:0.15rem 0.55rem; border-radius:999px;">Rising</span>
                         {% elif r.status == 'flat' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#f1f5f9; color:#64748b; padding:0.15rem 0.55rem; border-radius:999px;">Flat</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--surface-muted); color:var(--text-muted); padding:0.15rem 0.55rem; border-radius:999px;">Flat</span>
                         {% elif r.status == 'new' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#e0e7ff; color:#4338ca; padding:0.15rem 0.55rem; border-radius:999px;">New</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--primary-soft); color:var(--primary-strong); padding:0.15rem 0.55rem; border-radius:999px;">New</span>
                         {% else %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px;">Not enough data</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--warning-soft); color:var(--warning-strong); padding:0.15rem 0.55rem; border-radius:999px;">Not enough data</span>
                         {% endif %}
                     </td>
-                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; color:{% if r.status == 'declining' %}#dc2626{% elif r.status == 'rising' %}#15803d{% endif %};" data-sort-value="{{ r.pct_change|default_if_none:'' }}">
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; color:{% if r.status == 'declining' %}var(--danger){% elif r.status == 'rising' %}var(--success-strong){% endif %};" data-sort-value="{{ r.pct_change|default_if_none:'' }}">
                         {% if r.pct_change is not None %}{% if r.pct_change > 0 %}+{% endif %}{{ r.pct_change|floatformat:1 }}%{% else %}<span style="color:var(--text-muted); font-weight:400;">&mdash;</span>{% endif %}
                     </td>
                     <td style="padding:0.6rem 1rem; text-align:right;">{{ r.recent_avg_qty|floatformat:1 }}</td>

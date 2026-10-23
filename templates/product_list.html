@@ -42,14 +42,14 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: var(--danger);{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
 </div>
 {% endif %}
 
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
     {% include "partials/_table_search.html" with target='#productsTable' placeholder='Search products by SKU, name, description...' %}
     <div class="table-responsive">
         <table id="productsTable" class="modern-table sortable" style="width:100%; border-collapse:collapse;">
@@ -73,7 +73,7 @@
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">
                         <a href="{% url 'product_detail' prod.id %}" style="color:var(--primary); text-decoration:none;">{{ prod.sku }}</a>
                         {% if not prod.is_active %}
-                        <span style="display:inline-block; font-size:0.65rem; background:#fee2e2; color:#ef4444; padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">Deactivated</span>
+                        <span style="display:inline-block; font-size:0.65rem; background:var(--danger-soft); color:var(--danger); padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">Deactivated</span>
                         {% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{{ prod.name }}</td>
@@ -84,7 +84,7 @@
                     <td style="padding:0.85rem 1rem; font-weight:600;">RM{{ prod.price_per_unit|floatformat:2 }}</td>
                     <td style="padding:0.85rem 1rem;">
                         {% for item in prod.recipe_items.all %}
-                        <div style="font-size:0.8rem; background:#f1f5f9; padding:0.2rem 0.5rem; border-radius:4px; margin-bottom:0.2rem; display:inline-block;">
+                        <div style="font-size:0.8rem; background:var(--surface-muted); padding:0.2rem 0.5rem; border-radius:4px; margin-bottom:0.2rem; display:inline-block;">
                             {{ item.material.sku }}: <strong>{{ item.quantity_required|qty_display }}</strong> {{ item.material.unit_of_measure }}
                         </div>
                         {% empty %}
@@ -119,7 +119,7 @@
 
 <!-- Modal: New Product -->
 <div id="product-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:12px; width:100%; max-width:500px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
+    <div style="background:var(--bg-surface); border-radius:12px; width:100%; max-width:500px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
             <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Register New Product</h3>
             <button onclick="document.getElementById('product-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
@@ -139,7 +139,7 @@
                         Auto-generate
                     </label>
                 </div>
-                <input type="text" id="prod_sku_input" name="sku" value="{{ next_product_sku }}" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background:#f8fafc;" readonly>
+                <input type="text" id="prod_sku_input" name="sku" value="{{ next_product_sku }}" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background:var(--surface-sunken);" readonly>
             </div>
             <div style="margin-bottom:0.85rem;">
                 <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Description</label>
@@ -165,13 +165,13 @@
 
 <!-- Modal: Bulk Import Products -->
 <div id="import-prod-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:12px; width:100%; max-width:620px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1); max-height:90vh; overflow-y:auto;">
+    <div style="background:var(--bg-surface); border-radius:12px; width:100%; max-width:620px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1); max-height:90vh; overflow-y:auto;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
             <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Bulk Import Products (CSV)</h3>
             <button onclick="document.getElementById('import-prod-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
         </div>
         
-        <div style="background:#f8fafc; border:1px dashed var(--border-light); border-radius:8px; padding:1rem; margin-bottom:1.25rem; font-size:0.85rem;">
+        <div style="background:var(--surface-sunken); border:1px dashed var(--border-light); border-radius:8px; padding:1rem; margin-bottom:1.25rem; font-size:0.85rem;">
             <div style="font-weight:600; margin-bottom:0.3rem;">📋 CSV File Formatting Guide:</div>
             <div style="color:var(--text-muted); margin-bottom:0.5rem;">Expected headers: <code>name, sku, description, unit_of_measure, weight_mt_per_unit, price_per_unit</code></div>
             <a href="{% url 'export_product_template' %}" style="color:var(--primary); font-weight:600; text-decoration:none;">📄 Click here to download sample CSV template</a>
@@ -199,14 +199,14 @@
             </div>
 
             <!-- Dry-run live preview section -->
-            <div id="prod-dryrun-container" style="display:none; margin-bottom:1.25rem; background:#f1f5f9; border-radius:8px; padding:1rem; max-height:220px; overflow-y:auto;">
+            <div id="prod-dryrun-container" style="display:none; margin-bottom:1.25rem; background:var(--surface-muted); border-radius:8px; padding:1rem; max-height:220px; overflow-y:auto;">
                 <div style="font-weight:700; font-size:0.85rem; margin-bottom:0.5rem; display:flex; justify-content:space-between;">
                     <span>Dry-Run Validation Results:</span>
                     <span id="prod-dryrun-badges"></span>
                 </div>
-                <table style="width:100%; border-collapse:collapse; font-size:0.775rem; background:#fff; border-radius:6px; overflow:hidden;">
+                <table style="width:100%; border-collapse:collapse; font-size:0.775rem; background:var(--bg-surface); border-radius:6px; overflow:hidden;">
                     <thead>
-                        <tr style="background:#e2e8f0; text-align:left;">
+                        <tr style="background:var(--surface-strong); text-align:left;">
                             <th style="padding:0.4rem 0.6rem;">Line</th>
                             <th style="padding:0.4rem 0.6rem;">Product Name</th>
                             <th style="padding:0.4rem 0.6rem;">SKU</th>
@@ -234,13 +234,13 @@
 {% comment %}
 <!-- Modal: Bulk Import Recipes (Disabled for now) -->
 <div id="import-recipe-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:12px; width:100%; max-width:520px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
+    <div style="background:var(--bg-surface); border-radius:12px; width:100%; max-width:520px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
             <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Bulk Import Product Recipes (CSV)</h3>
             <button onclick="document.getElementById('import-recipe-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
         </div>
         
-        <div style="background:#f8fafc; border:1px dashed var(--border-light); border-radius:8px; padding:1rem; margin-bottom:1.25rem; font-size:0.85rem;">
+        <div style="background:var(--surface-sunken); border:1px dashed var(--border-light); border-radius:8px; padding:1rem; margin-bottom:1.25rem; font-size:0.85rem;">
             <div style="font-weight:600; margin-bottom:0.3rem;">📋 Recipe CSV Formatting Guide:</div>
             <div style="color:var(--text-muted); margin-bottom:0.5rem;">Expected headers: <code>product_sku, material_sku, quantity_required</code></div>
             <a href="#" style="color:var(--primary); font-weight:600; text-decoration:none;">📄 Download sample Recipe CSV template</a>
@@ -302,19 +302,19 @@ function runProductDryRun() {
         tbody.innerHTML = '';
         badges.innerHTML = `
             <span style="color:var(--success-strong); font-weight:700;">+${data.created_count} New</span> |
-            <span style="color:#2563eb; font-weight:700;">~${data.updated_count} Update</span> |
+            <span style="color:var(--info-strong); font-weight:700;">~${data.updated_count} Update</span> |
             <span style="color:var(--warning-strong); font-weight:700;">=${data.skipped_count} Skip</span> |
-            <span style="color:#dc2626; font-weight:700;">!${data.error_count} Error</span>
+            <span style="color:var(--danger); font-weight:700;">!${data.error_count} Error</span>
         `;
 
         data.results.forEach(r => {
             var tr = document.createElement('tr');
-            tr.style.borderBottom = '1px solid #cbd5e1';
+            tr.style.borderBottom = '1px solid var(--border-strong)';
             var statusBadge = '';
-            if (r.status === 'created') statusBadge = '<span style="background:#d1fae5; color:#065f46; padding:2px 6px; border-radius:4px; font-weight:600;">NEW</span>';
-            else if (r.status === 'updated') statusBadge = '<span style="background:#dbeafe; color:#1e40af; padding:2px 6px; border-radius:4px; font-weight:600;">UPDATE</span>';
-            else if (r.status === 'duplicate') statusBadge = '<span style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-weight:600;">SKIP</span>';
-            else statusBadge = '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-weight:600;">ERROR</span>';
+            if (r.status === 'created') statusBadge = '<span style="background:var(--success-soft); color:var(--success-strong); padding:2px 6px; border-radius:4px; font-weight:600;">NEW</span>';
+            else if (r.status === 'updated') statusBadge = '<span style="background:var(--info-soft); color:var(--info-strong); padding:2px 6px; border-radius:4px; font-weight:600;">UPDATE</span>';
+            else if (r.status === 'duplicate') statusBadge = '<span style="background:var(--warning-soft); color:var(--warning-strong); padding:2px 6px; border-radius:4px; font-weight:600;">SKIP</span>';
+            else statusBadge = '<span style="background:var(--danger-soft); color:var(--danger-strong); padding:2px 6px; border-radius:4px; font-weight:600;">ERROR</span>';
 
             tr.innerHTML = `
                 <td style="padding:0.4rem 0.6rem; font-weight:600;">L${escHtml(r.line)}</td>

@@ -14,21 +14,12 @@
         <h1 class="bh-title">Today's briefings</h1>
         <p class="bh-sub">{{ today|date:"l j F" }} &middot; your open jobs and the six company briefings</p>
     </div>
-    {% if can_generate %}
-    <div class="bh-actions">
-        <button type="button" class="bh-btn bh-btn-primary" id="bh-generate-all" data-csrf="{{ csrf_token }}"
-            {% if not has_api_key or not briefing_enabled %}disabled{% endif %}
-            title="{% if not has_api_key %}ANTHROPIC_API_KEY is not set{% elif not briefing_enabled %}Briefings are paused in System Settings{% else %}Generate all six company briefings{% endif %}">
-            Generate all six
-        </button>
-    </div>
-    {% endif %}
 </header>
 
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: var(--danger);{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -48,6 +39,16 @@
 {% endif %}
 
 <!-- My Open Jobs -->
+<div class="bh-section-row">
+    <p class="bh-section-label">My open jobs</p>
+    {% if has_api_key %}
+    <form method="post" class="bh-gen-form" data-bh-busy>
+        {% csrf_token %}
+        <input type="hidden" name="category" value="my_checklist">
+        <button type="submit" class="bh-btn bh-btn-primary">{% if mine %}Refresh my checklist{% else %}Generate my checklist{% endif %}</button>
+    </form>
+    {% endif %}
+</div>
 <button type="button" class="bh-jobs animate-fade-in-up" data-bh-open="my_checklist">
     <svg class="bh-ring" viewBox="0 0 56 56" aria-hidden="true">
         <circle class="bh-ring-bg" cx="28" cy="28" r="22" fill="none" stroke-width="6"/>
@@ -56,7 +57,6 @@
         <text x="28" y="32" text-anchor="middle" class="bh-ring-text">{% if points %}<tspan class="bh-done-n">{{ ticked|length }}</tspan>/{{ points|length }}{% else %}{{ live_items|length }}{% endif %}</text>
     </svg>
     <span class="bh-jobs-body">
-        <span class="bh-cat">My Open Jobs</span>
         <span class="bh-headline">{% if mine %}{{ mine.headline }}{% else %}{{ live_items|length }} open item{{ live_items|length|pluralize }}, no checklist yet{% endif %}</span>
         {% if next_point %}
         <span class="bh-next">Next: <b>{{ next_point }}</b></span>
@@ -68,10 +68,19 @@
     <span class="bh-read">Open &rarr;</span>
 </button>
 
-<p class="bh-section-label">Company briefings</p>
+<div class="bh-section-row">
+    <p class="bh-section-label">Company briefings</p>
+    {% if can_generate %}
+    <button type="button" class="bh-btn bh-btn-primary" id="bh-generate-all" data-csrf="{{ csrf_token }}"
+        {% if not has_api_key or not briefing_enabled %}disabled{% endif %}
+        title="{% if not has_api_key %}ANTHROPIC_API_KEY is not set{% elif not briefing_enabled %}Briefings are paused in System Settings{% else %}Generate all six company briefings{% endif %}">
+        Generate all six
+    </button>
+    {% endif %}
+</div>
 <div class="bh-grid">
     {% for c in cards %}
-    <button type="button" class="bh-card bh-state-{{ c.state }} animate-fade-in-up" data-bh-open="{{ c.key }}" data-bh-card="{{ c.key }}">
+    <a href="{% url 'category_briefing' category=c.key %}" class="bh-card bh-state-{{ c.state }} animate-fade-in-up" data-bh-card="{{ c.key }}">
         <span class="bh-card-top">
             <span class="bh-cat">{{ c.label }}</span>
             <span class="bh-chip bh-chip-{{ c.state }}" data-bh-chip>
@@ -90,7 +99,8 @@
             {% else %}No briefing has been generated yet{% endif %}
         </span>
         <span class="bh-card-point">
-            {% if c.points %}{{ c.points.0 }}
+            {% if c.state == 'stale' %}Latest run failed: {{ c.last_attempt.error_detail|default:"no details recorded." }}
+            {% elif c.points %}{{ c.points.0 }}
             {% elif c.state == 'clear' %}The {{ c.label|lower }} analytics flagged nothing.
             {% elif c.state == 'error' %}{{ c.last_attempt.error_detail|default:"No details recorded." }}
             {% endif %}
@@ -99,7 +109,7 @@
             <span>{% if c.last_attempt %}{{ c.last_attempt.generated_at|naturaltime }}{% else %}&mdash;{% endif %}</span>
             <span class="bh-read">Read &rarr;</span>
         </span>
-    </button>
+    </a>
     {% endfor %}
 </div>
 
@@ -107,13 +117,11 @@
 <p class="bh-note">Only users who can generate briefings see the Generate buttons. Everyone can read them.</p>
 {% endif %}
 
-<!-- Drawer: one panel per briefing, all rendered up front so opening is instant -->
+<!-- Drawer: My Open Jobs checklist (the six categories open their full pages) -->
 <div class="bh-drawer-wrap" id="bh-drawer" hidden>
     <div class="bh-drawer" role="dialog" aria-modal="true" aria-labelledby="bh-drawer-title">
         <div class="bh-drawer-head">
             <span class="bh-cat" id="bh-drawer-title"></span>
-            <button type="button" class="bh-icon-btn" data-bh-step="-1" aria-label="Previous briefing">&larr;</button>
-            <button type="button" class="bh-icon-btn" data-bh-step="1" aria-label="Next briefing">&rarr;</button>
             <button type="button" class="bh-icon-btn" data-bh-close aria-label="Close">&times;</button>
         </div>
 
@@ -152,63 +160,6 @@
             </div>
         </section>
 
-        {% for c in cards %}
-        <section class="bh-panel" data-bh-panel="{{ c.key }}" data-bh-label="{{ c.label }} briefing" hidden>
-            <div class="bh-drawer-body">
-                {% if c.state == 'stale' or c.state == 'error' %}
-                <div class="bh-error">The latest run ({{ c.last_attempt.generated_at|naturaltime }}) failed{% if c.last_attempt.error_detail %}: {{ c.last_attempt.error_detail }}{% endif %}.{% if c.briefing %} Showing the last briefing that worked.{% endif %}</div>
-                {% elif c.state == 'paused' %}
-                <div class="bh-banner">The latest run was skipped because briefings are paused.{% if c.briefing %} Showing the last briefing that worked.{% endif %}</div>
-                {% endif %}
-
-                {% if c.briefing %}
-                <div class="bh-panel-head">
-                    <h2 class="bh-panel-headline">{{ c.briefing.headline }}</h2>
-                    <p class="bh-meta">{{ c.briefing.get_period_display }} &middot; {{ c.briefing.generated_at|naturaltime }} &middot; {{ c.briefing.signal_count }} signal{{ c.briefing.signal_count|pluralize }}</p>
-                </div>
-                {% if c.points %}
-                <ul class="bh-points">{% for p in c.points %}<li>{{ p }}</li>{% endfor %}</ul>
-                {% else %}
-                <p class="bh-body-text">{{ c.briefing.body_text }}</p>
-                {% endif %}
-                {% if c.watch %}<p class="bh-watch"><strong>Watch:</strong> {{ c.watch }}</p>{% endif %}
-                {% if c.outlook %}
-                <div class="bh-outlook"><p>Outlook &mdash; estimate, not a fact</p>
-                    <ul>{% for o in c.outlook %}<li>{{ o }}</li>{% endfor %}</ul>
-                </div>
-                {% endif %}
-                {% if c.signal_sections %}
-                <div>
-                    <p class="bh-section-label">Drawn from</p>
-                    <div class="bh-sources">
-                        {% for s in c.signal_sections %}
-                        <a href="{% url s.url_name %}" class="bh-source">{{ s.label }} <span>{{ s.count }}</span></a>
-                        {% endfor %}
-                    </div>
-                </div>
-                {% endif %}
-                {% elif c.state == 'clear' %}
-                <div class="bh-empty"><b>All clear</b>The last run ({{ c.last_attempt.generated_at|naturaltime }}) found nothing flagged in the {{ c.label|lower }} analytics.</div>
-                {% elif c.state == 'none' %}
-                <div class="bh-empty"><b>No briefing yet</b>The daily job (<code>generate_ops_briefing</code>) hasn't produced one{% if c.can_generate %}, or generate it below{% endif %}.</div>
-                {% endif %}
-            </div>
-            <div class="bh-drawer-foot">
-                {% if c.can_generate and has_api_key %}
-                <form method="post" class="bh-gen-form">
-                    {% csrf_token %}
-                    <input type="hidden" name="category" value="{{ c.key }}">
-                    <select name="period" class="bh-select" aria-label="Period">
-                        <option value="daily">Daily</option>
-                        <option value="weekly">Weekly</option>
-                    </select>
-                    <button type="submit" class="bh-btn bh-btn-primary">Generate now</button>
-                </form>
-                {% endif %}
-                <a class="bh-full-link" href="{% url 'category_briefing' category=c.key %}">Open full page &rarr;</a>
-            </div>
-        </section>
-        {% endfor %}
     </div>
 </div>
 
@@ -231,19 +182,15 @@
 <script>
 (function () {
     var wrap = document.getElementById('bh-drawer');
-    var panels = Array.prototype.slice.call(document.querySelectorAll('[data-bh-panel]'));
-    var order = panels.map(function (p) { return p.dataset.bhPanel; });
+    var panel = wrap.querySelector('[data-bh-panel]');
     var title = document.getElementById('bh-drawer-title');
     var current = null, opener = null;
 
     function open(key) {
-        if (order.indexOf(key) === -1) return;
+        if (panel.dataset.bhPanel !== key) return;
         current = key;
-        panels.forEach(function (p) { p.hidden = p.dataset.bhPanel !== key; });
-        var panel = panels[order.indexOf(key)];
+        panel.hidden = false;
         title.textContent = panel.dataset.bhLabel;
-        wrap.querySelector('[data-bh-step="-1"]').disabled = order.indexOf(key) === 0;
-        wrap.querySelector('[data-bh-step="1"]').disabled = order.indexOf(key) === order.length - 1;
         wrap.hidden = false;
         document.body.classList.add('bh-locked');
         wrap.querySelector('[data-bh-close]').focus();
@@ -254,26 +201,24 @@
         current = null;
         if (opener) opener.focus();
     }
-    function step(d) {
-        var i = order.indexOf(current) + d;
-        if (i >= 0 && i < order.length) open(order[i]);
-    }
 
     document.querySelectorAll('[data-bh-open]').forEach(function (btn) {
         btn.addEventListener('click', function () { opener = btn; open(btn.dataset.bhOpen); });
     });
     wrap.addEventListener('click', function (e) {
         if (e.target === wrap || e.target.closest('[data-bh-close]')) close();
-        var s = e.target.closest('[data-bh-step]');
-        if (s) step(+s.dataset.bhStep);
     });
     document.addEventListener('keydown', function (e) {
-        if (!current) return;
-        if (e.key === 'Escape') close();
-        else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && !/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) {
-            e.preventDefault();
-            step(e.key === 'ArrowRight' ? 1 : -1);
-        }
+        if (current && e.key === 'Escape') close();
+    });
+
+    // Checklist generation is a normal form post that takes a few seconds; show it is working.
+    document.querySelectorAll('[data-bh-busy]').forEach(function (form) {
+        form.addEventListener('submit', function () {
+            var b = form.querySelector('button[type="submit"]');
+            b.disabled = true;
+            b.innerHTML = '<span class="bh-spin" aria-hidden="true"></span> Generating…';
+        });
     });
 
     // Keep the My Open Jobs ring in step with ticks made in the drawer.
@@ -302,12 +247,17 @@
         if (b.dataset.bhConfirm === 'yes') runAll();
     });
 
+    // Warn before leaving mid-run: categories not yet started would never run.
+    function warnLeave(e) { e.preventDefault(); e.returnValue = ''; }
+
     function runAll() {
         var failed = 0;
         allBtn.disabled = true;
+        window.addEventListener('beforeunload', warnLeave);
         cards.forEach(function (c) { c.classList.add('bh-queued'); });
         (function next(i) {
             if (i >= cards.length) {
+                window.removeEventListener('beforeunload', warnLeave);
                 allBtn.textContent = failed ? 'Done, ' + failed + ' failed. Reloading…' : 'Done. Reloading…';
                 setTimeout(function () { window.location.href = window.location.pathname; }, failed ? 1800 : 600);
                 return;

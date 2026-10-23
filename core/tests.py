@@ -3911,6 +3911,22 @@ class FinishedGoodsFefoAllocationTests(TestCase):
         self._post('', '10', reason='x')  # order already fully covered
         self.assertEqual(sum(self._allocated().values()), Decimal('400'))
 
+    def test_stock_reserved_by_someone_else_mid_submit_is_refused(self):
+        # Another order grabs FG-NEW after this request has read the batches but before it saves
+        from unittest import mock
+        from core import views
+        real = views._fg_fefo_batches
+        def stale(product):
+            batches = real(product)
+            Batch.objects.filter(pk=self.newer.pk).update(allocated_quantity=Decimal('500'))
+            return batches
+        with mock.patch.object(views, '_fg_fefo_batches', stale):
+            self._post('284', '116')
+        self.assertEqual(self._allocated(), {})
+        self.older.refresh_from_db(); self.newer.refresh_from_db()
+        self.assertEqual(self.older.allocated_quantity, Decimal('0'))
+        self.assertEqual(self.newer.allocated_quantity, Decimal('500'))
+
 
 class OutboundShipmentOriginAndBatchTests(TestCase):
     """A shipment leaves from one place: SO shipments are split per warehouse, items
@@ -7713,6 +7729,34 @@ class BriefingHubTests(TestCase):
         self.assertNotContains(resp, '<script>"')
         self.assertEqual(resp.context['open_key'], '')
 
+    def test_category_cards_link_to_full_pages(self):
+        self.client.login(username='hubplain', password='pw')
+        resp = self.client.get(self.url)
+        for key in ('materials', 'products', 'sales', 'purchase', 'logistics', 'warehouse'):
+            self.assertContains(resp, 'href="%s"' % reverse('category_briefing', kwargs={'category': key}))
+        self.assertNotContains(resp, 'data-bh-panel="sales"')
+
+    def test_open_param_only_opens_my_checklist(self):
+        self.client.login(username='hubplain', password='pw')
+        self.assertEqual(self.client.get(self.url + '?open=sales').context['open_key'], '')
+        self.assertEqual(self.client.get(self.url + '?open=my_checklist').context['open_key'], 'my_checklist')
+
+    def test_generate_checklist_button_beside_open_jobs(self):
+        self.client.login(username='hubplain', password='pw')
+        with mock.patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            resp = self.client.get(self.url)
+        self.assertContains(resp, 'Generate my checklist')
+        self.assertContains(resp, 'data-bh-busy')
+
+    def test_category_form_post_redirects_to_full_page(self):
+        self.client.login(username='hubmgr', password='pw')
+        with mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
+                mock.patch.object(briefing_mod, 'collect_signals', _fake_signals), \
+                mock.patch.object(briefing_mod, 'render_prompt', lambda s, period='daily': 'x'), \
+                mock.patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            resp = self.client.post(self.url, {'category': 'sales', 'period': 'daily'})
+        self.assertRedirects(resp, reverse('category_briefing', kwargs={'category': 'sales'}), fetch_redirect_response=False)
+
 
 # ============================================================================
 # Decision Support sidebar group
@@ -8285,3 +8329,58 @@ class PartyDetailPageTests(TestCase):
         self.assertContains(self.client.get(url), 'SO-PARTY')
         self.assertContains(self.client.get(reverse('client_list')), url)
         self.assertContains(self.client.get(reverse('supplier_list')), self._url())
+
+
+# ============================================================================
+# Per-material reorder point, PO receipt shelf life, Purchaser merged into Purchasing
+# ============================================================================
+from datetime import timedelta
+
+from core.analytics import stockout_forecast
+from core.utils import apply_po_material_receipt
+
+
+class ReorderPointTests(TestCase):
+    def setUp(self):
+        self.wh = Warehouse.objects.create(name='RP Plant', location_type='Both')
+        self.mat = Material.objects.create(name='RP Urea', sku='RP-1', category='Raw', unit_of_measure='kg',
+                                           safe_storage_days=90, weight_mt_per_unit=Decimal('0.001'))
+        Batch.objects.create(batch_number='RP-B1', material=self.mat, quantity=Decimal('100'), warehouse=self.wh,
+                             manufacturing_date=timezone.localdate(),
+                             expiry_date=timezone.localdate() + timedelta(days=90))
+
+    def row(self):
+        return next(r for r in stockout_forecast() if r['sku'] == 'RP-1')
+
+    def test_below_reorder_point_flags_reorder_now(self):
+        self.mat.reorder_point = Decimal('150')
+        self.mat.save()
+        row = self.row()
+        self.assertTrue(row['below_reorder_point'])
+        self.assertEqual(row['status'], 'reorder_now')
+
+    def test_above_reorder_point_is_not_flagged(self):
+        self.mat.reorder_point = Decimal('50')
+        self.mat.save()
+        self.assertFalse(self.row()['below_reorder_point'])
+
+    def test_blank_reorder_point_is_not_flagged(self):
+        self.assertFalse(self.row()['below_reorder_point'])
+
+
+class ReceiptShelfLifeTests(TestCase):
+    def test_po_receipt_expiry_uses_material_shelf_life(self):
+        wh = Warehouse.objects.create(name='SL Plant', location_type='Both')
+        mat = Material.objects.create(name='SL Humic', sku='SL-1', category='Raw', unit_of_measure='kg',
+                                      safe_storage_days=45, weight_mt_per_unit=Decimal('0.001'))
+        po = PurchaseOrder.objects.create(po_number='PO-SL-1', supplier_name='S', target_warehouse=wh, status='Pending')
+        detail = PurchaseOrderDetail.objects.create(purchase_order=po, material=mat, quantity_ordered=Decimal('10'))
+        apply_po_material_receipt(detail, Decimal('10'), make_user(username='sl_wh', password='pw-wh-12345'))
+        batch = Batch.objects.get(purchase_order=po)
+        self.assertEqual(batch.expiry_date, timezone.localdate() + timedelta(days=45))
+
+
+class PurchaserMergedTests(TestCase):
+    def test_only_purchasing_role_exists(self):
+        self.assertFalse(Group.objects.filter(name='Purchaser').exists())
+        self.assertTrue(Group.objects.get(name='Purchasing').permissions.exists())

@@ -35,14 +35,14 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: var(--danger);{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
 </div>
 {% endif %}
 
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
     {% include "partials/_table_search.html" with target='#materialsTable' placeholder='Search materials by SKU, name, category...' %}
     <div class="table-responsive">
         <table id="materialsTable" class="modern-table sortable" style="width:100%; border-collapse:collapse;">
@@ -65,7 +65,7 @@
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">
                         <a href="{% url 'material_detail' item.material.id %}" style="color:var(--primary); text-decoration:none;">{{ item.material.sku }}</a>
                         {% if not item.material.is_active %}
-                        <span style="display:inline-block; font-size:0.65rem; background:#fee2e2; color:#ef4444; padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">Deactivated</span>
+                        <span style="display:inline-block; font-size:0.65rem; background:var(--danger-soft); color:var(--danger); padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">Deactivated</span>
                         {% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{{ item.material.name }}</td>
@@ -106,7 +106,7 @@
 
 <!-- Modal: New Material -->
 <div id="material-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:12px; width:100%; max-width:500px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
+    <div style="background:var(--bg-surface); border-radius:12px; width:100%; max-width:500px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
             <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Register New Material</h3>
             <button onclick="document.getElementById('material-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
@@ -126,7 +126,7 @@
                             Auto
                         </label>
                     </div>
-                    <input type="text" id="mat_sku_input" name="sku" value="{{ next_material_sku }}" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background:#f8fafc;" readonly>
+                    <input type="text" id="mat_sku_input" name="sku" value="{{ next_material_sku }}" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light); background:var(--surface-sunken);" readonly>
                 </div>
                 <div>
                     <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Category</label>
@@ -159,6 +159,10 @@
                     <input type="number" step="0.01" name="cost_per_unit" value="50.00" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
                 </div>
             </div>
+            <div style="margin-bottom:1.25rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Reorder Point <span style="font-weight:400; color:var(--text-muted);">(optional, in the material's unit)</span></label>
+                <input type="number" step="0.01" min="0" name="reorder_point" placeholder="Blank = forecast only" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
             <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('material-modal').style.display='none'">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save Material</button>
@@ -169,13 +173,13 @@
 
 <!-- Modal: Bulk Import Materials -->
 <div id="import-mat-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:12px; width:100%; max-width:620px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1); max-height:90vh; overflow-y:auto;">
+    <div style="background:var(--bg-surface); border-radius:12px; width:100%; max-width:620px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1); max-height:90vh; overflow-y:auto;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
             <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Bulk Import Materials (CSV)</h3>
             <button onclick="document.getElementById('import-mat-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
         </div>
         
-        <div style="background:#f8fafc; border:1px dashed var(--border-light); border-radius:8px; padding:1rem; margin-bottom:1.25rem; font-size:0.85rem;">
+        <div style="background:var(--surface-sunken); border:1px dashed var(--border-light); border-radius:8px; padding:1rem; margin-bottom:1.25rem; font-size:0.85rem;">
             <div style="font-weight:600; margin-bottom:0.3rem;">📋 Material CSV Formatting Guide:</div>
             <div style="color:var(--text-muted); margin-bottom:0.5rem;">Expected headers: <code>name, sku, category, unit_of_measure, safe_storage_days, weight_mt_per_unit, cost_per_unit</code></div>
             <a href="{% url 'export_material_template' %}" style="color:var(--primary); font-weight:600; text-decoration:none;">📄 Click here to download sample Material CSV template</a>
@@ -203,14 +207,14 @@
             </div>
 
             <!-- Dry-run live preview section -->
-            <div id="mat-dryrun-container" style="display:none; margin-bottom:1.25rem; background:#f1f5f9; border-radius:8px; padding:1rem; max-height:220px; overflow-y:auto;">
+            <div id="mat-dryrun-container" style="display:none; margin-bottom:1.25rem; background:var(--surface-muted); border-radius:8px; padding:1rem; max-height:220px; overflow-y:auto;">
                 <div style="font-weight:700; font-size:0.85rem; margin-bottom:0.5rem; display:flex; justify-content:space-between;">
                     <span>Dry-Run Validation Results:</span>
                     <span id="mat-dryrun-badges"></span>
                 </div>
-                <table style="width:100%; border-collapse:collapse; font-size:0.775rem; background:#fff; border-radius:6px; overflow:hidden;">
+                <table style="width:100%; border-collapse:collapse; font-size:0.775rem; background:var(--bg-surface); border-radius:6px; overflow:hidden;">
                     <thead>
-                        <tr style="background:#e2e8f0; text-align:left;">
+                        <tr style="background:var(--surface-strong); text-align:left;">
                             <th style="padding:0.4rem 0.6rem;">Line</th>
                             <th style="padding:0.4rem 0.6rem;">Material Name</th>
                             <th style="padding:0.4rem 0.6rem;">SKU</th>
@@ -242,10 +246,10 @@ function toggleMaterialSkuAuto() {
     if (toggle.checked) {
         input.value = "{{ next_material_sku }}";
         input.readOnly = true;
-        input.style.background = '#f8fafc';
+        input.style.background = 'var(--surface-sunken)';
     } else {
         input.readOnly = false;
-        input.style.background = '#ffffff';
+        input.style.background = 'var(--bg-surface)';
         input.focus();
     }
 }
@@ -288,19 +292,19 @@ function runMaterialDryRun() {
         tbody.innerHTML = '';
         badges.innerHTML = `
             <span style="color:var(--success-strong); font-weight:700;">+${data.created_count} New</span> |
-            <span style="color:#2563eb; font-weight:700;">~${data.updated_count} Update</span> |
+            <span style="color:var(--info-strong); font-weight:700;">~${data.updated_count} Update</span> |
             <span style="color:var(--warning-strong); font-weight:700;">=${data.skipped_count} Skip</span> |
-            <span style="color:#dc2626; font-weight:700;">!${data.error_count} Error</span>
+            <span style="color:var(--danger); font-weight:700;">!${data.error_count} Error</span>
         `;
 
         data.results.forEach(r => {
             var tr = document.createElement('tr');
-            tr.style.borderBottom = '1px solid #cbd5e1';
+            tr.style.borderBottom = '1px solid var(--border-strong)';
             var statusBadge = '';
-            if (r.status === 'created') statusBadge = '<span style="background:#d1fae5; color:#065f46; padding:2px 6px; border-radius:4px; font-weight:600;">NEW</span>';
-            else if (r.status === 'updated') statusBadge = '<span style="background:#dbeafe; color:#1e40af; padding:2px 6px; border-radius:4px; font-weight:600;">UPDATE</span>';
-            else if (r.status === 'duplicate') statusBadge = '<span style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-weight:600;">SKIP</span>';
-            else statusBadge = '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-weight:600;">ERROR</span>';
+            if (r.status === 'created') statusBadge = '<span style="background:var(--success-soft); color:var(--success-strong); padding:2px 6px; border-radius:4px; font-weight:600;">NEW</span>';
+            else if (r.status === 'updated') statusBadge = '<span style="background:var(--info-soft); color:var(--info-strong); padding:2px 6px; border-radius:4px; font-weight:600;">UPDATE</span>';
+            else if (r.status === 'duplicate') statusBadge = '<span style="background:var(--warning-soft); color:var(--warning-strong); padding:2px 6px; border-radius:4px; font-weight:600;">SKIP</span>';
+            else statusBadge = '<span style="background:var(--danger-soft); color:var(--danger-strong); padding:2px 6px; border-radius:4px; font-weight:600;">ERROR</span>';
 
             tr.innerHTML = `
                 <td style="padding:0.4rem 0.6rem; font-weight:600;">L${escHtml(r.line)}</td>

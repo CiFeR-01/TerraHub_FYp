@@ -89,6 +89,22 @@ def unexpired(batches):
     return batches.filter(Q(expiry_date__isnull=True) | Q(expiry_date__gte=timezone.localdate()))
 
 
+class StockTaken(Exception):
+    """A batch picked on a page no longer has the free stock it showed: someone reserved it first."""
+
+
+def lock_free_batch(batch_id, qty):
+    """Locks a Batch row and returns it fresh, raising StockTaken if `qty` is no longer free.
+    Call inside transaction.atomic() so the lock holds until the reservation is saved."""
+    from .models import Batch
+    batch = Batch.objects.select_for_update().get(id=batch_id)
+    free = batch.quantity - batch.allocated_quantity
+    if Decimal(str(qty)) > free:
+        raise StockTaken(f"Batch {batch.batch_number} now has only {max(free, Decimal('0'))} free, because someone else reserved it first. "
+                         "Refresh the page and pick again.")
+    return batch
+
+
 def trim_batch_reservations(batch, keep, user, why):
     """Cuts reservations on `batch` down to `keep` units (spoilage or a short count), newest first. Affected orders/runs go back to Pending / Pending Allocation.
     Returns an error message (and changes nothing) if stock on an open shipment would need cutting, else None."""
@@ -154,7 +170,8 @@ def allocate_stock(order_type, order, material_or_product, required_qty, warehou
         batches = batches.filter(warehouse=warehouse)
         
     from django.db.models import F
-    batches = unexpired(batches).order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
+    # Locked while reserving, so two allocations at once can't both count the same free stock
+    batches = unexpired(batches).select_for_update().order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date')
 
     remaining_to_allocate = Decimal(str(required_qty))
     total_allocated = Decimal('0')
@@ -990,7 +1007,8 @@ def apply_po_material_receipt(po_detail, delta_qty, user):
             material=po_detail.material,
             quantity=delta_qty,
             manufacturing_date=date.today(),
-            expiry_date=date.today() + timedelta(days=365),
+            # Shelf life comes from the material, not a flat year.
+            expiry_date=date.today() + timedelta(days=po_detail.material.safe_storage_days or 365),
             warehouse=po.target_warehouse,
             purchase_order=po,
             location=f"Zone {loc.zone_name} Aisle {loc.aisle}" if loc else None,

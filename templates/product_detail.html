@@ -14,7 +14,7 @@
     }
     
     .detail-card {
-        background: #fff;
+        background: var(--bg-surface);
         border-radius: 12px;
         border: 1px solid var(--border-light);
         padding: 1.5rem;
@@ -27,10 +27,10 @@
     }
 
     .dark-panel {
-        background: #0f172a;
-        color: #f8fafc;
-        border: 1px solid #1e293b;
-        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3);
+        background: var(--bg-surface);
+        color: var(--text-main);
+        border: 1px solid var(--border-light);
+        box-shadow: var(--shadow-sm);
     }
     
     .section-title {
@@ -43,7 +43,7 @@
     }
 
     .dark-panel .section-title {
-        border-bottom-color: #334155;
+        border-bottom-color: var(--border-light);
     }
 
     .form-group-inline {
@@ -61,14 +61,14 @@
     }
 
     .dark-panel .form-group-inline label {
-        color: #cbd5e1;
+        color: var(--text-secondary);
     }
 
     .table-container {
-        border: 1px solid #334155;
+        border: 1px solid var(--border-light);
         border-radius: 6px;
         padding: 0.5rem;
-        background: #1e293b;
+        background: var(--surface-sunken);
         overflow-y: auto;
     }
     
@@ -76,7 +76,7 @@
         display: flex;
         justify-content: space-between;
         padding: 0.4rem 0.5rem;
-        border-bottom: 1px solid #334155;
+        border-bottom: 1px solid var(--border-light);
         font-size: 0.85rem;
     }
     .list-item:last-child {
@@ -89,9 +89,9 @@
         font-weight: 600;
         font-size: 0.75rem;
     }
-    .badge-success { background: #d1fae5; color: #065f46; }
-    .badge-warning { background: #fef3c7; color: #92400e; }
-    .badge-neutral { background: #e2e8f0; color: #334155; }
+    .badge-success { background: var(--success-soft); color: var(--success-strong); }
+    .badge-warning { background: var(--warning-soft); color: var(--warning-strong); }
+    .badge-neutral { background: var(--surface-strong); color: var(--text-secondary); }
 
     .kpi-strip {
         display: grid;
@@ -100,7 +100,7 @@
         margin-top: 1.25rem;
     }
     .kpi-card {
-        background: #fff;
+        background: var(--bg-surface);
         border: 1px solid var(--border-light);
         border-radius: 12px;
         padding: 0.9rem 1.1rem;
@@ -118,7 +118,7 @@
         margin-bottom: 1rem;
     }
     .chart-toggle button {
-        background: #f1f5f9;
+        background: var(--surface-muted);
         border: 1px solid var(--border-light);
         padding: 0.4rem 0.8rem;
         border-radius: 6px;
@@ -128,7 +128,7 @@
     }
     .chart-toggle button.active {
         background: var(--primary);
-        color: white;
+        color: var(--on-primary);
         border-color: var(--primary);
     }
 </style>
@@ -204,7 +204,7 @@
     <div class="kpi-card">
         <div class="kpi-label">Unit margin</div>
         {% if recipe_rows and product.price_per_unit > 0 %}
-        <div class="kpi-value" style="color: {% if margin >= 0 %}var(--success-strong){% else %}#dc2626{% endif %};">RM{{ margin|floatformat:2 }}</div>
+        <div class="kpi-value" style="color: {% if margin >= 0 %}var(--success-strong){% else %}var(--danger){% endif %};">RM{{ margin|floatformat:2 }}</div>
         <div class="kpi-sub">{{ margin_pct|floatformat:1 }}% &middot; recipe cost RM{{ unit_cost|floatformat:2 }}</div>
         {% else %}
         <div class="kpi-value">&mdash;</div>
@@ -283,8 +283,8 @@
             <div class="list-item" style="flex-direction: column; align-items: stretch; gap: 0.35rem;">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <span>
-                        <strong style="color: #38bdf8;">{{ row.batch.batch_number }}</strong>
-                        <span style="color:#94a3b8; font-size:0.85em;"> @ {{ row.batch.warehouse.name|default:row.batch.location|default:"Unassigned" }}</span>
+                        <strong style="color: var(--primary);">{{ row.batch.batch_number }}</strong>
+                        <span style="color:var(--text-soft); font-size:0.85em;"> @ {{ row.batch.warehouse.name|default:row.batch.location|default:"Unassigned" }}</span>
                     </span>
                     <span>
                         <strong>{{ row.batch.quantity|floatformat:2 }}</strong>
@@ -293,26 +293,26 @@
                         {% endif %}
                     </span>
                 </div>
-                <div style="display:flex; justify-content:space-between; font-size:0.8em; color:#94a3b8;">
+                <div style="display:flex; justify-content:space-between; font-size:0.8em; color:var(--text-soft);">
                     <span>Allocated: {{ row.batch.allocated_quantity|floatformat:2 }} · Available: {{ row.available|floatformat:2 }}</span>
                 </div>
                 {% if row.produced_for %}
                 <div style="font-size:0.8em;">
-                    <a href="{{ row.produced_for.url }}" style="color:#f59e0b; text-decoration:none;">⚠ Originally produced for {{ row.produced_for.so_number }} (Run {{ row.produced_for.run_number }})</a>
+                    <a href="{{ row.produced_for.url }}" style="color:var(--warning); text-decoration:none;">⚠ Originally produced for {{ row.produced_for.so_number }} (Run {{ row.produced_for.run_number }})</a>
                 </div>
                 {% endif %}
                 {% if row.reservations %}
                 <div style="display:flex; flex-wrap:wrap; gap:0.4rem; font-size:0.8em;">
                     {% for res in row.reservations %}
-                    <a href="{{ res.url }}" style="color:#38bdf8; text-decoration:none; background:rgba(56,189,248,0.1); padding:0.15rem 0.5rem; border-radius:4px;">{{ res.quantity|floatformat:2 }} → {{ res.label }}</a>
+                    <a href="{{ res.url }}" style="color:var(--primary); text-decoration:none; background:var(--primary-soft); padding:0.15rem 0.5rem; border-radius:4px;">{{ res.quantity|floatformat:2 }} → {{ res.label }}</a>
                     {% endfor %}
                 </div>
                 {% else %}
-                <div style="font-size:0.8em; color:#4ade80;">Fully available — not reserved</div>
+                <div style="font-size:0.8em; color:var(--success-strong);">Fully available — not reserved</div>
                 {% endif %}
             </div>
             {% empty %}
-            <div class="list-item" style="color:#64748b;">No active inventory batches.</div>
+            <div class="list-item" style="color:var(--text-muted);">No active inventory batches.</div>
             {% endfor %}
         </div>
 
@@ -320,27 +320,27 @@
         <div class="table-container" style="max-height: 200px;">
             {% for run in production_runs %}
             <div class="list-item">
-                <span><a href="{% url 'production_run_detail' run.pk %}" style="color:#38bdf8; font-weight:700; text-decoration:none;">{{ run.run_number }}</a> ({{ run.get_status_display }})</span>
-                <span>{% if run.status == 'Completed' and run.actual_yield is not None %}Yield: {{ run.actual_yield|floatformat:2 }} <span style="color:#94a3b8;">of {{ run.expected_yield|floatformat:2 }}</span>{% else %}Expected: {{ run.expected_yield|floatformat:2 }}{% endif %}</span>
+                <span><a href="{% url 'production_run_detail' run.pk %}" style="color:var(--primary); font-weight:700; text-decoration:none;">{{ run.run_number }}</a> ({{ run.get_status_display }})</span>
+                <span>{% if run.status == 'Completed' and run.actual_yield is not None %}Yield: {{ run.actual_yield|floatformat:2 }} <span style="color:var(--text-soft);">of {{ run.expected_yield|floatformat:2 }}</span>{% else %}Expected: {{ run.expected_yield|floatformat:2 }}{% endif %}</span>
             </div>
             {% empty %}
-            <div class="list-item" style="color:#64748b;">No manufacturing history.</div>
+            <div class="list-item" style="color:var(--text-muted);">No manufacturing history.</div>
             {% endfor %}
         </div>
     </div>
     
     <!-- Bottom Right: Bill of Materials (Recipe) -->
     <div class="detail-card dark-panel">
-        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-light); padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
             <h3 class="section-title" style="border: none; margin: 0; padding: 0;">Bill of Materials (Recipe)</h3>
             <button type="button" onclick="openRecipeStudio({{ product.id }})" class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.75rem;">
                 ⚙ Open Recipe Studio
             </button>
         </div>
         <div class="table-container" style="max-height: 400px;">
-            <table class="sortable" style="width:100%; border-collapse:collapse; font-size:0.85rem; color: #f8fafc;">
+            <table class="sortable" style="width:100%; border-collapse:collapse; font-size:0.85rem; color: var(--text-main);">
                 <thead>
-                    <tr style="background:#0f172a; text-align:left; color:#94a3b8;">
+                    <tr style="background:var(--surface-sunken); text-align:left; color:var(--text-soft);">
                         <th style="padding:0.5rem;">Material</th>
                         <th style="padding:0.5rem;">Required Qty</th>
                         <th style="padding:0.5rem; text-align:right;">Cost / Material Unit</th>
@@ -349,30 +349,30 @@
                 </thead>
                 <tbody>
                     {% for row in recipe_rows %}
-                    <tr style="border-bottom: 1px solid #334155;">
-                        <td style="padding:0.5rem;"><a href="{% url 'material_detail' row.item.material.id %}" style="color:#38bdf8; font-weight:700; text-decoration:none;">{{ row.item.material.sku }}</a> — {{ row.item.material.name }}</td>
+                    <tr style="border-bottom: 1px solid var(--border-light);">
+                        <td style="padding:0.5rem;"><a href="{% url 'material_detail' row.item.material.id %}" style="color:var(--primary); font-weight:700; text-decoration:none;">{{ row.item.material.sku }}</a> — {{ row.item.material.name }}</td>
                         <td style="padding:0.5rem;">{{ row.item.quantity_required|qty_display }} {{ row.item.material.unit_of_measure }}</td>
-                        <td style="padding:0.5rem; text-align:right; color:#94a3b8;">
+                        <td style="padding:0.5rem; text-align:right; color:var(--text-soft);">
                             {{ row.item.material.cost_per_unit|floatformat:2 }} / {{ row.item.material.unit_of_measure }}
                         </td>
-                        <td style="padding:0.5rem; text-align:right; color:#4ade80;">{{ row.line_cost|floatformat:2 }}</td>
+                        <td style="padding:0.5rem; text-align:right; color:var(--success-strong);">{{ row.line_cost|floatformat:2 }}</td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="4" style="padding:1.5rem; text-align:center; color:#64748b;">No recipe defined for this product.</td>
+                        <td colspan="4" style="padding:1.5rem; text-align:center; color:var(--text-muted);">No recipe defined for this product.</td>
                     </tr>
                     {% endfor %}
                 </tbody>
                 {% if recipe_rows %}
                 <tfoot>
-                    <tr style="border-top: 2px solid #334155;">
+                    <tr style="border-top: 2px solid var(--border-light);">
                         <td colspan="3" style="padding:0.5rem; font-weight:700;">Recipe cost per unit made</td>
-                        <td style="padding:0.5rem; text-align:right; font-weight:700; color:#4ade80;">RM{{ unit_cost|floatformat:2 }}</td>
+                        <td style="padding:0.5rem; text-align:right; font-weight:700; color:var(--success-strong);">RM{{ unit_cost|floatformat:2 }}</td>
                     </tr>
                     {% if product.price_per_unit > 0 %}
                     <tr>
-                        <td colspan="3" style="padding:0.5rem; color:#94a3b8;">Selling price RM{{ product.price_per_unit|floatformat:2 }} &rarr; margin</td>
-                        <td style="padding:0.5rem; text-align:right; font-weight:700; color:{% if margin >= 0 %}#4ade80{% else %}#f87171{% endif %};">RM{{ margin|floatformat:2 }} ({{ margin_pct|floatformat:1 }}%)</td>
+                        <td colspan="3" style="padding:0.5rem; color:var(--text-soft);">Selling price RM{{ product.price_per_unit|floatformat:2 }} &rarr; margin</td>
+                        <td style="padding:0.5rem; text-align:right; font-weight:700; color:{% if margin >= 0 %}var(--success-strong){% else %}var(--danger-strong){% endif %};">RM{{ margin|floatformat:2 }} ({{ margin_pct|floatformat:1 }}%)</td>
                     </tr>
                     {% endif %}
                 </tfoot>
@@ -399,7 +399,7 @@
                 datasets: [{
                     label: 'Units sold (orders)',
                     data: chartSalesData,
-                    borderColor: '#3b82f6',
+                    borderColor: themeColor('--info'),
                     backgroundColor: 'rgba(59, 130, 246, 0.1)',
                     borderWidth: 2,
                     tension: 0.3,
@@ -407,7 +407,7 @@
                 }, {
                     label: 'Units produced (completed runs)',
                     data: chartProducedData,
-                    borderColor: '#10b981',
+                    borderColor: themeColor('--success'),
                     backgroundColor: 'rgba(16, 185, 129, 0.1)',
                     borderWidth: 2,
                     tension: 0.3,

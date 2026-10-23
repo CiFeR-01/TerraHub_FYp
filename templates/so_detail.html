@@ -34,21 +34,21 @@
         {% endif %}
         {% if perms.core.cancel_orders and so.status != 'Shipped' and so.status != 'Delivered' and so.status != 'Cancelled' %}
         <details style="position:relative;">
-            <summary class="btn btn-secondary" style="padding:0.45rem 1rem; font-size:0.85rem; border-color:#dc2626; color:#dc2626; list-style:none; cursor:pointer;">Cancel Order</summary>
-            <form method="post" style="position:absolute; right:0; top:2.6rem; z-index:20; width:320px; padding:1rem; background:#fff; border:1px solid #fecaca; border-radius:8px; box-shadow:0 8px 24px rgba(15,23,42,0.12);">
+            <summary class="btn btn-secondary" style="padding:0.45rem 1rem; font-size:0.85rem; border-color:var(--danger); color:var(--danger); list-style:none; cursor:pointer;">Cancel Order</summary>
+            <form method="post" style="position:absolute; right:0; top:2.6rem; z-index:20; width:320px; padding:1rem; background:var(--bg-surface); border:1px solid var(--danger-border); border-radius:8px; box-shadow:0 8px 24px rgba(15,23,42,0.12);">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="cancel_so">
-                <label style="display:block; font-size:0.8rem; font-weight:600; color:#991b1b; margin-bottom:0.4rem;">Why is this order being cancelled?</label>
-                <textarea name="reason" required class="form-input" style="width:100%; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:0.5rem; height:60px;"></textarea>
+                <label style="display:block; font-size:0.8rem; font-weight:600; color:var(--danger-strong); margin-bottom:0.4rem;">Why is this order being cancelled?</label>
+                <textarea name="reason" required class="form-input" style="width:100%; padding:0.5rem; border:1px solid var(--danger-border); margin-bottom:0.5rem; height:60px;"></textarea>
                 <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 0.75rem;">Reserved stock is released, runs that haven't started and shipments that haven't left are cancelled. This can't be undone.</p>
-                <button type="submit" class="btn" style="width:100%; padding:0.5rem; background:#dc2626; color:#fff; border:none; border-radius:6px; font-weight:600;" onclick="return confirm('Cancel this order for good?')">Cancel Order</button>
+                <button type="submit" class="btn" style="width:100%; padding:0.5rem; background:var(--danger); color:#fff; border:none; border-radius:6px; font-weight:600;" onclick="return confirm('Cancel this order for good?')">Cancel Order</button>
             </form>
         </details>
         {% endif %}
     </div>
 </header>
 {% if so.status == 'Cancelled' %}
-<div style="padding:0.85rem 1.25rem; border-radius:8px; margin-bottom:1rem; background:#fef2f2; border:1px solid #fecaca; color:#991b1b; font-size:0.9rem;">
+<div style="padding:0.85rem 1.25rem; border-radius:8px; margin-bottom:1rem; background:var(--danger-soft); border:1px solid var(--danger-border); color:var(--danger-strong); font-size:0.9rem;">
     <strong>Cancelled.</strong> {{ so.cancel_reason }}
 </div>
 {% endif %}
@@ -56,7 +56,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom:1.5rem;">
     {% for message in messages %}
-    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:var(--danger);{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -64,7 +64,7 @@
 {% endif %}
 
 <!-- Invoice Header Card -->
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:2rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:2rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <div style="display:grid; grid-template-columns:1fr 280px; gap:2rem; align-items:start;">
         <div>
             <div style="display:flex; align-items:center; gap:1rem; margin-bottom:1.25rem;">
@@ -152,7 +152,7 @@
             </div>
         </div>
         <!-- Edit header panel (read-only once the order is locked) -->
-        <div style="background:#f8fafc; border-radius:10px; border:1px solid var(--border-light); padding:1.25rem;">
+        <div style="background:var(--surface-sunken); border-radius:10px; border:1px solid var(--border-light); padding:1.25rem;">
             <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.75rem; text-transform:uppercase; letter-spacing:0.05em;">{% if items_locked %}Order Details{% else %}Edit Details{% endif %}</div>
             <form method="post">
                 {% csrf_token %}
@@ -182,7 +182,7 @@
 
 
         <!-- Line Items Table -->
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.05s;">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.05s;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700;">Product Line Items</h3>
         {% if not items_locked and so.status != 'Rejected' %}
@@ -194,7 +194,7 @@
 
     <!-- Add Item Form (hidden by default) -->
     {% if not items_locked and so.status != 'Rejected' %}
-    <div id="add-item-form" style="display:none; background:#f8fafc; border-radius:10px; border:1px solid var(--border-light); padding:1.25rem; margin-bottom:1.25rem;">
+    <div id="add-item-form" style="display:none; background:var(--surface-sunken); border-radius:10px; border:1px solid var(--border-light); padding:1.25rem; margin-bottom:1.25rem;">
         <form method="post">
             {% csrf_token %}
             <input type="hidden" name="action" value="add_so_item">
@@ -250,7 +250,7 @@
                     <td style="padding:0.85rem 1rem; font-weight:600;">{{ row.item.quantity_ordered|floatformat:1 }} units<br><span style="font-size:0.72rem; font-weight:400; color:var(--text-muted);">≈ {{ row.item.quantity_ordered|weight_display:row.item.product }}</span></td>
                     <td style="padding:0.85rem 1rem; font-weight:600; color:{% if row.allocated > 0 %}var(--success-strong){% else %}var(--text-muted){% endif %};">{{ row.allocated|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600; color:{% if row.in_logistics > 0 %}var(--primary){% else %}var(--text-muted){% endif %};">{{ row.in_logistics|floatformat:1 }}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:600; color:{% if row.deficit > 0 %}#dc2626{% else %}var(--text-muted){% endif %};">{{ row.deficit|floatformat:1 }}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600; color:{% if row.deficit > 0 %}var(--danger){% else %}var(--text-muted){% endif %};">{{ row.deficit|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem;">{{ row.item.quantity_shipped|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem;">{% if row.item.unit_price %}RM {{ row.item.unit_price|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600; white-space:nowrap;">
@@ -274,14 +274,14 @@
                             {% csrf_token %}
                             <input type="hidden" name="action" value="remove_so_item">
                             <input type="hidden" name="item_id" value="{{ row.item.id }}">
-                            <button type="submit" onclick="return confirm('Remove {{ row.item.product.name }} from this order?')" style="background:none; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:#dc2626;">✕</button>
+                            <button type="submit" onclick="return confirm('Remove {{ row.item.product.name }} from this order?')" style="background:none; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--danger);">✕</button>
                         </form>
                         {% endif %}
                     </td>
                 </tr>
                 <!-- Allocated Batches Detail Row -->
                 {% if row.allocation_rows %}
-                <tr id="batches-{{ row.item.id }}" style="display:none; background:#f8fafc;">
+                <tr id="batches-{{ row.item.id }}" style="display:none; background:var(--surface-sunken);">
                     <td colspan="12" style="padding:0.75rem 1.5rem 1rem 2rem;">
                         <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">Batches — {{ row.item.product.name }}</div>
                         <table class="sortable" style="width:100%; border-collapse:collapse; font-size:0.82rem; max-width:1000px;">
@@ -292,7 +292,7 @@
                                 <td style="padding:0.3rem 0.75rem;"></td>
                             </tr>
                             {% for arow in row.allocation_rows %}
-                            <tr style="border-bottom:1px solid #f1f5f9;">
+                            <tr style="border-bottom:1px solid var(--border-light);">
                                 <td style="padding:0.4rem 0.75rem; font-weight:600;">
                                     <a href="{% url 'batch_detail' arow.batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ arow.batch.batch_number }}</a>
                                 </td>
@@ -301,7 +301,7 @@
                                     {% if 'Newly Manufactured' in arow.source %}<span style="color:var(--success-strong); font-weight:600;">{{ arow.source }}</span>
                                     {% else %}<span style="color:var(--text-muted);">{{ arow.source }}</span>{% endif %}
                                     {% if arow.produced_for %}
-                                    <br><a href="{{ arow.produced_for.url }}" style="font-size:0.72rem; color:#b45309; text-decoration:none;">⚠ Originally produced for {{ arow.produced_for.so_number }}</a>
+                                    <br><a href="{{ arow.produced_for.url }}" style="font-size:0.72rem; color:var(--warning-strong); text-decoration:none;">⚠ Originally produced for {{ arow.produced_for.so_number }}</a>
                                     {% endif %}
                                     {% if arow.shipment %}<br><a href="{% url 'shipment_detail' arow.shipment.pk %}" style="font-size:0.72rem; color:var(--primary); text-decoration:none;">On {{ arow.shipment.tracking_number }} ({{ arow.shipment.status }})</a>{% endif %}
                                 </td>
@@ -312,7 +312,7 @@
                             {% if arow.can_unallocate %}
                             <tr id="unalloc-{{ arow.alloc_id }}" style="display:none;">
                                 <td colspan="4" style="padding:0.5rem 0.75rem 0.85rem;">
-                                    <form method="post" style="display:flex; align-items:flex-end; gap:0.6rem; flex-wrap:wrap; background:#fff; border:1px solid var(--border-light); border-radius:6px; padding:0.75rem;">
+                                    <form method="post" style="display:flex; align-items:flex-end; gap:0.6rem; flex-wrap:wrap; background:var(--bg-surface); border:1px solid var(--border-light); border-radius:6px; padding:0.75rem;">
                                         {% csrf_token %}
                                         <input type="hidden" name="action" value="unallocate_so_stock">
                                         <input type="hidden" name="alloc_id" value="{{ arow.alloc_id }}">
@@ -341,7 +341,7 @@
                 {% endif %}
                 <!-- BOM Detail Row -->
                 {% if not items_locked %}
-                <tr id="bom-{{ row.item.id }}" style="display:none; background:#f8fafc;">
+                <tr id="bom-{{ row.item.id }}" style="display:none; background:var(--surface-sunken);">
                     <td colspan="12" style="padding:0.75rem 1.5rem 1rem 2rem;">
                         <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">BOM — {{ row.item.product.name }}</div>
                         {% if row.bom_rows %}
@@ -353,13 +353,13 @@
                                 <td style="padding:0.3rem 0.75rem;">Status</td>
                             </tr>
                             {% for brow in row.bom_rows %}
-                            <tr style="border-bottom:1px solid #f1f5f9;">
+                            <tr style="border-bottom:1px solid var(--border-light);">
                                 <td style="padding:0.4rem 0.75rem; font-weight:600;">{{ brow.material.name }}</td>
                                 <td style="padding:0.4rem 0.75rem;">{{ brow.required_for_order|floatformat:2 }} {{ brow.material.unit_of_measure }}</td>
                                 <td style="padding:0.4rem 0.75rem;">{{ brow.available|floatformat:2 }} {{ brow.material.unit_of_measure }}</td>
                                 <td style="padding:0.4rem 0.75rem;">
                                     {% if brow.sufficient %}<span style="color:var(--success-strong); font-weight:700;">✓ Sufficient</span>
-                                    {% else %}<span style="color:#dc2626; font-weight:700;">✗ Short by {{ brow.required_for_order|floatformat:2|add:"-"|add:brow.available|floatformat:2 }}</span>{% endif %}
+                                    {% else %}<span style="color:var(--danger); font-weight:700;">✗ Short by {{ brow.required_for_order|floatformat:2|add:"-"|add:brow.available|floatformat:2 }}</span>{% endif %}
                                 </td>
                             </tr>
                             {% endfor %}
@@ -394,7 +394,7 @@
 
 <!-- Custom Detail Modal for Mfg -->
 <div id="detailMfgModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:100; align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:12px; padding:2rem; max-width:450px; width:100%; box-shadow:0 10px 25px rgba(0,0,0,0.1); animation: fade-in-up 0.2s ease-out;">
+    <div style="background:var(--bg-surface); border-radius:12px; padding:2rem; max-width:450px; width:100%; box-shadow:0 10px 25px rgba(0,0,0,0.1); animation: fade-in-up 0.2s ease-out;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:700; margin-bottom:1rem; color:var(--text-main);">Send to Manufacturing</h3>
         <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:1.5rem;">This will create Production Runs for any unfulfilled shortages and lock further stock allocations. Which plant should handle the manufacturing?</p>
         
@@ -428,7 +428,7 @@
 </script>
 
 <!-- SO Fulfillment Section -->
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.08s;">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); animation-delay:0.08s;">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:0.75rem;">SO Fulfillment</h3>
     <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.25rem;">Allocate finished goods from the warehouse to fulfill this Sales Order. You must allocate enough stock to meet the ordered quantity before this order can be shipped.</p>
     {% if so_runs %}
@@ -436,7 +436,7 @@
         <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.5rem;">Manufacturing orders already created for this SO</div>
         <div style="display:flex; flex-direction:column; gap:0.4rem;">
             {% for run in so_runs %}
-            <a href="{% url 'production_run_detail' run.pk %}" style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; padding:0.6rem 0.85rem; background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; text-decoration:none; color:var(--text-main); font-size:0.85rem;">
+            <a href="{% url 'production_run_detail' run.pk %}" style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; padding:0.6rem 0.85rem; background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:8px; text-decoration:none; color:var(--text-main); font-size:0.85rem;">
                 <span><strong style="color:var(--primary);">{{ run.run_number }}</strong> — {{ run.target_product.name }} ({{ run.expected_yield|floatformat:0 }} units ≈ {{ run.expected_yield|weight_display:run.target_product }})</span>
                 <span class="badge {% if run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.7rem;">{% if run.in_qa %}Quality Check{% else %}{{ run.status }}{% endif %}</span>
             </a>
@@ -447,7 +447,7 @@
     {% if so.status == 'Ready to Ship' %}
         {% if open_stock_moves %}
         {# One delivery chosen: stock is on its way to the order's warehouse #}
-        <div style="padding:1rem 1.1rem; background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px;">
+        <div style="padding:1rem 1.1rem; background:var(--info-soft); border:1px solid var(--info-border); border-radius:10px;">
             <div style="font-weight:700; margin-bottom:0.35rem;">Moving stock to {{ so.origin_warehouse.name }} for one delivery</div>
             <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.6rem;">Once these arrive, create the logistics order to ship everything together.</div>
             {% for sh in open_stock_moves %}
@@ -466,7 +466,7 @@
         </div>
         {% elif has_unshipped_allocation and stock_split|length > 1 %}
         {# Stock in several warehouses: let the user choose #}
-        <div style="padding:1rem 1.1rem; background:#fffbeb; border:1px solid #fcd34d; border-radius:10px;">
+        <div style="padding:1rem 1.1rem; background:var(--warning-soft); border:1px solid var(--warning-border); border-radius:10px;">
             <div style="font-weight:700; margin-bottom:0.35rem;">Choose how to deliver</div>
             <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
                 This order's stock is in {{ stock_split|length }} warehouses:
@@ -475,7 +475,7 @@
             <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
                 <form method="post" action="{% url 'so_create_shipment' so.pk %}">
                     {% csrf_token %}
-                    <button type="submit" class="btn btn-primary" style="padding:0.5rem 1.1rem; font-size:0.88rem; background:#10b981; border-color:#10b981;">Ship separately ({{ stock_split|length }} deliveries)</button>
+                    <button type="submit" class="btn btn-primary" style="padding:0.5rem 1.1rem; font-size:0.88rem; background:var(--success); border-color:var(--success);">Ship separately ({{ stock_split|length }} deliveries)</button>
                 </form>
                 <form method="post">
                     {% csrf_token %}
@@ -488,7 +488,7 @@
         {% elif has_unshipped_allocation %}
         <form method="post" action="{% url 'so_create_shipment' so.pk %}">
             {% csrf_token %}
-            <button type="submit" class="btn btn-primary" style="padding:0.5rem 1.25rem; font-size:0.9rem; background:#10b981; border-color:#10b981;">Create Logistics Order</button>
+            <button type="submit" class="btn btn-primary" style="padding:0.5rem 1.25rem; font-size:0.9rem; background:var(--success); border-color:var(--success);">Create Logistics Order</button>
         </form>
         {% else %}
         <p style="font-size:0.85rem; color:var(--text-muted); margin:0;">All allocated stock for this order is already held by a logistics order — see the Logistics section above.</p>
@@ -517,11 +517,11 @@
         <p style="font-size:0.85rem; color:var(--text-muted); margin:0 0 0.75rem;">Part of this order has shipped, but some units are still owed with no stock reserved for them.</p>
         {% if perms.core.allocate_order_stock %}<a href="{% url 'so_allocate' so.pk %}" class="btn btn-primary" style="padding:0.5rem 1.25rem; font-size:0.9rem;">Allocate Finished Goods</a>{% endif %}
     {% elif so_in_qa %}
-        <p style="font-size:0.85rem; color:#92400e; padding:1rem; background:#fffbeb; border-radius:8px; border:1px solid #fde68a;">
+        <p style="font-size:0.85rem; color:var(--warning-strong); padding:1rem; background:var(--warning-soft); border-radius:8px; border:1px solid var(--warning-border);">
             <strong>In Quality Check.</strong> The finished goods for this order have been produced and are waiting for QA release. They will be allocated to this order automatically once released.
         </p>
     {% else %}
-        <p style="font-size:0.85rem; color:var(--text-muted); padding:1rem; background:#f8fafc; border-radius:8px; border:1px solid var(--border-light);">
+        <p style="font-size:0.85rem; color:var(--text-muted); padding:1rem; background:var(--surface-sunken); border-radius:8px; border:1px solid var(--border-light);">
             Allocation is available when the order is in <strong>Pending</strong> status. Current status: <span style="font-weight:600;">{{ so.status }}</span>.
         </p>
     {% endif %}
@@ -532,14 +532,14 @@
 <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; align-items: start; margin-bottom: 1.5rem;">
     <div style="display: flex; flex-direction: column; gap: 1.5rem; min-width: 0;">
         <!-- Audit Timeline -->
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem;">Order Timeline</h3>
     {% if so.timeline.all %}
     <div style="position:relative; padding-left:1.5rem;">
         <div style="position:absolute; left:0.45rem; top:0.35rem; bottom:0; width:2px; background:var(--border-light);"></div>
         {% for event in so.timeline.all %}
         <div style="position:relative; margin-bottom:1rem;">
-            <div style="position:absolute; left:-1.5rem; top:0.25rem; width:10px; height:10px; border-radius:50%; background:var(--primary); border:2px solid #fff; box-shadow:0 0 0 2px var(--primary);"></div>
+            <div style="position:absolute; left:-1.5rem; top:0.25rem; width:10px; height:10px; border-radius:50%; background:var(--primary); border:2px solid var(--bg-surface); box-shadow:0 0 0 2px var(--primary);"></div>
             <div style="font-size:0.875rem; font-weight:600; color:var(--text-main);">{{ event.action }}</div>
             <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.1rem;">{{ event.timestamp|date:"d M Y, H:i" }}{% if event.user %} · {{ event.user.get_full_name|default:event.user.username }}{% endif %}</div>
         </div>
@@ -556,9 +556,9 @@
     <div style="display: flex; flex-direction: column; gap: 1.5rem;">
         <!-- Request Approval Panel -->
 {% if so.status == 'Pending Approval' and so.assigned_to %}
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:0.75rem; color:var(--text-main); display:flex; align-items:center; gap:0.5rem;">
-        <span style="width:9px; height:9px; border-radius:50%; background:#f59e0b; display:inline-block;"></span>
+        <span style="width:9px; height:9px; border-radius:50%; background:var(--warning); display:inline-block;"></span>
         Pending Approval
     </h3>
     <p style="font-size:0.9rem; color:var(--text-main); margin-bottom:0.25rem;">
@@ -576,7 +576,7 @@
         <textarea name="comment" rows="2" class="form-input" placeholder="Comment (optional)" style="width:100%; padding:0.5rem 0.75rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.85rem; resize:vertical; font-family:inherit; margin-bottom:0.6rem;"></textarea>
         <div style="display:flex; gap:0.5rem;">
             <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.45rem 1.1rem; font-size:0.85rem;">Approve</button>
-            <button type="submit" name="action" value="reject" class="btn btn-secondary" style="padding:0.45rem 1.1rem; font-size:0.85rem; border-color:#dc2626; color:#dc2626;" onclick="return confirm('Reject this order? It will return to Draft.')">Reject</button>
+            <button type="submit" name="action" value="reject" class="btn btn-secondary" style="padding:0.45rem 1.1rem; font-size:0.85rem; border-color:var(--danger); color:var(--danger);" onclick="return confirm('Reject this order? It will return to Draft.')">Reject</button>
         </div>
     </form>
     {% endif %}
@@ -609,7 +609,7 @@
     </div>
 </div>
 {% elif so.status == 'Draft' or so.status == 'Pending Approval' or so.status == 'Rejected' %}
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; animation-delay:0.1s; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem; color:var(--text-main);">Request Manager Approval</h3>
     <form method="post" style="display:flex; flex-direction:column; gap:1rem; max-width:500px;">
         {% csrf_token %}
@@ -642,17 +642,17 @@
 
         
 <!-- Followers Panel -->
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main); display:flex; justify-content:space-between; align-items:center;">
         Followers
-        <span style="background:var(--primary); color:#fff; border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem;">{{ so.followers.count }}</span>
+        <span style="background:var(--primary); color:var(--on-primary); border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem;">{{ so.followers.count }}</span>
     </h3>
     
     <div style="display:flex; flex-direction:column; gap:0.75rem; margin-bottom:1rem;">
         {% for follower in so.followers.all %}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:#f8fafc; border-radius:8px; border:1px solid var(--border-light);">
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:var(--surface-sunken); border-radius:8px; border:1px solid var(--border-light);">
             <div style="display:flex; align-items:center; gap:0.5rem;">
-                <div style="width:28px; height:28px; border-radius:50%; background:var(--primary); color:#fff; display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700;">
+                <div style="width:28px; height:28px; border-radius:50%; background:var(--primary); color:var(--on-primary); display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700;">
                     {{ follower.username|make_list|first|upper }}
                 </div>
                 <span style="font-size:0.85rem; font-weight:600;">{{ follower.get_full_name|default:follower.username }}</span>
@@ -662,7 +662,7 @@
                 {% csrf_token %}
                 <input type="hidden" name="action" value="remove_follower">
                 <input type="hidden" name="user_id" value="{{ follower.id }}">
-                <button type="submit" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:0.75rem; font-weight:600;">Unfollow</button>
+                <button type="submit" style="background:none; border:none; color:var(--danger); cursor:pointer; font-size:0.75rem; font-weight:600;">Unfollow</button>
             </form>
             {% endif %}
         </div>

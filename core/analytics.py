@@ -747,6 +747,11 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
                 else:
                     status = "ok"
 
+        # A set reorder point overrides a calm forecast: at or below it means reorder now.
+        below_reorder_point = m.reorder_point is not None and available <= m.reorder_point
+        if below_reorder_point and status in ("ok", "watch", "no_usage"):
+            status = "reorder_now"
+
         rows.append({
             "material_id": m.id,
             "sku": m.sku,
@@ -772,6 +777,8 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
             "lead_time_estimated": lead_estimated,
             "reorder_by_date": reorder_by,
             "safe_storage_days": m.safe_storage_days,
+            "reorder_point": float(m.reorder_point) if m.reorder_point is not None else None,
+            "below_reorder_point": below_reorder_point,
             "status": status,
         })
 

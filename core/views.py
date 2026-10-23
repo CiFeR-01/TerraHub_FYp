@@ -2160,13 +2160,18 @@ def material_list_view(request):
             sku = generate_next_code(Material, 'sku', 'MAT', 1001, pad=4)
         category = request.POST.get('category')
         uom = request.POST.get('unit_of_measure', 'MT')
+        reorder_point, err = read_decimal(request.POST, 'reorder_point', 'Reorder point', min_value=0, required=False)
+        if err:
+            messages.error(request, err)
+            return redirect('material_list')
         try:
             safe_days = int(request.POST.get('safe_storage_days', 90))
             weight = float(request.POST.get('weight_mt_per_unit', 1.0))
             cost = float(request.POST.get('cost_per_unit', 0.0))
             Material.objects.create(
                 name=name, sku=sku, category=category, unit_of_measure=uom,
-                safe_storage_days=safe_days, weight_mt_per_unit=weight, cost_per_unit=cost
+                safe_storage_days=safe_days, weight_mt_per_unit=weight, cost_per_unit=cost,
+                reorder_point=reorder_point,
             )
             messages.success(request, f"Material '{name}' (SKU: {sku}) registered.")
         except Exception as e:
@@ -2211,6 +2216,11 @@ def _apply_material_update(request, material):
             messages.error(request, "Material name is required.")
             return False
 
+        reorder_point, err = read_decimal(request.POST, 'reorder_point', 'Reorder point', min_value=0, required=False)
+        if err:
+            messages.error(request, err)
+            return False
+
         if not sku:
             sku = material.sku
 
@@ -2226,6 +2236,7 @@ def _apply_material_update(request, material):
         material.safe_storage_days = safe_days
         material.weight_mt_per_unit = weight
         material.cost_per_unit = cost
+        material.reorder_point = reorder_point
         material.save()
 
         RegistryLog.objects.create(
@@ -2268,6 +2279,7 @@ def material_edit_view(request, pk):
             'safe_storage_days': material.safe_storage_days,
             'weight_mt_per_unit': float(material.weight_mt_per_unit),
             'cost_per_unit': float(material.cost_per_unit),
+            'reorder_point': float(material.reorder_point) if material.reorder_point is not None else None,
         })
 
     from .utils import get_batch_reservations
@@ -5635,11 +5647,18 @@ def so_allocate_view(request, pk):
                 messages.error(request, f"Batches for {', '.join(off_fefo)} don't follow FEFO (earliest expiry first). Give an override reason to continue.")
                 return redirect('so_allocate', pk=so.pk)
 
+            from .utils import StockTaken, lock_free_batch
             with transaction.atomic():
                 total_unfulfilled_across_so = Decimal('0')
                 from .utils import sync_production_run_yield
                 for item, needed, chosen in plans:
                     for batch, amt in chosen:
+                        try:
+                            batch = lock_free_batch(batch.id, amt)
+                        except StockTaken as e:
+                            transaction.set_rollback(True)   # undo anything already reserved in this submit
+                            messages.error(request, str(e))
+                            return redirect('so_allocate', pk=so.pk)
                         StockAllocation.objects.create(batch=batch, sales_order=so, quantity=amt)
                         batch.allocated_quantity += amt
                         batch.save(update_fields=['allocated_quantity'])
@@ -5973,8 +5992,14 @@ def production_run_allocate_view(request, pk):
             with transaction.atomic():
                 warehouse_groups = {} # warehouse_id -> [ {batch, qty} ]
 
+                from .utils import StockTaken, lock_free_batch
                 for batch_id, qty in selected_allocations.items():
-                    batch = Batch.objects.select_for_update().get(id=batch_id)
+                    try:
+                        batch = lock_free_batch(batch_id, qty)
+                    except StockTaken as e:
+                        transaction.set_rollback(True)
+                        messages.error(request, str(e))
+                        return redirect('production_run_allocate', pk=pk)
                     wh = batch.warehouse if batch.warehouse else None
                     wh_key = wh.id if wh else None
                     if wh_key not in warehouse_groups:

@@ -96,6 +96,11 @@ class Material(models.Model):
     safe_storage_days = models.IntegerField(help_text="Days until predictive degradation alert")
     weight_mt_per_unit = models.DecimalField(max_digits=10, decimal_places=4, default=1.0000, help_text="Weight in MT per unit")
     cost_per_unit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    reorder_point = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text="Reorder when available stock (on hand minus allocated) falls to this level, "
+                  "in the material's own unit. Blank = days-of-cover forecast only."
+    )
 
     def __str__(self):
         return f"{self.sku} - {self.name}"

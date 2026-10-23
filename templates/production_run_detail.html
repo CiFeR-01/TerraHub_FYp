@@ -24,18 +24,18 @@
     <div style="display:flex; align-items:center; gap:1rem;">
         {% if priority %}
         <span class="badge" style="font-size:0.78rem; padding:0.35rem 0.85rem;
-            {% if priority == 'Overdue' %}background:#fee2e2; color:#b91c1c; border:1px solid #fecaca;
-            {% elif priority == 'Due Soon' %}background:#fef3c7; color:#92400e; border:1px solid #fde68a;
-            {% else %}background:#dcfce7; color:#166534; border:1px solid #bbf7d0;{% endif %}">
+            {% if priority == 'Overdue' %}background:var(--danger-soft); color:var(--danger-strong); border:1px solid var(--danger-border);
+            {% elif priority == 'Due Soon' %}background:var(--warning-soft); color:var(--warning-strong); border:1px solid var(--warning-border);
+            {% else %}background:var(--success-soft); color:var(--success-strong); border:1px solid var(--success-border);{% endif %}">
             {{ priority }}
         </span>
         {% endif %}
         <span class="badge" style="font-size:0.85rem; padding:0.4rem 1rem;
-            {% if run.status == 'InProgress' %}background:#dbeafe; color:#1e40af; border:1px solid #bfdbfe;
-            {% elif run.status == 'Paused' %}background:#fef3c7; color:#92400e; border:1px solid #fde68a;
-            {% elif run.status == 'Completed' %}background:#dcfce7; color:#166534; border:1px solid #bbf7d0;
-            {% elif run.status == 'Cancelled' %}background:#fee2e2; color:#b91c1c; border:1px solid #fecaca;
-            {% else %}background:#f1f5f9; color:#475569; border:1px solid #e2e8f0;{% endif %}">
+            {% if run.status == 'InProgress' %}background:var(--info-soft); color:var(--info-strong); border:1px solid var(--info-border);
+            {% elif run.status == 'Paused' %}background:var(--warning-soft); color:var(--warning-strong); border:1px solid var(--warning-border);
+            {% elif run.status == 'Completed' %}background:var(--success-soft); color:var(--success-strong); border:1px solid var(--success-border);
+            {% elif run.status == 'Cancelled' %}background:var(--danger-soft); color:var(--danger-strong); border:1px solid var(--danger-border);
+            {% else %}background:var(--surface-muted); color:var(--text-secondary); border:1px solid var(--border-light);{% endif %}">
             {{ run.status }}
         </span>
     </div>
@@ -44,7 +44,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#dc2626;{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
+    <div style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:var(--danger);{% elif message.tags == 'warning' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -52,7 +52,7 @@
 {% endif %}
 
 <!-- Info Card -->
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:2rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); max-width:1200px;">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:2rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1.5rem;">
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Target Product</div>
@@ -69,8 +69,8 @@
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Progress</div>
             <div style="font-size:0.95rem; font-weight:600; margin-bottom:0.3rem;">{{ yield_logs_sum|floatformat:2 }} / {{ run.expected_yield|floatformat:2 }} units <span style="font-size:0.78rem; color:var(--text-muted); font-weight:500;">(≈ {{ yield_logs_sum|weight_display:run.target_product }} / {{ run.expected_yield|weight_display:run.target_product }})</span></div>
-            <div style="width:100%; height:6px; background:#e2e8f0; border-radius:10px; overflow:hidden;">
-                <div style="height:100%; border-radius:10px; width:{{ yield_progress_pct|floatformat:0 }}%; background:{% if yield_progress_pct >= 100 %}#059669{% elif run.status == 'Completed' %}#d97706{% else %}var(--primary){% endif %};"></div>
+            <div style="width:100%; height:6px; background:var(--surface-strong); border-radius:10px; overflow:hidden;">
+                <div style="height:100%; border-radius:10px; width:{{ yield_progress_pct|floatformat:0 }}%; background:{% if yield_progress_pct >= 100 %}var(--success){% elif run.status == 'Completed' %}var(--warning){% else %}var(--primary){% endif %};"></div>
             </div>
         </div>
         {% endif %}
@@ -115,7 +115,7 @@
         </div>
         <div>
             <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Yield Efficiency</div>
-            <div style="font-size:0.95rem; font-weight:600; {% if yield_efficiency < 95 %}color:var(--warning-strong);{% elif yield_efficiency > 105 %}color:#2563eb;{% else %}color:var(--success-strong);{% endif %}">
+            <div style="font-size:0.95rem; font-weight:600; {% if yield_efficiency < 95 %}color:var(--warning-strong);{% elif yield_efficiency > 105 %}color:var(--info-strong);{% else %}color:var(--success-strong);{% endif %}">
                 {% if yield_efficiency %}{{ yield_efficiency|floatformat:1 }}%{% else %}—{% endif %}
             </div>
         </div>
@@ -125,7 +125,7 @@
 
 <!-- Bill of Materials Preview -->
 {% if bom_materials and run.status != 'Completed' and run.status != 'Cancelled' %}
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); max-width:1200px;">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Bill of Materials</h3>
     <table class="sortable" style="width:100%; border-collapse:collapse; font-size:0.85rem;">
         <thead>
@@ -148,7 +148,7 @@
                     {% if bom.state == 'ready' %}<span class="badge badge-emerald" style="font-size:0.7rem;">Ready</span>
                     {% elif bom.state == 'in_transit' %}<span class="badge badge-sky" style="font-size:0.7rem;">In transit</span>
                     {% elif bom.state == 'partial' %}<span class="badge badge-amber" style="font-size:0.7rem;">Partly allocated</span>
-                    {% elif bom.sufficient %}<span class="badge" style="font-size:0.7rem; background:#f1f5f9; color:#475569;">Not allocated</span>
+                    {% elif bom.sufficient %}<span class="badge" style="font-size:0.7rem; background:var(--surface-muted); color:var(--text-secondary);">Not allocated</span>
                     {% else %}<span class="badge badge-rose" style="font-size:0.7rem;">Short in stock</span>{% endif %}
                 </td>
             </tr>
@@ -160,7 +160,7 @@
 
 <!-- Scheduler Card -->
 {% if run.status != 'Completed' %}
-<div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:2rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); max-width:1200px;">
+<div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:2rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700;">Production Schedule</h3>
     </div>
@@ -180,15 +180,15 @@
 </div>
 {% endif %}
 
-<div class="animate-fade-in-up" style="display:grid; grid-template-columns:2fr 1fr; gap:2rem; max-width:1200px;">
+<div class="animate-fade-in-up" style="display:grid; grid-template-columns:2fr 1fr; gap:2rem;">
 
     <!-- Left Column: Operations & Execution -->
     <div style="min-width: 0;">
-        <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-bottom:2rem;">
+        <div style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-bottom:2rem;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
                 <h3 style="font-family:'Outfit',sans-serif; font-size:1.25rem; font-weight:700;">Execution Engine</h3>
                 {% if not all_shipments_arrived and run.status == 'Pending Allocation' %}
-                <span style="font-size:0.8rem; background:#fee2e2; color:#b91c1c; padding:0.25rem 0.75rem; border-radius:99px; font-weight:600; display:flex; align-items:center; gap:0.25rem;">
+                <span style="font-size:0.8rem; background:var(--danger-soft); color:var(--danger-strong); padding:0.25rem 0.75rem; border-radius:99px; font-weight:600; display:flex; align-items:center; gap:0.25rem;">
                     <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                     Safety Lock Active
                 </span>
@@ -196,14 +196,14 @@
             </div>
             
             {% if run.status == 'Pending Allocation' or run.status == 'Planned' or run.status == 'Awaiting Materials' %}
-                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; padding:1.5rem; text-align:center;">
+                <div style="background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:8px; padding:1.5rem; text-align:center;">
                     {% if run.status == 'Pending Allocation' %}
                     <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;">Materials must be allocated before production can start.</p>
                     {% if perms.core.allocate_run_materials %}<a href="{% url 'production_run_allocate' run.pk %}" class="btn btn-primary" style="width:100%; justify-content:center; padding:0.75rem; font-size:1rem; text-decoration:none;">Allocate Materials</a>{% endif %}
                     {% else %}
                     <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;">Ready to begin manufacturing? Review the material inbound statuses on the right before starting.</p>
                     {% if materials_short %}
-                    <p style="text-align:left; font-size:0.82rem; color:#92400e; background:#fef3c7; border:1px solid #fde68a; border-radius:6px; padding:0.6rem 0.75rem; margin-bottom:1rem;">
+                    <p style="text-align:left; font-size:0.82rem; color:var(--warning-strong); background:var(--warning-soft); border:1px solid var(--warning-border); border-radius:6px; padding:0.6rem 0.75rem; margin-bottom:1rem;">
                         Not fully allocated:
                         {% for b in materials_short %}{{ b.material.name }} ({{ b.allocated|floatformat:2 }} of {{ b.needed|floatformat:2 }} {{ b.material.unit_of_measure }}){% if not forloop.last %}, {% endif %}{% endfor %}.
                         You can start now and allocate the rest while the run is in progress.
@@ -215,13 +215,13 @@
                         <input type="hidden" name="action" value="start_production">
                         
                         {% if not all_shipments_arrived %}
-                            <div style="margin-bottom:1.5rem; text-align:left; background:#fff7ed; padding:1rem; border:1px solid #fed7aa; border-radius:8px;">
-                                <p style="font-size:0.85rem; font-weight:600; color:#9a3412; margin-bottom:0.5rem; display:flex; align-items:center; gap:0.25rem;">
+                            <div style="margin-bottom:1.5rem; text-align:left; background:var(--warning-soft); padding:1rem; border:1px solid var(--warning-border); border-radius:8px;">
+                                <p style="font-size:0.85rem; font-weight:600; color:var(--warning-strong); margin-bottom:0.5rem; display:flex; align-items:center; gap:0.25rem;">
                                     <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                                     Partial Start Override
                                 </p>
-                                <p style="font-size:0.8rem; color:#9a3412; margin-bottom:0.5rem;">There are {{ pending_shipments_count }} shipments still in transit. To start production early, you must provide a reason.</p>
-                                <input type="text" name="override_remark" class="form-input" placeholder="e.g., Starting Phase 1 mixing while waiting for Phase 2..." style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid #fdba74; font-size:0.9rem;" {% if not all_shipments_arrived %}required{% endif %}>
+                                <p style="font-size:0.8rem; color:var(--warning-strong); margin-bottom:0.5rem;">There are {{ pending_shipments_count }} shipments still in transit. To start production early, you must provide a reason.</p>
+                                <input type="text" name="override_remark" class="form-input" placeholder="e.g., Starting Phase 1 mixing while waiting for Phase 2..." style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--warning-border); font-size:0.9rem;" {% if not all_shipments_arrived %}required{% endif %}>
                             </div>
                         {% endif %}
                         
@@ -234,17 +234,17 @@
                 </div>
 
                 <details style="margin-top:1.25rem;">
-                    <summary style="cursor:pointer; font-size:0.85rem; color:#b91c1c; font-weight:600;">Scrap this run instead</summary>
-                    <form method="post" action="{% url 'production_run_detail' run.pk %}" style="margin-top:0.75rem; padding:1rem; border:1px solid #fecaca; background:#fef2f2; border-radius:8px;">
+                    <summary style="cursor:pointer; font-size:0.85rem; color:var(--danger-strong); font-weight:600;">Scrap this run instead</summary>
+                    <form method="post" action="{% url 'production_run_detail' run.pk %}" style="margin-top:0.75rem; padding:1rem; border:1px solid var(--danger-border); background:var(--danger-soft); border-radius:8px;">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="scrap_run">
-                        <label style="display:block; font-size:0.8rem; font-weight:600; color:#991b1b; margin-bottom:0.4rem;">Reason</label>
-                        <textarea name="reason" required class="form-input" style="width:100%; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:0.75rem; height:60px;" placeholder="Why is this run no longer needed?"></textarea>
-                        <button type="submit" class="btn" style="width:100%; padding:0.6rem; background:#fff; border:1px solid #dc2626; color:#dc2626; border-radius:6px; font-weight:600;" onclick="return confirm('Scrap this production run? This releases any allocated materials and cannot be undone.')">Scrap Run</button>
+                        <label style="display:block; font-size:0.8rem; font-weight:600; color:var(--danger-strong); margin-bottom:0.4rem;">Reason</label>
+                        <textarea name="reason" required class="form-input" style="width:100%; padding:0.5rem; border:1px solid var(--danger-border); margin-bottom:0.75rem; height:60px;" placeholder="Why is this run no longer needed?"></textarea>
+                        <button type="submit" class="btn" style="width:100%; padding:0.6rem; background:var(--bg-surface); border:1px solid var(--danger); color:var(--danger); border-radius:6px; font-weight:600;" onclick="return confirm('Scrap this production run? This releases any allocated materials and cannot be undone.')">Scrap Run</button>
                     </form>
                 </details>
             {% elif run.status == 'InProgress' or run.status == 'Paused' %}
-                <div style="background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; padding:1.5rem; margin-bottom:1.5rem;">
+                <div style="background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:8px; padding:1.5rem; margin-bottom:1.5rem;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
                         <h4 style="font-size:1rem; font-weight:700; color:var(--text-main); margin:0;">Yield Log</h4>
                         {% if run.status == 'InProgress' %}
@@ -264,21 +264,21 @@
                     <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">Production can span more than one session — log what's actually been made as you go, then finalize once the run is done.</p>
                     {% if perms.core.cancel_orders %}
                     <details style="margin-bottom:1rem;">
-                        <summary style="cursor:pointer; font-size:0.85rem; color:#b91c1c; font-weight:600;">Abort this run</summary>
-                        <form method="post" action="{% url 'production_run_detail' run.pk %}" style="margin-top:0.75rem; padding:1rem; border:1px solid #fecaca; background:#fef2f2; border-radius:8px;">
+                        <summary style="cursor:pointer; font-size:0.85rem; color:var(--danger-strong); font-weight:600;">Abort this run</summary>
+                        <form method="post" action="{% url 'production_run_detail' run.pk %}" style="margin-top:0.75rem; padding:1rem; border:1px solid var(--danger-border); background:var(--danger-soft); border-radius:8px;">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="abort_run">
-                            <label style="display:block; font-size:0.8rem; font-weight:600; color:#991b1b; margin-bottom:0.4rem;">Reason</label>
-                            <textarea name="reason" required class="form-input" style="width:100%; padding:0.5rem; border:1px solid #fca5a5; margin-bottom:0.75rem; height:60px;" placeholder="Why is production stopping?"></textarea>
-                            <p style="font-size:0.78rem; color:#7f1d1d; margin:0 0 0.5rem;">Material actually used so far (the rest goes back to stock):</p>
+                            <label style="display:block; font-size:0.8rem; font-weight:600; color:var(--danger-strong); margin-bottom:0.4rem;">Reason</label>
+                            <textarea name="reason" required class="form-input" style="width:100%; padding:0.5rem; border:1px solid var(--danger-border); margin-bottom:0.75rem; height:60px;" placeholder="Why is production stopping?"></textarea>
+                            <p style="font-size:0.78rem; color:var(--danger-strong); margin:0 0 0.5rem;">Material actually used so far (the rest goes back to stock):</p>
                             {% for bom in bom_materials %}
                             <label style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; font-size:0.8rem; margin-bottom:0.4rem;">
                                 <span>{{ bom.material.name }} <span style="color:var(--text-muted);">(reserved {{ bom.allocated|floatformat:2 }} {{ bom.material.unit_of_measure }})</span></span>
                                 <input type="number" step="0.01" min="0" name="used_qty_{{ bom.material.id }}" value="0" class="form-input" style="width:110px; padding:0.35rem;">
                             </label>
                             {% endfor %}
-                            <p style="font-size:0.78rem; color:#7f1d1d; margin:0.5rem 0 0.75rem;">Yield already logged ({{ yield_logs_sum|floatformat:2 }}) becomes a finished-goods batch.</p>
-                            <button type="submit" class="btn" style="width:100%; padding:0.6rem; background:#fff; border:1px solid #dc2626; color:#dc2626; border-radius:6px; font-weight:600;" onclick="return confirm('Abort this run? It closes as Cancelled and cannot be resumed.')">Abort Run</button>
+                            <p style="font-size:0.78rem; color:var(--danger-strong); margin:0.5rem 0 0.75rem;">Yield already logged ({{ yield_logs_sum|floatformat:2 }}) becomes a finished-goods batch.</p>
+                            <button type="submit" class="btn" style="width:100%; padding:0.6rem; background:var(--bg-surface); border:1px solid var(--danger); color:var(--danger); border-radius:6px; font-weight:600;" onclick="return confirm('Abort this run? It closes as Cancelled and cannot be resumed.')">Abort Run</button>
                         </form>
                     </details>
                     {% endif %}
@@ -286,7 +286,7 @@
                     {% if yield_logs %}
                     <div style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-bottom:1rem;">
                         {% for y in yield_logs reversed %}
-                        <div style="background:#fff; border:1px solid var(--border-light); border-radius:6px; padding:0.35rem 0.7rem; font-size:0.78rem;">
+                        <div style="background:var(--bg-surface); border:1px solid var(--border-light); border-radius:6px; padding:0.35rem 0.7rem; font-size:0.78rem;">
                             <strong style="color:var(--primary);">+{{ y.quantity|floatformat:2 }}</strong>
                             <span style="color:var(--text-muted);">· {{ y.log_date|date:"Y-m-d" }} · {{ y.logged_by.get_full_name|default:y.logged_by.username|default:"—" }}{% if y.notes %} · {{ y.notes }}{% endif %}</span>
                         </div>
@@ -314,7 +314,7 @@
                 </div>
 
                 {% if run.status == 'InProgress' %}
-                <div id="finalize" style="background:#f8fafc; border:1px solid var(--border-light); border-radius:8px; padding:1.5rem; scroll-margin-top:5rem;">
+                <div id="finalize" style="background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:8px; padding:1.5rem; scroll-margin-top:5rem;">
                     <h4 style="font-size:1rem; font-weight:700; color:var(--text-main); margin-bottom:1rem;">Record Material Usage &amp; Finalize</h4>
                     <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1.5rem;">Production started at {{ run.exact_start_time|date:"M d, Y H:i" }}. Enter the actual poured quantities below to complete the run.</p>
 
@@ -324,9 +324,9 @@
                         
                         <!-- Material Usage form -->
                         <div style="margin-bottom:1.5rem; border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
-                            <table class="sortable" style="width:100%; border-collapse:collapse; background:#fff;">
+                            <table class="sortable" style="width:100%; border-collapse:collapse; background:var(--bg-surface);">
                                 <thead>
-                                    <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                                    <tr style="background:var(--surface-muted); border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
                                         <th style="padding:0.75rem; text-align:left;">Material</th>
                                         <th style="padding:0.75rem; text-align:right;">Expected (BOM)</th>
                                         <th style="padding:0.75rem; text-align:right;">Actual Poured</th>
@@ -343,10 +343,10 @@
                                             <input type="number" step="0.01" name="actual_qty_{{ bom.material.id }}" required class="form-input actual-qty-input" data-mid="{{ bom.material.id }}" data-alloc="{{ bom.allocated|stringformat:'.2f' }}" data-unit="{{ bom.material.unit_of_measure }}" style="width:100px; padding:0.4rem; text-align:right;" placeholder="Enter qty">
                                         </td>
                                     </tr>
-                                    <tr class="extra-row" id="extra-{{ bom.material.id }}" style="display:none; background:#fffbeb; border-bottom:1px solid var(--border-light);">
+                                    <tr class="extra-row" id="extra-{{ bom.material.id }}" style="display:none; background:var(--warning-soft); border-bottom:1px solid var(--border-light);">
                                         <td colspan="3" style="padding:1rem;">
-                                            <div class="extra-msg" style="font-size:0.85rem; font-weight:700; color:#92400e; margin-bottom:0.5rem;"></div>
-                                            <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.82rem; font-weight:600; color:#92400e; margin-bottom:0.75rem; cursor:pointer;">
+                                            <div class="extra-msg" style="font-size:0.85rem; font-weight:700; color:var(--warning-strong); margin-bottom:0.5rem;"></div>
+                                            <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.82rem; font-weight:600; color:var(--warning-strong); margin-bottom:0.75rem; cursor:pointer;">
                                                 <input type="checkbox" class="extra-confirm" name="extra_confirm_{{ bom.material.id }}" value="1" disabled>
                                                 Yes, this quantity is correct
                                             </label>
@@ -367,7 +367,7 @@
                                                     </select>
                                                     <input type="number" step="0.01" min="0.01" name="extra_qty_{{ bom.material.id }}" class="form-input src-qty" placeholder="Qty" style="width:100px; padding:0.4rem; text-align:right;">
                                                     <input type="text" name="extra_reason_{{ bom.material.id }}" class="form-input src-reason" placeholder="Reason (required)" style="flex:1; min-width:180px; padding:0.4rem; display:none;">
-                                                    <button type="button" class="rm-src" title="Remove" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:1rem;">✕</button>
+                                                    <button type="button" class="rm-src" title="Remove" style="background:none; border:none; color:var(--danger); cursor:pointer; font-size:1rem;">✕</button>
                                                 </div>
                                             </template>
                                         </td>
@@ -377,10 +377,10 @@
                             </table>
                         </div>
                         
-                        <div style="margin-bottom:1.5rem; background:#fff; padding:1rem; border:1px solid var(--border-light); border-radius:8px;">
+                        <div style="margin-bottom:1.5rem; background:var(--bg-surface); padding:1rem; border:1px solid var(--border-light); border-radius:8px;">
                             <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--text-main); margin-bottom:0.5rem;">Actual Yield (Finished Goods)</label>
                             {% if yield_remaining > 0 and yield_logs_sum %}
-                            <p style="font-size:0.78rem; color:#92400e; background:#fef3c7; border:1px solid #fde68a; border-radius:6px; padding:0.5rem 0.65rem; margin-bottom:0.5rem;">
+                            <p style="font-size:0.78rem; color:var(--warning-strong); background:var(--warning-soft); border:1px solid var(--warning-border); border-radius:6px; padding:0.5rem 0.65rem; margin-bottom:0.5rem;">
                                 {{ yield_logs_sum|floatformat:2 }} of {{ run.expected_yield|floatformat:2 }} units logged so far. Completing will auto-fill the remaining {{ yield_remaining|floatformat:2 }} units. To record less, change this figure to what was actually made (or log the yield manually above first).
                             </p>
                             {% endif %}
@@ -389,8 +389,8 @@
                                 <span style="font-size:0.85rem; color:var(--text-muted);">units</span>
                             </div>
                         </div>
-                        <div style="margin-bottom:1.5rem; padding:1rem; border:1px solid #fde047; background:#fefce8; border-radius:8px;">
-                              <label style="display:block; font-size:0.85rem; font-weight:700; color:#854d0e; margin-bottom:0.5rem;">Variance Approval (If >3% Variance)</label>
+                        <div style="margin-bottom:1.5rem; padding:1rem; border:1px solid var(--warning-border); background:var(--warning-soft); border-radius:8px;">
+                              <label style="display:block; font-size:0.85rem; font-weight:700; color:var(--warning-strong); margin-bottom:0.5rem;">Variance Approval (If >3% Variance)</label>
                               
                               <label style="display:block; font-size:0.75rem; color:var(--text-main); margin-bottom:0.25rem;">Select Manager for Approval</label>
                               <select name="approver_id" class="form-input" style="width:100%; padding:0.5rem; margin-bottom:0.75rem;">
@@ -421,16 +421,16 @@
                 </div>
                 {% endif %}
             {% elif run.status == 'Pending Approval' %}
-                  <div style="background:#fefce8; border:1px solid #fde047; border-radius:8px; padding:1.5rem; text-align:center;">
-                      <svg width="48" height="48" fill="none" stroke="#a16207" viewBox="0 0 24 24" style="margin:0 auto 1rem;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                      <h4 style="font-size:1.1rem; font-weight:700; color:#a16207; margin-bottom:0.5rem;">{% if run.actual_yield is not None %}Pending Variance Approval{% else %}Pending Approval{% endif %}</h4>
+                  <div style="background:var(--warning-soft); border:1px solid var(--warning-border); border-radius:8px; padding:1.5rem; text-align:center;">
+                      <svg width="48" height="48" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="color:var(--warning-strong); margin:0 auto 1rem;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                      <h4 style="font-size:1.1rem; font-weight:700; color:var(--warning-strong); margin-bottom:0.5rem;">{% if run.actual_yield is not None %}Pending Variance Approval{% else %}Pending Approval{% endif %}</h4>
                       {% if run.actual_yield is not None %}
-                      <p style="font-size:0.85rem; color:#854d0e;">This run exceeded 3% material variance and is awaiting manager approval.</p>
+                      <p style="font-size:0.85rem; color:var(--warning-strong);">This run exceeded 3% material variance and is awaiting manager approval.</p>
                       {% else %}
-                      <p style="font-size:0.85rem; color:#854d0e;">This run needs manager approval before materials can be allocated.</p>
+                      <p style="font-size:0.85rem; color:var(--warning-strong);">This run needs manager approval before materials can be allocated.</p>
                       {% endif %}
                       {% if extra_sources %}
-                      <div style="text-align:left; margin:1rem auto 0; max-width:560px; font-size:0.8rem; color:#854d0e;">
+                      <div style="text-align:left; margin:1rem auto 0; max-width:560px; font-size:0.8rem; color:var(--warning-strong);">
                           <div style="font-weight:700; margin-bottom:0.25rem;">Extra material beyond the allocation</div>
                           {% for x in extra_sources %}
                           <div>{{ x.material.name }} · {{ x.quantity|floatformat:2 }} {{ x.material.unit_of_measure }} · {% if x.batch %}batch {{ x.batch.batch_number }}{% else %}<strong>not in records</strong>: {{ x.reason }}{% endif %}</div>
@@ -438,7 +438,7 @@
                       </div>
                       {% endif %}
                       {% if run.assigned_to %}
-                      <p style="font-size:0.85rem; color:#854d0e; margin-top:0.5rem;">Assigned to: {{ run.assigned_to.get_full_name|default:run.assigned_to.username }}</p>
+                      <p style="font-size:0.85rem; color:var(--warning-strong); margin-top:0.5rem;">Assigned to: {{ run.assigned_to.get_full_name|default:run.assigned_to.username }}</p>
                       {% endif %}
                       {% if can_decide_approval %}
                       <form method="post" action="{% url 'approvals_inbox' %}" style="display:flex; gap:0.5rem; justify-content:center; margin-top:1rem;">
@@ -447,23 +447,23 @@
                           <input type="hidden" name="item_id" value="{{ run.id }}">
                           <input type="hidden" name="next" value="{{ request.path }}">
                           {% if run.actual_yield is not None %}
-                          <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;">Reject (Rework)</button>
-                          <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem; background:#854d0e; border-color:#854d0e;">Approve &amp; Complete</button>
+                          <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:var(--danger); color:var(--danger); padding:0.4rem 1rem;">Reject (Rework)</button>
+                          <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem; background:var(--warning-strong); border-color:var(--warning-strong);">Approve &amp; Complete</button>
                           {% else %}
-                          <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:#dc2626; color:#dc2626; padding:0.4rem 1rem;" onclick="return confirm('Reject this run? It will be cancelled.')">Reject</button>
-                          <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem; background:#854d0e; border-color:#854d0e;">Approve</button>
+                          <button type="submit" name="action" value="reject" class="btn btn-secondary" style="border-color:var(--danger); color:var(--danger); padding:0.4rem 1rem;" onclick="return confirm('Reject this run? It will be cancelled.')">Reject</button>
+                          <button type="submit" name="action" value="approve" class="btn btn-primary" style="padding:0.4rem 1rem; background:var(--warning-strong); border-color:var(--warning-strong);">Approve</button>
                           {% endif %}
                       </form>
                       {% endif %}
                   </div>
             {% elif run.status == 'Completed' %}
-                <div style="background:#f8fafc; border:1px solid #bbf7d0; border-radius:8px; padding:1.5rem; text-align:center; margin-bottom: 1.5rem;">
-                    <svg width="48" height="48" fill="none" stroke="#166534" viewBox="0 0 24 24" style="margin:0 auto 1rem;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                    <h4 style="font-size:1.1rem; font-weight:700; color:#166534; margin-bottom:0.5rem;">Production Completed</h4>
-                    <p style="font-size:0.85rem; color:#15803d;">Started: {{ run.exact_start_time|date:"M d, H:i" }} | Ended: {{ run.exact_end_time|date:"M d, H:i" }}</p>
+                <div style="background:var(--surface-sunken); border:1px solid var(--success-border); border-radius:8px; padding:1.5rem; text-align:center; margin-bottom: 1.5rem;">
+                    <svg width="48" height="48" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="color:var(--success-strong); margin:0 auto 1rem;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <h4 style="font-size:1.1rem; font-weight:700; color:var(--success-strong); margin-bottom:0.5rem;">Production Completed</h4>
+                    <p style="font-size:0.85rem; color:var(--success-strong);">Started: {{ run.exact_start_time|date:"M d, H:i" }} | Ended: {{ run.exact_end_time|date:"M d, H:i" }}</p>
                 </div>
                 
-                <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+                <div style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
                         <h4 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; color:var(--text-main);">Material Usage History</h4>
                         {% if total_material_cost %}
@@ -472,9 +472,9 @@
                     </div>
 
                     <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden; margin-bottom:1.5rem;">
-                        <table class="sortable" style="width:100%; border-collapse:collapse; background:#fff;">
+                        <table class="sortable" style="width:100%; border-collapse:collapse; background:var(--bg-surface);">
                             <thead>
-                                <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                                <tr style="background:var(--surface-muted); border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
                                     <th style="padding:0.75rem; text-align:left;">Material</th>
                                     <th style="padding:0.75rem; text-align:right;">Expected</th>
                                     <th style="padding:0.75rem; text-align:right;">Actual Poured</th>
@@ -489,7 +489,7 @@
                                     <td style="padding:0.75rem; font-size:0.85rem; font-weight:600;">{{ row.usage.material.name }}</td>
                                     <td style="padding:0.75rem; font-size:0.85rem; text-align:right; color:var(--text-muted);">{{ row.usage.expected_qty|floatformat:2 }} {{ row.usage.material.unit_of_measure }}</td>
                                     <td style="padding:0.75rem; font-size:0.85rem; text-align:right;">{{ row.usage.actual_qty|floatformat:2 }} {{ row.usage.material.unit_of_measure }}</td>
-                                    <td style="padding:0.75rem; font-size:0.85rem; text-align:right; font-weight:600; {% if row.usage.variance_pct > 3 or row.usage.variance_pct < -3 %}color:#dc2626;{% elif row.usage.variance_pct != 0 %}color:var(--warning-strong);{% else %}color:var(--success-strong);{% endif %}">
+                                    <td style="padding:0.75rem; font-size:0.85rem; text-align:right; font-weight:600; {% if row.usage.variance_pct > 3 or row.usage.variance_pct < -3 %}color:var(--danger);{% elif row.usage.variance_pct != 0 %}color:var(--warning-strong);{% else %}color:var(--success-strong);{% endif %}">
                                         {% if row.usage.variance_pct > 0 %}+{% endif %}{{ row.usage.variance_pct|floatformat:2 }}%
                                     </td>
                                     <td style="padding:0.75rem; font-size:0.85rem; text-align:right; color:var(--text-muted);">RM {{ row.cost|floatformat:2 }}</td>
@@ -502,7 +502,7 @@
                                     </td>
                                 </tr>
                                 {% if row.consumptions %}
-                                <tr id="consumed-{{ row.usage.id }}" style="display:none; background:#f8fafc;">
+                                <tr id="consumed-{{ row.usage.id }}" style="display:none; background:var(--surface-sunken);">
                                     <td colspan="6" style="padding:0.75rem 1.5rem 1rem 2rem;">
                                         <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em;">Batches Consumed — {{ row.usage.material.name }}</div>
                                         <table class="sortable" style="width:100%; border-collapse:collapse; font-size:0.82rem; max-width:700px;">
@@ -512,7 +512,7 @@
                                                 <td style="padding:0.3rem 0.75rem;">Expiry</td>
                                             </tr>
                                             {% for c in row.consumptions %}
-                                            <tr style="border-bottom:1px solid #f1f5f9;">
+                                            <tr style="border-bottom:1px solid var(--border-light);">
                                                 <td style="padding:0.4rem 0.75rem; font-weight:600;">
                                                     <a href="{% url 'batch_detail' c.consumed_batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ c.consumed_batch.batch_number }}</a>
                                                 </td>
@@ -534,21 +534,21 @@
                     </div>
 
                     {% if run.supervisor_signoff or run.fefo_override_reason %}
-                    <div style="background:#fefce8; border:1px solid #fde047; border-radius:8px; padding:1.25rem;">
-                        <h5 style="font-size:0.95rem; font-weight:700; color:#854d0e; margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem;">
+                    <div style="background:var(--warning-soft); border:1px solid var(--warning-border); border-radius:8px; padding:1.25rem;">
+                        <h5 style="font-size:0.95rem; font-weight:700; color:var(--warning-strong); margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem;">
                             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                             Approvals & Overrides
                         </h5>
                         {% if run.fefo_override_reason %}
                         <div style="margin-bottom:0.75rem;">
-                            <span style="font-size:0.75rem; font-weight:700; color:#a16207; text-transform:uppercase;">Startup Override</span>
-                            <p style="font-size:0.85rem; color:#854d0e; margin-top:0.25rem; white-space:pre-wrap;">{{ run.fefo_override_reason }}</p>
+                            <span style="font-size:0.75rem; font-weight:700; color:var(--warning-strong); text-transform:uppercase;">Startup Override</span>
+                            <p style="font-size:0.85rem; color:var(--warning-strong); margin-top:0.25rem; white-space:pre-wrap;">{{ run.fefo_override_reason }}</p>
                         </div>
                         {% endif %}
                         {% if run.supervisor_signoff %}
                         <div>
-                            <span style="font-size:0.75rem; font-weight:700; color:#a16207; text-transform:uppercase;">Variance Sign-off By: {{ run.supervisor_signoff.get_full_name|default:run.supervisor_signoff.username }}</span>
-                            <p style="font-size:0.85rem; color:#854d0e; margin-top:0.25rem;">{{ run.signoff_reason|default:"Approved without remark" }}</p>
+                            <span style="font-size:0.75rem; font-weight:700; color:var(--warning-strong); text-transform:uppercase;">Variance Sign-off By: {{ run.supervisor_signoff.get_full_name|default:run.supervisor_signoff.username }}</span>
+                            <p style="font-size:0.85rem; color:var(--warning-strong); margin-top:0.25rem;">{{ run.signoff_reason|default:"Approved without remark" }}</p>
                         </div>
                         {% endif %}
                     </div>
@@ -557,12 +557,12 @@
 
                 {% if produced_batches %}
                 <!-- Finished Goods Batch Panel -->
-                <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:1.5rem;">
+                <div style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:1.5rem;">
                     <h4 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main);">Finished Goods Batch</h4>
                     <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
-                        <table class="sortable" style="width:100%; border-collapse:collapse; background:#fff;">
+                        <table class="sortable" style="width:100%; border-collapse:collapse; background:var(--bg-surface);">
                             <thead>
-                                <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                                <tr style="background:var(--surface-muted); border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
                                     <th style="padding:0.75rem; text-align:left;">Batch</th>
                                     <th style="padding:0.75rem; text-align:right;">Quantity</th>
                                     <th style="padding:0.75rem; text-align:left;">Warehouse</th>
@@ -599,12 +599,12 @@
 
             {% if yield_logs and run.status != 'InProgress' and run.status != 'Paused' %}
             <!-- Yield history stays visible once the run is finished / awaiting approval -->
-            <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:1.5rem;">
+            <div style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:1.5rem;">
                 <h4 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main);">Yield Log</h4>
                 <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
-                    <table class="sortable" style="width:100%; border-collapse:collapse; background:#fff;">
+                    <table class="sortable" style="width:100%; border-collapse:collapse; background:var(--bg-surface);">
                         <thead>
-                            <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                            <tr style="background:var(--surface-muted); border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
                                 <th style="padding:0.75rem; text-align:left;">Date</th>
                                 <th style="padding:0.75rem; text-align:right;">Quantity</th>
                                 <th style="padding:0.75rem; text-align:left;">Logged By</th>
@@ -629,12 +629,12 @@
             {% if run.status == 'Completed' %}
             <!-- Batches actually consumed -->
             {% if consumptions or extra_sources %}
-            <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
+            <div style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
                 <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1.5rem;">Materials Consumed</h3>
                 <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
-                    <table class="sortable" style="width:100%; border-collapse:collapse; background:#fff;">
+                    <table class="sortable" style="width:100%; border-collapse:collapse; background:var(--bg-surface);">
                         <thead>
-                            <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                            <tr style="background:var(--surface-muted); border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
                                 <th style="padding:0.75rem; text-align:left;">Material</th>
                                 <th style="padding:0.75rem; text-align:left;">Batch</th>
                                 <th style="padding:0.75rem; text-align:left;">Location</th>
@@ -653,10 +653,10 @@
                             </tr>
                             {% endfor %}
                             {% for x in extra_sources %}{% if not x.batch %}
-                            <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem; background:#fffbeb;">
+                            <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem; background:var(--warning-soft);">
                                 <td style="padding:0.75rem; font-weight:600;">{{ x.material.name }}</td>
-                                <td style="padding:0.75rem; color:#92400e; font-weight:600;">Not in records</td>
-                                <td style="padding:0.75rem; color:#92400e;" colspan="2">{{ x.reason }}{% if x.recorded_by %} <span style="color:var(--text-muted);">— {{ x.recorded_by.get_full_name|default:x.recorded_by.username }}</span>{% endif %}</td>
+                                <td style="padding:0.75rem; color:var(--warning-strong); font-weight:600;">Not in records</td>
+                                <td style="padding:0.75rem; color:var(--warning-strong);" colspan="2">{{ x.reason }}{% if x.recorded_by %} <span style="color:var(--text-muted);">— {{ x.recorded_by.get_full_name|default:x.recorded_by.username }}</span>{% endif %}</td>
                                 <td style="padding:0.75rem; text-align:right;">{{ x.quantity|floatformat:2 }} {{ x.material.unit_of_measure }}</td>
                             </tr>
                             {% endif %}{% endfor %}
@@ -667,16 +667,16 @@
             {% endif %}
             {% elif run.status != 'Cancelled' and run.status != 'Pending Approval' %}
             <!-- Materials allocated to this run -->
-            <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
+            <div style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:1.5rem;">
                     <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin:0;">Materials Allocated</h3>
                     {% if perms.core.allocate_run_materials %}<a href="{% url 'production_run_allocate' run.pk %}" class="btn btn-primary" style="padding:0.4rem 1rem; font-size:0.85rem; text-decoration:none;">+ Allocate Materials</a>{% endif %}
                 </div>
                 {% if allocations %}
                 <div style="border:1px solid var(--border-light); border-radius:8px; overflow:hidden;">
-                    <table class="sortable" style="width:100%; border-collapse:collapse; background:#fff;">
+                    <table class="sortable" style="width:100%; border-collapse:collapse; background:var(--bg-surface);">
                         <thead>
-                            <tr style="background:#f1f5f9; border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
+                            <tr style="background:var(--surface-muted); border-bottom:1px solid var(--border-light); font-size:0.75rem; color:var(--text-muted); text-transform:uppercase;">
                                 <th style="padding:0.75rem; text-align:left;">Material</th>
                                 <th style="padding:0.75rem; text-align:left;">Batch</th>
                                 <th style="padding:0.75rem; text-align:left;">From</th>
@@ -706,7 +706,7 @@
                                         {% csrf_token %}
                                         <input type="hidden" name="action" value="remove_allocation">
                                         <input type="hidden" name="alloc_id" value="{{ alloc.id }}">
-                                        <button type="submit" style="background:none; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:#dc2626;">Remove</button>
+                                        <button type="submit" style="background:none; border:1px solid rgba(239,68,68,0.3); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--danger);">Remove</button>
                                     </form>
                                     {% else %}<span style="font-size:0.75rem; color:var(--text-muted);">In logistics</span>{% endif %}
                                 </td>
@@ -720,7 +720,7 @@
                 <form method="post" action="{% url 'production_run_detail' run.pk %}" style="margin-top:0.85rem; text-align:right;" onsubmit="return confirm('Cancel this allocation? The reserved stock is released and any draft transfers are cancelled. You can then allocate again.')">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="cancel_allocation">
-                    <button type="submit" class="btn btn-secondary" style="padding:0.35rem 0.9rem; font-size:0.8rem; border-color:#dc2626; color:#dc2626;">Cancel allocation &amp; start over</button>
+                    <button type="submit" class="btn btn-secondary" style="padding:0.35rem 0.9rem; font-size:0.8rem; border-color:var(--danger); color:var(--danger);">Cancel allocation &amp; start over</button>
                 </form>
                 {% endif %}
                 {% else %}
@@ -733,7 +733,7 @@
     
     <!-- Right Column: Live Inbound Tracking -->
     <div>
-        <div style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
+        <div style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04);">
             <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:0.5rem;">Live Inbound Tracking</h3>
             <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1.5rem;">Logistics shipments delivering materials for this run.</p>
             
@@ -745,10 +745,10 @@
                             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
                                 <span style="font-weight:700; font-size:0.9rem; color:var(--primary);">{{ shp.tracking_number }}</span>
                                 <span style="font-size:0.75rem; font-weight:600; padding:0.2rem 0.5rem; border-radius:4px;
-                                    {% if shp.status == 'Arrived' %}background:#dcfce7; color:#166534;
-                                    {% elif shp.status == 'Dispatched' %}background:#dbeafe; color:#1e40af;
-                                    {% elif shp.status == 'Delayed' %}background:#fee2e2; color:#b91c1c;
-                                    {% else %}background:#f1f5f9; color:#475569;{% endif %}">
+                                    {% if shp.status == 'Arrived' %}background:var(--success-soft); color:var(--success-strong);
+                                    {% elif shp.status == 'Dispatched' %}background:var(--info-soft); color:var(--info-strong);
+                                    {% elif shp.status == 'Delayed' %}background:var(--danger-soft); color:var(--danger-strong);
+                                    {% else %}background:var(--surface-muted); color:var(--text-secondary);{% endif %}">
                                     {{ shp.status }}
                                 </span>
                             </div>
@@ -762,24 +762,24 @@
                     {% endfor %}
                 </div>
             {% else %}
-                <div style="text-align:center; padding:2rem 0; color:var(--text-muted); font-size:0.85rem; background:#f8fafc; border-radius:8px;">
+                <div style="text-align:center; padding:2rem 0; color:var(--text-muted); font-size:0.85rem; background:var(--surface-sunken); border-radius:8px;">
                     No shipments linked to this run.
                 </div>
             {% endif %}
         </div>
         
         <!-- Followers Panel -->
-        <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
+        <div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.5rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
             <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem; color:var(--text-main); display:flex; justify-content:space-between; align-items:center;">
                 Followers
-                <span style="background:var(--primary); color:#fff; border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem;">{{ run.followers.count }}</span>
+                <span style="background:var(--primary); color:var(--on-primary); border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:0.75rem;">{{ run.followers.count }}</span>
             </h3>
             
             <div style="display:flex; flex-direction:column; gap:0.75rem; margin-bottom:1rem;">
                 {% for follower in run.followers.all %}
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:#f8fafc; border-radius:8px; border:1px solid var(--border-light);">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:0.5rem; background:var(--surface-sunken); border-radius:8px; border:1px solid var(--border-light);">
                     <div style="display:flex; align-items:center; gap:0.5rem;">
-                        <div style="width:28px; height:28px; border-radius:50%; background:var(--primary); color:#fff; display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700;">
+                        <div style="width:28px; height:28px; border-radius:50%; background:var(--primary); color:var(--on-primary); display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700;">
                             {{ follower.username|make_list|first|upper }}
                         </div>
                         <span style="font-size:0.85rem; font-weight:600;">{{ follower.get_full_name|default:follower.username }}</span>
@@ -789,7 +789,7 @@
                         {% csrf_token %}
                         <input type="hidden" name="action" value="remove_follower">
                         <input type="hidden" name="user_id" value="{{ follower.id }}">
-                        <button type="submit" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:0.75rem; font-weight:600;">Unfollow</button>
+                        <button type="submit" style="background:none; border:none; color:var(--danger); cursor:pointer; font-size:0.75rem; font-weight:600;">Unfollow</button>
                     </form>
                     {% endif %}
                 </div>
@@ -814,14 +814,14 @@
         </div>
 
         <!-- Audit Timeline -->
-        <div class="animate-fade-in-up" style="background:#fff; border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
+        <div class="animate-fade-in-up" style="background:var(--bg-surface); border-radius:14px; border:1px solid var(--border-light); padding:1.75rem; box-shadow:0 2px 12px rgba(15,23,42,0.04); margin-top:2rem;">
             <h3 style="font-family:'Outfit',sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1.25rem;">Run Timeline</h3>
             {% if timeline_events %}
             <div style="position:relative; padding-left:1.5rem;">
                 <div style="position:absolute; left:0.45rem; top:0.35rem; bottom:0; width:2px; background:var(--border-light);"></div>
                 {% for event in timeline_events %}
                 <div style="position:relative; margin-bottom:1rem;">
-                    <div style="position:absolute; left:-1.5rem; top:0.25rem; width:10px; height:10px; border-radius:50%; background:var(--primary); border:2px solid #fff; box-shadow:0 0 0 2px var(--primary);"></div>
+                    <div style="position:absolute; left:-1.5rem; top:0.25rem; width:10px; height:10px; border-radius:50%; background:var(--primary); border:2px solid var(--bg-surface); box-shadow:0 0 0 2px var(--primary);"></div>
                     <div style="font-size:0.875rem; font-weight:600; color:var(--text-main);">{{ event.action }}</div>
                     <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.1rem;">{{ event.timestamp|date:"d M Y, H:i" }}{% if event.user %} · {{ event.user.get_full_name|default:event.user.username }}{% endif %}</div>
                 </div>
@@ -848,7 +848,7 @@
         var out = panel.querySelector('.src-total');
         var ok = Math.abs(total - excess) < 0.005;
         out.textContent = 'Accounted for ' + total.toFixed(2) + ' of ' + excess.toFixed(2) + ' ' + unit;
-        out.style.color = ok ? '#166534' : '#b91c1c';
+        out.style.color = ok ? 'var(--success-strong)' : 'var(--danger-strong)';
     }
 
     function addSource(panel, qty) {

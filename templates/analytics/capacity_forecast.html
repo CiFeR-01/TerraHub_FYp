@@ -38,7 +38,7 @@
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom: 1.5rem;">
     {% for message in messages %}
-    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #dc2626;{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
+    <div class="alert alert-{{ message.tags|default:'info' }}" style="padding: 0.85rem 1.25rem; border-radius: 8px; font-weight: 500; font-size: 0.9rem; margin-bottom: 0.5rem; {% if message.tags == 'error' %}background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: var(--danger);{% elif message.tags == 'warning' %}background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--warning-strong);{% else %}background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--success-strong);{% endif %}">
         {{ message }}
     </div>
     {% endfor %}
@@ -49,7 +49,7 @@
 {% include "analytics/partials/_freshness.html" %}
 
 {% if summary.out_of_sync %}
-<div class="animate-fade-in-up" style="background:#fee2e2; border:1px solid rgba(220,38,38,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:#b91c1c;">
+<div class="animate-fade-in-up" style="background:var(--danger-soft); border:1px solid rgba(220,38,38,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:var(--danger-strong);">
     <strong>Snapshots are behind live data.</strong> {{ summary.out_of_sync }} warehouse{{ summary.out_of_sync|pluralize }}
     {{ summary.out_of_sync|pluralize:"has,have" }} occupancy that no snapshot reflects yet (usually a bulk update that skipped the automatic recording).
     {% if can_run_snapshot %}Use "Run snapshot now" above to catch up.{% else %}Ask an Admin or Manager to run a snapshot.{% endif %}
@@ -57,13 +57,13 @@
 {% endif %}
 
 {% if summary.empty %}
-<div class="animate-fade-in-up" style="background:var(--accent-wash,#eef2ff); border:1px solid rgba(79,70,229,0.2); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:var(--text-main);">
+<div class="animate-fade-in-up" style="background:var(--accent-wash); border:1px solid rgba(var(--primary-rgb), 0.2); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:var(--text-main);">
     <strong>No snapshots yet.</strong> Utilization is recorded automatically each day
     stock moves (no schedule needed), and a trend needs a few days of it.
     Projections firm up after about a week.
 </div>
 {% elif summary.building %}
-<div class="animate-fade-in-up" style="background:#fef9c3; border:1px solid rgba(202,138,4,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:#854d0e;">
+<div class="animate-fade-in-up" style="background:var(--warning-soft); border:1px solid rgba(202,138,4,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:var(--warning-strong);">
     <strong>Collecting data.</strong> {{ summary.history_days }} day{{ summary.history_days|pluralize }} of history so
     far &mdash; projections are shown once a warehouse has 3+ snapshots and firm up around 7.
 </div>
@@ -77,13 +77,13 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Critical</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.critical %}#dc2626{% else %}var(--text-main){% endif %};">{{ summary.critical }}</span>
+            <span class="kpi-value" style="color:{% if summary.critical %}var(--danger){% else %}var(--text-main){% endif %};">{{ summary.critical }}</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Watch</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.watch %}#b45309{% else %}var(--text-main){% endif %};">{{ summary.watch }}</span>
+            <span class="kpi-value" style="color:{% if summary.watch %}var(--warning-strong){% else %}var(--text-main){% endif %};">{{ summary.watch }}</span>
         </div>
     </div>
     <div class="kpi-item-card">
@@ -97,14 +97,14 @@
 </section>
 
 {% if summary.has_rent_opportunities %}
-<div class="animate-fade-in-up" style="background:#fef3c7; border:1px solid rgba(180,83,9,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:#854d0e;">
+<div class="animate-fade-in-up" style="background:var(--warning-soft); border:1px solid rgba(180,83,9,0.25); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.5rem; font-size:0.88rem; color:var(--warning-strong);">
     <strong>Rent-saving opportunities available.</strong> One or more warehouses below are Critical/Watch —
-    see <a href="{% url 'rent_opportunities' %}" style="color:#854d0e; font-weight:700; text-decoration:underline;">Rent Reduction</a>
+    see <a href="{% url 'rent_opportunities' %}" style="color:var(--warning-strong); font-weight:700; text-decoration:underline;">Rent Reduction</a>
     for batches that could move to spare Internal capacity.
 </div>
 {% endif %}
 
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
     <div class="table-responsive">
         <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
@@ -127,31 +127,31 @@
                     </td>
                     <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.status == 'critical' %}0{% elif r.status == 'watch' %}1{% elif r.status == 'ok' %}2{% elif r.status == 'stable' %}3{% else %}4{% endif %}">
                         {% if r.status == 'critical' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px;">Critical</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--danger-soft); color:var(--danger-strong); padding:0.15rem 0.55rem; border-radius:999px;">Critical</span>
                         {% elif r.status == 'watch' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px;">Watch</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--warning-soft); color:var(--warning-strong); padding:0.15rem 0.55rem; border-radius:999px;">Watch</span>
                         {% elif r.status == 'ok' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px;">Filling</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--success-soft); color:var(--success-strong); padding:0.15rem 0.55rem; border-radius:999px;">Filling</span>
                         {% elif r.status == 'stable' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#e0e7ff; color:#4338ca; padding:0.15rem 0.55rem; border-radius:999px;">Stable</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--primary-soft); color:var(--primary-strong); padding:0.15rem 0.55rem; border-radius:999px;">Stable</span>
                         {% else %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#f1f5f9; color:#64748b; padding:0.15rem 0.55rem; border-radius:999px;">No data</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--surface-muted); color:var(--text-muted); padding:0.15rem 0.55rem; border-radius:999px;">No data</span>
                         {% endif %}
                     </td>
-                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; {% if r.current_percent and r.current_percent >= 95 %}color:#dc2626;{% endif %}"
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; {% if r.current_percent and r.current_percent >= 95 %}color:var(--danger);{% endif %}"
                         data-sort-value="{{ r.current_percent|default_if_none:'' }}">
                         {% if r.current_percent is not None %}{{ r.current_percent|floatformat:1 }}%{% else %}<span style="color:var(--text-muted); font-weight:400;">&mdash;</span>{% endif %}
                     </td>
                     <td style="padding:0.6rem 1rem; text-align:right;" data-sort-value="{{ r.weekly_rate_pp|default_if_none:'' }}">
                         {% if r.weekly_rate_pp is not None %}
-                            {% if r.weekly_rate_pp > 0 %}<span style="color:#dc2626;">+{{ r.weekly_rate_pp|floatformat:2 }} pp</span>
+                            {% if r.weekly_rate_pp > 0 %}<span style="color:var(--danger);">+{{ r.weekly_rate_pp|floatformat:2 }} pp</span>
                             {% else %}<span style="color:var(--success-strong);">{{ r.weekly_rate_pp|floatformat:2 }} pp</span>{% endif %}
                         {% else %}<span style="color:var(--text-muted);">&mdash;</span>{% endif %}
                     </td>
                     <td style="padding:0.6rem 1rem; text-align:right; font-weight:700;" data-sort-value="{{ r.days_to_full|default_if_none:'' }}">
                         {% if r.days_to_full is not None %}{{ r.days_to_full|floatformat:0 }}d{% else %}<span style="color:var(--text-muted); font-weight:400;">&mdash;</span>{% endif %}
                     </td>
-                    <td style="padding:0.6rem 1rem; text-align:right; {% if r.status == 'critical' %}color:#dc2626; font-weight:700;{% endif %}"
+                    <td style="padding:0.6rem 1rem; text-align:right; {% if r.status == 'critical' %}color:var(--danger); font-weight:700;{% endif %}"
                         data-sort-value="{{ r.projected_full_date|date:'Y-m-d' }}">
                         {{ r.projected_full_date|date:"d M Y"|default:"&mdash;" }}
                     </td>

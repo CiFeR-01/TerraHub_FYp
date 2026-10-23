@@ -32,18 +32,18 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Late</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.late_count %}#dc2626{% else %}var(--text-main){% endif %};">{{ summary.late_count }}</span>
+            <span class="kpi-value" style="color:{% if summary.late_count %}var(--danger){% else %}var(--text-main){% endif %};">{{ summary.late_count }}</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">At Risk</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.at_risk_count %}#b45309{% else %}var(--text-main){% endif %};">{{ summary.at_risk_count }}</span>
+            <span class="kpi-value" style="color:{% if summary.at_risk_count %}var(--warning-strong){% else %}var(--text-main){% endif %};">{{ summary.at_risk_count }}</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">On Track</span>
-        <div class="kpi-value-row"><span class="kpi-value" style="color:#15803d;">{{ summary.on_track_count }}</span></div>
+        <div class="kpi-value-row"><span class="kpi-value" style="color:var(--success-strong);">{{ summary.on_track_count }}</span></div>
     </div>
 </section>
 {% include "analytics/partials/_estimate_note.html" %}
@@ -53,13 +53,13 @@
     {% for key, label in filters %}
     <a href="{% if key %}?risk={{ key }}{% else %}?{% endif %}"
        style="font-size:0.8rem; padding:0.3rem 0.7rem; border-radius:6px; text-decoration:none; border:1px solid var(--border-light);
-              {% if key == risk_filter %}background:var(--primary); color:#fff; font-weight:700;{% else %}color:var(--text-muted); background:#fff;{% endif %}">
+              {% if key == risk_filter %}background:var(--primary); color:var(--on-primary); font-weight:700;{% else %}color:var(--text-muted); background:var(--bg-surface);{% endif %}">
         {{ label }}
     </a>
     {% endfor %}
 </div>
 
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
     <div class="table-responsive">
         <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
@@ -83,13 +83,13 @@
                     <td style="padding:0.85rem 1rem; color:var(--text-muted);">{{ r.status }}</td>
                     <td style="padding:0.85rem 1rem;" data-sort-value="{% if r.risk == 'late' %}0{% elif r.risk == 'at_risk' %}1{% elif r.risk == 'on_track' %}2{% else %}3{% endif %}">
                         {% if r.risk == 'late' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px;">Late</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--danger-soft); color:var(--danger-strong); padding:0.15rem 0.55rem; border-radius:999px;">Late</span>
                         {% elif r.risk == 'at_risk' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px;">At risk</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--warning-soft); color:var(--warning-strong); padding:0.15rem 0.55rem; border-radius:999px;">At risk</span>
                         {% elif r.risk == 'on_track' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px;">On track</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--success-soft); color:var(--success-strong); padding:0.15rem 0.55rem; border-radius:999px;">On track</span>
                         {% else %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#f1f5f9; color:#64748b; padding:0.15rem 0.55rem; border-radius:999px;">No deadline</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--surface-muted); color:var(--text-muted); padding:0.15rem 0.55rem; border-radius:999px;">No deadline</span>
                         {% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem; text-align:right;" data-sort-value="{{ r.deadline|date:'Y-m-d' }}">{{ r.deadline|date:"d M Y"|default:"&mdash;" }}</td>
@@ -104,7 +104,7 @@
                     <td style="padding:0.85rem 1rem; text-align:right;" data-sort-value="{{ r.days_slack|default_if_none:'' }}">
                         {% if r.days_slack is not None %}
                             {% if r.days_slack < 0 %}
-                            <span style="color:#dc2626; font-weight:700;">{{ r.days_slack }}d</span>
+                            <span style="color:var(--danger); font-weight:700;">{{ r.days_slack }}d</span>
                             {% else %}
                             <span style="color:var(--success-strong); font-weight:700;">+{{ r.days_slack }}d</span>
                             {% endif %}

@@ -30,7 +30,7 @@
     {% for w in window_choices %}
     <a href="?window={{ w }}"
        style="font-size:0.8rem; padding:0.3rem 0.7rem; border-radius:6px; text-decoration:none; border:1px solid var(--border-light);
-              {% if w == window_days %}background:var(--primary); color:#fff; font-weight:700;{% else %}color:var(--text-muted); background:#fff;{% endif %}">
+              {% if w == window_days %}background:var(--primary); color:var(--on-primary); font-weight:700;{% else %}color:var(--text-muted); background:var(--bg-surface);{% endif %}">
         {% if w == 0 %}All time{% else %}{{ w }} days{% endif %}
     </a>
     {% endfor %}
@@ -57,7 +57,7 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Needs Attention</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="color:{% if summary.poor_count %}#dc2626{% else %}var(--text-main){% endif %};">{{ summary.poor_count }}</span>
+            <span class="kpi-value" style="color:{% if summary.poor_count %}var(--danger){% else %}var(--text-main){% endif %};">{{ summary.poor_count }}</span>
             <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.4rem;">poor &middot; {{ summary.watch_count }} watch</span>
         </div>
     </div>
@@ -67,7 +67,7 @@
     </div>
 </section>
 
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:#fff; border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+<div class="table-card-wrapper animate-fade-in-up" style="animation-delay:0.1s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
     <div class="table-responsive">
         <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
@@ -87,21 +87,21 @@
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">
                         {{ r.supplier_name }}
                         {% if r.is_active is False %}
-                        <span style="display:inline-block; font-size:0.65rem; background:#fee2e2; color:#ef4444; padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">Deactivated</span>
+                        <span style="display:inline-block; font-size:0.65rem; background:var(--danger-soft); color:var(--danger); padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">Deactivated</span>
                         {% endif %}
                         {% if r.supplier_id is None %}
-                        <span style="display:inline-block; font-size:0.65rem; background:#f1f5f9; color:#64748b; padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">unlinked</span>
+                        <span style="display:inline-block; font-size:0.65rem; background:var(--surface-muted); color:var(--text-muted); padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">unlinked</span>
                         {% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem;" data-sort-value="{% if r.rating == 'poor' %}0{% elif r.rating == 'watch' %}1{% elif r.rating == 'good' %}2{% else %}3{% endif %}">
                         {% if r.rating == 'good' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#dcfce7; color:#15803d; padding:0.15rem 0.55rem; border-radius:999px;">On track</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--success-soft); color:var(--success-strong); padding:0.15rem 0.55rem; border-radius:999px;">On track</span>
                         {% elif r.rating == 'watch' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#fef3c7; color:#b45309; padding:0.15rem 0.55rem; border-radius:999px;">Watch</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--warning-soft); color:var(--warning-strong); padding:0.15rem 0.55rem; border-radius:999px;">Watch</span>
                         {% elif r.rating == 'poor' %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#fee2e2; color:#b91c1c; padding:0.15rem 0.55rem; border-radius:999px;">Poor</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--danger-soft); color:var(--danger-strong); padding:0.15rem 0.55rem; border-radius:999px;">Poor</span>
                         {% else %}
-                        <span style="font-size:0.7rem; font-weight:700; background:#f1f5f9; color:#64748b; padding:0.15rem 0.55rem; border-radius:999px;">No data</span>
+                        <span style="font-size:0.7rem; font-weight:700; background:var(--surface-muted); color:var(--text-muted); padding:0.15rem 0.55rem; border-radius:999px;">No data</span>
                         {% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem; text-align:right;" data-sort-value="{{ r.on_time_rate|default_if_none:'' }}">
@@ -110,7 +110,7 @@
                         <span style="color:var(--text-muted); font-size:0.75rem;"> ({{ r.on_time_count }}/{{ r.assessable_count }})</span>
                         {% if r.estimated_count %}
                         <span title="{{ r.estimated_count }} of these scored against an estimated due date (order date + lead time)"
-                              style="font-size:0.6rem; font-weight:700; background:#eef2ff; color:#4338ca; padding:0.05rem 0.35rem; border-radius:4px; margin-left:0.3rem; vertical-align:middle;">EST</span>
+                              style="font-size:0.6rem; font-weight:700; background:var(--primary-softer); color:var(--primary-strong); padding:0.05rem 0.35rem; border-radius:4px; margin-left:0.3rem; vertical-align:middle;">EST</span>
                         {% endif %}
                         {% else %}
                         <span style="color:var(--text-muted);">&mdash;</span>
@@ -119,7 +119,7 @@
                     <td style="padding:0.85rem 1rem; text-align:right;" data-sort-value="{{ r.avg_delay_days|default_if_none:'' }}">
                         {% if r.avg_delay_days is not None %}
                             {% if r.avg_delay_days > 0 %}
-                            <span style="color:#dc2626; font-weight:700;">+{{ r.avg_delay_days|floatformat:1 }}d</span>
+                            <span style="color:var(--danger); font-weight:700;">+{{ r.avg_delay_days|floatformat:1 }}d</span>
                             {% else %}
                             <span style="color:var(--success-strong); font-weight:700;">{{ r.avg_delay_days|floatformat:1 }}d</span>
                             {% endif %}
@@ -129,7 +129,7 @@
                     </td>
                     <td style="padding:0.85rem 1rem; text-align:right;" data-sort-value="{{ r.fill_rate|default_if_none:'' }}">
                         {% if r.fill_rate is not None %}
-                        <span style="font-weight:700; {% if r.fill_rate < 0.9 %}color:#dc2626;{% endif %}">{% widthratio r.fill_rate 1 100 %}%</span>
+                        <span style="font-weight:700; {% if r.fill_rate < 0.9 %}color:var(--danger);{% endif %}">{% widthratio r.fill_rate 1 100 %}%</span>
                         {% else %}
                         <span style="color:var(--text-muted);">&mdash;</span>
                         {% endif %}
@@ -162,7 +162,7 @@
     date plus a lead time &mdash; the supplier/material lead time on file, or the
     <code>po_default_lead_time_days</code> setting (editable in Admin &rsaquo; System
     settings). Rows scored against a derived due date are tagged
-    <span style="font-size:0.6rem; font-weight:700; background:#eef2ff; color:#4338ca; padding:0.05rem 0.35rem; border-radius:4px;">EST</span>.
+    <span style="font-size:0.6rem; font-weight:700; background:var(--primary-softer); color:var(--primary-strong); padding:0.05rem 0.35rem; border-radius:4px;">EST</span>.
     A PO is "on time" when arrival is on or before the due date. Fill rate is total
     quantity received &divide; total quantity ordered across the supplier's POs.
     Rating: <em>On track</em> &ge; {{ th.good_on_time|floatformat:"-1" }}% on-time and &ge; {{ th.good_fill|floatformat:"-1" }}% fill; <em>Poor</em> below
