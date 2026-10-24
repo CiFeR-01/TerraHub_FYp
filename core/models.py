@@ -666,6 +666,9 @@ class UserAuditLog(models.Model):
         ('role_renamed', 'Role renamed'),
         ('role_permissions_changed', 'Role permissions changed'),
         ('role_deleted', 'Role deleted'),
+        ('signed_in', 'Signed in'),
+        ('sign_in_failed', 'Sign-in failed'),
+        ('locked_out', 'Locked out after failed sign-ins'),
     )
     # The username is copied so the history still reads right if the account is later renamed or deleted.
     target = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='audit_entries')

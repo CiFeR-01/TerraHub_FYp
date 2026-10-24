@@ -77,12 +77,27 @@ def _bump(key):
 
 @receiver(user_login_failed)
 def record_failure(sender, credentials, request=None, **kwargs):
+    from .account import log_sign_in
     username = credentials.get('username') or credentials.get(get_user_model().USERNAME_FIELD)
     for key in _keys(username, request):
         _bump(key)
     # Remember which addresses have counters, so unlock() can find them
     ips = set(cache.get(_ips_key(username), ())) | {_client_ip(request)}
     cache.set(_ips_key(username), ips, lockout_seconds())
+    # Login history in the Audit Log. Only real sign-in attempts (they carry a request), not code calling authenticate().
+    if request is None:
+        return
+    log_sign_in(request, username, 'sign_in_failed')
+    user_key, pair_key = _keys(username, request)
+    limit = fail_limit()
+    # The attempt that reaches a limit is the one that locks; later refused attempts don't log it again.
+    if cache.get(pair_key, 0) == limit:
+        reason = f"{limit} failed attempts from this address"
+    elif cache.get(user_key, 0) == limit * 4:
+        reason = f"{limit * 4} failed attempts from several addresses"
+    else:
+        return
+    log_sign_in(request, username, 'locked_out', f"{reason}; locked for {lockout_seconds() // 60} minutes")
 
 
 @receiver(user_logged_in)
@@ -112,6 +127,8 @@ class ThrottledAuthenticationForm(AuthenticationForm):
 
     def confirm_login_allowed(self, user):
         super().confirm_login_allowed(user)
-        from .account import TEMP_PASSWORD_EXPIRED_MESSAGE, temp_password_expired
+        from .account import TEMP_PASSWORD_EXPIRED_MESSAGE, log_sign_in, temp_password_expired
         if temp_password_expired(user):
             raise ValidationError(TEMP_PASSWORD_EXPIRED_MESSAGE, code='temp_password_expired')
+        # Logged here rather than on user_logged_in so tests' force_login and other code logins stay out of the history
+        log_sign_in(self.request, user.get_username(), 'signed_in')

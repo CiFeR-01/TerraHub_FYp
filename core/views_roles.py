@@ -87,7 +87,7 @@ def roles_view(request):
                 'count': sum(1 for code, _ in perms if code in held),
             } for title, perms in ROLE_PERMISSION_SECTIONS],
             'held_count': len(held),
-            'other_count': selected.permissions.count() - len(held),
+            'total_count': len(ROLE_PERMISSION_CODENAMES),
             'members': CustomUser.objects.filter(groups=selected).order_by('username'),
         })
     return render(request, 'roles.html', context)

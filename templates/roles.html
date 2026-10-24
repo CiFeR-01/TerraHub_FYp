@@ -85,8 +85,7 @@
                 <div style="min-width:0;">
                     <h2 style="font-family:'Outfit',sans-serif; font-size:1.35rem; font-weight:700; color:var(--text-main);">{{ selected.name }}</h2>
                     <p style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">
-                        {{ held_count }} of the permissions below
-                        {% if other_count %} &middot; {{ other_count }} other technical permission{{ other_count|pluralize }} (kept as is; superusers manage those in Django admin){% endif %}
+                        {{ held_count }} of {{ total_count }} permissions
                     </p>
                 </div>
                 {% if editable %}

@@ -13,7 +13,7 @@
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
             {% if target %}History for {{ target.username }}{% else %}Audit Log{% endif %}
         </h1>
-        <p style="font-size:0.9rem; color:var(--text-muted); margin-top:0.25rem;">Who created, reset, or changed each account, role or system setting, and when.</p>
+        <p style="font-size:0.9rem; color:var(--text-muted); margin-top:0.25rem;">Who signed in, and who created, reset, or changed each account, role or system setting, and when.</p>
     </div>
 </header>
 
@@ -56,7 +56,7 @@
                     <td style="padding:0.85rem 1rem;">{{ e.get_action_display }}</td>
                     <td style="padding:0.85rem 1rem; color:var(--text-muted);">{{ e.details|default:"-" }}</td>
                     <td style="padding:0.85rem 1rem;">
-                        {{ e.actor.username|default:"System" }}
+                        {% if e.action == 'sign_in_failed' or e.action == 'locked_out' %}<span style="color:var(--text-muted);">Sign-in page</span>{% else %}{{ e.actor.username|default:"System" }}{% endif %}
                         {% if e.ip_address %}<div style="font-size:0.75rem; color:var(--text-muted);">{{ e.ip_address }}</div>{% endif %}
                     </td>
                 </tr>

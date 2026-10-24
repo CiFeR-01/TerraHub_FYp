@@ -72,6 +72,19 @@ def log_role_change(request, role_name, action, details=''):
                                 details=details, ip_address=_valid_ip(request))
 
 
+def log_sign_in(request, username, action, details=''):
+    """Record a sign-in attempt. `username` is what was typed, so failures for unknown names still show it."""
+    from .models import CustomUser, UserAuditLog
+    username = (username or '').strip()[:150]
+    user = CustomUser.objects.filter(username__iexact=username).first() if username else None
+    if user is None and action == 'sign_in_failed':
+        details = 'No such username'
+    UserAuditLog.objects.create(target=user, target_username=user.username if user else username,
+                                actor=user if action == 'signed_in' else None, action=action,
+                                details=details, ip_address=_valid_ip(request))
+    return user
+
+
 def sign_out_everywhere(user, keep_session_key=None):
     """End every signed-in session of `user` except `keep_session_key`. Returns how many were ended."""
     from django.contrib.sessions.models import Session

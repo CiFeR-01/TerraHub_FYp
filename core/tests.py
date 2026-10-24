@@ -8865,3 +8865,55 @@ class PurchaseOrderCancelTests(TestCase):
         self.client.post(reverse('po_detail', args=[self.po.pk]), {'action': 'mark_received', 'item_id': self.line.id, 'qty_received': '5'})
         self.line.refresh_from_db()
         self.assertEqual(self.line.quantity_received, Decimal('0'))
+
+
+# ============================================================================
+# Login history: sign-ins, failed attempts and lockouts in the Audit Log
+# ============================================================================
+@override_settings(CACHES=LOCMEM)
+class LoginHistoryTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = make_user(username='lh_user', password='right-pw-123')
+
+    def login(self, username='lh_user', password='right-pw-123', ip='10.9.9.9'):
+        return self.client.post(reverse('login'), {'username': username, 'password': password}, REMOTE_ADDR=ip)
+
+    def entries(self, action):
+        return UserAuditLog.objects.filter(action=action).order_by('id')
+
+    def test_successful_sign_in_is_logged_with_ip(self):
+        self.login()
+        entry = self.entries('signed_in').get()
+        self.assertEqual((entry.target, entry.actor, entry.ip_address), (self.user, self.user, '10.9.9.9'))
+
+    def test_failed_sign_in_is_logged_without_actor(self):
+        self.login(password='wrong')
+        entry = self.entries('sign_in_failed').get()
+        self.assertEqual((entry.target, entry.actor, entry.details), (self.user, None, ''))
+        self.assertFalse(self.entries('signed_in').exists())
+
+    def test_unknown_username_keeps_what_was_typed(self):
+        self.login(username='ghost', password='whatever')
+        entry = self.entries('sign_in_failed').get()
+        self.assertEqual((entry.target, entry.target_username, entry.details), (None, 'ghost', 'No such username'))
+
+    def test_lockout_logged_once(self):
+        limit = get_setting('login_fail_limit')
+        for _ in range(limit + 2):
+            self.login(password='wrong')
+        self.assertEqual(self.entries('locked_out').count(), 1)
+        self.assertIn(f'{limit} failed attempts from this address', self.entries('locked_out').get().details)
+
+    def test_force_login_is_not_logged(self):
+        self.client.force_login(self.user)
+        self.assertFalse(self.entries('signed_in').exists())
+
+    def test_audit_log_page_shows_sign_ins(self):
+        self.login(username='ghost', password='whatever')
+        admin = make_user(username='lh_admin', password='x-pw-123456', role='Admin')
+        self.client.force_login(admin)
+        page = self.client.get(reverse('user_audit_log'), {'action': 'sign_in_failed'})
+        self.assertContains(page, 'ghost')
+        self.assertContains(page, 'No such username')
+        self.assertContains(page, 'Sign-in page')
