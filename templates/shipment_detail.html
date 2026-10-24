@@ -310,7 +310,7 @@
                             {% endif %}
                         </td>
                         <td style="padding:1rem 1.5rem; color:var(--text-muted);">
-                            {{ item.batch.batch_number|default:"-" }}
+                            {{ item.batch.batch_number|default:"-" }}{% include "partials/_send_to_qa_button.html" with b=item.batch %}
                         </td>
                         <td style="padding:1rem 1.5rem; text-align:right; font-weight:600;">
                             {{ item.quantity|floatformat:2 }}

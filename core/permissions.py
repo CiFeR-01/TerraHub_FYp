@@ -16,6 +16,12 @@ HANDLE_PURCHASING = 'core.handle_purchasing'
 ALLOCATE_ORDER_STOCK = 'core.allocate_order_stock'
 ALLOCATE_RUN_MATERIALS = 'core.allocate_run_materials'
 CANCEL_ORDERS = 'core.cancel_orders'
+# QA: anyone on the floor can raise a request; QA staff hold/inspect/release/extend; write-offs and returns are
+# their own permission; large write-offs and long extensions need an approver.
+REQUEST_QA = 'core.request_qa'
+PERFORM_QA = 'core.perform_qa'
+DISPOSE_STOCK = 'core.dispose_stock'
+APPROVE_QA_WRITEOFFS = 'core.approve_qa_writeoffs'
 
 
 def is_admin_user(user):
@@ -31,7 +37,7 @@ def approve_perm(obj):
 
 def can_approve(user):
     """Who may approve in at least one module (and so sees the Action Center)."""
-    return has_any_perm(user, APPROVE_PERMS)
+    return has_any_perm(user, APPROVE_PERMS + (APPROVE_QA_WRITEOFFS,))
 
 
 def can_grant_group(user, group):
@@ -44,6 +50,90 @@ def can_grant_group(user, group):
         # HANDLE_PURCHASING only marks who purchasing work is routed to; it isn't a power
         if f"{app_label}.{codename}" != HANDLE_PURCHASING
     )
+
+
+# The Roles page shows only the permissions the app actually checks, in plain words. Every other Django
+# permission a role holds is left as it is (superusers still manage those in /admin/).
+ROLE_PERMISSION_SECTIONS = (
+    ('Sales orders', (
+        ('add_salesorder', 'Create sales orders'),
+        ('change_salesorder', 'Edit sales orders and send them for approval'),
+        ('set_order_status', 'Set a sales order status by hand'),
+        ('approve_sales_orders', 'Approve sales orders'),
+        ('allocate_order_stock', 'Reserve finished goods for sales orders'),
+        ('cancel_orders', 'Cancel sales orders and abort production runs'),
+    )),
+    ('Purchasing', (
+        ('add_purchaseorder', 'Create purchase orders'),
+        ('change_purchaseorder', 'Edit purchase orders and send them for approval'),
+        ('change_purchaseorderdetail', 'Mark purchase order goods as received'),
+        ('approve_purchase_orders', 'Approve purchase orders'),
+        ('handle_purchasing', 'Receive purchase orders drafted for material shortages'),
+    )),
+    ('Manufacturing', (
+        ('view_productrecipe', 'Open the Manufacture page and recipes'),
+        ('add_productrecipe', 'Add recipes'),
+        ('change_productrecipe', 'Edit recipes'),
+        ('add_productionrun', 'Create production runs'),
+        ('change_productionrun', 'Schedule, start and complete production runs'),
+        ('approve_production_runs', 'Approve production runs'),
+        ('allocate_run_materials', 'Reserve materials for production runs'),
+    )),
+    ('Logistics', (
+        ('view_shipment', 'Open Sales Orders, Purchase Orders and the Logistics Tracker'),
+        ('add_shipment', 'Create shipments'),
+        ('change_shipment', 'Plan routes and update shipments'),
+        ('change_shipmentitem', 'Add or remove shipment cargo'),
+        ('add_shipmentitemreceipt', 'Receive shipments'),
+        ('approve_shipments', 'Approve shipments and force-close discrepant ones'),
+    )),
+    ('Inventory & QA', (
+        ('add_batch', 'Create stock batches'),
+        ('change_batch', 'Edit stock batches'),
+        ('adjust_physical_stock', 'Adjust physical stock by hand'),
+        ('delete_stockallocation', 'Remove stock reservations'),
+        ('view_stockaudit', 'See stock audits'),
+        ('add_stockaudit', 'Start stock audits'),
+        ('change_stockaudit', 'Resolve stock audits'),
+        ('request_qa', 'Send batches to QA'),
+        ('perform_qa', 'Quarantine, inspect, release and extend batches'),
+        ('dispose_stock', 'Write off spoiled stock'),
+        ('approve_qa_writeoffs', 'Approve large write-offs and long shelf-life extensions'),
+    )),
+    ('Products, materials & partners', (
+        ('view_product', 'See products'),
+        ('add_product', 'Add products'),
+        ('change_product', 'Edit products'),
+        ('view_material', 'See materials'),
+        ('add_material', 'Add materials'),
+        ('change_material', 'Edit materials'),
+        ('view_supplier', 'See suppliers'),
+        ('change_supplier', 'Add and edit suppliers'),
+        ('view_client', 'See clients'),
+        ('change_client', 'Add and edit clients'),
+    )),
+    ('Facilities', (
+        ('view_warehouse', 'See facilities, capacity and rent pages'),
+        ('add_warehouse', 'Add facilities'),
+        ('change_warehouse', 'Edit facilities'),
+        ('add_warehouseutilizationsnapshot', 'Take capacity snapshots'),
+    )),
+    ('Reports & admin', (
+        ('view_registrylog', 'See the registry ledger'),
+        ('add_opsbriefing', 'Run AI Copilot briefings (each run is a paid model call)'),
+        ('manage_users', 'Manage users, their roles and facility access'),
+        ('override_approvals', 'Work in every facility and use the system tools (Admin level)'),
+    )),
+)
+ROLE_PERMISSION_CODENAMES = tuple(code for _, perms in ROLE_PERMISSION_SECTIONS for code, _ in perms)
+ROLE_PERMISSION_LABELS = {code: label for _, perms in ROLE_PERMISSION_SECTIONS for code, label in perms}
+# Admin always holds every permission (migration 0060 gives it '*'), so the Roles page never changes it.
+LOCKED_ROLES = ('Admin',)
+
+
+def can_edit_roles(user):
+    """Who may create, rename, delete and change roles. Anyone with manage_users can look."""
+    return user.is_superuser or is_admin_user(user)
 
 
 def users_with_perm(perm, include_superusers=True):
@@ -69,7 +159,7 @@ def approvers(perm):
 def pending_actions(user):
     """The work items waiting on `user` in the Action Center, keyed by section.
     Both the page and the sidebar badge count from here so they always agree."""
-    from .models import SalesOrder, PurchaseOrder, ProductionRun, Shipment
+    from .models import SalesOrder, PurchaseOrder, ProductionRun, Shipment, QAApproval
 
     def mine(model, perm, **filters):
         # Sections for a module the user can't approve in stay empty.
@@ -87,6 +177,8 @@ def pending_actions(user):
             .select_related('supplier', 'linked_production_run').prefetch_related('items').order_by('order_date'),
         'pending_shipment_approvals': mine(Shipment, APPROVE_SHIPMENTS, status='Pending Approval', assigned_to=user).order_by('-id'),
         'pending_shipments': mine(Shipment, APPROVE_SHIPMENTS, status='Discrepant', assigned_manager=user).order_by('-id'),
+        'pending_qa_approvals': mine(QAApproval, APPROVE_QA_WRITEOFFS, status='Pending')
+            .select_related('batch', 'batch__material', 'batch__product', 'batch__warehouse', 'requested_by'),
     }
 
 
@@ -100,6 +192,7 @@ SHIP = 'core.change_shipment'
 RECEIVE = 'core.add_shipmentitemreceipt'
 ACTION_PERMS = {
     'batch_detail': {'update_batch': 'core.change_batch'},
+    'qa_request_create': {'send_to_qa': REQUEST_QA},
     'stock_audit': {'create': 'core.add_stockaudit', 'resolve': 'core.change_stockaudit'},
     'product_recipe_api': {a: 'core.change_productrecipe' for a in ('clone_recipe', 'delete_item', 'save_batch')},
     'product_list': {'create_product': 'core.add_product', 'add_recipe': 'core.add_productrecipe',
@@ -119,13 +212,16 @@ ACTION_PERMS = {
                                      'update_so_header')} | {'update_so_status': SET_ORDER_STATUS, 'cancel_so': CANCEL_ORDERS}
     | {'add_follower': OWN_CHECK, 'remove_follower': OWN_CHECK},
     'po_detail': {a: PURCHASE for a in ('add_po_item', 'remove_po_item', 'request_approval', 'update_po_header',
-                                        'update_po_status')} | {'mark_received': ('core.change_purchaseorderdetail', 'core.add_batch', RECEIVE)}
+                                        'update_po_status', 'cancel_po')} | {'mark_received': ('core.change_purchaseorderdetail', 'core.add_batch', RECEIVE)}
     | {'add_follower': OWN_CHECK, 'remove_follower': OWN_CHECK},
     'readiness': {'create_run': 'core.add_productionrun'} | {
         a: RUN for a in ('cancel_allocation', 'update_run_schedule', 'draft_po_from_shortage', 'start_run', 'complete_run')}
     | {'draft_transfer_from_shortage': ALLOCATE_RUN_MATERIALS, 'approve_run': OWN_CHECK},
     'shipments': {'create_shipment': 'core.add_shipment'},
-    'qa_dashboard': {a: 'core.change_batch' for a in ('extend_expiry', 'quarantine', 'release_quarantine', 'spoil_dispose')},
+    'qa_dashboard': {a: PERFORM_QA for a in ('extend_expiry', 'quarantine', 'release_quarantine', 'inspect',
+                                             'assign_request', 'resolve_request', 'hold_downstream')}
+    | {a: DISPOSE_STOCK for a in ('spoil_dispose',)}
+    | {a: APPROVE_QA_WRITEOFFS for a in ('approve_qa', 'reject_qa', 'undo_write_off')},
     'shipment_detail': {a: SHIP for a in ('update_route', 'submit_to_logistics', 'submit_for_approval', 'skip_approval',
                                           'scrap_shipment', 'update_operational_status', 'reopen_shipment',
                                           'return_to_manufacturing', 'cancel_escalation')}
@@ -135,6 +231,7 @@ ACTION_PERMS = {
     | {a: OWN_CHECK for a in ('approve', 'reject', 'force_close_shipment', 'add_follower', 'remove_follower', 'toggle_follow')},
     'user_management': {'update_user': OWN_CHECK, 'reset_password': OWN_CHECK,
                         'create_user': OWN_CHECK, 'unlock_user': OWN_CHECK, 'sign_out_everywhere': OWN_CHECK},
+    'roles': {a: OWN_CHECK for a in ('create_role', 'rename_role', 'delete_role', 'save_permissions')},
     'so_allocate': {'allocate_manual': ALLOCATE_ORDER_STOCK},
     'production_run_allocate': {'allocate_run': ALLOCATE_RUN_MATERIALS},
     'production_run_detail': {a: RUN for a in ('cancel_allocation', 'complete_production', 'log_yield', 'pause_production',

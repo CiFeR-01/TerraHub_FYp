@@ -3,6 +3,26 @@ from django.utils.safestring import mark_safe
 
 from .permissions import can_approve, pending_actions, MANAGE_USERS, ACTION_PERMS, has_any_perm, is_admin_user
 
+def qa_requests_count(request):
+    """Open QA requests (sidebar badge on QA & Spoilage Control) for users who work QA, and the reasons the
+    "Send to QA" pop-up (base.html) offers."""
+    if not request.user.is_authenticated:
+        return {'open_qa_requests_total': 0}
+    from .models import QA_REASON_CHOICES
+    out = {'qa_reason_choices': QA_REASON_CHOICES}
+    if request.user.has_perm('core.perform_qa'):
+        from .models import QARequest
+        from .permissions import limited_warehouse_ids
+        qs = QARequest.objects.filter(status__in=('Open', 'In Review'))
+        ids = limited_warehouse_ids(request.user)
+        if ids is not None:
+            qs = qs.filter(batch__warehouse_id__in=ids)
+        out['open_qa_requests_total'] = qs.count()
+    else:
+        out['open_qa_requests_total'] = 0
+    return out
+
+
 def approvals_count(request):
     """Number of items waiting on the user in the Action Center (sidebar badge), counted from the same querysets the page lists."""
     if request.user.is_authenticated and can_approve(request.user):
@@ -85,6 +105,7 @@ ANALYTICS_CATEGORIES = [
     ('Operations', [
         ('production_yield', 'Yield Performance', ('core.view_productrecipe', 'core.add_batch')),
         ('audit_accuracy', 'Inventory Audit Accuracy', ('core.view_stockaudit', 'core.add_stockaudit')),
+        ('spoilage_report', 'Spoilage & Write-offs', ('core.perform_qa', 'core.dispose_stock', 'core.approve_qa_writeoffs')),
     ]),
 ]
 
@@ -164,8 +185,9 @@ def sidebar_nav(request):
         ops_items.append({'label': 'Logistics Tracker', 'url_name': 'shipments', 'alias_url_names': ['shipment_detail']})
     if user.has_perm('core.view_productrecipe') or user.has_perm('core.add_batch'):
         ops_items.append({'label': 'Manufacture', 'url_name': 'readiness', 'alias_url_names': ['production_run_detail', 'production_run_allocate']})
-    if user.has_perm('core.change_batch'):
-        ops_items.append({'label': 'QA & Spoilage Control', 'url_name': 'qa_dashboard', 'css_class': 'warning-link'})
+    if has_any_perm(user, ('core.perform_qa', 'core.dispose_stock', 'core.approve_qa_writeoffs')):
+        ops_items.append({'label': 'QA & Spoilage Control', 'url_name': 'qa_dashboard', 'css_class': 'warning-link',
+                          'show_qa_badge': True})
     if ops_items:
         groups.append({'id': 'operations', 'short': 'Orders', 'label': 'Operations & Logistics', 'icon': NAV_ICONS['operations'], 'items': ops_items})
 
@@ -173,6 +195,7 @@ def sidebar_nav(request):
     admin_items = []
     if user.has_perm(MANAGE_USERS):
         admin_items.append({'label': 'Users Management', 'url_name': 'user_management'})
+        admin_items.append({'label': 'Roles & Permissions', 'url_name': 'roles'})
         admin_items.append({'label': 'Audit Log', 'url_name': 'user_audit_log'})
     if user.is_superuser or is_admin_user(user):
         admin_items.append({'label': 'System Console', 'url_name': 'system'})

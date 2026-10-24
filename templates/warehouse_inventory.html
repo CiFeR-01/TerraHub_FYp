@@ -128,7 +128,7 @@
                         <th style="text-align: right;">Current Qty</th>
                         {% include "partials/_sort_th.html" with key="expiry_date" label="Expiry Date" %}
                         <th>Days Remaining</th>
-                        {% if can_adjust %}<th style="text-align: right;">Action</th>{% endif %}
+                        {% if can_adjust or perms.core.request_qa %}<th style="text-align: right;">Action</th>{% endif %}
                     </tr>
                 </thead>
                 <tbody id="batchTableBody">
@@ -183,11 +183,18 @@
                                 <span class="badge badge-slate">N/A</span>
                             {% endif %}
                         </td>
-                        {% if can_adjust %}
-                        <td style="text-align: right;">
+                        {% if can_adjust or perms.core.request_qa %}
+                        <td style="text-align: right; white-space: nowrap;">
+                            {% if perms.core.request_qa %}
+                            <button type="button" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem; border-radius: 6px;" onclick="event.stopPropagation(); openSendToQA('{{ b.id }}', '{{ b.batch_number|escapejs }}', '{{ b.quantity }}', '{% if b.material %}{{ b.material.unit_of_measure|escapejs }}{% else %}units{% endif %}');">
+                                Send to QA
+                            </button>
+                            {% endif %}
+                            {% if can_adjust %}
                             <a href="{% url 'stock_audit' %}?batch={{ b.batch_number }}" class="btn btn-secondary" style="background: rgba(245, 158, 11, 0.08); color: var(--warning-strong); border: 1px solid rgba(245, 158, 11, 0.2); padding: 0.35rem 0.75rem; font-size: 0.8rem; border-radius: 6px;" onclick="event.stopPropagation();">
                                 Adjust Stock
                             </a>
+                            {% endif %}
                         </td>
                         {% endif %}
                     </tr>

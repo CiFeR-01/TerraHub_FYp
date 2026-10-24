@@ -420,7 +420,7 @@
         <span class="sec-icon sec-icon--danger" aria-hidden="true"><svg><use href="#i-shield-alert"/></svg></span>
         <div>
             <h2>Risk &amp; Compliance</h2>
-            <div class="sec-sub">Stock within 30 days of its shelf-life limit, soonest first.</div>
+            <div class="sec-sub">Stock within {{ near_window }} days of its shelf-life limit, soonest first.</div>
         </div>
         {% if degrading_batches_total %}
         <a href="{% url 'qa_dashboard' %}" class="sec-link">

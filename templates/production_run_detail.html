@@ -575,7 +575,7 @@
                                 {% for batch in produced_batches %}
                                 <tr style="border-bottom:1px solid var(--border-light);">
                                     <td style="padding:0.75rem; font-size:0.85rem; font-weight:600;">
-                                        <a href="{% url 'batch_detail' batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ batch.batch_number }}</a>
+                                        <a href="{% url 'batch_detail' batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ batch.batch_number }}</a>{% include "partials/_send_to_qa_button.html" with b=batch %}
                                     </td>
                                     <td style="padding:0.75rem; font-size:0.85rem; text-align:right;">{{ batch.quantity|floatformat:2 }} units <span style="font-size:0.75rem; color:var(--text-muted);">(≈ {{ batch.quantity|weight_display:run.target_product }})</span></td>
                                     <td style="padding:0.75rem; font-size:0.85rem;">{{ batch.warehouse.name|default:"Unassigned" }}</td>
@@ -646,7 +646,7 @@
                             {% for c in consumptions %}
                             <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
                                 <td style="padding:0.75rem; font-weight:600;">{{ c.consumed_batch.material.name }}</td>
-                                <td style="padding:0.75rem;"><a href="{% url 'batch_detail' c.consumed_batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ c.consumed_batch.batch_number }}</a></td>
+                                <td style="padding:0.75rem;"><a href="{% url 'batch_detail' c.consumed_batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ c.consumed_batch.batch_number }}</a>{% include "partials/_send_to_qa_button.html" with b=c.consumed_batch %}</td>
                                 <td style="padding:0.75rem; color:var(--text-muted);">{{ c.consumed_batch.warehouse.name|default:"—" }}</td>
                                 <td style="padding:0.75rem; color:var(--text-muted);">{{ c.consumed_batch.expiry_date|date:"M d, Y"|default:"—" }}</td>
                                 <td style="padding:0.75rem; text-align:right;">{{ c.quantity_used|floatformat:2 }} {{ c.consumed_batch.material.unit_of_measure }}</td>

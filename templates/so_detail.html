@@ -294,7 +294,7 @@
                             {% for arow in row.allocation_rows %}
                             <tr style="border-bottom:1px solid var(--border-light);">
                                 <td style="padding:0.4rem 0.75rem; font-weight:600;">
-                                    <a href="{% url 'batch_detail' arow.batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ arow.batch.batch_number }}</a>
+                                    <a href="{% url 'batch_detail' arow.batch.batch_number %}" style="color:var(--primary); text-decoration:none;">{{ arow.batch.batch_number }}</a>{% include "partials/_send_to_qa_button.html" with b=arow.batch %}
                                 </td>
                                 <td style="padding:0.4rem 0.75rem;">{{ arow.quantity|floatformat:2 }} units <span style="color:var(--text-muted);">(≈ {{ arow.quantity|weight_display:row.item.product }})</span></td>
                                 <td style="padding:0.4rem 0.75rem;">

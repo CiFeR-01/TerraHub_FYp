@@ -65,6 +65,13 @@ def log_setting_change(request, key, details):
                                 details=f"{key}: {details}", ip_address=_valid_ip(request))
 
 
+def log_role_change(request, role_name, action, details=''):
+    """Record a Roles page change in the same audit log; the role name sits where the username goes."""
+    from .models import UserAuditLog
+    UserAuditLog.objects.create(target=None, target_username=role_name, actor=request.user, action=action,
+                                details=details, ip_address=_valid_ip(request))
+
+
 def sign_out_everywhere(user, keep_session_key=None):
     """End every signed-in session of `user` except `keep_session_key`. Returns how many were ended."""
     from django.contrib.sessions.models import Session

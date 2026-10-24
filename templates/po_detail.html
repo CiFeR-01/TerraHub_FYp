@@ -34,8 +34,26 @@
             <button type="submit" class="btn btn-primary" style="padding:0.45rem 1rem; font-size:0.85rem;">Update Status</button>
         </form>
         {% endif %}
+        {% if can_cancel and perms.core.change_purchaseorder %}
+        <details style="position:relative;">
+            <summary class="btn btn-secondary" style="padding:0.45rem 1rem; font-size:0.85rem; border-color:var(--danger); color:var(--danger); list-style:none; cursor:pointer;">Cancel PO</summary>
+            <form method="post" style="position:absolute; right:0; top:2.6rem; z-index:20; width:320px; padding:1rem; background:var(--bg-surface); border:1px solid var(--danger-border); border-radius:8px; box-shadow:0 8px 24px rgba(15,23,42,0.12);">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="cancel_po">
+                <label style="display:block; font-size:0.8rem; font-weight:600; color:var(--danger-strong); margin-bottom:0.4rem;">Why is this PO being cancelled?</label>
+                <textarea name="reason" required class="form-input" style="width:100%; padding:0.5rem; border:1px solid var(--danger-border); margin-bottom:0.5rem; height:60px;"></textarea>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 0.75rem;">Deliveries for this PO that haven't left the supplier are cancelled too. This can't be undone.</p>
+                <button type="submit" class="btn" style="width:100%; padding:0.5rem; background:var(--danger); color:#fff; border:none; border-radius:6px; font-weight:600;" onclick="return confirm('Cancel this PO for good?')">Cancel PO</button>
+            </form>
+        </details>
+        {% endif %}
     </div>
 </header>
+{% if cancel_note %}
+<div style="padding:0.85rem 1.25rem; border-radius:8px; margin-bottom:1rem; background:var(--danger-soft); border:1px solid var(--danger-border); color:var(--danger-strong); font-size:0.9rem;">
+    <strong>Cancelled</strong> by {{ cancel_note.user.username|default:"someone" }} on {{ cancel_note.timestamp|date:"d M Y" }}. {{ cancel_note.action|cut:"PO cancelled. " }}
+</div>
+{% endif %}
 
 {% if messages %}
 <div class="messages-container animate-fade-in-up" style="margin-bottom:1.5rem;">
@@ -57,7 +75,7 @@
                 {% elif po.status == 'Pending' or po.status == 'Pending Approval' %}<span class="badge badge-amber">Pending</span>
                 {% elif po.status == 'Partially Received' %}<span class="badge badge-amber">Partially Received</span>
                 {% elif po.status == 'Completed' %}<span class="badge badge-emerald">Completed</span>
-                {% elif po.status == 'Rejected' %}<span class="badge badge-rose">Rejected</span>
+                {% elif po.status == 'Rejected' or po.status == 'Cancelled' %}<span class="badge badge-rose">{{ po.status }}</span>
                 {% else %}<span class="badge badge-sky">{{ po.status }}</span>{% endif %}
             </div>
             <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:1.25rem;">
@@ -246,13 +264,16 @@
                 <!-- Receive quantity mini-form -->
                 <tr id="recv-{{ row.item.id }}" style="display:none; background:var(--success-soft);">
                     <td colspan="10" style="padding:0.5rem 1rem 0.75rem 2rem;">
-                        <form method="post" style="display:inline-flex; gap:0.75rem; align-items:center;">
+                        <form method="post" style="display:inline-flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="mark_received">
                             <input type="hidden" name="item_id" value="{{ row.item.id }}">
                             <label style="font-size:0.82rem; font-weight:600;">Update Received Qty:</label>
                             <input type="number" step="0.01" name="qty_received" value="{{ row.item.quantity_received|floatformat:2 }}" class="form-input" style="width:120px; padding:0.35rem 0.5rem; border-radius:5px; border:1px solid var(--border-light); font-size:0.85rem;" max="{{ row.item.quantity_ordered }}">
                             <span style="font-size:0.82rem; color:var(--text-muted);">/ {{ row.item.quantity_ordered|floatformat:1 }} {{ row.item.material.unit_of_measure }}</span>
+                            <label style="font-size:0.78rem; color:var(--text-muted);" title="From the supplier's label. Blank = worked out from the material's safe storage days.">Expiry <input type="date" name="expiry_date" class="form-input" style="padding:0.3rem 0.4rem; font-size:0.8rem;"></label>
+                            <label style="font-size:0.78rem; color:var(--text-muted);">Made <input type="date" name="manufacturing_date" class="form-input" style="padding:0.3rem 0.4rem; font-size:0.8rem;"></label>
+                            {% if row.item.material.inspect_on_receipt %}<span class="badge badge-amber" title="This material goes on QA hold when it arrives">QA check on arrival</span>{% endif %}
                             <button type="submit" class="btn btn-secondary" style="padding:0.35rem 0.75rem; font-size:0.82rem;">✓ Confirm</button>
                         </form>
                     </td>

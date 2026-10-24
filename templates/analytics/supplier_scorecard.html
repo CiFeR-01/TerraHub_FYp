@@ -79,6 +79,7 @@
                     <th data-sort="num" style="padding:0.75rem 1rem; text-align:right;">Fill Rate</th>
                     <th data-sort="num" style="padding:0.75rem 1rem; text-align:right;">POs</th>
                     <th data-sort="date" style="padding:0.75rem 1rem; text-align:right;">Last Delivery</th>
+                    <th data-sort="num" style="padding:0.75rem 1rem; text-align:right;" title="Stock returned to this supplier or written off by QA, as a share of what was received">QA Rejects</th>
                 </tr>
             </thead>
             <tbody>
@@ -142,10 +143,18 @@
                         data-sort-value="{{ r.last_delivery|date:'Y-m-d' }}">
                         {{ r.last_delivery|date:"d M Y"|default:"&mdash;" }}
                     </td>
+                    <td style="padding:0.85rem 1rem; text-align:right;" data-sort-value="{{ r.quality.reject_rate|default_if_none:'' }}">
+                        {% if r.quality %}
+                        <span style="font-weight:700; {% if r.quality.reject_rate and r.quality.reject_rate > 0.02 %}color:var(--danger);{% endif %}">{% if r.quality.reject_rate is not None %}{% widthratio r.quality.reject_rate 1 100 %}%{% else %}&mdash;{% endif %}</span>
+                        <div style="color:var(--text-muted); font-size:0.72rem;">{% if r.quality.written_off_value %}RM {{ r.quality.written_off_value|floatformat:2 }} written off{% endif %}{% if r.quality.failed_inspections %} &middot; {{ r.quality.failed_inspections }} failed check{{ r.quality.failed_inspections|pluralize }}{% endif %}</div>
+                        {% else %}
+                        <span style="color:var(--text-muted);">&mdash;</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="7" style="padding:2rem 1rem; text-align:center; color:var(--text-muted);">
+                    <td colspan="8" style="padding:2rem 1rem; text-align:center; color:var(--text-muted);">
                         No purchase orders in this window.
                     </td>
                 </tr>

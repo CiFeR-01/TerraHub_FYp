@@ -1,6 +1,6 @@
 from django.urls import path
 from django.contrib.auth import views as auth_views
-from . import views, views_analytics
+from . import views, views_analytics, views_qa, views_roles
 from .login_throttle import ThrottledAuthenticationForm
 
 urlpatterns = [
@@ -13,6 +13,7 @@ urlpatterns = [
     path('system/settings/', views.system_settings_view, name='system_settings'),
     path('system/users/', views.user_management_view, name='user_management'),
     path('system/users/audit/', views.user_audit_log_view, name='user_audit_log'),
+    path('system/roles/', views_roles.roles_view, name='roles'),
     path('profile/', views.profile_view, name='profile'),
     path('profile/password/', views.password_change_view, name='password_change'),
     path('system/db-logs/', views.db_logs_api_view, name='db_logs_api'),
@@ -74,7 +75,9 @@ urlpatterns = [
     path('analytics/yield/', views_analytics.production_yield_view, name='production_yield'),
     path('operations/manufacture/run/<int:pk>/', views.production_run_detail_view, name='production_run_detail'),
     path('operations/manufacture/run/<int:pk>/allocate/', views.production_run_allocate_view, name='production_run_allocate'),
-    path('operations/qa/', views.qa_dashboard_view, name='qa_dashboard'),
+    path('operations/qa/', views_qa.qa_dashboard_view, name='qa_dashboard'),
+    path('operations/qa/request/', views_qa.qa_request_create, name='qa_request_create'),
+    path('analytics/spoilage/', views_analytics.spoilage_report_view, name='spoilage_report'),
     path('approvals/', views.approvals_inbox_view, name='approvals_inbox'),
     path('operations/notifications/read/', views.mark_notifications_read, name='mark_notifications_read'),
 ]

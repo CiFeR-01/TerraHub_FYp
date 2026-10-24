@@ -60,6 +60,13 @@
                 <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.35rem;">Safe Storage Days</label>
                 <input type="number" name="safe_storage_days" value="{{ material.safe_storage_days }}" class="form-input" style="width:100%; padding:0.6rem; border-radius:8px; border:1px solid var(--border-light);">
             </div>
+            <div style="grid-column:1 / -1;">
+                <label style="display:flex; gap:0.5rem; align-items:flex-start; font-size:0.85rem; cursor:pointer;">
+                    <input type="hidden" name="inspect_on_receipt_field" value="1">
+                    <input type="checkbox" name="inspect_on_receipt" value="1" {% if material.inspect_on_receipt %}checked{% endif %} style="margin-top:0.2rem;">
+                    <span><strong>QA check on arrival.</strong> New deliveries go on hold until QA inspects them.</span>
+                </label>
+            </div>
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.75rem;">

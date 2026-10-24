@@ -142,6 +142,50 @@ REGISTRY: dict[str, tuple[object, str, str]] = {
         "being marked Completed is flagged 'stalled' on the Logistics Risk "
         "board / Logistics briefing.",
     ),
+    "qa_near_expiry_days": (
+        30,
+        "int",
+        "QA & Spoilage: batches expiring within this many days are listed as near expiry "
+        "(also the dashboard's degrading-batches panel).",
+    ),
+    "qa_expiry_warning_days": (
+        7,
+        "int",
+        "QA & Spoilage: QA is notified once when a batch is this many days (or fewer) from expiry.",
+    ),
+    "qa_auto_hold_expired": (
+        True,
+        "bool",
+        "When on, a batch that passes its expiry date is put on QA hold automatically "
+        "(Quarantined, with its reservations released) and QA is notified.",
+    ),
+    "qa_quarantine_alert_days": (
+        14,
+        "int",
+        "QA & Spoilage: QA is reminded about a batch that has been on hold this many days.",
+    ),
+    "qa_extension_cap_pct": (
+        25.0,
+        "float",
+        "Shelf-life extensions on a batch may add up to this share (%) of its original shelf life "
+        "without approval; anything beyond goes to the Action Center.",
+    ),
+    "qa_writeoff_approval_rm": (
+        5000.0,
+        "float",
+        "A write-off worth at least this much (RM, at cost or selling price) goes to the Action Center "
+        "for approval before stock is removed. 0 = every write-off needs approval.",
+    ),
+    "qa_writeoff_undo_days": (
+        7,
+        "int",
+        "A manager or admin can undo a write-off for this many days afterwards. 0 = write-offs can't be undone.",
+    ),
+    "qa_release_needs_second_person": (
+        False,
+        "bool",
+        "When on, the person who put a batch on hold can't also release it (four-eyes rule).",
+    ),
 }
 
 
@@ -173,6 +217,12 @@ LIMITS = {
     "login_fail_limit": (3, 50),
     "login_lockout_minutes": (1, 24 * 60),
     "session_idle_timeout_minutes": (5, lambda: _django_settings().SESSION_IDLE_TIMEOUT // 60),
+    "qa_near_expiry_days": (1, 365),
+    "qa_expiry_warning_days": (0, 365),
+    "qa_quarantine_alert_days": (1, 365),
+    "qa_extension_cap_pct": (0, 500),
+    "qa_writeoff_approval_rm": (0, None),
+    "qa_writeoff_undo_days": (0, 365),
 }
 
 ALL_SETTINGS = {**SECURITY_REGISTRY, **REGISTRY}
@@ -182,7 +232,9 @@ SECTIONS = [
     ("Security & sign-in", ["login_fail_limit", "login_lockout_minutes", "session_idle_timeout_minutes"]),
     ("Purchasing & sales", ["po_default_lead_time_days", "so_at_risk_window_days"]),
     ("Logistics", ["logistics_at_risk_window_days", "logistics_stall_days"]),
-    ("Quality", ["qa_hold_new_finished_goods"]),
+    ("Quality", ["qa_hold_new_finished_goods", "qa_near_expiry_days", "qa_expiry_warning_days", "qa_auto_hold_expired",
+                 "qa_quarantine_alert_days", "qa_extension_cap_pct", "qa_writeoff_approval_rm",
+                 "qa_writeoff_undo_days", "qa_release_needs_second_person"]),
     ("Stockout & reorder", ["stockout_reorder_now_days", "stockout_watch_days"]),
     ("Inventory capacity", ["capacity_trend_window_days", "capacity_critical_percent", "capacity_critical_days",
                             "capacity_watch_days", "capacity_flat_slope_pp"]),

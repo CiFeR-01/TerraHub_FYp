@@ -225,6 +225,13 @@
                 <input type="number" name="safe_storage_days" value="{{ material.safe_storage_days }}" class="form-input" required style="width: 100%;">
             </div>
             <div class="form-group-inline">
+                <label style="display:flex; gap:0.5rem; align-items:flex-start; font-size:0.85rem; cursor:pointer;">
+                    <input type="hidden" name="inspect_on_receipt_field" value="1">
+                    <input type="checkbox" name="inspect_on_receipt" value="1" {% if material.inspect_on_receipt %}checked{% endif %} style="margin-top:0.2rem;">
+                    <span><strong>QA check on arrival.</strong> New deliveries go on hold until QA inspects them.</span>
+                </label>
+            </div>
+            <div class="form-group-inline">
                 <label>Weight (MT) per Unit</label>
                 <input type="number" step="0.0001" name="weight_mt_per_unit" value="{{ material.weight_mt_per_unit|floatformat:4 }}" class="form-input" required style="width: 100%;">
             </div>
