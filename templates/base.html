@@ -73,11 +73,14 @@
                         <li>
                             {% if item.url_name %}
                             <a href="{% url item.url_name %}"
-                                class="submenu-link{% if item.css_class %} {{ item.css_class }}{% endif %}{% if item.active %} active{% endif %}{% if item.show_badge %} has-badge{% endif %}"
+                                class="submenu-link{% if item.css_class %} {{ item.css_class }}{% endif %}{% if item.active %} active{% endif %}{% if item.show_badge or item.show_qa_badge %} has-badge{% endif %}"
                                 {% if item.active %}aria-current="page"{% endif %}>
                                 {{ item.label }}
                                 {% if item.show_badge and pending_approvals_total %}
                                 <span class="nav-badge">{{ pending_approvals_total }}</span>
+                                {% endif %}
+                                {% if item.show_qa_badge and open_qa_requests_total %}
+                                <span class="nav-badge" title="Open QA requests">{{ open_qa_requests_total }}</span>
                                 {% endif %}
                             </a>
                             {% else %}
@@ -241,6 +244,7 @@
     </div>
     <script src="{% static 'js/session-timeout.js' %}"></script>
     {% endif %}
+    {% if perms.core.request_qa %}{% include "partials/_send_to_qa_modal.html" %}{% endif %}
     {% block extra_js %}{% endblock %}
     {% include "partials/_sortable_tables.html" %}
     {{ denied_actions|json_script:"th-denied-actions" }}
@@ -385,4 +389,4 @@
     </script>
 </body>
 
-</html>
+</html>

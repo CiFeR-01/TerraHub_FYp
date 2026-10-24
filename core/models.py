@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from datetime import date
+from django.utils import timezone
 
 from .validators import validate_phone, validate_phone_or_email
 
@@ -23,6 +24,10 @@ class Capability(models.Model):
             ('allocate_order_stock', 'Can reserve finished goods for sales orders'),
             ('allocate_run_materials', 'Can reserve materials for production runs'),
             ('cancel_orders', 'Can cancel sales orders and abort production runs'),
+            ('request_qa', 'Can send batches to QA'),
+            ('perform_qa', 'Can quarantine, inspect, release and extend batches'),
+            ('dispose_stock', 'Can write off spoiled stock and return it to suppliers'),
+            ('approve_qa_writeoffs', 'Can approve large write-offs and long shelf-life extensions'),
         ]
 
 
@@ -101,6 +106,9 @@ class Material(models.Model):
         help_text="Reorder when available stock (on hand minus allocated) falls to this level, "
                   "in the material's own unit. Blank = days-of-cover forecast only."
     )
+    inspect_on_receipt = models.BooleanField(
+        default=False, help_text="Deliveries of this material start Quarantined until QA inspects and releases them."
+    )
 
     def __str__(self):
         return f"{self.sku} - {self.name}"
@@ -117,6 +125,9 @@ class Product(models.Model):
     )
     price_per_unit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     is_active = models.BooleanField(default=True)
+    shelf_life_days = models.PositiveIntegerField(
+        null=True, blank=True, help_text="Days a finished batch stays usable after production. Blank = 365."
+    )
 
     def __str__(self):
         return f"{self.sku} - {self.name}"
@@ -294,6 +305,18 @@ class Batch(models.Model):
         help_text="Date this batch stopped costing rent - fully consumed to zero, or "
                    "spoiled/disposed. Null while the batch is still open (Active/Quarantined)."
     )
+    # Expiry as first set; shelf-life extensions are capped against it (core/qa.py).
+    original_expiry_date = models.DateField(null=True, blank=True)
+    extension_days_total = models.PositiveIntegerField(default=0)
+    # Set on a batch split off another (part of a lot held or written off by QA).
+    parent_batch = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='child_batches')
+
+    def save(self, *args, **kwargs):
+        if self.original_expiry_date is None and self.expiry_date:
+            self.original_expiry_date = self.expiry_date
+            if kwargs.get('update_fields') is not None:
+                kwargs['update_fields'] = list(kwargs['update_fields']) + ['original_expiry_date']
+        super().save(*args, **kwargs)
 
     @property
     def available_quantity(self):
@@ -334,6 +357,7 @@ class PurchaseOrder(models.Model):
         ('Partially Received', 'Partially Received'),
         ('Completed', 'Completed'),
         ('Rejected', 'Rejected'),
+        ('Cancelled', 'Cancelled'),
     )
     po_number = models.CharField(max_length=100, unique=True)
     supplier_name = models.CharField(max_length=255)
@@ -571,6 +595,7 @@ class RegistryLog(models.Model):
         ('Spoiled_Disposal', 'Spoiled / Disposed'),
         ('QA_Extension', 'Expiry Extended (QA)'),
         ('Draft_Transfer_Deleted', 'Draft Transfer Deleted'),
+        ('Lost_In_Transit', 'Lost in Transit'),
     )
     action_type = models.CharField(max_length=50, choices=ACTION_CHOICES)
     item_name = models.CharField(max_length=255)
@@ -637,6 +662,13 @@ class UserAuditLog(models.Model):
         ('unlocked', 'Sign-in lockout cleared'),
         ('signed_out_everywhere', 'Signed out everywhere'),
         ('setting_changed', 'System setting changed'),
+        ('role_created', 'Role created'),
+        ('role_renamed', 'Role renamed'),
+        ('role_permissions_changed', 'Role permissions changed'),
+        ('role_deleted', 'Role deleted'),
+        ('signed_in', 'Signed in'),
+        ('sign_in_failed', 'Sign-in failed'),
+        ('locked_out', 'Locked out after failed sign-ins'),
     )
     # The username is copied so the history still reads right if the account is later renamed or deleted.
     target = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='audit_entries')
@@ -800,3 +832,135 @@ class BriefingTick(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=['briefing', 'user', 'point_index'], name='unique_briefing_tick')]
 
+
+
+QA_REASON_CHOICES = (
+    ('expired', 'Expired'),
+    ('near_expiry', 'Close to expiry'),
+    ('moisture', 'Moisture / caking'),
+    ('pest', 'Pest or insect damage'),
+    ('contamination', 'Contamination or foreign matter'),
+    ('packaging', 'Packaging damaged'),
+    ('temperature', 'Stored at the wrong temperature'),
+    ('odour_colour', 'Odour or colour off'),
+    ('damaged_in_transit', 'Damaged in transit'),
+    ('customer_return', 'Customer return'),
+    ('supplier_defect', 'Supplier defect / recall'),
+    ('returned_to_supplier', 'Returned to supplier'),
+    ('failed_inspection', 'Failed inspection'),
+    ('inbound_check', 'Inbound check'),
+    ('routine_check', 'Routine check'),
+    ('other', 'Other'),
+)
+
+
+class QARequest(models.Model):
+    """A batch someone sent to QA ("Send to QA"). QA works it from the Requests tab and records an outcome."""
+    STATUS_CHOICES = (('Open', 'Open'), ('In Review', 'In review'), ('Resolved', 'Resolved'), ('Cancelled', 'Cancelled'))
+    PRIORITY_CHOICES = (('Low', 'Low'), ('Normal', 'Normal'), ('High', 'High'), ('Urgent', 'Urgent'))
+    OUTCOME_CHOICES = (
+        ('released', 'Passed and released'), ('no_issue', 'No issue found'), ('held', 'Kept on hold'),
+        ('disposed', 'Written off'), ('extended', 'Shelf life extended'),
+        ('cancelled', 'Cancelled'),
+    )
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='qa_requests')
+    quantity = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, help_text="Blank = the whole batch")
+    reason = models.CharField(max_length=30, choices=QA_REASON_CHOICES)
+    note = models.TextField(blank=True, default='')
+    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='Normal')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Open')
+    source = models.CharField(max_length=100, blank=True, default='', help_text="Page it was raised from")
+    hold_requested = models.BooleanField(default=False)
+    requested_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name='qa_requests_raised')
+    created_at = models.DateTimeField(auto_now_add=True)
+    assigned_to = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='qa_requests_assigned')
+    resolved_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='qa_requests_resolved')
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    outcome = models.CharField(max_length=20, choices=OUTCOME_CHOICES, blank=True, default='')
+    outcome_note = models.TextField(blank=True, default='')
+
+    class Meta:
+        ordering = ['-created_at']
+
+    @property
+    def is_open(self):
+        return self.status in ('Open', 'In Review')
+
+    def __str__(self):
+        return f"QA request #{self.pk} for {self.batch.batch_number}"
+
+
+class QAInspection(models.Model):
+    """A recorded inspection of a batch: the checklist ticked and the result."""
+    RESULT_CHOICES = (('pass', 'Pass'), ('fail', 'Fail'))
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='inspections')
+    request = models.ForeignKey(QARequest, on_delete=models.SET_NULL, null=True, blank=True, related_name='inspections')
+    result = models.CharField(max_length=10, choices=RESULT_CHOICES)
+    checks = models.JSONField(default=list, blank=True, help_text='[{"check": name, "ok": bool}]')
+    moisture_pct = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    notes = models.TextField(blank=True, default='')
+    inspector = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class QAApproval(models.Model):
+    """A write-off or shelf-life extension above the configured limit, waiting in the Action Center."""
+    KIND_CHOICES = (('dispose', 'Write-off'), ('extend', 'Shelf-life extension'))
+    STATUS_CHOICES = (('Pending', 'Pending'), ('Approved', 'Approved'), ('Rejected', 'Rejected'))
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='qa_approvals')
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES)
+    quantity = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    days = models.PositiveIntegerField(null=True, blank=True)
+    reason = models.CharField(max_length=30, choices=QA_REASON_CHOICES)
+    note = models.TextField(blank=True, default='')
+    value_rm = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    request = models.ForeignKey(QARequest, on_delete=models.SET_NULL, null=True, blank=True, related_name='approvals')
+    requested_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name='qa_approvals_requested')
+    created_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='Pending')
+    decided_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='qa_approvals_decided')
+    decided_at = models.DateTimeField(null=True, blank=True)
+    comment = models.TextField(blank=True, default='')
+
+    class Meta:
+        ordering = ['created_at']
+
+
+class QAEvent(models.Model):
+    """One QA action on a batch, with its reason: the batch's QA history and the data behind the spoilage report."""
+    ACTION_CHOICES = (
+        ('requested', 'Sent to QA'),
+        ('quarantined', 'Put on hold'),
+        ('auto_hold', 'Held automatically (expired)'),
+        ('inspected', 'Inspected'),
+        ('released', 'Released'),
+        ('disposed', 'Written off'),
+        ('disposed_undone', 'Written off (undone)'),
+        ('writeoff_undone', 'Write-off undone'),
+        ('extended', 'Shelf life extended'),
+        ('split', 'Split off a new batch'),
+        ('approval_requested', 'Sent for approval'),
+        ('approval_rejected', 'Approval rejected'),
+        ('expiry_corrected', 'Expiry date corrected'),
+        ('expiry_warning', 'Expiry warning sent'),
+        ('hold_alert', 'Long hold alert sent'),
+    )
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='qa_events')
+    action = models.CharField(max_length=30, choices=ACTION_CHOICES)
+    reason = models.CharField(max_length=30, choices=QA_REASON_CHOICES, blank=True, default='')
+    note = models.TextField(blank=True, default='')
+    quantity = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    value_rm = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    request = models.ForeignKey(QARequest, on_delete=models.SET_NULL, null=True, blank=True, related_name='events')
+    user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+        indexes = [models.Index(fields=['action', 'created_at'])]
+
+    def __str__(self):
+        return f"{self.get_action_display()} {self.batch.batch_number}"

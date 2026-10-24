@@ -96,6 +96,10 @@
                         <span class="badge badge-emerald">Produced</span>
                         {% elif log.action_type == 'Spoiled_Disposal' %}
                         <span class="badge badge-rose">Disposed</span>
+                        {% elif log.action_type == 'Lost_In_Transit' %}
+                        <span class="badge badge-rose">Lost in transit</span>
+                        {% elif log.action_type == 'QA_Extension' %}
+                        <span class="badge badge-slate">Shelf life extended</span>
                         {% elif log.action_type == 'Draft_Transfer_Deleted' %}
                         <span class="badge badge-amber">Draft deleted</span>
                         {% else %}
@@ -103,8 +107,8 @@
                         {% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem; font-weight:600; color:var(--text-main);">{{ log.item_name }}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:700; {% if log.action_type in 'Inbound,Produced,QA_Extension' %}color:var(--success);{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal' %}color:var(--danger);{% endif %}">
-                        {% if log.action_type in 'Inbound,Produced' %}+{{ log.quantity_changed|floatformat:2|cut:"-" }}{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal' %}-{{ log.quantity_changed|floatformat:2|cut:"-" }}{% else %}{{ log.quantity_changed|floatformat:2 }}{% endif %}
+                    <td style="padding:0.85rem 1rem; font-weight:700; {% if log.action_type in 'Inbound,Produced' %}color:var(--success);{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal,Lost_In_Transit' %}color:var(--danger);{% endif %}">
+                        {% if log.action_type in 'Inbound,Produced' %}+{{ log.quantity_changed|floatformat:2|cut:"-" }}{% elif log.action_type in 'Outbound,Consumed_For_Manufacturing,Spoiled_Disposal,Lost_In_Transit' %}-{{ log.quantity_changed|floatformat:2|cut:"-" }}{% else %}{{ log.quantity_changed|floatformat:2 }}{% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem;">{{ log.warehouse.name|default:"—" }}</td>
                     <td style="padding:0.85rem 1rem;">{{ log.user.username|default:"System Engine" }}</td>

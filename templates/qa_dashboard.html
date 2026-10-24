@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load qa_extras %}
 
 {% block title %}QA & Spoilage Control - TerraHub{% endblock %}
 
@@ -11,9 +12,21 @@
             <span class="current-page">QA &amp; Spoilage Control</span>
         </nav>
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
-            Quality Assurance &amp; Degradation Control
+            Quality Assurance &amp; Spoilage Control
         </h1>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:70ch;">
+            Requests sent to QA, stock nearing expiry, stock on hold and write-offs waiting for approval.
+            Expired stock is put on hold automatically.
+        </p>
     </div>
+    <form method="get" style="display:flex; gap:0.5rem; align-items:center;">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <label for="qa-wh" style="font-size:0.8rem; color:var(--text-muted);">Facility</label>
+        <select id="qa-wh" name="wh" class="form-select" style="padding:0.4rem 0.6rem;" onchange="this.form.submit()">
+            <option value="">All my facilities</option>
+            {% for w in warehouses %}<option value="{{ w.id }}" {% if wh == w.id|stringformat:'s' %}selected{% endif %}>{{ w.name }}</option>{% endfor %}
+        </select>
+    </form>
 </header>
 
 {% if messages %}
@@ -28,165 +41,340 @@
 
 <section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay: 0.05s;">
     <div class="kpi-item-card">
-        <span class="kpi-label">Near-Expiry Batches (≤ 30 Days)</span>
+        <span class="kpi-label">Open QA Requests</span>
         <div class="kpi-value-row">
-            <span class="kpi-value">{{ near_expiry|length }}</span>
-            {% if near_expiry %}<span class="badge badge-amber">Warning</span>{% else %}<span class="badge badge-emerald">Healthy</span>{% endif %}
+            <span class="kpi-value">{{ kpis.open_requests }}</span>
+            {% if kpis.urgent_requests %}<span class="badge badge-rose">{{ kpis.urgent_requests }} urgent/high</span>{% endif %}
         </div>
     </div>
     <div class="kpi-item-card">
-        <span class="kpi-label">Quarantined Batches</span>
+        <span class="kpi-label">Expiring (≤ {{ window }} Days)</span>
         <div class="kpi-value-row">
-            <span class="kpi-value">{{ quarantined|length }}</span>
-            {% if quarantined %}<span class="badge badge-rose">Held</span>{% else %}<span class="badge badge-emerald">None</span>{% endif %}
+            <span class="kpi-value">{{ kpis.near_expiry }}</span>
+            {% if kpis.expired %}<span class="badge badge-rose">{{ kpis.expired }} expired</span>{% elif kpis.near_expiry %}<span class="badge badge-amber">Warning</span>{% else %}<span class="badge badge-emerald">Healthy</span>{% endif %}
         </div>
     </div>
     <div class="kpi-item-card">
-        <span class="kpi-label">Disposed / Spoiled</span>
+        <span class="kpi-label">On Hold</span>
         <div class="kpi-value-row">
-            <span class="kpi-value">{{ spoiled|length }}</span>
-            <span class="badge badge-sky">Archived</span>
+            <span class="kpi-value">{{ kpis.on_hold }}</span>
+            <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.4rem;">RM {{ kpis.on_hold_value|floatformat:2 }}</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Value at Risk</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value" style="{% if kpis.at_risk_value %}color:var(--warning-strong);{% endif %}">RM {{ kpis.at_risk_value|floatformat:2 }}</span>
+        </div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Written Off (30 Days)</span>
+        <div class="kpi-value-row">
+            <span class="kpi-value">RM {{ kpis.written_off_30d|floatformat:2 }}</span>
+            <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.4rem;">{{ spoiled.count }} spoiled batch{{ spoiled.count|pluralize:"es" }} in total</span>
         </div>
     </div>
 </section>
 
-<!-- Section 1: Near Expiry Risk Table -->
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
-    <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; color:var(--warning-strong); margin-bottom:1rem;">⚠️ Degrading &amp; Near-Expiry Batches</h3>
+<nav class="animate-fade-in-up" role="tablist" style="display:flex; gap:0.35rem; flex-wrap:wrap; margin:1.5rem 0 1rem; border-bottom:1px solid var(--border-light);">
+    {% for key, label, count in tab_list %}
+    <a href="?tab={{ key }}{% if wh %}&wh={{ wh }}{% endif %}" role="tab" data-qa-tab="{{ key }}" aria-selected="{% if key == tab %}true{% else %}false{% endif %}"
+       style="padding:0.55rem 0.9rem; font-size:0.85rem; text-decoration:none; border-bottom:2px solid {% if key == tab %}var(--primary){% else %}transparent{% endif %}; color:{% if key == tab %}var(--primary){% else %}var(--text-muted){% endif %}; font-weight:{% if key == tab %}700{% else %}500{% endif %};">
+        {{ label }}{% if count %} <span style="font-size:0.7rem; background:var(--surface-muted); padding:0.05rem 0.4rem; border-radius:999px;">{{ count }}</span>{% endif %}
+    </a>
+    {% endfor %}
+</nav>
+
+{% with card_style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;" th_style="padding:0.7rem 1rem;" td_style="padding:0.75rem 1rem;" small_btn="padding:0.3rem 0.6rem; font-size:0.78rem;" %}
+
+<!-- Requests -->
+<section data-qa-pane="requests" class="table-card-wrapper animate-fade-in-up" style="{{ card_style }}{% if tab != 'requests' %} display:none;{% endif %}">
+    <h3 style="font-family:'Outfit', sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem;">QA Check</h3>
+    <div class="table-responsive">
+        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th style="{{ th_style }}">Priority</th>
+                    <th style="{{ th_style }}">Batch</th>
+                    <th style="{{ th_style }}">Reason</th>
+                    <th style="{{ th_style }}">Raised by</th>
+                    <th style="{{ th_style }}">Status</th>
+                    <th style="{{ th_style }} text-align:right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in requests_open %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem; vertical-align:top;">
+                    <td style="{{ td_style }}">
+                        <span class="badge {% if r.priority == 'Urgent' %}badge-rose{% elif r.priority == 'High' %}badge-amber{% else %}badge-sky{% endif %}">{{ r.priority }}</span>
+                    </td>
+                    <td style="{{ td_style }}">
+                        <a href="{% url 'batch_detail' r.batch.batch_number %}" style="font-weight:700; color:var(--primary); text-decoration:none;">{{ r.batch.batch_number }}</a>
+                        <div style="font-size:0.78rem; color:var(--text-muted);">{% if r.batch.material %}{{ r.batch.material.name }}{% elif r.batch.product %}{{ r.batch.product.name }}{% endif %} &middot; {{ r.batch.warehouse.name|default:"No facility" }}</div>
+                        <div style="font-size:0.78rem; color:var(--text-muted);">{% if r.quantity %}{{ r.quantity|floatformat:2 }} of {% endif %}{{ r.batch.quantity|floatformat:2 }} &middot; {{ r.batch.get_status_display }}</div>
+                    </td>
+                    <td style="{{ td_style }}">
+                        {{ r.get_reason_display }}
+                        {% if r.note %}<div style="font-size:0.78rem; color:var(--text-muted); max-width:36ch;">{{ r.note }}</div>{% endif %}
+                    </td>
+                    <td style="{{ td_style }}">
+                        {{ r.requested_by|who }}
+                        <div style="font-size:0.75rem; color:var(--text-muted);">{{ r.created_at|timesince }} ago{% if r.source %} &middot; {{ r.source }}{% endif %}</div>
+                    </td>
+                    <td style="{{ td_style }}">
+                        {{ r.status }}{% if r.assigned_to %}<div style="font-size:0.75rem; color:var(--text-muted);">{{ r.assigned_to|who }}</div>{% endif %}
+                    </td>
+                    <td style="{{ td_style }} text-align:right;">
+                        {% if can_qa %}
+                        <div style="display:inline-flex; gap:0.35rem; flex-wrap:wrap; justify-content:flex-end;">
+                            {% if r.status == 'Open' %}
+                            <form method="post">{% csrf_token %}
+                                <input type="hidden" name="action" value="assign_request"><input type="hidden" name="request_id" value="{{ r.id }}"><input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                <button type="submit" class="btn btn-secondary" style="{{ small_btn }}">Take it</button>
+                            </form>
+                            {% endif %}
+                            <button type="button" class="btn btn-primary" style="{{ small_btn }}" onclick="openQAAction('inspect', '{{ r.batch.id }}', '{{ r.batch.batch_number|escapejs }}', '{{ r.batch.quantity }}', '', '{{ r.id }}')">Inspect</button>
+                            {% if r.batch.status == 'Active' %}
+                            <button type="button" class="btn btn-secondary" style="{{ small_btn }} border-color:var(--warning); color:var(--warning-strong);" onclick="openQAAction('quarantine', '{{ r.batch.id }}', '{{ r.batch.batch_number|escapejs }}', '{{ r.batch.quantity }}', '', '{{ r.id }}')">Hold</button>
+                            {% endif %}
+                            {% if can_dispose %}
+                            <button type="button" class="btn btn-secondary" style="{{ small_btn }} border-color:var(--danger); color:var(--danger);" onclick="openQAAction('spoil_dispose', '{{ r.batch.id }}', '{{ r.batch.batch_number|escapejs }}', '{{ r.batch.quantity }}', '', '{{ r.id }}')">Write off</button>
+                            {% endif %}
+                            <form method="post">{% csrf_token %}
+                                <input type="hidden" name="action" value="resolve_request"><input type="hidden" name="request_id" value="{{ r.id }}"><input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                <select name="outcome" aria-label="Close as" class="form-select" style="padding:0.25rem; font-size:0.78rem;">
+                                    <option value="no_issue">No issue found</option>
+                                    <option value="held">Keep on hold</option>
+                                    <option value="cancelled">Cancel request</option>
+                                </select>
+                                <button type="submit" class="btn btn-secondary" style="{{ small_btn }}">Close</button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" style="padding:1.5rem; text-align:center; color:var(--text-muted);">No open QA requests. Staff can send a batch to QA from its page or the inventory list.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<!-- Expiring -->
+<section data-qa-pane="expiring" class="table-card-wrapper animate-fade-in-up" style="{{ card_style }}{% if tab != 'expiring' %} display:none;{% endif %}">
+    <h3 style="font-family:'Outfit', sans-serif; font-size:1.1rem; font-weight:700; color:var(--warning-strong); margin-bottom:1rem;">Expiring within {{ window }} days</h3>
     {% include "partials/_table_search.html" with target='#nearExpiryTable' placeholder='Search batch #, item, warehouse...' %}
     <div class="table-responsive">
         <table id="nearExpiryTable" class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
-                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
-                    <th style="padding:0.75rem 1rem;">Batch Number</th>
-                    <th style="padding:0.75rem 1rem;">Item / Material</th>
-                    <th style="padding:0.75rem 1rem;">Warehouse Location</th>
-                    <th style="padding:0.75rem 1rem;">Quantity</th>
-                    <th style="padding:0.75rem 1rem;">Expiry Date</th>
-                    <th style="padding:0.75rem 1rem;">Days Remaining</th>
-                    <th style="padding:0.75rem 1rem; text-align:right;">QA Actions</th>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th style="{{ th_style }}">Batch</th>
+                    <th style="{{ th_style }}">Item</th>
+                    <th style="{{ th_style }}">Facility</th>
+                    <th style="{{ th_style }}">Quantity</th>
+                    <th style="{{ th_style }}">Value</th>
+                    <th style="{{ th_style }}">Expiry</th>
+                    <th style="{{ th_style }}">Days Left</th>
+                    <th style="{{ th_style }} text-align:right;">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for b in near_expiry %}
-                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
-                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ b.batch_number }}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:600;">{% if b.material %}{{ b.material.name }}{% elif b.product %}{{ b.product.name }}{% else %}Batch Item{% endif %}</td>
-                    <td style="padding:0.85rem 1rem;">{% if b.warehouse %}{{ b.warehouse.name }}{% if b.location %} ({{ b.location }}){% endif %}{% else %}Unassigned{% endif %}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:600;">{{ b.quantity|floatformat:1 }}</td>
-                    <td style="padding:0.85rem 1rem;">{{ b.expiry_date }}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--warning-strong);">
-                        {{ b.days_remaining }} Days
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                    <td style="{{ td_style }}"><a href="{% url 'batch_detail' b.batch_number %}" style="font-weight:700; color:var(--primary); text-decoration:none;">{{ b.batch_number }}</a></td>
+                    <td style="{{ td_style }} font-weight:600;">{% if b.material %}{{ b.material.name }}{% elif b.product %}{{ b.product.name }}{% else %}Batch Item{% endif %}</td>
+                    <td style="{{ td_style }}">{% if b.warehouse %}{{ b.warehouse.name }}{% if b.location %} ({{ b.location }}){% endif %}{% else %}Unassigned{% endif %}</td>
+                    <td style="{{ td_style }}">
+                        {{ b.quantity|floatformat:1 }}
+                        {% with n=b.allocations.all|length %}{% if n %}<div style="font-size:0.72rem; color:var(--text-muted);">{{ n }} reservation{{ n|pluralize }}</div>{% endif %}{% endwith %}
                     </td>
-                    <td style="padding:0.85rem 1rem; text-align:right;">
-                        <div style="display:inline-flex; gap:0.4rem;">
-                            <!-- Extend Expiry Button -->
-                            <button type="button" class="btn btn-secondary" onclick="openExtendModal('{{ b.id }}', '{{ b.batch_number }}')" style="padding:0.3rem 0.6rem; font-size:0.78rem;">
-                                + Extend Shelf Life
-                            </button>
-                            <!-- Quarantine Button -->
-                            <form method="post" style="display:inline;">
-                                {% csrf_token %}
-                                <input type="hidden" name="action" value="quarantine">
-                                <input type="hidden" name="batch_id" value="{{ b.id }}">
-                                <button type="submit" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem; border-color:var(--warning); color:var(--warning);">
-                                    Quarantine
-                                </button>
-                            </form>
-                            <!-- Spoil/Dispose Button -->
-                            <form method="post" style="display:inline;" onsubmit="return confirm('Mark this batch as spoiled and dispose?')">
-                                {% csrf_token %}
-                                <input type="hidden" name="action" value="spoil_dispose">
-                                <input type="hidden" name="batch_id" value="{{ b.id }}">
-                                <button type="submit" class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.78rem; border-color:var(--danger); color:var(--danger);">
-                                    Dispose
-                                </button>
-                            </form>
+                    <td style="{{ td_style }}" data-sort-value="{{ b.value }}">RM {{ b.value|floatformat:2 }}</td>
+                    <td style="{{ td_style }}" data-sort-value="{{ b.expiry_date|date:'Y-m-d' }}">{{ b.expiry_date }}</td>
+                    <td style="{{ td_style }} font-weight:700; color:{% if b.days_remaining <= warning_days %}var(--danger){% else %}var(--warning-strong){% endif %};" data-sort-value="{{ b.days_remaining }}">
+                        {% if b.days_remaining < 0 %}Expired{% else %}{{ b.days_remaining }} Days{% endif %}
+                    </td>
+                    <td style="{{ td_style }} text-align:right;">
+                        <div style="display:inline-flex; gap:0.35rem; flex-wrap:wrap; justify-content:flex-end;">
+                            {% if can_qa %}
+                            <button type="button" class="btn btn-secondary" style="{{ small_btn }}" onclick="openQAAction('inspect', '{{ b.id }}', '{{ b.batch_number|escapejs }}', '{{ b.quantity }}')">Inspect</button>
+                            <button type="button" class="btn btn-secondary" style="{{ small_btn }}" onclick="openQAAction('extend_expiry', '{{ b.id }}', '{{ b.batch_number|escapejs }}', '{{ b.quantity }}')">Extend</button>
+                            <button type="button" class="btn btn-secondary" style="{{ small_btn }} border-color:var(--warning); color:var(--warning-strong);" onclick="openQAAction('quarantine', '{{ b.id }}', '{{ b.batch_number|escapejs }}', '{{ b.quantity }}')">Hold</button>
+                            {% endif %}
+                            {% if can_dispose %}
+                            <button type="button" class="btn btn-secondary" style="{{ small_btn }} border-color:var(--danger); color:var(--danger);" onclick="openQAAction('spoil_dispose', '{{ b.id }}', '{{ b.batch_number|escapejs }}', '{{ b.quantity }}')">Write off</button>
+                            {% endif %}
                         </div>
                     </td>
                 </tr>
                 {% empty %}
-                <tr>
-                    <td colspan="7" style="padding:1.5rem; text-align:center; color:var(--text-muted);">No batches are near expiry threshold.</td>
-                </tr>
+                <tr><td colspan="8" style="padding:1.5rem; text-align:center; color:var(--text-muted);">No Active batches expire within {{ window }} days.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
-</div>
+</section>
 
-<!-- Section 2: Quarantined Batches -->
-<div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.15s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
-    <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; color:var(--danger); margin-bottom:1rem;">🛑 Quarantined Inventory</h3>
+<!-- At risk forecast -->
+<section data-qa-pane="at_risk" class="table-card-wrapper animate-fade-in-up" style="{{ card_style }}{% if tab != 'at_risk' %} display:none;{% endif %}">
+    <h3 style="font-family:'Outfit', sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:0.35rem;">Won't be used before it expires</h3>
+    <p style="color:var(--text-muted); font-size:0.82rem; margin:0 0 1rem; max-width:80ch;">
+        Forecast from the last 90 days of usage, taking stock that expires sooner first (FEFO). Act early: move it to a busier facility,
+        use it in production first, or sell it on promotion.
+    </p>
+    <div class="table-responsive">
+        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th style="{{ th_style }}">Batch</th>
+                    <th style="{{ th_style }}">Item</th>
+                    <th style="{{ th_style }}">Days Left</th>
+                    <th style="{{ th_style }}">Free stock</th>
+                    <th style="{{ th_style }}">Daily use</th>
+                    <th style="{{ th_style }}">Left over at expiry</th>
+                    <th style="{{ th_style }}">Value at risk</th>
+                    <th style="{{ th_style }}">Suggestion</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in at_risk %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                    <td style="{{ td_style }}"><a href="{% url 'batch_detail' r.batch.batch_number %}" style="font-weight:700; color:var(--primary); text-decoration:none;">{{ r.batch.batch_number }}</a></td>
+                    <td style="{{ td_style }}">{% if r.batch.material %}{{ r.batch.material.name }}{% elif r.batch.product %}{{ r.batch.product.name }}{% endif %}<div style="font-size:0.72rem; color:var(--text-muted);">{{ r.batch.warehouse.name }}</div></td>
+                    <td style="{{ td_style }}" data-sort-value="{{ r.days_left }}">{{ r.days_left }}</td>
+                    <td style="{{ td_style }}">{{ r.free|floatformat:2 }}</td>
+                    <td style="{{ td_style }}">{% if r.daily_rate %}{{ r.daily_rate|floatformat:2 }}{% else %}None recorded{% endif %}</td>
+                    <td style="{{ td_style }} font-weight:700;">{{ r.unused_at_expiry|floatformat:2 }}</td>
+                    <td style="{{ td_style }} font-weight:700; color:var(--warning-strong);" data-sort-value="{{ r.value_at_risk }}">RM {{ r.value_at_risk|floatformat:2 }}</td>
+                    <td style="{{ td_style }} font-size:0.8rem;">{{ r.suggestion }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="8" style="padding:1.5rem; text-align:center; color:var(--text-muted);">Everything on hand is forecast to be used before it expires.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<!-- On hold -->
+<section data-qa-pane="quarantined" class="table-card-wrapper animate-fade-in-up" style="{{ card_style }}{% if tab != 'quarantined' %} display:none;{% endif %}">
+    <h3 style="font-family:'Outfit', sans-serif; font-size:1.1rem; font-weight:700; color:var(--danger); margin-bottom:1rem;">On hold</h3>
     {% include "partials/_table_search.html" with target='#quarantinedTable' placeholder='Search batch #, item, location...' %}
     <div class="table-responsive">
         <table id="quarantinedTable" class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
-                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
-                    <th style="padding:0.75rem 1rem;">Batch Number</th>
-                    <th style="padding:0.75rem 1rem;">Item / Material</th>
-                    <th style="padding:0.75rem 1rem;">Quantity</th>
-                    <th style="padding:0.75rem 1rem;">Location</th>
-                    <th style="padding:0.75rem 1rem;">Actions</th>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th style="{{ th_style }}">Batch</th>
+                    <th style="{{ th_style }}">Item</th>
+                    <th style="{{ th_style }}">Quantity</th>
+                    <th style="{{ th_style }}">Why</th>
+                    <th style="{{ th_style }}">Held for</th>
+                    <th style="{{ th_style }}">Expiry</th>
+                    <th style="{{ th_style }} text-align:right;">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for b in quarantined %}
-                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
-                    <td style="padding:0.85rem 1rem; font-weight:700; color:var(--danger);">{{ b.batch_number }}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:600;">{% if b.material %}{{ b.material.name }}{% elif b.product %}{{ b.product.name }}{% else %}Batch Item{% endif %}</td>
-                    <td style="padding:0.85rem 1rem;">{{ b.quantity|floatformat:1 }}</td>
-                    <td style="padding:0.85rem 1rem;">{% if b.warehouse %}{{ b.warehouse.name }}{% if b.location %} ({{ b.location }}){% endif %}{% else %}Unassigned{% endif %}</td>
-                    <td style="padding:0.85rem 1rem;">
-                        <form method="post" style="display:inline;">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="release_quarantine">
-                            <input type="hidden" name="batch_id" value="{{ b.id }}">
-                            <button type="submit" class="btn btn-primary" style="padding:0.3rem 0.6rem; font-size:0.78rem; background:var(--success);">
-                                ✓ Release to Active
-                            </button>
-                        </form>
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem; vertical-align:top;">
+                    <td style="{{ td_style }}"><a href="{% url 'batch_detail' b.batch_number %}" style="font-weight:700; color:var(--danger); text-decoration:none;">{{ b.batch_number }}</a></td>
+                    <td style="{{ td_style }} font-weight:600;">{% if b.material %}{{ b.material.name }}{% elif b.product %}{{ b.product.name }}{% else %}Batch Item{% endif %}<div style="font-size:0.72rem; font-weight:500; color:var(--text-muted);">{% if b.warehouse %}{{ b.warehouse.name }}{% if b.location %} ({{ b.location }}){% endif %}{% else %}Unassigned{% endif %}</div></td>
+                    <td style="{{ td_style }}">{{ b.quantity|floatformat:1 }}<div style="font-size:0.72rem; color:var(--text-muted);">RM {{ b.value|floatformat:2 }}</div></td>
+                    <td style="{{ td_style }}">
+                        {% if b.hold_event %}{{ b.hold_event.get_reason_display|default:b.hold_event.get_action_display }}
+                        <div style="font-size:0.72rem; color:var(--text-muted);">{{ b.hold_event.user|who }}{% if b.hold_event.note %} &middot; {{ b.hold_event.note|truncatechars:60 }}{% endif %}</div>
+                        {% else %}<span style="color:var(--text-muted);">Not recorded</span>{% endif %}
+                    </td>
+                    <td style="{{ td_style }}" data-sort-value="{{ b.days_held|default_if_none:'' }}">{% if b.days_held is not None %}{{ b.days_held }} day{{ b.days_held|pluralize }}{% else %}&mdash;{% endif %}</td>
+                    <td style="{{ td_style }}{% if b.expired %} color:var(--danger); font-weight:700;{% endif %}">{{ b.expiry_date|default:"&mdash;" }}{% if b.expired %} (expired){% endif %}</td>
+                    <td style="{{ td_style }} text-align:right;">
+                        <div style="display:inline-flex; gap:0.35rem; flex-wrap:wrap; justify-content:flex-end;">
+                            {% if can_qa %}
+                            {% if not b.expired %}<button type="button" class="btn btn-primary" style="{{ small_btn }} background:var(--success);" onclick="openQAAction('inspect', '{{ b.id }}', '{{ b.batch_number|escapejs }}', '{{ b.quantity }}')">Inspect &amp; release</button>{% endif %}
+                            <button type="button" class="btn btn-secondary" style="{{ small_btn }}" onclick="openQAAction('extend_expiry', '{{ b.id }}', '{{ b.batch_number|escapejs }}', '{{ b.quantity }}')">Extend</button>
+                            {% endif %}
+                            {% if can_dispose %}
+                            
+                            <button type="button" class="btn btn-secondary" style="{{ small_btn }} border-color:var(--danger); color:var(--danger);" onclick="openQAAction('spoil_dispose', '{{ b.id }}', '{{ b.batch_number|escapejs }}', '{{ b.quantity }}')">Write off</button>
+                            {% endif %}
+                        </div>
                     </td>
                 </tr>
                 {% empty %}
-                <tr>
-                    <td colspan="5" style="padding:1.5rem; text-align:center; color:var(--text-muted);">No inventory currently held in quarantine.</td>
-                </tr>
+                <tr><td colspan="7" style="padding:1.5rem; text-align:center; color:var(--text-muted);">Nothing is on hold.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
-</div>
+</section>
 
-<!-- Modal: Extend Expiry -->
-<div id="extend-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:var(--bg-surface); border-radius:12px; width:100%; max-width:440px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
-            <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Extend Batch Shelf Life</h3>
-            <button onclick="document.getElementById('extend-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
-        </div>
-        <form method="post">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="extend_expiry">
-            <input type="hidden" id="extend-batch-id" name="batch_id" value="">
-            <p style="font-size:0.875rem; margin-bottom:1rem;" id="extend-batch-name">Extending batch...</p>
-            <div style="margin-bottom:1.25rem;">
-                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.4rem;">Days to Extend</label>
-                <input type="number" name="extra_days" value="30" required class="form-input" style="width:100%; padding:0.6rem; border-radius:6px; border:1px solid var(--border-light);">
-            </div>
-            <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
-                <button type="button" class="btn btn-secondary" onclick="document.getElementById('extend-modal').style.display='none'">Cancel</button>
-                <button type="submit" class="btn btn-primary">Save Expiry Extension</button>
-            </div>
-        </form>
+<!-- Approvals -->
+<section data-qa-pane="approvals" class="table-card-wrapper animate-fade-in-up" style="{{ card_style }}{% if tab != 'approvals' %} display:none;{% endif %}">
+    <h3 style="font-family:'Outfit', sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem;">Waiting for approval</h3>
+    {% include "partials/_qa_approvals_table.html" with qa_approvals=approvals %}
+</section>
+
+<!-- History -->
+<section data-qa-pane="history" class="table-card-wrapper animate-fade-in-up" style="{{ card_style }}{% if tab != 'history' %} display:none;{% endif %}">
+    <h3 style="font-family:'Outfit', sans-serif; font-size:1.1rem; font-weight:700; margin-bottom:1rem;">QA history</h3>
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th style="{{ th_style }}">When</th>
+                    <th style="{{ th_style }}">Batch</th>
+                    <th style="{{ th_style }}">What happened</th>
+                    <th style="{{ th_style }}">Reason</th>
+                    <th style="{{ th_style }}">Quantity</th>
+                    <th style="{{ th_style }}">By</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ev in history %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem; vertical-align:top;">
+                    <td style="{{ td_style }} color:var(--text-muted); white-space:nowrap;">{{ ev.created_at|date:"d M Y H:i" }}</td>
+                    <td style="{{ td_style }}"><a href="{% url 'batch_detail' ev.batch.batch_number %}" style="font-weight:700; color:var(--primary); text-decoration:none;">{{ ev.batch.batch_number }}</a></td>
+                    <td style="{{ td_style }}">{{ ev.get_action_display }}{% if ev.note %}<div style="font-size:0.75rem; color:var(--text-muted); max-width:48ch;">{{ ev.note }}</div>{% endif %}</td>
+                    <td style="{{ td_style }}">{{ ev.get_reason_display|default:"&mdash;" }}</td>
+                    <td style="{{ td_style }}">{% if ev.quantity is not None %}{{ ev.quantity|floatformat:2 }}{% else %}&mdash;{% endif %}{% if ev.value_rm %}<div style="font-size:0.72rem; color:var(--text-muted);">RM {{ ev.value_rm|floatformat:2 }}</div>{% endif %}</td>
+                    <td style="{{ td_style }}">{{ ev.user|who }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" style="padding:1.5rem; text-align:center; color:var(--text-muted);">No QA activity yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
-</div>
+    {% if history.has_other_pages %}
+    <div style="display:flex; gap:0.5rem; justify-content:flex-end; margin-top:1rem; font-size:0.85rem;">
+        {% if history.has_previous %}<a href="?tab=history&page={{ history.previous_page_number }}{% if wh %}&wh={{ wh }}{% endif %}" class="btn btn-secondary" style="{{ small_btn }}">Newer</a>{% endif %}
+        <span style="align-self:center; color:var(--text-muted);">Page {{ history.number }} of {{ history.paginator.num_pages }}</span>
+        {% if history.has_next %}<a href="?tab=history&page={{ history.next_page_number }}{% if wh %}&wh={{ wh }}{% endif %}" class="btn btn-secondary" style="{{ small_btn }}">Older</a>{% endif %}
+    </div>
+    {% endif %}
+</section>
+{% endwith %}
+
+{% include "partials/_qa_action_modal.html" %}
 
 <script>
-    function openExtendModal(batchId, batchNum) {
-        document.getElementById('extend-batch-id').value = batchId;
-        document.getElementById('extend-batch-name').innerText = 'Extending batch: ' + batchNum;
-        document.getElementById('extend-modal').style.display = 'flex';
-    }
+    // Switch tabs without reloading; the link still works without JavaScript.
+    document.querySelectorAll('[data-qa-tab]').forEach(function (link) {
+        link.addEventListener('click', function (e) {
+            if (e.ctrlKey || e.metaKey) { return; }
+            e.preventDefault();
+            var key = link.getAttribute('data-qa-tab');
+            document.querySelectorAll('[data-qa-pane]').forEach(function (p) { p.style.display = p.getAttribute('data-qa-pane') === key ? '' : 'none'; });
+            document.querySelectorAll('[data-qa-tab]').forEach(function (l) {
+                var on = l === link;
+                l.setAttribute('aria-selected', on ? 'true' : 'false');
+                l.style.borderBottomColor = on ? 'var(--primary)' : 'transparent';
+                l.style.color = on ? 'var(--primary)' : 'var(--text-muted)';
+                l.style.fontWeight = on ? '700' : '500';
+            });
+            history.replaceState(null, '', link.getAttribute('href'));
+            var tabInput = document.querySelector('form input[name="tab"]');
+            if (tabInput) { tabInput.value = key; }
+        });
+    });
 </script>
 {% endblock %}

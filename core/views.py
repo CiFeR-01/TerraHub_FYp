@@ -188,6 +188,36 @@ def cancel_sales_order(so, reason, user):
             Notification.objects.create(user=follower, message=f"Sales Order {so.so_number} was cancelled.", link=reverse('so_detail', args=[so.pk]))
 
 
+
+def po_cancel_problem(po):
+    """Why `po` can't be cancelled right now, or None. Only approved POs with nothing received or on the road."""
+    if po.status != 'Pending':
+        return f"{po.po_number} is {po.status}. Only an approved PO with nothing received can be cancelled."
+    if any(i.quantity_received > 0 for i in po.items.all()):
+        return f"Goods have already been received on {po.po_number}. Close it short instead."
+    out = po.shipments.filter(direction='Inbound', status__in=SHIPMENT_OUT + ('Completed',))
+    if out.exists():
+        return f"{', '.join(out.values_list('tracking_number', flat=True))} has already left the supplier. Receive or scrap it first."
+    return None
+
+
+def cancel_purchase_order(po, reason, user):
+    """Cancels an approved PO and its deliveries that haven't left. Callers check po_cancel_problem first."""
+    with transaction.atomic():
+        for sh in po.shipments.filter(direction='Inbound').exclude(status='Cancelled'):
+            sh.status = 'Cancelled'
+            sh.save(update_fields=['status'])
+            clear_approval_notifications(sh.tracking_number)
+            OrderTimeline.objects.create(shipment=sh, action=f"Cancelled with {po.po_number}.", user=user)
+        po.status = 'Cancelled'
+        po.assigned_to = None
+        po.updated_by = user
+        po.save()
+        clear_approval_notifications(po.po_number)
+        OrderTimeline.objects.create(purchase_order=po, action=f"PO cancelled. Reason: {reason}", user=user)
+        for follower in po.followers.exclude(pk=user.pk):
+            Notification.objects.create(user=follower, message=f"Purchase Order {po.po_number} was cancelled.", link=reverse('po_detail', args=[po.pk]))
+
 def so_manual_status_problem(so, new_status):
     """Why `so` can't be set to `new_status` from the dropdown, or None.
     Shipped/Delivered by hand only once every unit has shipped and none of its shipments is still open."""
@@ -215,7 +245,7 @@ SO_MANUFACTURABLE = ('Pending', 'Awaiting Acknowledgement', 'In Production')
 
 
 # PO statuses where lines can't be edited
-PO_ITEMS_LOCKED = ('Partially Received', 'Completed')
+PO_ITEMS_LOCKED = ('Partially Received', 'Completed', 'Cancelled')
 PO_REAPPROVE_ON_EDIT = ('Pending Approval', 'Pending')
 
 
@@ -337,14 +367,18 @@ def dashboard_view(request):
     active_shipments_total = active_shipments_qs.count()
     active_shipments = active_shipments_qs[:DASH_PREVIEW_LIMIT]
 
-    # 5. Degrading batches (<= 30 days shelf life, same threshold as the QA dashboard), soonest expiry first, capped.
+    # 5. Degrading batches (within the QA near-expiry window, qa_near_expiry_days), soonest expiry first, capped.
+    from .qa import sweep_if_due
+    from .settings_store import get_setting
+    sweep_if_due()
+    near_window = get_setting('qa_near_expiry_days')
     active_batches = Batch.objects.filter(status='Active').select_related('material', 'product', 'warehouse')
     today = date.today()
     degrading_batches = []
     for b in active_batches:
         if b.expiry_date:
             days_remaining = (b.expiry_date - today).days
-            if days_remaining <= 30:
+            if days_remaining <= near_window:
                 b.days_remaining = days_remaining
                 degrading_batches.append(b)
     degrading_batches.sort(key=lambda b: b.days_remaining)
@@ -559,6 +593,7 @@ def dashboard_view(request):
         'active_shipments_total': active_shipments_total,
         'degrading_batches': degrading_batches,
         'degrading_batches_total': degrading_batches_total,
+        'near_window': near_window,
         'so_pipeline': so_pipeline,
         'so_open_total': so_open_total,
         'so_closed_total': so_closed_total,
@@ -811,7 +846,7 @@ def warehouse_inventory_view(request):
                         material=mat,
                         quantity=qty,
                         manufacturing_date=date.today(),
-                        expiry_date=expiry if expiry else date.today() + timedelta(days=365),
+                        expiry_date=expiry if expiry else date.today() + timedelta(days=mat.safe_storage_days or 365),
                         warehouse_id=wh_id,
                         location="Receiving Bay"
                     )
@@ -824,7 +859,7 @@ def warehouse_inventory_view(request):
                         product=prod,
                         quantity=qty,
                         manufacturing_date=date.today(),
-                        expiry_date=expiry if expiry else date.today() + timedelta(days=365),
+                        expiry_date=expiry if expiry else date.today() + timedelta(days=prod.shelf_life_days or 365),
                         warehouse_id=wh_id,
                         location="Receiving Bay"
                     )
@@ -937,6 +972,31 @@ status='Active').select_related('warehouse',
     }
     return render(request, 'warehouse_inventory.html', context)
 
+def _batch_qa_context(user, batch):
+    """QA panel data for the batch page: history, inspections, open request, pending approval, trace and what the user may do."""
+    from . import qa
+    from .models import QA_REASON_CHOICES
+    from .permissions import REQUEST_QA, PERFORM_QA, DISPOSE_STOCK, APPROVE_QA_WRITEOFFS
+    is_open = batch.status in qa.OPEN_STATUSES
+    undo_until = qa.undo_deadline(batch) if user.has_perm(APPROVE_QA_WRITEOFFS) else None
+    return {
+        'qa_events': batch.qa_events.select_related('user', 'request')[:50],
+        'qa_inspections': batch.inspections.select_related('inspector')[:10],
+        'qa_open_request': batch.qa_requests.filter(status__in=('Open', 'In Review')).select_related('requested_by').first(),
+        'qa_pending_approval': batch.qa_approvals.filter(status='Pending').select_related('requested_by').first(),
+        'qa_trace': qa.trace(batch),
+        'qa_reasons': QA_REASON_CHOICES,
+        'qa_checks': qa.INSPECTION_CHECKS,
+        'qa_expired': qa.is_expired(batch),
+        'qa_cap_days': qa.extension_cap_days(batch),
+        'can_request_qa': is_open and user.has_perm(REQUEST_QA),
+        'can_qa': is_open and user.has_perm(PERFORM_QA),
+        'can_dispose': is_open and user.has_perm(DISPOSE_STOCK),
+        'can_trace_hold': batch.material_id is not None and user.has_perm(PERFORM_QA),
+        'qa_undo_until': undo_until if undo_until and undo_until >= timezone.localdate() else None,
+    }
+
+
 @login_required
 def batch_detail_view(request, batch_number):
     from django.shortcuts import get_object_or_404, redirect
@@ -959,29 +1019,27 @@ def batch_detail_view(request, batch_number):
             new_location_id = request.POST.get('location_id')
             
             changes = []
-            # Status moves with stock effects go through the same steps as QA; Spoiled/Depleted are final.
-            status_change = new_status if new_status and new_status != batch.status else None
-            if status_change:
-                problem = None
-                if status_change not in dict(Batch.STATUS_CHOICES):
-                    problem = f"'{status_change}' isn't a batch status."
-                elif batch.status in ('Spoiled', 'Depleted'):
-                    problem = f"Batch {batch.batch_number} is {batch.status}, so its status can't be changed."
-                elif status_change == 'Depleted':
-                    problem = "A batch becomes Depleted by itself when its stock runs out; it can't be set by hand."
-                if problem:
-                    messages.error(request, problem)
-                    return redirect('batch_detail', batch_number=batch.batch_number)
+            # Status only changes through the QA actions (hold, inspect/release, write-off), which record a reason.
+            if new_status and new_status != batch.status:
+                messages.error(request, "Change a batch's status with the QA actions on this page (Put on hold, "
+                                        "Inspect / release, Write off), so the reason is recorded.")
+                return redirect('batch_detail', batch_number=batch.batch_number)
 
+            expiry_note = None
             if new_expiry:
                 parsed_expiry, err = read_date(request.POST, 'expiry_date', "Expiry date")
                 if err:
                     messages.error(request, err)
                     return redirect('batch_detail', batch_number=batch.batch_number)
                 if batch.expiry_date != parsed_expiry:
+                    if batch.expiry_date and parsed_expiry > batch.expiry_date:
+                        messages.error(request, "A later expiry date is a shelf-life extension. Use Extend shelf life, "
+                                                "so it's checked against the limit and the reason is recorded.")
+                        return redirect('batch_detail', batch_number=batch.batch_number)
+                    expiry_note = f"Expiry corrected from {batch.expiry_date} to {parsed_expiry}"
                     changes.append(f"Expiry updated to {new_expiry}")
                     batch.expiry_date = parsed_expiry
-                    
+
             new_location = request.POST.get('location')
             if new_location is not None:
                 new_location = new_location.strip()
@@ -1006,17 +1064,6 @@ def batch_detail_view(request, batch_number):
                     )
                     batch.rental_rate_per_mt = new_rate
 
-            # Spoiling logs its own disposal entry; QA release runs after the save so the order gets its reservation.
-            qa_release = status_change == 'Active' and batch.status == 'Quarantined'
-            if status_change == 'Spoiled':
-                problem = spoil_batch(batch, request.user)
-                if problem:
-                    messages.error(request, problem)
-                    return redirect('batch_detail', batch_number=batch.batch_number)
-            elif status_change:
-                changes.insert(0, f"Status changed to {status_change}")
-                if not qa_release:
-                    batch.status = status_change
             if changes:
                 batch.save()
                 RegistryLog.objects.create(
@@ -1026,9 +1073,10 @@ def batch_detail_view(request, batch_number):
                     warehouse=batch.warehouse if batch.warehouse else None,
                     user=request.user,
                 )
-            if qa_release:
-                release_batch_from_qa(batch, request.user)
-            if changes or status_change:
+            if expiry_note:
+                from .qa import log_event
+                log_event(batch, 'expiry_corrected', request.user, note=expiry_note)
+            if changes:
                 messages.success(request, "Batch details updated successfully.")
             return redirect('batch_detail', batch_number=batch.batch_number)
 
@@ -1064,8 +1112,8 @@ def batch_detail_view(request, batch_number):
     context = {
         'batch': batch,
         'logs': logs,
-        'statuses': Batch.STATUS_CHOICES,
         'reservations': reservations,
+        **_batch_qa_context(request.user, batch),
         'shipment_history': shipment_history,
         'unit_cost': unit_cost,
         'est_value': est_value,
@@ -1344,10 +1392,10 @@ def export_product_template(request):
     response = HttpResponse(content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = 'attachment; filename="product_import_template.csv"'
     writer = csv.writer(response)
-    writer.writerow(['name', 'sku', 'description', 'unit_of_measure', 'weight_mt_per_unit', 'price_per_unit'])
-    writer.writerow(['Polymer Compound Alpha', 'PROD1001', 'High density industrial resin', 'pcs', '0.5000', '150.00'])
-    writer.writerow(['Bio-Solvent Solution', 'PROD1002', 'Organic chemical solvent', 'L', '1.0000', '85.50'])
-    writer.writerow(['Composite Sheet Grade B', '', 'Standard structural panel (Auto SKU)', 'pcs', '0.2500', '45.00'])
+    writer.writerow(['name', 'sku', 'description', 'unit_of_measure', 'weight_mt_per_unit', 'price_per_unit', 'shelf_life_days'])
+    writer.writerow(['Polymer Compound Alpha', 'PROD1001', 'High density industrial resin', 'pcs', '0.5000', '150.00', '365'])
+    writer.writerow(['Bio-Solvent Solution', 'PROD1002', 'Organic chemical solvent', 'L', '1.0000', '85.50', '180'])
+    writer.writerow(['Composite Sheet Grade B', '', 'Standard structural panel (Auto SKU)', 'pcs', '0.2500', '45.00', ''])
     return response
 
 
@@ -1357,7 +1405,7 @@ def export_products_csv(request):
     response = HttpResponse(content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = 'attachment; filename="products_export.csv"'
     writer = csv.writer(response)
-    writer.writerow(['name', 'sku', 'description', 'unit_of_measure', 'weight_mt_per_unit', 'price_per_unit'])
+    writer.writerow(['name', 'sku', 'description', 'unit_of_measure', 'weight_mt_per_unit', 'price_per_unit', 'shelf_life_days'])
     for prod in Product.objects.all().order_by('sku'):
         writer.writerow([
             prod.name,
@@ -1365,7 +1413,8 @@ def export_products_csv(request):
             prod.description or '',
             prod.unit_of_measure,
             f"{prod.weight_mt_per_unit:.4f}",
-            f"{prod.price_per_unit:.2f}"
+            f"{prod.price_per_unit:.2f}",
+            prod.shelf_life_days or '',
         ])
     return response
 
@@ -1433,6 +1482,7 @@ def import_products(request):
             uom = row.get('unit_of_measure', 'pcs')
             weight_str = row.get('weight_mt_per_unit', '1.0')
             price_str = row.get('price_per_unit', '0.0')
+            shelf_str = row.get('shelf_life_days', '')
 
             # 1. Validation
             if not name:
@@ -1461,6 +1511,15 @@ def import_products(request):
                 if price < 0: raise ValueError()
             except ValueError:
                 err = f"Line {idx}: Price/Unit must be a non-negative number."
+                error_rows.append({'line': idx, 'row': raw_row, 'error': err})
+                dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
+                continue
+
+            try:
+                shelf = int(shelf_str) if shelf_str else None
+                if shelf is not None and shelf <= 0: raise ValueError()
+            except ValueError:
+                err = f"Line {idx}: Shelf life must be a whole number of days, or blank."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
@@ -1499,6 +1558,7 @@ def import_products(request):
                         db_match.unit_of_measure = uom
                         db_match.weight_mt_per_unit = weight
                         db_match.price_per_unit = price
+                        if shelf is not None: db_match.shelf_life_days = shelf
                         db_match.save()
                     updated_count += 1
                     msg = f"Line {idx}: Updated existing product '{name}' (SKU: {db_match.sku})."
@@ -1515,7 +1575,7 @@ def import_products(request):
             if not is_dry_run:
                 p = Product.objects.create(
                     name=name, sku=sku, description=description,
-                    unit_of_measure=uom, weight_mt_per_unit=weight, price_per_unit=price
+                    unit_of_measure=uom, weight_mt_per_unit=weight, price_per_unit=price, shelf_life_days=shelf
                 )
                 existing_skus[sku.upper()] = p
                 existing_names[clean_name_key] = p
@@ -1980,7 +2040,8 @@ def product_list_view(request):
             name = (name or '').strip()
             weight, err = read_decimal(request.POST, 'weight_mt_per_unit', "Weight per unit", above=0, required=False)
             price, price_err = read_decimal(request.POST, 'price_per_unit', "Price", min_value=0, required=False)
-            err = err or price_err or (None if name else "Product name is required.")
+            shelf, shelf_err = read_decimal(request.POST, 'shelf_life_days', "Shelf life", above=0, required=False)
+            err = err or price_err or shelf_err or (None if name else "Product name is required.")
             if err:
                 messages.error(request, err)
                 return redirect('product_list')
@@ -1989,7 +2050,8 @@ def product_list_view(request):
             try:
                 Product.objects.create(
                     name=name, sku=sku, description=description,
-                    unit_of_measure=uom, weight_mt_per_unit=weight, price_per_unit=price
+                    unit_of_measure=uom, weight_mt_per_unit=weight, price_per_unit=price,
+                    shelf_life_days=int(shelf) if shelf is not None else None,
                 )
                 messages.success(request, f"Product '{name}' (SKU: {sku}) added successfully.")
             except Exception as e:
@@ -2067,6 +2129,11 @@ def product_detail_view(request, pk):
                 product.unit_of_measure = request.POST.get('unit_of_measure', product.unit_of_measure)
                 product.weight_mt_per_unit = float(request.POST.get('weight_mt_per_unit', product.weight_mt_per_unit))
                 product.price_per_unit = float(request.POST.get('price_per_unit', product.price_per_unit))
+                if 'shelf_life_days' in request.POST:
+                    raw_shelf = request.POST.get('shelf_life_days', '').strip()
+                    product.shelf_life_days = int(raw_shelf) if raw_shelf else None
+                    if product.shelf_life_days is not None and product.shelf_life_days <= 0:
+                        raise ValueError("Shelf life must be at least 1 day, or blank for the 365-day default.")
                 product.save()
                 messages.success(request, f"Product '{product.sku}' updated successfully.")
             except Exception as e:
@@ -2191,7 +2258,7 @@ def material_list_view(request):
             Material.objects.create(
                 name=name, sku=sku, category=category, unit_of_measure=uom,
                 safe_storage_days=safe_days, weight_mt_per_unit=weight, cost_per_unit=cost,
-                reorder_point=reorder_point,
+                reorder_point=reorder_point, inspect_on_receipt=request.POST.get('inspect_on_receipt') == '1',
             )
             messages.success(request, f"Material '{name}' (SKU: {sku}) registered.")
         except Exception as e:
@@ -2257,6 +2324,8 @@ def _apply_material_update(request, material):
         material.weight_mt_per_unit = weight
         material.cost_per_unit = cost
         material.reorder_point = reorder_point
+        if 'inspect_on_receipt_field' in request.POST:
+            material.inspect_on_receipt = request.POST.get('inspect_on_receipt') == '1'
         material.save()
 
         RegistryLog.objects.create(
@@ -2300,6 +2369,7 @@ def material_edit_view(request, pk):
             'weight_mt_per_unit': float(material.weight_mt_per_unit),
             'cost_per_unit': float(material.cost_per_unit),
             'reorder_point': float(material.reorder_point) if material.reorder_point is not None else None,
+            'inspect_on_receipt': material.inspect_on_receipt,
         })
 
     from .utils import get_batch_reservations
@@ -2322,6 +2392,7 @@ def material_edit_view(request, pk):
 _MOVEMENT_SIGN = {
     'Inbound': '+', 'Produced': '+',
     'Outbound': '-', 'Consumed_For_Manufacturing': '-', 'Spoiled_Disposal': '-',
+    'Lost_In_Transit': '-',
 }
 
 
@@ -3426,6 +3497,9 @@ def po_detail_view(request, pk):
             if po.status in UNAPPROVED_STATUSES:
                 messages.error(request, f"{po.po_number} hasn't been approved yet, so nothing can be received against it.")
                 return redirect('po_detail', pk=po.pk)
+            if po.status == 'Cancelled':
+                messages.error(request, f"{po.po_number} was cancelled, so nothing can be received against it.")
+                return redirect('po_detail', pk=po.pk)
             try:
                 item = get_object_or_404(PurchaseOrderDetail, id=item_id, purchase_order=po)
                 old_qty = Decimal(str(item.quantity_received))
@@ -3440,17 +3514,38 @@ def po_detail_view(request, pk):
                 delta = new_qty - old_qty
                 if delta == 0:
                     return redirect('po_detail', pk=po.pk)
+                # Optional dates from the supplier's label; blank = today and the material's shelf life
+                supplier_expiry, date_err = read_date(request.POST, 'expiry_date', "Expiry date")
+                supplier_mfg, mfg_err = read_date(request.POST, 'manufacturing_date', "Manufacture date")
+                if date_err or mfg_err:
+                    messages.error(request, date_err or mfg_err)
+                    return redirect('po_detail', pk=po.pk)
+                if supplier_expiry and supplier_mfg and supplier_expiry <= supplier_mfg:
+                    messages.error(request, "The expiry date must be after the manufacture date.")
+                    return redirect('po_detail', pk=po.pk)
 
                 from .utils import apply_po_material_receipt
                 with transaction.atomic():
-                    apply_po_material_receipt(item, delta, request.user)
+                    apply_po_material_receipt(item, delta, request.user, expiry_date=supplier_expiry,
+                                              manufacturing_date=supplier_mfg)
                 OrderTimeline.objects.create(purchase_order=po, action=f"Received {new_qty} of {item.material.name}", user=request.user)
-                if delta > 0:
+                if delta > 0 and item.material.inspect_on_receipt:
+                    messages.success(request, f"Updated received quantity for {item.material.name}. The {delta} received is on QA hold until it's inspected.")
+                elif delta > 0:
                     messages.success(request, f"Updated received quantity for {item.material.name} and added {delta} to inventory.")
                 else:
                     messages.success(request, f"Corrected received quantity for {item.material.name} and took {-delta} back out of inventory.")
             except Exception as e:
                 messages.error(request, f"Error updating received qty: {e}")
+
+        elif action == 'cancel_po':
+            reason = request.POST.get('reason', '').strip()
+            problem = po_cancel_problem(po) or (None if reason else "Give a reason for cancelling the PO.")
+            if problem:
+                messages.error(request, problem)
+                return redirect('po_detail', pk=po.pk)
+            cancel_purchase_order(po, reason, request.user)
+            messages.success(request, f"{po.po_number} cancelled. Its deliveries that hadn't left were cancelled too.")
 
         elif action == 'update_po_status':
             new_status = request.POST.get('status')
@@ -3547,6 +3642,8 @@ def po_detail_view(request, pk):
         'po_status_choices': [c for c in PurchaseOrder.STATUS_CHOICES if c[0] == po.status or c[0] in PO_MANUAL_TRANSITIONS.get(po.status, [])],
         'unapproved_statuses': UNAPPROVED_STATUSES,
         'items_locked': po.status in PO_ITEMS_LOCKED,
+        'can_cancel': po_cancel_problem(po) is None,
+        'cancel_note': po.timeline.filter(action__startswith='PO cancelled').last() if po.status == 'Cancelled' else None,
         'managers': approvers(APPROVE_PURCHASE_ORDERS),
         'can_decide_approval': may_decide_approval(request.user, po),
         'all_users': CustomUser.objects.all().order_by('username'),
@@ -3781,7 +3878,11 @@ def manufacturing_view(request):
                 return redirect('readiness')
             run_id = request.POST.get('run_id')
             run = get_object_or_404(ProductionRun, id=run_id)
-            if run.status == 'Planned':
+            from .qa import run_hold_problem
+            hold_problem = run_hold_problem(run) if run.status == 'Planned' else None
+            if hold_problem:
+                messages.error(request, hold_problem)
+            elif run.status == 'Planned':
                 run.status = 'InProgress'
                 run.start_time = timezone.now()
                 run.save()
@@ -3991,6 +4092,9 @@ def shipments_view(request):
                 origin_wh = Warehouse.objects.filter(id=origin_id).first() if origin_id else None
                 dest_wh = Warehouse.objects.filter(id=dest_id).first() if dest_id else None
                 po = PurchaseOrder.objects.filter(id=po_id).first() if po_id else None
+                if po and po.status == 'Cancelled':
+                    messages.error(request, f"{po.po_number} was cancelled, so no delivery can be raised for it.")
+                    return redirect('shipments')
                 so = SalesOrder.objects.filter(id=so_id).first() if so_id else None
 
                 # Delivery contact and address come from the linked Client (contact person kept separate from the company name).
@@ -4085,7 +4189,7 @@ def shipments_view(request):
     warehouses = Warehouse.objects.all().order_by('name')
     materials = Material.objects.all().order_by('name')
     products = Product.objects.all().order_by('name')
-    purchase_orders = PurchaseOrder.objects.exclude(status='Completed').order_by('-po_number')
+    purchase_orders = PurchaseOrder.objects.exclude(status__in=['Completed', 'Cancelled']).order_by('-po_number')
     sales_orders = SalesOrder.objects.exclude(status='Delivered').order_by('-so_number')
     batches = Batch.objects.filter(status='Active').order_by('batch_number')
 
@@ -4125,116 +4229,7 @@ def shipments_view(request):
 
 
 
-def release_batch_from_qa(batch, user):
-    """QA release: the batch becomes Active and, if a run made it for an order, is reserved for that order now."""
-    batch.status = 'Active'
-    batch.save()
-    clear_approval_notifications(batch.batch_number)
-    run = batch.produced_in
-    if run:
-        OrderTimeline.objects.create(production_run=run, action=f"FG batch {batch.batch_number} released by QA.", user=user)
-        # A batch held at completion gets its order reservation now, if it has none.
-        if run.sales_order and not batch.allocations.exists():
-            from .utils import allocate_finished_batch_to_order
-            allocate_finished_batch_to_order(run, batch, user, event=f"FG batch {batch.batch_number} (Run {run.run_number}) released by QA.")
-
-
-def spoil_batch(batch, user):
-    """Writes a batch off as Spoiled: frees its reservations and logs the disposal. Returns an error message (changing nothing) if it's loaded on a shipment, else None."""
-    from .utils import trim_batch_reservations
-    problem = trim_batch_reservations(batch, 0, user, "batch spoiled / disposed")
-    if problem:
-        return problem
-    batch.status = 'Spoiled'
-    batch.closed_date = date.today()
-    batch.save()
-    RegistryLog.objects.create(
-        action_type='Spoiled_Disposal',
-        item_name=f"Batch {batch.batch_number} Disposed",
-        material=batch.material,
-        quantity_changed=batch.quantity,
-        warehouse=batch.warehouse if batch.warehouse else None,
-        user=user
-    )
-    return None
-
-
-# QA and spoilage control
-@login_required
-def qa_dashboard_view(request):
-    denied = action_denied(request, 'qa_dashboard')
-    if denied:
-        messages.error(request, denied)
-        return redirect(request.get_full_path())
-    if request.method == 'POST':
-        action = request.POST.get('action')
-        batch_id = request.POST.get('batch_id')
-        batch = get_object_or_404(Batch, id=batch_id)
-        if not may_use_warehouse(request.user, batch.warehouse_id):
-            messages.error(request, FACILITY_REFUSED)
-            return redirect('qa_dashboard')
-
-        if action == 'extend_expiry':
-            try:
-                days = int(request.POST.get('extra_days', 30))
-                if days <= 0:
-                    messages.error(request, "Extend the expiry by at least 1 day.")
-                    return redirect('qa_dashboard')
-                batch.expiry_date = batch.expiry_date + timedelta(days=days)
-                batch.save()
-                RegistryLog.objects.create(
-                    action_type='QA_Extension',
-                    item_name=f"Batch {batch.batch_number} (+{days} days)",
-                    material=batch.material,
-                    quantity_changed=batch.quantity,
-                    warehouse=batch.warehouse if batch.warehouse else None,
-                    user=request.user
-                )
-                messages.success(request, f"Expiry date for batch {batch.batch_number} extended by {days} days.")
-            except Exception as e:
-                messages.error(request, f"Error extending expiry: {e}")
-
-        elif action == 'quarantine':
-            batch.status = 'Quarantined'
-            batch.save()
-            messages.warning(request, f"Batch {batch.batch_number} placed in Quarantine.")
-
-        elif action == 'release_quarantine':
-            if batch.status != 'Quarantined':
-                messages.error(request, f"Batch {batch.batch_number} is {batch.status}, not Quarantined, so it can't be released.")
-                return redirect('qa_dashboard')
-            release_batch_from_qa(batch, request.user)
-            messages.success(request, f"Batch {batch.batch_number} released to Active inventory.")
-
-        elif action == 'spoil_dispose':
-            problem = spoil_batch(batch, request.user)
-            if problem:
-                messages.error(request, problem)
-                return redirect('qa_dashboard')
-            messages.error(request, f"Batch {batch.batch_number} marked as Spoiled / Disposed.")
-
-        return redirect('qa_dashboard')
-
-    # Targeted queries for near-expiry, expired and quarantined batches; Depleted batches are excluded.
-    today = timezone.localdate()
-    near_expiry_cutoff = today + timedelta(days=30)
-
-    near_expiry = list(
-        Batch.objects.filter(status='Active', expiry_date__isnull=False, expiry_date__lte=near_expiry_cutoff)
-        .select_related('material', 'product', 'warehouse').order_by('expiry_date')
-    )
-    for b in near_expiry:
-        b.days_remaining = (b.expiry_date - today).days
-
-    quarantined = Batch.objects.filter(status='Quarantined').select_related('material', 'product', 'warehouse').order_by('expiry_date')
-    spoiled = Batch.objects.filter(status='Spoiled')
-
-    context = {
-        'near_expiry': near_expiry,
-        'quarantined': quarantined,
-        'spoiled': spoiled,
-    }
-    return render(request, 'qa_dashboard.html', context)
+# QA actions live in core/qa.py; the QA page is core/views_qa.py.
 
 
 # Approvals inbox (Action Center)
@@ -5117,7 +5112,7 @@ def shipment_detail_view(request, pk):
                         short = item.shortage_quantity
                         if shortage_reasons[item.id] == 'lost':
                             RegistryLog.objects.create(
-                                action_type='Spoiled_Disposal',
+                                action_type='Lost_In_Transit',
                                 item_name=f"{item_name} (Batch {batch.batch_number}) — lost in transit ({shipment.tracking_number})",
                                 material=batch.material,
                                 quantity_changed=short,
@@ -6196,7 +6191,7 @@ def production_run_detail_view(request, pk):
     bom_materials = []
     for req in run.target_product.recipe_items.all():
         needed = float(req.quantity_required) * float(run.expected_yield)
-        avail = float(Batch.objects.filter(material=req.material, status='Active').annotate(
+        avail = float(unexpired(Batch.objects.filter(material=req.material, status='Active')).annotate(
             avail=F('quantity') - F('allocated_quantity')
         ).aggregate(s=Sum('avail'))['s'] or 0)
         allocated = allocated_by_material.get(req.material_id, 0)
@@ -6245,6 +6240,11 @@ def production_run_detail_view(request, pk):
             if run.status not in ('Planned', 'Awaiting Materials'):
                 # A stale page or replayed form must not restart a paused, running or finished run
                 messages.error(request, f"This run is {run.get_status_display()} and can't be started.")
+                return redirect('production_run_detail', pk=pk)
+            from .qa import run_hold_problem
+            hold_problem = run_hold_problem(run)
+            if hold_problem:
+                messages.error(request, hold_problem)
                 return redirect('production_run_detail', pk=pk)
             override_remark = request.POST.get('override_remark', '').strip()
             if not all_shipments_arrived and not override_remark:

@@ -5,7 +5,7 @@ import datetime as _dt
 import re
 from decimal import Decimal
 
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.utils import timezone
 
 from .analytics_cache import cached_analytics
@@ -1542,6 +1542,18 @@ def my_open_jobs(user):
             "age_days": _age(opened), "ownership": "touched", "context": None,
         })
 
+    from .models import QARequest
+    for req in (QARequest.objects.filter(Q(requested_by=user) | Q(assigned_to=user), status__in=("Open", "In Review"))
+                .select_related("batch")):
+        opened = timezone.localtime(req.created_at).date()
+        rows.append({
+            # QA requests are worked on the QA page, which has no per-request view, so pk is None.
+            "kind": "QA Request", "reference": f"Batch {req.batch.batch_number}", "url_name": "qa_dashboard",
+            "pk": None, "status": req.status, "opened_on": opened, "age_days": _age(opened),
+            "ownership": "assigned" if req.assigned_to_id == user.id else "created",
+            "context": {"reason": req.get_reason_display(), "priority": req.priority},
+        })
+
     rows.sort(key=lambda r: (
         -(r["age_days"] if r["age_days"] is not None else -1),
         r["kind"], r["reference"],
@@ -1662,3 +1674,194 @@ def product_sales_trend(*, window_months=TREND_WINDOW_MONTHS, end=None):
 
     rows.sort(key=_sort_key)
     return rows
+
+
+# QA & spoilage: expiry risk, write-off report and supplier quality (core/qa.py records the QAEvent rows).
+
+def expiry_risk(*, horizon_days=90, warehouse_ids=None, today=None):
+    """Active batches whose free stock won't all be used before it expires, at the current usage rate (FEFO order).
+    One row per batch, largest value at risk first."""
+    from django.db.models import F, Q
+    from .models import Batch
+
+    today = today or timezone.localdate()
+    qs = (Batch.objects.filter(status='Active', expiry_date__gte=today,
+                               expiry_date__lte=today + _dt.timedelta(days=horizon_days))
+          .select_related('material', 'product', 'warehouse'))
+    if warehouse_ids is not None:
+        qs = qs.filter(warehouse_id__in=warehouse_ids)
+    batches = [b for b in qs if b.quantity - b.allocated_quantity > 0]
+    if not batches:
+        return []
+    mids = {b.material_id for b in batches if b.material_id}
+    pids = {b.product_id for b in batches if b.product_id}
+    rates = _daily_usage_rates(mids, pids, today)
+
+    # Free stock ahead of each batch in FEFO order, from one query.
+    ahead, running = {}, {}
+    for b in (Batch.objects.filter(status='Active').filter(Q(material_id__in=mids) | Q(product_id__in=pids))
+              .order_by(F('expiry_date').asc(nulls_last=True), 'manufacturing_date', 'id')
+              .only('id', 'material_id', 'product_id', 'quantity', 'allocated_quantity')):
+        key = ('material', b.material_id) if b.material_id else ('product', b.product_id)
+        ahead[b.id] = running.get(key, Decimal('0'))
+        running[key] = ahead[b.id] + max(b.quantity - b.allocated_quantity, Decimal('0'))
+
+    rows = []
+    for b in batches:
+        key = ('material', b.material_id) if b.material_id else ('product', b.product_id)
+        rate = rates.get(key) or Decimal('0')
+        free = b.quantity - b.allocated_quantity
+        days_left = (b.expiry_date - today).days
+        usable = max(rate * days_left - ahead.get(b.id, Decimal('0')), Decimal('0'))
+        unused = max(free - usable, Decimal('0'))
+        if unused <= 0:
+            continue
+        unit = (b.material.cost_per_unit if b.material_id else b.product.price_per_unit) or Decimal('0')
+        if rate <= 0:
+            suggestion = ("Nothing has used this lately. Check whether another site needs it, or plan to write it off."
+                          if b.material_id else "No recent orders for this product. Offer it to customers first or at a discount.")
+        elif b.material_id:
+            suggestion = "Use this batch first in the next run that needs it, or move it to a plant that uses more."
+        else:
+            suggestion = "Allocate this batch to the next orders first, or offer it at a discount."
+        rows.append({
+            'batch': b,
+            'days_left': days_left,
+            'free': free,
+            'daily_rate': rate,
+            'unused_at_expiry': unused.quantize(Decimal('0.01')),
+            'value_at_risk': (unused * Decimal(str(unit))).quantize(Decimal('0.01')),
+            'suggestion': suggestion,
+        })
+    rows.sort(key=lambda r: (-r['value_at_risk'], r['days_left']))
+    return rows
+
+
+def _supplier_key(po):
+    if po is None:
+        return None, 'No supplier (made in-house or adjusted)'
+    if po.supplier_id:
+        return ('id', po.supplier_id), po.supplier.name
+    nm = (po.supplier_name or 'Unspecified').strip() or 'Unspecified'
+    return ('name', nm.lower()), nm
+
+
+def spoilage_report(*, since=None, until=None):
+    """Write-offs recorded by QA (QAEvent; supplier returns are write-offs with that reason), plus lost-in-transit stock, broken down for the
+    Spoilage & Write-offs page."""
+    from .models import QAEvent, RegistryLog, Material
+
+    events = (QAEvent.objects.filter(action='disposed')
+              .select_related('batch', 'batch__material', 'batch__product', 'batch__warehouse',
+                              'batch__purchase_order', 'batch__purchase_order__supplier'))
+    lost = RegistryLog.objects.filter(action_type='Lost_In_Transit').select_related('material', 'warehouse')
+    inbound = RegistryLog.objects.filter(action_type='Inbound', material__isnull=False)
+    if since is not None:
+        events = events.filter(created_at__date__gte=since)
+        lost = lost.filter(timestamp__date__gte=since)
+        inbound = inbound.filter(timestamp__date__gte=since)
+    if until is not None:
+        events = events.filter(created_at__date__lte=until)
+        lost = lost.filter(timestamp__date__lte=until)
+        inbound = inbound.filter(timestamp__date__lte=until)
+
+    def bucket(store, key, label):
+        return store.setdefault(key, {'label': label, 'count': 0, 'quantity': Decimal('0'), 'value': Decimal('0')})
+
+    by_month, by_reason, by_item, by_warehouse, by_supplier = {}, {}, {}, {}, {}
+    totals = {'disposed_value': Decimal('0'), 'returned_value': Decimal('0'), 'count': 0}
+    disposed_by_material = {}
+    for ev in events:
+        b = ev.batch
+        qty = ev.quantity or Decimal('0')
+        val = ev.value_rm or Decimal('0')
+        totals['count'] += 1
+        totals['returned_value' if ev.reason == 'returned_to_supplier' else 'disposed_value'] += val
+        month = timezone.localtime(ev.created_at).strftime('%Y-%m')
+        rows = [
+            bucket(by_month, month, month),
+            bucket(by_reason, ev.reason or 'other', ev.get_reason_display() or 'Other'),
+            bucket(by_item, ('m', b.material_id) if b.material_id else ('p', b.product_id),
+                   b.material.name if b.material_id else (b.product.name if b.product_id else b.batch_number)),
+            bucket(by_warehouse, b.warehouse_id, b.warehouse.name if b.warehouse_id else 'No facility'),
+        ]
+        skey, sname = _supplier_key(b.purchase_order)
+        rows.append(bucket(by_supplier, skey, sname))
+        for r in rows:
+            r['count'] += 1
+            r['quantity'] += qty
+            r['value'] += val
+        if b.material_id:
+            disposed_by_material[b.material_id] = disposed_by_material.get(b.material_id, Decimal('0')) + qty
+
+    lost_rows, lost_value = [], Decimal('0')
+    for log in lost:
+        val = (log.quantity_changed * (log.material.cost_per_unit if log.material_id else Decimal('0'))).quantize(Decimal('0.01'))
+        lost_value += val
+        lost_rows.append({'log': log, 'value': val})
+
+    inbound_by_material = {r['material_id']: r['q'] for r in inbound.values('material_id').annotate(q=Sum('quantity_changed'))}
+    names = dict(Material.objects.filter(id__in=set(disposed_by_material) | set(inbound_by_material)).values_list('id', 'name'))
+    rates = []
+    for mid, disposed in disposed_by_material.items():
+        received = inbound_by_material.get(mid) or Decimal('0')
+        rates.append({'material': names.get(mid, ''), 'disposed': disposed, 'received': received,
+                      'rate': float(disposed / received) if received > 0 else None})
+    rates.sort(key=lambda r: -(r['rate'] or 0))
+
+    def ordered(store, by='value'):
+        return sorted(store.values(), key=lambda r: -r[by])
+
+    return {
+        'totals': {**totals, 'lost_value': lost_value,
+                   'total_value': totals['disposed_value'] + totals['returned_value'] + lost_value},
+        'by_month': sorted(by_month.values(), key=lambda r: r['label']),
+        'by_reason': ordered(by_reason),
+        'by_item': ordered(by_item)[:15],
+        'by_warehouse': ordered(by_warehouse),
+        'by_supplier': ordered(by_supplier),
+        'material_rates': rates[:15],
+        'lost': lost_rows[:20],
+    }
+
+
+def supplier_quality(*, since=None):
+    """{supplier key: {...}} from QA records on purchased batches: returns, write-offs and failed inspections,
+    keyed like supplier_reliability rows (('id', pk) or ('name', lower name))."""
+    from .models import QAEvent
+
+    out = {}
+
+    def row(key):
+        return out.setdefault(key, {'received_qty': Decimal('0'), 'returned_qty': Decimal('0'),
+                                    'written_off_qty': Decimal('0'), 'written_off_value': Decimal('0'),
+                                    'failed_inspections': 0})
+
+    events = (QAEvent.objects.filter(action__in=('disposed', 'inspected'), batch__purchase_order__isnull=False)
+              .select_related('batch__purchase_order__supplier'))
+    if since is not None:
+        events = events.filter(created_at__date__gte=since)
+    for ev in events:
+        key, _ = _supplier_key(ev.batch.purchase_order)
+        r = row(key)
+        if ev.action == 'disposed' and ev.reason == 'returned_to_supplier':
+            r['returned_qty'] += ev.quantity or 0
+        elif ev.action == 'disposed':
+            r['written_off_qty'] += ev.quantity or 0
+            r['written_off_value'] += ev.value_rm or 0
+        elif ev.reason == 'failed_inspection':
+            r['failed_inspections'] += 1
+    # Received quantity per supplier, from the PO lines (only for suppliers with QA records)
+    from .models import PurchaseOrderDetail
+    lines = PurchaseOrderDetail.objects.select_related('purchase_order__supplier')
+    if since is not None:
+        lines = lines.filter(purchase_order__order_date__gte=since)
+    for line in lines:
+        key, _ = _supplier_key(line.purchase_order)
+        r = out.get(key)
+        if r is not None:
+            r['received_qty'] += line.quantity_received or 0
+    for r in out.values():
+        bad = r['returned_qty'] + r['written_off_qty']
+        r['reject_rate'] = float(bad / r['received_qty']) if r['received_qty'] > 0 else None
+    return out

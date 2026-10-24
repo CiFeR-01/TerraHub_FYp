@@ -1,0 +1,122 @@
+<!-- One pop-up for every QA action (hold, inspect, write off, return, extend). Posts to the QA page, which sends the user back to `next`.
+     Open it with openQAAction(action, batchId, batchNumber, quantity, unit, requestId, capDays). -->
+<div id="qa-action-modal" role="dialog" aria-modal="true" aria-labelledby="qa-action-title" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.5); z-index:1100; align-items:center; justify-content:center; padding:1rem;">
+    <div style="background:var(--bg-surface); border-radius:12px; width:100%; max-width:500px; padding:1.5rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.15); max-height:90vh; overflow:auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+            <h3 id="qa-action-title" style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700;">QA action</h3>
+            <button type="button" onclick="closeQAAction()" aria-label="Close" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        </div>
+        <form method="post" action="{% url 'qa_dashboard' %}" id="qa-action-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" id="qa-action-action" value="">
+            <input type="hidden" name="batch_id" id="qa-action-batch-id" value="">
+            <input type="hidden" name="request_id" id="qa-action-request-id" value="">
+            <input type="hidden" name="next" value="{{ request.get_full_path }}">
+            <p id="qa-action-batch" style="font-size:0.9rem; margin-bottom:0.35rem; font-weight:600;"></p>
+            <p id="qa-action-help" style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1rem;"></p>
+
+            <div data-qa-field="result" style="margin-bottom:0.9rem;">
+                <span style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.4rem;">Checklist</span>
+                {% for c in qa_checks %}
+                <label style="display:flex; gap:0.5rem; align-items:center; font-size:0.85rem; margin-bottom:0.3rem; cursor:pointer;">
+                    <input type="checkbox" name="checks" value="{{ c }}" class="qa-check"> {{ c }}
+                </label>
+                {% endfor %}
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-top:0.6rem;">
+                    <div>
+                        <label for="qa-action-moisture" style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.3rem;">Moisture % (optional)</label>
+                        <input type="number" step="0.01" min="0" max="100" name="moisture_pct" id="qa-action-moisture" class="form-input" style="width:100%; padding:0.5rem;">
+                    </div>
+                    <div>
+                        <span style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.3rem;">Result</span>
+                        <label style="margin-right:0.9rem; font-size:0.85rem; cursor:pointer;"><input type="radio" name="result" value="pass" id="qa-action-pass"> Pass</label>
+                        <label style="font-size:0.85rem; cursor:pointer;"><input type="radio" name="result" value="fail" id="qa-action-fail"> Fail</label>
+                    </div>
+                </div>
+            </div>
+
+            <div data-qa-field="reason" style="margin-bottom:0.9rem;">
+                <label for="qa-action-reason" style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.3rem;">Reason</label>
+                <select name="reason" id="qa-action-reason" class="form-select" style="width:100%; padding:0.5rem;">
+                    <option value="">Choose a reason…</option>
+                    {% for val, label in qa_reasons %}<option value="{{ val }}">{{ label }}</option>{% endfor %}
+                </select>
+            </div>
+
+            <div data-qa-field="quantity" style="margin-bottom:0.9rem;">
+                <label for="qa-action-qty" style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.3rem;">Quantity</label>
+                <input type="number" step="0.01" min="0.01" name="quantity" id="qa-action-qty" class="form-input" style="width:100%; padding:0.5rem;" placeholder="All">
+                <div id="qa-action-qty-hint" style="font-size:0.72rem; color:var(--text-muted); margin-top:0.2rem;"></div>
+            </div>
+
+            <div data-qa-field="days" style="margin-bottom:0.9rem;">
+                <label for="qa-action-days" style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.3rem;">Days to add</label>
+                <input type="number" min="1" name="extra_days" id="qa-action-days" value="7" class="form-input" style="width:100%; padding:0.5rem;">
+                <div id="qa-action-days-hint" style="font-size:0.72rem; color:var(--text-muted); margin-top:0.2rem;"></div>
+            </div>
+
+            <label for="qa-action-note" style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.3rem;">Note</label>
+            <textarea name="note" id="qa-action-note" rows="2" class="form-input" style="width:100%; padding:0.5rem; margin-bottom:1.1rem;"></textarea>
+
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
+                <button type="button" class="btn btn-secondary" onclick="closeQAAction()">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="qa-action-submit">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+    (function () {
+        var SETUP = {
+            quarantine: {title: 'Put on hold', button: 'Put on hold', fields: ['reason', 'quantity'],
+                         help: "Held stock can't be reserved, shipped or used in production. Enter a quantity to hold only part of the batch."},
+            inspect: {title: 'Inspect', button: 'Save inspection', fields: ['result'],
+                      help: 'Pass releases a held batch back to Active stock. Fail keeps it on hold.'},
+            spoil_dispose: {title: 'Write off', button: 'Write off', fields: ['reason', 'quantity'], danger: true,
+                            help: 'Removes the stock for good, including stock sent back to the supplier (pick that reason). Large write-offs go to a manager for approval first.'},
+            extend_expiry: {title: 'Extend shelf life', button: 'Extend', fields: ['reason', 'days'],
+                            help: 'Only extend after a check shows the stock is still good.'}
+        };
+        window.openQAAction = function (action, batchId, batchNumber, quantity, unit, requestId, capDays) {
+            var s = SETUP[action];
+            document.getElementById('qa-action-action').value = action;
+            document.getElementById('qa-action-batch-id').value = batchId;
+            document.getElementById('qa-action-request-id').value = requestId || '';
+            document.getElementById('qa-action-title').innerText = s.title;
+            document.getElementById('qa-action-batch').innerText = 'Batch ' + batchNumber + (quantity ? ' · ' + quantity + (unit ? ' ' + unit : '') : '');
+            document.getElementById('qa-action-help').innerText = s.help;
+            var submit = document.getElementById('qa-action-submit');
+            submit.innerText = s.button;
+            submit.style.background = s.danger ? 'var(--danger)' : '';
+            document.querySelectorAll('#qa-action-modal [data-qa-field]').forEach(function (el) {
+                el.style.display = s.fields.indexOf(el.getAttribute('data-qa-field')) >= 0 ? '' : 'none';
+            });
+            var reason = document.getElementById('qa-action-reason');
+            reason.required = s.fields.indexOf('reason') >= 0;
+            reason.value = '';
+            var qty = document.getElementById('qa-action-qty');
+            qty.value = '';
+            qty.max = quantity || '';
+            document.getElementById('qa-action-qty-hint').innerText = 'Blank = the whole batch' + (quantity ? ' (' + quantity + (unit ? ' ' + unit : '') + ')' : '');
+            document.getElementById('qa-action-days-hint').innerText = capDays ? ('Up to ' + capDays + ' more days without approval.') : '';
+            document.querySelectorAll('#qa-action-modal .qa-check').forEach(function (c) { c.checked = false; });
+            document.getElementById('qa-action-pass').checked = false;
+            document.getElementById('qa-action-fail').checked = false;
+            document.getElementById('qa-action-pass').required = action === 'inspect';
+            document.getElementById('qa-action-note').value = '';
+            document.getElementById('qa-action-modal').style.display = 'flex';
+        };
+        window.closeQAAction = function () {
+            document.getElementById('qa-action-modal').style.display = 'none';
+        };
+        document.getElementById('qa-action-form').addEventListener('submit', function (e) {
+            var action = document.getElementById('qa-action-action').value;
+            if (action === 'inspect' && document.getElementById('qa-action-pass').checked) {
+                var unticked = Array.prototype.filter.call(document.querySelectorAll('#qa-action-modal .qa-check'), function (c) { return !c.checked; });
+                if (unticked.length && !confirm('Some checklist items are not ticked. Pass the batch anyway?')) { e.preventDefault(); }
+            }
+            if (action === 'spoil_dispose' && !confirm('Write this stock off? This cannot be undone.')) { e.preventDefault(); }
+        });
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { window.closeQAAction(); } });
+    })();
+</script>

@@ -213,6 +213,14 @@
             </div>
             {% endfor %}
 
+            <!-- QA write-offs and shelf-life extensions -->
+            {% if pending_qa_approvals %}
+            <div style="background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:10px; padding:1.25rem;">
+                <div style="font-size:0.75rem; font-weight:700; color:var(--danger); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.5rem;">QA Approval</div>
+                {% include "partials/_qa_approvals_table.html" with qa_approvals=pending_qa_approvals can_approve_qa=True %}
+            </div>
+            {% endif %}
+
             {% if not pending_count %}
             <div style="text-align:center; padding:3rem 1rem; color:var(--text-muted);">
                 <div style="font-size:2rem; margin-bottom:0.5rem;">&#127881;</div>

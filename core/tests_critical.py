@@ -188,7 +188,7 @@ class PermissionTests(CriticalBase):
         stock = self.batch('CR-VW', '10')
         self.as_user(make_user(username='cr_viewer', password='pw', role='Staff (Viewer)'))
         self.post('so_list', action='create_so', so_number_auto='1', client_name='C', origin_warehouse_id=self.store.id)
-        self.post('qa_dashboard', action='spoil_dispose', batch_id=stock.id)
+        self.post('qa_dashboard', action='spoil_dispose', reason='expired', batch_id=stock.id)
         self.refresh(stock)
         self.assertFalse(SalesOrder.objects.exists())
         self.assertEqual(stock.status, 'Active')
@@ -301,7 +301,7 @@ class StockAccuracyTests(CriticalBase):
         stock = self.batch('CR-SPOIL', '10', allocated='10')
         so, _ = self.so('10', status='Ready to Ship')
         StockAllocation.objects.create(batch=stock, sales_order=so, quantity=D('10'))
-        self.post('qa_dashboard', action='spoil_dispose', batch_id=stock.id)
+        self.post('qa_dashboard', action='spoil_dispose', reason='expired', batch_id=stock.id)
         self.refresh(stock, so)
         self.assertEqual((stock.status, stock.allocated_quantity, so.status), ('Spoiled', D('0'), 'Pending'))
         self.assertTrue(RegistryLog.objects.filter(action_type='Spoiled_Disposal').exists())
@@ -310,7 +310,7 @@ class StockAccuracyTests(CriticalBase):
         stock = self.batch('CR-LOADED', '10', allocated='10')
         so, _ = self.so('10', status='Shipped')
         self.outbound(so, stock, '10', status='Dispatched')
-        self.post('qa_dashboard', action='spoil_dispose', batch_id=stock.id)
+        self.post('qa_dashboard', action='spoil_dispose', reason='expired', batch_id=stock.id)
         self.refresh(stock)
         self.assertEqual(stock.status, 'Active')
 
@@ -448,7 +448,7 @@ class TransferTests(CriticalBase):
         self.refresh(src)
         self.assertEqual(src.quantity, D('100'))    # 200 - 70 arrived - 30 lost
         self.assertEqual(Batch.objects.get(warehouse=self.plant).quantity, D('70'))
-        self.assertEqual(RegistryLog.objects.get(action_type='Spoiled_Disposal').quantity_changed, D('30'))
+        self.assertEqual(RegistryLog.objects.get(action_type='Lost_In_Transit').quantity_changed, D('30'))
 
     def test_transfer_for_a_run_keeps_the_runs_reservation(self):
         src = self.batch('CR-SRC4', '50', allocated='20', wh=self.store, material=True)

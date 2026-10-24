@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block title %}Spoilage & Write-offs - TerraHub{% endblock %}
+
+{% block content %}
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <span>Analytics</span>
+            <span class="separator">/</span>
+            <span>Operations</span>
+            <span class="separator">/</span>
+            <span class="current-page">Spoilage &amp; Write-offs</span>
+        </nav>
+        <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
+            Spoilage &amp; Write-offs
+        </h1>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:64ch;">
+            What QA wrote off or sent back to suppliers, and stock lost in transit. Use it to find the reasons,
+            items, facilities and suppliers that cost the most.
+        </p>
+    </div>
+</header>
+
+{% include "analytics/partials/_analytics_tabs.html" %}
+{% include "analytics/partials/_freshness.html" %}
+
+<div class="animate-fade-in-up" style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center; margin-bottom:1.25rem;">
+    <span style="font-size:0.8rem; color:var(--text-muted); margin-right:0.25rem;">Recorded within:</span>
+    {% for w in window_choices %}
+    <a href="?window={{ w }}"
+       style="font-size:0.8rem; padding:0.3rem 0.7rem; border-radius:6px; text-decoration:none; border:1px solid var(--border-light);
+              {% if w == window_days %}background:var(--primary); color:var(--on-primary); font-weight:700;{% else %}color:var(--text-muted); background:var(--bg-surface);{% endif %}">
+        {% if w == 0 %}All time{% else %}{{ w }} days{% endif %}
+    </a>
+    {% endfor %}
+</div>
+
+<section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay:0.05s; margin-bottom:1.5rem;">
+    <div class="kpi-item-card">
+        <span class="kpi-label">Total Loss</span>
+        <div class="kpi-value-row"><span class="kpi-value" style="color:{% if report.totals.total_value %}var(--danger){% else %}var(--text-main){% endif %};">RM {{ report.totals.total_value|floatformat:2 }}</span></div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Written Off</span>
+        <div class="kpi-value-row"><span class="kpi-value">RM {{ report.totals.disposed_value|floatformat:2 }}</span></div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Returned to Suppliers</span>
+        <div class="kpi-value-row"><span class="kpi-value">RM {{ report.totals.returned_value|floatformat:2 }}</span></div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">Lost in Transit</span>
+        <div class="kpi-value-row"><span class="kpi-value">RM {{ report.totals.lost_value|floatformat:2 }}</span></div>
+    </div>
+    <div class="kpi-item-card">
+        <span class="kpi-label">QA Write-off Records</span>
+        <div class="kpi-value-row"><span class="kpi-value">{{ report.totals.count }}</span></div>
+    </div>
+</section>
+
+<div class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:700; margin:0 0 1rem;">By month</h3>
+    {% for r in report.by_month %}
+    <div style="display:grid; grid-template-columns:5.5rem 1fr 8rem; gap:0.75rem; align-items:center; font-size:0.85rem; margin-bottom:0.45rem;">
+        <span style="color:var(--text-muted);">{{ r.label }}</span>
+        <div style="background:var(--surface-muted); border-radius:4px; height:0.7rem; overflow:hidden;">
+            <div style="background:var(--danger); height:100%; width:{% if month_max %}{% widthratio r.value month_max 100 %}{% else %}0{% endif %}%;"></div>
+        </div>
+        <span style="text-align:right; font-weight:700;">RM {{ r.value|floatformat:2 }}</span>
+    </div>
+    {% empty %}
+    <p style="color:var(--text-muted); font-size:0.85rem; margin:0;">Nothing written off or returned in this window.</p>
+    {% endfor %}
+</div>
+
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:1.5rem; margin-bottom:1.5rem;">
+    {% include "analytics/partials/_spoilage_table.html" with title="By reason" label="Reason" rows=report.by_reason %}
+    {% include "analytics/partials/_spoilage_table.html" with title="Top items" label="Item" rows=report.by_item %}
+    {% include "analytics/partials/_spoilage_table.html" with title="By facility" label="Facility" rows=report.by_warehouse %}
+    {% include "analytics/partials/_spoilage_table.html" with title="By supplier" label="Supplier" rows=report.by_supplier %}
+</div>
+
+<div class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:700; margin:0 0 0.35rem;">Write-off rate by material</h3>
+    <p style="color:var(--text-muted); font-size:0.82rem; margin:0 0 1rem;">Quantity written off &divide; quantity received in the same window. Highest first.</p>
+    <div class="table-responsive">
+        <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th data-sort="text" style="padding:0.6rem 1rem;">Material</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Written off</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Received</th>
+                    <th data-sort="num" style="padding:0.6rem 1rem; text-align:right;">Rate</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in report.material_rates %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                    <td style="padding:0.6rem 1rem; font-weight:700; color:var(--primary);">{{ r.material }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right;">{{ r.disposed|floatformat:2 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right;">{{ r.received|floatformat:2 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700; {% if r.rate and r.rate > 0.02 %}color:var(--danger);{% endif %}" data-sort-value="{{ r.rate|default_if_none:'' }}">
+                        {% if r.rate is not None %}{% widthratio r.rate 1 100 %}%{% else %}&mdash;{% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="4" style="padding:1.5rem 1rem; text-align:center; color:var(--text-muted);">No materials written off in this window.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:1.5rem;">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:700; margin:0 0 1rem;">Lost in transit</h3>
+    <div class="table-responsive">
+        <table class="modern-table" style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                    <th style="padding:0.6rem 1rem;">When</th>
+                    <th style="padding:0.6rem 1rem;">Item</th>
+                    <th style="padding:0.6rem 1rem;">Facility</th>
+                    <th style="padding:0.6rem 1rem; text-align:right;">Quantity</th>
+                    <th style="padding:0.6rem 1rem; text-align:right;">Value</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in report.lost %}
+                <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                    <td style="padding:0.6rem 1rem; color:var(--text-muted);">{{ r.log.timestamp|date:"d M Y" }}</td>
+                    <td style="padding:0.6rem 1rem;">{{ r.log.item_name }}</td>
+                    <td style="padding:0.6rem 1rem;">{{ r.log.warehouse.name|default:"&mdash;" }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right;">{{ r.log.quantity_changed|floatformat:2 }}</td>
+                    <td style="padding:0.6rem 1rem; text-align:right; font-weight:700;">RM {{ r.value|floatformat:2 }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5" style="padding:1.5rem 1rem; text-align:center; color:var(--text-muted);">No stock lost in transit in this window.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<p style="color:var(--text-muted); font-size:0.75rem; margin-top:0.5rem; max-width:74ch;">
+    Values use the material's cost per unit (or the product's price) at the time QA recorded the write-off.
+    Write-offs made before the QA upgrade are included from their disposal records.
+</p>
+{% endblock %}

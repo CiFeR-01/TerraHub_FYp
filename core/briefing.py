@@ -7,6 +7,7 @@ import json
 import os
 
 from django.utils import timezone
+from django.db.models import Count, Max, Q, Sum
 
 from . import analytics
 from .settings_store import get_setting
@@ -282,6 +283,47 @@ def _logistics_signals(since):
     ]
 
 
+def _qa_signals(since):
+    from .models import Batch, QAEvent, QARequest
+    today = timezone.localdate()
+    at_risk = [
+        {
+            "batch": r["batch"].batch_number,
+            "item": (r["batch"].material or r["batch"].product).name if (r["batch"].material_id or r["batch"].product_id) else "",
+            "warehouse": r["batch"].warehouse.name if r["batch"].warehouse_id else None,
+            "days_to_expiry": r["days_left"],
+            "unused_at_expiry": _num(r["unused_at_expiry"], 2),
+            "value_at_risk_rm": _num(r["value_at_risk"], 2),
+        }
+        for r in analytics.expiry_risk(horizon_days=60, today=today)[:MAX_ROWS_PER_SECTION]
+    ]
+    holds = [
+        {
+            "batch": b.batch_number,
+            "item": b.material.name if b.material_id else (b.product.name if b.product_id else ""),
+            "held_since": _iso(timezone.localtime(b.held_at).date()) if b.held_at else None,
+            "expired": bool(b.expiry_date and b.expiry_date < today),
+        }
+        for b in Batch.objects.filter(status="Quarantined").select_related("material", "product")
+        .annotate(held_at=Max("qa_events__created_at", filter=Q(qa_events__action__in=("quarantined", "auto_hold"))))
+        .order_by("held_at")[:MAX_ROWS_PER_SECTION]
+    ]
+    urgent = list(QARequest.objects.filter(status__in=("Open", "In Review"), priority__in=("Urgent", "High"))
+                  .select_related("batch").order_by("created_at")[:MAX_ROWS_PER_SECTION])
+    written_off = QAEvent.objects.filter(action="disposed", created_at__date__gte=since).aggregate(
+        v=Sum("value_rm"), n=Count("id"))
+    return {
+        "expiry_risk": at_risk,
+        "on_hold": holds,
+        "urgent_qa_requests": [
+            {"batch": r.batch.batch_number, "priority": r.priority, "reason": r.get_reason_display(),
+             "opened_on": _iso(timezone.localtime(r.created_at).date())}
+            for r in urgent
+        ],
+        "write_offs": [{"count": written_off["n"], "value_rm": _num(written_off["v"] or 0, 2)}] if written_off["n"] else [],
+    }
+
+
 # Analytics feeding each category. Every builder takes (since) so collect_signals() can call them uniformly.
 CATEGORY_SIGNAL_BUILDERS = {
     "materials": [("stockout_forecast", _stockout_signals)],
@@ -295,6 +337,7 @@ CATEGORY_SIGNAL_BUILDERS = {
     "warehouse": [
         ("capacity_runway", _capacity_signals),
         ("stock_audit_accuracy", _audit_signals),
+        ("quality_and_spoilage", _qa_signals),
     ],
 }
 
@@ -376,7 +419,7 @@ CATEGORY_INTROS = {
     "sales": "Sales briefing for TerraHub, covering at-risk and late sales-order deliveries, and products with a rising or declining sales trend",
     "purchase": "Purchase briefing for TerraHub, covering unreliable suppliers",
     "logistics": "Logistics briefing for TerraHub, covering in-flight shipments - inbound, outbound, and internal transfers - that are discrepant, overdue, at risk, or stalled",
-    "warehouse": "Warehouse briefing for TerraHub, covering capacity runway and stock-count accuracy/shrinkage",
+    "warehouse": "Warehouse briefing for TerraHub, covering capacity runway, stock-count accuracy/shrinkage, and quality: stock forecast to expire unused, stock on QA hold, urgent QA requests and write-offs",
 }
 
 

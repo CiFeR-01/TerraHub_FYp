@@ -725,7 +725,7 @@ def finalize_production_run(run, user, verb='completed'):
             produced_in=run,
             warehouse=run.manufacturing_plant,
             manufacturing_date=timezone.now().date(),
-            expiry_date=timezone.now().date() + timedelta(days=365)
+            expiry_date=timezone.now().date() + timedelta(days=run.target_product.shelf_life_days or 365)
         )
         RegistryLog.objects.create(
             action_type='Produced',
@@ -751,13 +751,12 @@ def finalize_production_run(run, user, verb='completed'):
                 action=f"Production Run {run.run_number} {verb}. FG batch {fg_batch.batch_number} is awaiting QA release before it can be allocated.",
                 user=user
             )
-        from .permissions import approvers, APPROVE_PRODUCTION_RUNS
-        for reviewer in approvers(APPROVE_PRODUCTION_RUNS):
-            Notification.objects.create(
-                user=reviewer,
-                message=f"QA release needed: batch {fg_batch.batch_number} ({run.target_product.name}) from Run {run.run_number}.",
-                link=reverse("qa_dashboard")
-            )
+        from .qa import create_request, log_event
+        log_event(fg_batch, 'quarantined', user, 'inbound_check', f"New finished goods from Run {run.run_number} held for QA release.",
+                  fg_batch.quantity)
+        # Shows in the QA Check tab; passing the inspection releases it
+        create_request(fg_batch, user, 'inbound_check', f"New finished goods from Run {run.run_number}.",
+                       source=f"Run {run.run_number}", hold=True, auto=True)
     elif fg_batch and run.sales_order:
         allocate_finished_batch_to_order(run, fg_batch, user, event=f"Production Run {run.run_number} {verb}. FG batch {fg_batch.batch_number} created.")
 
@@ -973,8 +972,9 @@ def deduct_stock_from_allocation(order_type, order, user=None):
             alloc.delete()
 
 
-def apply_po_material_receipt(po_detail, delta_qty, user):
-    """Single source for goods received against a PO: adds delta_qty to quantity_received, creates a Batch and recomputes the PO status."""
+def apply_po_material_receipt(po_detail, delta_qty, user, expiry_date=None, manufacturing_date=None):
+    """Single source for goods received against a PO: adds delta_qty to quantity_received, creates a Batch and recomputes the PO status.
+    Dates default to today and the material's shelf life; a material marked inspect_on_receipt arrives on QA hold."""
     import uuid
     from datetime import date, timedelta
     from .models import Batch, WarehouseLocation, RegistryLog
@@ -1017,14 +1017,16 @@ def apply_po_material_receipt(po_detail, delta_qty, user):
         loc = WarehouseLocation.objects.filter(warehouse=po.target_warehouse).first()
         # None = track the warehouse's current rate live; only a negotiated per-PO rate is locked in.
         rental_rate = po_detail.negotiated_rental_rate_per_mt
+        mfg = manufacturing_date or date.today()
+        hold = po_detail.material.inspect_on_receipt
         batch = Batch.objects.create(
             batch_number=po_batch_number(po, po_detail.material),
-            status='Active',
+            status='Quarantined' if hold else 'Active',
             material=po_detail.material,
             quantity=delta_qty,
-            manufacturing_date=date.today(),
-            # Shelf life comes from the material, not a flat year.
-            expiry_date=date.today() + timedelta(days=po_detail.material.safe_storage_days or 365),
+            manufacturing_date=mfg,
+            # Supplier's expiry if given, else the material's shelf life (not a flat year).
+            expiry_date=expiry_date or (mfg + timedelta(days=po_detail.material.safe_storage_days or 365)),
             warehouse=po.target_warehouse,
             purchase_order=po,
             location=f"Zone {loc.zone_name} Aisle {loc.aisle}" if loc else None,
@@ -1038,6 +1040,13 @@ def apply_po_material_receipt(po_detail, delta_qty, user):
             warehouse=po.target_warehouse,
             user=user
         )
+        if hold:
+            from .qa import create_request, log_event
+            log_event(batch, 'quarantined', user, 'inbound_check',
+                      f"Received on {po.po_number}; {po_detail.material.name} is inspected on receipt.", delta_qty)
+            # Shows in the QA Check tab; passing the inspection releases it
+            create_request(batch, user, 'inbound_check', f"Received on {po.po_number}; checked on arrival.",
+                           source=po.po_number, hold=True, auto=True)
 
     all_items = po.items.all()
     total_ordered = sum(Decimal(str(i.quantity_ordered)) for i in all_items)

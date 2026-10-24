@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block title %}Roles & Permissions - TerraHub{% endblock %}
+
+{% block content %}
+<style>
+    .roles-layout { display:flex; flex-wrap:wrap; gap:1.5rem; align-items:flex-start; }
+    .roles-list { flex:0 1 17rem; min-width:15rem; }
+    .roles-main { flex:1 1 32rem; min-width:0; }
+    .roles-card { background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); box-shadow:0 2px 12px rgba(15,23,42,0.04); }
+    .role-link { display:flex; justify-content:space-between; align-items:center; gap:0.5rem; padding:0.7rem 1rem; text-decoration:none; color:var(--text-main); font-weight:600; font-size:0.9rem; border-bottom:1px solid var(--border-light); }
+    .role-link:hover, .role-link:focus-visible { background:rgba(var(--primary-rgb), 0.06); outline:none; }
+    .role-link.active { background:rgba(var(--primary-rgb), 0.1); color:var(--primary-strong); }
+    .role-count { font-size:0.72rem; font-weight:700; color:var(--text-muted); background:var(--bg-page, rgba(15,23,42,0.04)); padding:0.1rem 0.5rem; border-radius:999px; white-space:nowrap; }
+    .perm-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(17rem, 1fr)); gap:0.25rem 1.5rem; padding:1rem 1.5rem 1.25rem; }
+    .perm-item { display:flex; gap:0.6rem; align-items:flex-start; padding:0.35rem 0; font-size:0.875rem; color:var(--text-main); cursor:pointer; }
+    .perm-item input { margin-top:0.2rem; flex-shrink:0; }
+    .perm-item.is-disabled { color:var(--text-muted); cursor:default; }
+    .field { padding:0.5rem 0.75rem; border:1px solid var(--border-light); border-radius:8px; font-size:0.875rem; width:100%; }
+</style>
+<header class="dashboard-header-row animate-fade-in-up">
+    <div>
+        <nav class="breadcrumb-nav">
+            <span>Admin</span>
+            <span class="separator">/</span>
+            <a href="{% url 'user_management' %}">Users Management</a>
+            <span class="separator">/</span>
+            <span class="current-page">Roles &amp; Permissions</span>
+        </nav>
+        <h1 style="font-family:'Outfit',sans-serif; font-size:1.85rem; font-weight:700; margin-top:0.25rem; color:var(--text-main);">
+            Roles &amp; Permissions
+        </h1>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.35rem; max-width:68ch;">
+            A role is a set of permissions. Give users roles on the Users page; what each role can do is set here.
+            {% if not can_edit %}Only an Admin can change roles, so this page is read-only for you.{% endif %}
+        </p>
+    </div>
+</header>
+
+{% if messages %}
+<div class="messages-container animate-fade-in-up" style="margin-bottom:1.5rem;">
+    {% for message in messages %}
+    <div role="status" style="padding:0.85rem 1.25rem; border-radius:8px; font-weight:500; font-size:0.9rem; margin-bottom:0.5rem; {% if message.tags == 'error' %}background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:var(--danger);{% elif message.tags == 'warning' or message.tags == 'info' %}background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);color:var(--warning-strong);{% else %}background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:var(--success-strong);{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="roles-layout animate-fade-in-up" style="animation-delay:0.05s;">
+    <aside class="roles-list">
+        <nav class="roles-card" aria-label="Roles" style="overflow:hidden;">
+            <div style="padding:0.85rem 1rem; font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); border-bottom:1px solid var(--border-light);">Roles</div>
+            {% for r in roles %}
+            <a href="{% url 'roles' %}?role={{ r.id }}" class="role-link{% if selected and r.id == selected.id %} active{% endif %}"{% if selected and r.id == selected.id %} aria-current="page"{% endif %}>
+                <span>{{ r.name }}</span>
+                <span class="role-count">{{ r.user_count }} user{{ r.user_count|pluralize }}</span>
+            </a>
+            {% empty %}
+            <p style="padding:1rem; color:var(--text-muted); font-size:0.875rem;">No roles yet.</p>
+            {% endfor %}
+        </nav>
+
+        {% if can_edit %}
+        <form method="post" class="roles-card" style="margin-top:1rem; padding:1rem;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="create_role">
+            <label for="new-role-name" style="display:block; font-weight:700; font-size:0.9rem; margin-bottom:0.4rem;">New role</label>
+            <input id="new-role-name" name="name" type="text" maxlength="{{ name_max }}" required placeholder="e.g. Warehouse Supervisor" class="field">
+            <label for="copy-from" style="display:block; font-size:0.8rem; color:var(--text-muted); margin:0.6rem 0 0.3rem;">Start with the permissions of</label>
+            <select id="copy-from" name="copy_from" class="field">
+                <option value="">Nothing (tick them after)</option>
+                {% for r in roles %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary" style="margin-top:0.75rem; width:100%; padding:0.5rem; font-size:0.85rem;">Create role</button>
+        </form>
+        {% endif %}
+        <p style="margin-top:0.75rem; font-size:0.8rem;"><a href="{% url 'user_audit_log' %}{% if selected %}?q={{ selected.name|urlencode }}{% endif %}">Change history in the Audit Log</a></p>
+    </aside>
+
+    {% if selected %}
+    <section class="roles-main">
+        <div class="roles-card" style="padding:1.25rem 1.5rem; margin-bottom:1rem;">
+            <div style="display:flex; flex-wrap:wrap; justify-content:space-between; gap:1rem; align-items:flex-start;">
+                <div style="min-width:0;">
+                    <h2 style="font-family:'Outfit',sans-serif; font-size:1.35rem; font-weight:700; color:var(--text-main);">{{ selected.name }}</h2>
+                    <p style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">
+                        {{ held_count }} of {{ total_count }} permissions
+                    </p>
+                </div>
+                {% if editable %}
+                <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center;">
+                    <form method="post" style="display:flex; gap:0.4rem;">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="rename_role">
+                        <input type="hidden" name="role_id" value="{{ selected.id }}">
+                        <label for="rename" class="sr-only" style="position:absolute; left:-9999px;">Role name</label>
+                        <input id="rename" name="name" type="text" value="{{ selected.name }}" maxlength="{{ name_max }}" required class="field" style="width:13rem;">
+                        <button type="submit" class="btn btn-secondary" style="padding:0.45rem 0.8rem; font-size:0.8rem;">Rename</button>
+                    </form>
+                    <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="delete_role">
+                        <input type="hidden" name="role_id" value="{{ selected.id }}">
+                        <button type="submit" class="btn btn-secondary" style="padding:0.45rem 0.8rem; font-size:0.8rem; color:var(--danger);"
+                                {% if members %}disabled title="Move its users to another role first"{% endif %}
+                                onclick="return confirm('Delete the {{ selected.name|escapejs }} role? This cannot be undone.');">Delete role</button>
+                    </form>
+                </div>
+                {% endif %}
+            </div>
+            {% if locked %}
+            <p style="margin-top:0.75rem; font-size:0.85rem; padding:0.6rem 0.85rem; border-radius:8px; background:rgba(var(--primary-rgb), 0.06); color:var(--text-main);">
+                Admin always has every permission, so it can't be renamed, changed or deleted here.
+            </p>
+            {% elif can_edit and not editable %}
+            <p style="margin-top:0.75rem; font-size:0.85rem; color:var(--warning-strong);">This role has permissions you don't hold, so you can't change it.</p>
+            {% endif %}
+            <div style="margin-top:0.85rem; font-size:0.85rem;">
+                <span style="font-weight:700;">Users:</span>
+                {% for m in members %}{{ m.get_full_name|default:m.username }}{% if not forloop.last %}, {% endif %}{% empty %}<span style="color:var(--text-muted);">nobody has this role yet</span>{% endfor %}
+            </div>
+        </div>
+
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="save_permissions">
+            <input type="hidden" name="role_id" value="{{ selected.id }}">
+            {% for section in sections %}
+            <fieldset class="roles-card" style="margin:0 0 1rem; padding:0; border:1px solid var(--border-light);">
+                <legend style="float:left; width:100%; padding:0.85rem 1.5rem; border-bottom:1px solid var(--border-light); font-family:'Outfit',sans-serif; font-size:1rem; font-weight:700; color:var(--text-main);">
+                    {{ section.title }}
+                    <span style="font-family:inherit; font-size:0.75rem; font-weight:600; color:var(--text-muted); margin-left:0.4rem;">{{ section.count }} of {{ section.perms|length }}</span>
+                </legend>
+                <div class="perm-grid" style="clear:both;">
+                    {% for p in section.perms %}
+                    <label class="perm-item{% if p.disabled %} is-disabled{% endif %}">
+                        <input type="checkbox" name="perms" value="{{ p.code }}" {% if p.checked %}checked{% endif %} {% if p.disabled %}disabled{% endif %}>
+                        <span>{{ p.label }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </fieldset>
+            {% endfor %}
+            {% if editable %}
+            {# A disabled box isn't posted, so keep the ones the editor can't change as they are #}
+            {% for section in sections %}{% for p in section.perms %}{% if p.disabled and p.checked %}<input type="hidden" name="perms" value="{{ p.code }}">{% endif %}{% endfor %}{% endfor %}
+            <div style="display:flex; gap:0.75rem; align-items:center; position:sticky; bottom:0; padding:0.85rem 0; background:var(--bg-page, transparent);">
+                <button type="submit" class="btn btn-primary" style="padding:0.55rem 1.5rem; font-size:0.9rem;">Save permissions</button>
+                <a href="{% url 'roles' %}?role={{ selected.id }}" style="font-size:0.85rem; color:var(--text-muted); text-decoration:none;">Discard changes</a>
+            </div>
+            {% endif %}
+        </form>
+    </section>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,23 @@
+<div class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
+    <h3 style="font-family:'Outfit',sans-serif; font-size:1.05rem; font-weight:700; margin:0 0 1rem;">{{ title }}</h3>
+    <table class="modern-table sortable" style="width:100%; border-collapse:collapse;">
+        <thead>
+            <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.8rem; color:var(--text-muted);">
+                <th data-sort="text" style="padding:0.5rem 0.75rem;">{{ label }}</th>
+                <th data-sort="num" style="padding:0.5rem 0.75rem; text-align:right;">Records</th>
+                <th data-sort="num" style="padding:0.5rem 0.75rem; text-align:right;">Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr style="border-bottom:1px solid var(--border-light); font-size:0.85rem;">
+                <td style="padding:0.5rem 0.75rem; font-weight:600;">{{ r.label }}</td>
+                <td style="padding:0.5rem 0.75rem; text-align:right;">{{ r.count }}</td>
+                <td style="padding:0.5rem 0.75rem; text-align:right; font-weight:700;" data-sort-value="{{ r.value }}">RM {{ r.value|floatformat:2 }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="3" style="padding:1rem 0.75rem; text-align:center; color:var(--text-muted);">Nothing recorded.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>

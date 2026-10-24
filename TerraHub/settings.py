@@ -69,6 +69,7 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'core.context_processors.approvals_count',
+                'core.context_processors.qa_requests_count',
                 'core.context_processors.sidebar_nav',
                 'core.context_processors.session_timeout',
                 'core.context_processors.denied_actions',

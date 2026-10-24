@@ -76,6 +76,10 @@ def supplier_scorecard_view(request):
     window_days = _parse_window(request)
     since = timezone.now().date() - timedelta(days=window_days) if window_days else None
     rows = analytics.supplier_reliability(since=since)
+    quality = analytics.supplier_quality(since=since)
+    for r in rows:
+        key = ("id", r["supplier_id"]) if r["supplier_id"] else ("name", r["supplier_name"].lower())
+        r["quality"] = quality.get(key)
 
     assessable = [r for r in rows if r["on_time_rate"] is not None]
     assessable_pos = sum(r["assessable_count"] for r in rows)
@@ -815,4 +819,24 @@ def product_sales_trend_view(request):
         "analytics_tabs": analytics_tabs,
         "as_of": as_of,
         "analytics_active": "product_sales_trend",
+    })
+
+
+@login_required
+@refreshable
+def spoilage_report_view(request):
+    window_days = _parse_window(request)
+    since = timezone.now().date() - timedelta(days=window_days) if window_days else None
+    report = analytics.spoilage_report(since=since)
+    month_max = max((r["value"] for r in report["by_month"]), default=0)
+    analytics_category, analytics_tabs = _analytics_tabs(request, "spoilage_report")
+    return render(request, "analytics/spoilage_report.html", {
+        "report": report,
+        "month_max": month_max,
+        "window_days": window_days,
+        "window_choices": WINDOW_CHOICES,
+        "analytics_category": analytics_category,
+        "analytics_tabs": analytics_tabs,
+        "as_of": timezone.now(),
+        "analytics_active": "spoilage_report",
     })

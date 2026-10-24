@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load qa_extras %}
 {% load quantity_extras %}
 
 {% block title %}Batch {{ batch.batch_number }} - TerraHub{% endblock %}
@@ -25,9 +26,16 @@
         <a href="{% url 'stock_audit' %}?batch={{ batch.batch_number }}" class="btn btn-secondary">
             Adjust Stock
         </a>
+        {% if can_request_qa and not qa_open_request %}
+        <button type="button" class="btn btn-secondary" onclick="openSendToQA('{{ batch.id }}', '{{ batch.batch_number|escapejs }}', '{{ batch.quantity }}', '{% if batch.material %}{{ batch.material.unit_of_measure|escapejs }}{% else %}units{% endif %}')">
+            Send to QA
+        </button>
+        {% endif %}
+        {% if perms.core.perform_qa or perms.core.dispose_stock or perms.core.approve_qa_writeoffs %}
         <a href="{% url 'qa_dashboard' %}" class="btn btn-primary">
-            QA Actions
+            QA Dashboard
         </a>
+        {% endif %}
     </div>
 </header>
 
@@ -59,7 +67,7 @@
                     {% if batch.status == 'Active' %}
                         <span class="badge badge-emerald">Active</span>
                     {% elif batch.status == 'Quarantined' %}
-                        <span class="badge badge-amber">Quarantined</span>
+                        <span class="badge badge-amber">On QA hold</span>
                     {% else %}
                         <span class="badge badge-rose">{{ batch.status }}</span>
                     {% endif %}
@@ -82,11 +90,14 @@
                     <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-main); margin-top: 0.25rem;">
                         {{ batch.expiry_date|date:"Y-m-d"|default:"-" }}
                     </div>
+                    {% if batch.extension_days_total %}
+                    <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.15rem;">Extended {{ batch.extension_days_total }} days (was {{ batch.original_expiry_date|date:"Y-m-d" }})</div>
+                    {% endif %}
                 </div>
                 <div style="padding: 1rem; background: var(--surface-sunken); border-radius: 8px;">
                     <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Days Remaining</span>
                     <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-main); margin-top: 0.25rem;">
-                        {{ batch.days_until_expiry|default:"-" }} Days
+                        {% if qa_expired %}<span style="color:var(--danger);">Expired</span>{% elif batch.days_until_expiry is not None %}{{ batch.days_until_expiry }} Days{% else %}-{% endif %}
                     </div>
                 </div>
                 <div style="padding: 1rem; background: var(--surface-sunken); border-radius: 8px;">
@@ -99,6 +110,96 @@
                     {% endif %}
                 </div>
             </div>
+        </div>
+
+        <!-- Quality (QA) -->
+        <div class="pane-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; flex-wrap:wrap; margin-bottom:1rem;">
+                <h3 style="margin:0;">🧪 Quality</h3>
+                <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
+                    {% if can_qa %}
+                    {% if batch.status == 'Active' %}
+                    <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.7rem; font-size:0.8rem; border-color:var(--warning); color:var(--warning-strong);" onclick="openQAAction('quarantine', '{{ batch.id }}', '{{ batch.batch_number|escapejs }}', '{{ batch.quantity }}', '', '{{ qa_open_request.id|default:'' }}')">Put on hold</button>
+                    {% endif %}
+                    {% if not qa_expired or batch.status == 'Active' %}
+                    <button type="button" class="btn btn-primary" style="padding:0.35rem 0.7rem; font-size:0.8rem;" onclick="openQAAction('inspect', '{{ batch.id }}', '{{ batch.batch_number|escapejs }}', '{{ batch.quantity }}', '', '{{ qa_open_request.id|default:'' }}')">{% if batch.status == 'Quarantined' %}Inspect &amp; release{% else %}Inspect{% endif %}</button>
+                    {% endif %}
+                    {% if batch.expiry_date %}
+                    <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.7rem; font-size:0.8rem;" onclick="openQAAction('extend_expiry', '{{ batch.id }}', '{{ batch.batch_number|escapejs }}', '{{ batch.quantity }}', '', '{{ qa_open_request.id|default:'' }}', '{{ qa_cap_days }}')">Extend shelf life</button>
+                    {% endif %}
+                    {% endif %}
+                    {% if can_dispose %}
+                    <button type="button" class="btn btn-secondary" style="padding:0.35rem 0.7rem; font-size:0.8rem; border-color:var(--danger); color:var(--danger);" onclick="openQAAction('spoil_dispose', '{{ batch.id }}', '{{ batch.batch_number|escapejs }}', '{{ batch.quantity }}', '', '{{ qa_open_request.id|default:'' }}')">Write off</button>
+                    {% endif %}
+                    {% if qa_undo_until %}
+                    <form method="post" action="{% url 'qa_dashboard' %}" style="display:inline;" onsubmit="return confirm('Undo the write-off of batch {{ batch.batch_number|escapejs }}? It goes back into stock{% if qa_expired %} on hold, since it has expired{% endif %}.');">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="undo_write_off">
+                        <input type="hidden" name="batch_id" value="{{ batch.id }}">
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <button type="submit" class="btn btn-secondary" style="padding:0.35rem 0.7rem; font-size:0.8rem;" title="Possible until {{ qa_undo_until|date:'Y-m-d' }}">Undo write-off</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if qa_expired and batch.status in 'Active,Quarantined' %}
+            <div style="padding:0.75rem 1rem; border-radius:8px; background:var(--danger-soft); color:var(--danger-strong); font-size:0.85rem; margin-bottom:0.75rem;">
+                This batch expired on {{ batch.expiry_date|date:"Y-m-d" }}. It can't be used or released until QA extends its shelf life or writes it off.
+            </div>
+            {% endif %}
+            {% if qa_open_request %}
+            <div style="padding:0.75rem 1rem; border-radius:8px; background:var(--warning-soft); color:var(--warning-strong); font-size:0.85rem; margin-bottom:0.75rem;">
+                <strong>Sent to QA</strong> by {{ qa_open_request.requested_by|who }} {{ qa_open_request.created_at|timesince }} ago
+                ({{ qa_open_request.get_reason_display }}, {{ qa_open_request.priority }} priority, {{ qa_open_request.status }}).
+                {% if qa_open_request.note %}<div style="margin-top:0.25rem;">"{{ qa_open_request.note }}"</div>{% endif %}
+            </div>
+            {% endif %}
+            {% if qa_pending_approval %}
+            <div style="padding:0.75rem 1rem; border-radius:8px; background:var(--surface-sunken); border:1px dashed var(--border-light); font-size:0.85rem; margin-bottom:0.75rem;">
+                <strong>{{ qa_pending_approval.get_kind_display }}</strong> waiting for approval
+                {% if qa_pending_approval.kind == 'dispose' %}({{ qa_pending_approval.quantity|floatformat:2 }}, RM {{ qa_pending_approval.value_rm|floatformat:2 }}){% else %}(+{{ qa_pending_approval.days }} days){% endif %},
+                asked by {{ qa_pending_approval.requested_by|who }}.
+            </div>
+            {% endif %}
+
+            {% if qa_inspections %}
+            <h4 style="font-size:0.8rem; text-transform:uppercase; color:var(--text-muted); margin:1rem 0 0.5rem;">Inspections</h4>
+            {% for insp in qa_inspections %}
+            <div style="padding:0.6rem 0.85rem; background:var(--surface-sunken); border-radius:8px; margin-bottom:0.5rem; font-size:0.85rem;">
+                <div style="display:flex; justify-content:space-between; gap:0.5rem;">
+                    <span>{% if insp.result == 'pass' %}<span class="badge badge-emerald">Passed</span>{% else %}<span class="badge badge-rose">Failed</span>{% endif %}
+                        {{ insp.inspector|who }}</span>
+                    <span style="color:var(--text-muted); font-size:0.78rem;">{{ insp.created_at|date:"Y-m-d H:i" }}</span>
+                </div>
+                {% if insp.checks %}<div style="margin-top:0.35rem; font-size:0.78rem; color:var(--text-muted);">{% for c in insp.checks %}{% if c.ok %}✓{% else %}<span style="color:var(--danger);">✗</span>{% endif %} {{ c.check }}{% if not forloop.last %} &middot; {% endif %}{% endfor %}</div>{% endif %}
+                {% if insp.moisture_pct is not None %}<div style="font-size:0.78rem; color:var(--text-muted);">Moisture {{ insp.moisture_pct }}%</div>{% endif %}
+                {% if insp.notes %}<div style="font-size:0.78rem; margin-top:0.2rem;">{{ insp.notes }}</div>{% endif %}
+            </div>
+            {% endfor %}
+            {% endif %}
+
+            <h4 style="font-size:0.8rem; text-transform:uppercase; color:var(--text-muted); margin:1rem 0 0.5rem;">QA history</h4>
+            {% if qa_events %}
+            <div class="data-table-container">
+                <table class="custom-table">
+                    <thead><tr><th>When</th><th>What happened</th><th>Reason</th><th style="text-align:right;">Qty</th><th>By</th></tr></thead>
+                    <tbody>
+                        {% for ev in qa_events %}
+                        <tr>
+                            <td style="font-size:0.8rem; color:var(--text-muted); white-space:nowrap;">{{ ev.created_at|date:"Y-m-d H:i" }}</td>
+                            <td style="font-size:0.85rem;">{{ ev.get_action_display }}{% if ev.note %}<div style="font-size:0.75rem; color:var(--text-muted);">{{ ev.note }}</div>{% endif %}</td>
+                            <td style="font-size:0.85rem;">{{ ev.get_reason_display|default:"-" }}</td>
+                            <td style="text-align:right; font-family:monospace;">{% if ev.quantity is not None %}{{ ev.quantity|floatformat:2 }}{% else %}-{% endif %}</td>
+                            <td style="font-size:0.8rem; color:var(--text-muted);">{{ ev.user|who }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p style="color: var(--text-muted); font-size: 0.85rem;">No QA activity on this batch yet.</p>
+            {% endif %}
         </div>
 
         <!-- Reservations -->
@@ -167,16 +268,18 @@
                                     <span class="badge badge-sky">{{ log.get_action_type_display }}</span>
                                 {% elif log.action_type == 'Adjusted' %}
                                     <span class="badge badge-amber">{{ log.get_action_type_display }}</span>
+                                {% elif log.action_type == 'Spoiled_Disposal' or log.action_type == 'Lost_In_Transit' %}
+                                    <span class="badge badge-rose">{{ log.get_action_type_display }}</span>
                                 {% else %}
                                     <span class="badge badge-slate">{{ log.get_action_type_display }}</span>
                                 {% endif %}
                             </td>
                             <td style="font-size: 0.85rem;">{{ log.item_name }}</td>
                             <td style="text-align: right; font-family: monospace; font-weight: 600;">
-                                {% if log.action_type in 'Inbound,Produced' %}+{% endif %}{{ log.quantity_changed }}
+                                {% if log.action_type == 'Inbound' or log.action_type == 'Produced' %}+{% endif %}{{ log.quantity_changed }}
                             </td>
                             <td style="font-size: 0.85rem; color: var(--text-muted);">
-                                {% if log.user %}{{ log.user.get_full_name|default:log.user.username }}{% else %}System{% endif %}
+                                {% if log.user %}{{ log.user|who }}{% else %}System{% endif %}
                             </td>
                         </tr>
                         {% endfor %}
@@ -246,6 +349,46 @@
             {% endif %}
         </div>
 
+        {% if batch.parent_batch or qa_trace.upstream or qa_trace.runs or qa_trace.orders %}
+        <!-- Traceability -->
+        <div class="pane-card">
+            <h3 style="margin-bottom: 1rem;">🧬 Traceability</h3>
+            {% if batch.parent_batch %}
+            <p style="font-size:0.85rem; margin-bottom:0.75rem;">Split from <a href="{% url 'batch_detail' batch.parent_batch.batch_number %}" style="color:var(--primary); font-weight:600; text-decoration:none;">{{ batch.parent_batch.batch_number }}</a></p>
+            {% endif %}
+            {% if qa_trace.upstream %}
+            <div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted); font-weight:600; margin-bottom:0.3rem;">Made from</div>
+            <div style="display:flex; flex-wrap:wrap; gap:0.35rem; margin-bottom:0.75rem;">{% for b in qa_trace.upstream %}<a href="{% url 'batch_detail' b.batch_number %}" class="badge badge-slate" style="text-decoration:none;">{{ b.batch_number }}</a>{% endfor %}</div>
+            {% endif %}
+            {% if qa_trace.runs %}
+            <div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted); font-weight:600; margin-bottom:0.3rem;">Used in runs</div>
+            <div style="display:flex; flex-wrap:wrap; gap:0.35rem; margin-bottom:0.75rem;">{% for r in qa_trace.runs %}<a href="{% url 'production_run_detail' r.id %}" class="badge badge-slate" style="text-decoration:none;">{{ r.run_number }}</a>{% endfor %}</div>
+            {% endif %}
+            {% if qa_trace.finished_batches %}
+            <div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted); font-weight:600; margin-bottom:0.3rem;">Finished batches</div>
+            <div style="display:flex; flex-wrap:wrap; gap:0.35rem; margin-bottom:0.75rem;">{% for b in qa_trace.finished_batches %}<a href="{% url 'batch_detail' b.batch_number %}" class="badge {% if b.status == 'Active' %}badge-emerald{% elif b.status == 'Quarantined' %}badge-amber{% else %}badge-slate{% endif %}" style="text-decoration:none;">{{ b.batch_number }}</a>{% endfor %}</div>
+            {% endif %}
+            {% if qa_trace.orders %}
+            <div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted); font-weight:600; margin-bottom:0.3rem;">Sales orders</div>
+            <div style="display:flex; flex-wrap:wrap; gap:0.35rem; margin-bottom:0.75rem;">{% for o in qa_trace.orders %}<a href="{% url 'so_detail' o.id %}" class="badge badge-sky" style="text-decoration:none;">{{ o.so_number }}</a>{% endfor %}</div>
+            {% endif %}
+            {% if qa_trace.shipments %}
+            <div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted); font-weight:600; margin-bottom:0.3rem;">Shipments</div>
+            <div style="display:flex; flex-wrap:wrap; gap:0.35rem; margin-bottom:0.75rem;">{% for sh in qa_trace.shipments %}<a href="{% url 'shipment_detail' sh.pk %}" class="badge badge-sky" style="text-decoration:none;">{{ sh.tracking_number }}</a>{% endfor %}</div>
+            {% endif %}
+            {% if can_trace_hold and qa_trace.holdable %}
+            <form method="post" action="{% url 'qa_dashboard' %}" onsubmit="return confirm('Put all {{ qa_trace.holdable|length }} Active finished batch(es) made from this batch on hold?')">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="hold_downstream">
+                <input type="hidden" name="batch_id" value="{{ batch.id }}">
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <input type="text" name="note" placeholder="Why (e.g. supplier recall notice)" aria-label="Why" class="form-input" style="width:100%; padding:0.4rem; font-size:0.8rem; margin-bottom:0.5rem;">
+                <button type="submit" class="btn btn-secondary" style="width:100%; padding:0.45rem; font-size:0.85rem; border-color:var(--danger); color:var(--danger);">Hold {{ qa_trace.holdable|length }} finished batch{{ qa_trace.holdable|length|pluralize:"es" }} made from this</button>
+            </form>
+            {% endif %}
+        </div>
+        {% endif %}
+
         <!-- Shipment History -->
         <div class="pane-card">
             <h3 style="margin-bottom: 1rem;">🚚 Shipment History</h3>
@@ -276,18 +419,11 @@
                 {% csrf_token %}
                 <input type="hidden" name="action" value="update_batch">
                 
-                <div style="margin-bottom: 1rem;">
-                    <label style="display:block; font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Status</label>
-                    <select name="status" class="form-select" style="width:100%; padding:0.5rem;">
-                        {% for st in statuses %}
-                        <option value="{{ st.0 }}" {% if batch.status == st.0 %}selected{% endif %}>{{ st.1 }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
                 
                 <div style="margin-bottom: 1rem;">
                     <label style="display:block; font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Expiry Date</label>
-                    <input type="date" name="expiry_date" value="{{ batch.expiry_date|date:'Y-m-d' }}" class="form-input" style="width:100%; padding:0.5rem;">
+                    <input type="date" name="expiry_date" value="{{ batch.expiry_date|date:'Y-m-d' }}" {% if batch.expiry_date %}max="{{ batch.expiry_date|date:'Y-m-d' }}"{% endif %} class="form-input" style="width:100%; padding:0.5rem;">
+                    <p style="font-size:0.72rem; color:var(--text-muted); margin-top:0.3rem;">Correct an earlier date here. To push expiry later, use Extend shelf life above.</p>
                 </div>
                 
                 <div style="margin-bottom: 1rem;">
@@ -313,4 +449,5 @@
 
     </div>
 </div>
+{% include "partials/_qa_action_modal.html" %}
 {% endblock %}

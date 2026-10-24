@@ -485,7 +485,7 @@ class BatchClosureTests(TestCase):
         client = Client()
         client.login(username='qauser', password='pw')
 
-        resp = client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'batch_id': batch.id})
+        resp = client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': batch.id})
         self.assertEqual(resp.status_code, 302)
 
         batch.refresh_from_db()
@@ -2172,25 +2172,27 @@ class BatchDetailEditTests(TestCase):
         url = reverse('batch_detail', kwargs={'batch_number': self.batch.batch_number})
         return self.client.post(url, data)
 
-    def test_update_batch_status_logs_change_without_error(self):
+    def test_update_batch_status_is_refused_in_favour_of_qa_actions(self):
+        # Status only changes through the QA actions, which record a reason.
         response = self._post_update(status='Quarantined')
         self.assertEqual(response.status_code, 302)
 
         self.batch.refresh_from_db()
-        self.assertEqual(self.batch.status, 'Quarantined')
+        self.assertEqual(self.batch.status, 'Active')
+        self.assertFalse(RegistryLog.objects.filter(action_type='Adjusted', item_name__icontains='BATCH-EDIT-001').exists())
 
-        log = RegistryLog.objects.get(action_type='Adjusted', item_name__icontains='BATCH-EDIT-001')
-        self.assertIn('Status changed to Quarantined', log.item_name)
-        self.assertEqual(log.warehouse, self.warehouse)
-        self.assertEqual(log.user, self.user)
+    def test_update_batch_later_expiry_is_refused(self):
+        old = self.batch.expiry_date
+        self._post_update(expiry_date=(old + timedelta(days=30)).strftime('%Y-%m-%d'))
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.expiry_date, old)
 
     def test_update_batch_multiple_fields_logged_and_visible_in_history(self):
-        new_expiry = (self.batch.expiry_date + timedelta(days=30)).strftime('%Y-%m-%d')
-        response = self._post_update(status='Quarantined', expiry_date=new_expiry, location='Zone B')
+        new_expiry = (self.batch.expiry_date - timedelta(days=5)).strftime('%Y-%m-%d')
+        response = self._post_update(expiry_date=new_expiry, location='Zone B')
         self.assertEqual(response.status_code, 302)
 
         log = RegistryLog.objects.get(action_type='Adjusted', item_name__icontains='BATCH-EDIT-001')
-        self.assertIn('Status changed to Quarantined', log.item_name)
         self.assertIn('Expiry updated to', log.item_name)
         self.assertIn('Location updated', log.item_name)
 
@@ -2198,7 +2200,7 @@ class BatchDetailEditTests(TestCase):
         history_url = reverse('batch_detail', kwargs={'batch_number': self.batch.batch_number})
         page = self.client.get(history_url)
         self.assertEqual(page.status_code, 200)
-        self.assertContains(page, 'Status changed to Quarantined')
+        self.assertContains(page, 'Location updated')
 
     def test_update_batch_no_changes_writes_no_log(self):
         response = self._post_update()
@@ -3733,7 +3735,7 @@ class TransferReceiptTests(TestCase):
         self.assertEqual(self._dest_batch().quantity, Decimal('150'))
         self.batch.refresh_from_db()
         self.assertEqual(self.batch.quantity, Decimal('300'))  # 500 - 150 received - 50 lost
-        loss = RegistryLog.objects.get(action_type='Spoiled_Disposal')
+        loss = RegistryLog.objects.get(action_type='Lost_In_Transit')
         self.assertEqual(loss.quantity_changed, Decimal('50'))
         self.assertEqual(loss.warehouse, self.origin)
 
@@ -6545,7 +6547,7 @@ class StockAndDeliveryTests(TestCase):
         self._post(s, action='force_close_shipment', **{f'shortage_reason_{item.id}': 'lost'})
         batch.refresh_from_db()
         self.assertEqual((batch.quantity, batch.allocated_quantity, batch.status), (Decimal('0'), Decimal('0'), 'Depleted'))
-        self.assertEqual(RegistryLog.objects.get(action_type='Spoiled_Disposal').quantity_changed, Decimal('1'))
+        self.assertEqual(RegistryLog.objects.get(action_type='Lost_In_Transit').quantity_changed, Decimal('1'))
 
     def test_shipped_goods_cannot_be_scrapped_returned_or_skip_dispatch(self):
         so, _ = self._so('5', status='Shipped', shipped='5')
@@ -6666,11 +6668,11 @@ class StockAndDeliveryTests(TestCase):
         batch = self._batch('SD-BP', '5', allocated='5')
         StockAllocation.objects.create(batch=batch, sales_order=so, quantity=Decimal('5'))
         url = reverse('batch_detail', args=[batch.batch_number])
-        for bad in ('Depleted', 'Lost'):
+        for bad in ('Depleted', 'Lost', 'Spoiled', 'Quarantined'):
             self.client.post(url, {'action': 'update_batch', 'status': bad})
             batch.refresh_from_db()
             self.assertEqual(batch.status, 'Active')
-        self.client.post(url, {'action': 'update_batch', 'status': 'Spoiled'})
+        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': batch.id, 'reason': 'contamination'})
         batch.refresh_from_db(); so.refresh_from_db()
         self.assertEqual((batch.status, batch.allocated_quantity), ('Spoiled', Decimal('0')))
         self.assertFalse(StockAllocation.objects.filter(batch=batch).exists())
@@ -6880,7 +6882,7 @@ class StockAndDeliveryTests(TestCase):
         batch = self._batch('SD-SP', '60', allocated='10')
         so, _ = self._so('10', status='Ready to Ship')
         StockAllocation.objects.create(batch=batch, sales_order=so, quantity=Decimal('10'))
-        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'batch_id': batch.id})
+        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': batch.id})
         batch.refresh_from_db(); so.refresh_from_db()
         self.assertEqual((batch.status, batch.allocated_quantity), ('Spoiled', Decimal('0')))
         self.assertFalse(StockAllocation.objects.filter(batch=batch).exists())
@@ -6890,7 +6892,7 @@ class StockAndDeliveryTests(TestCase):
         batch = self._batch('SD-SP2', '10', allocated='10')
         so, _ = self._so('10', status='Ready to Ship')
         self._outbound(so, batch, '10', status='Dispatched')
-        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'batch_id': batch.id})
+        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': batch.id})
         batch.refresh_from_db()
         self.assertEqual((batch.status, batch.allocated_quantity), ('Active', Decimal('10')))
 
@@ -7231,7 +7233,7 @@ class ServerSidePermissionTests(TestCase):
 
     def test_viewer_cannot_spoil_stock(self):
         self.client.force_login(self.viewer)
-        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'batch_id': self.beta_batch.id})
+        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': self.beta_batch.id})
         self.beta_batch.refresh_from_db()
         self.assertEqual(self.beta_batch.status, 'Active')
 
@@ -8434,3 +8436,484 @@ class PurchaserMergedTests(TestCase):
     def test_only_purchasing_role_exists(self):
         self.assertFalse(Group.objects.filter(name='Purchaser').exists())
         self.assertTrue(Group.objects.get(name='Purchasing').permissions.exists())
+
+
+# ============================================================================
+# QA & spoilage control: send to QA, holds, inspections, write-offs, extensions, returns, recall, sweep
+# ============================================================================
+from django.utils import timezone
+
+from core import qa as qa_logic
+from core.models import (OrderTimeline, ProductionConsumption, ProductionRun, PurchaseOrder, PurchaseOrderDetail,
+                         QAApproval, QAEvent, QARequest, RegistryLog)
+
+
+class QASpoilageTests(TestCase):
+    def setUp(self):
+        self.wh = Warehouse.objects.create(name='QA Store', location_type='Both')
+        self.mat = Material.objects.create(name='QA Humic', sku='QA-1', category='Raw', unit_of_measure='kg',
+                                           safe_storage_days=200, weight_mt_per_unit=Decimal('0.001'),
+                                           cost_per_unit=Decimal('10'))
+        self.product = Product.objects.create(name='QA Blend', sku='QA-P', unit_of_measure='bag',
+                                              weight_mt_per_unit=Decimal('0.05'), price_per_unit=Decimal('20'))
+        self.manager = make_user(username='qa_mgr', password='pw', role='Manager')
+        self.editor = make_user(username='qa_ed', password='pw', role='Staff (Editor)')
+        self.viewer = make_user(username='qa_view', password='pw', role='Staff (Viewer)')
+        self.client = Client()
+        self.client.force_login(self.editor)
+        self.today = timezone.localdate()
+
+    def batch(self, number, qty='10', expires_in=100, made_ago=100, **extra):
+        return Batch.objects.create(batch_number=number, material=self.mat, quantity=Decimal(qty), status='Active',
+                                    warehouse=self.wh, manufacturing_date=self.today - timedelta(days=made_ago),
+                                    expiry_date=self.today + timedelta(days=expires_in), **extra)
+
+    def qa_post(self, **data):
+        return self.client.post(reverse('qa_dashboard'), data)
+
+    def test_new_permissions_follow_what_groups_could_already_do(self):
+        self.assertTrue(self.editor.has_perm('core.perform_qa'))
+        self.assertTrue(self.editor.has_perm('core.dispose_stock'))
+        self.assertFalse(self.editor.has_perm('core.approve_qa_writeoffs'))
+        self.assertTrue(self.manager.has_perm('core.approve_qa_writeoffs'))
+        self.assertFalse(self.viewer.has_perm('core.request_qa'))
+        self.assertTrue(make_user(username='qa_sales', password='pw', role='Sales').has_perm('core.request_qa'))
+
+    def test_send_part_of_a_batch_to_qa_on_hold(self):
+        b = self.batch('QA-SEND')
+        self.client.post(reverse('qa_request_create'), {'action': 'send_to_qa', 'batch_id': b.id, 'reason': 'moisture',
+                                                         'quantity': '4', 'priority': 'High', 'hold': '1'})
+        b.refresh_from_db()
+        child = Batch.objects.get(parent_batch=b)
+        self.assertEqual((b.status, b.quantity), ('Active', Decimal('6')))
+        self.assertEqual((child.status, child.quantity), ('Quarantined', Decimal('4')))
+        req = QARequest.objects.get()
+        self.assertEqual((req.batch, req.priority, req.status), (child, 'High', 'Open'))
+        self.assertTrue(QAEvent.objects.filter(batch=child, action='quarantined', request=req).exists())
+        # A second request for the same batch is refused while the first is open.
+        self.client.post(reverse('qa_request_create'), {'action': 'send_to_qa', 'batch_id': child.id, 'reason': 'pest'})
+        self.assertEqual(QARequest.objects.count(), 1)
+
+    def test_viewer_cannot_send_to_qa(self):
+        b = self.batch('QA-VIEW')
+        self.client.force_login(self.viewer)
+        self.client.post(reverse('qa_request_create'), {'action': 'send_to_qa', 'batch_id': b.id, 'reason': 'moisture'})
+        self.assertFalse(QARequest.objects.exists())
+
+    def test_hold_needs_a_reason(self):
+        b = self.batch('QA-NOREASON')
+        self.qa_post(action='quarantine', batch_id=b.id)
+        b.refresh_from_db()
+        self.assertEqual(b.status, 'Active')
+        self.qa_post(action='quarantine', batch_id=b.id, reason='packaging')
+        b.refresh_from_db()
+        self.assertEqual(b.status, 'Quarantined')
+        self.assertEqual(QAEvent.objects.get(batch=b, action='quarantined').reason, 'packaging')
+
+    def test_inspection_pass_releases_and_records_the_checklist(self):
+        b = self.batch('QA-INSP')
+        qa_logic.hold_batch(b, self.manager, 'moisture')
+        self.qa_post(action='inspect', batch_id=b.id, result='pass', checks=list(qa_logic.INSPECTION_CHECKS[:3]),
+                     moisture_pct='11.5')
+        b.refresh_from_db()
+        self.assertEqual(b.status, 'Active')
+        insp = b.inspections.get()
+        self.assertEqual(insp.moisture_pct, Decimal('11.5'))
+        self.assertEqual([c['ok'] for c in insp.checks], [True, True, True, False, False])
+
+    def test_inspection_fail_holds_an_active_batch(self):
+        b = self.batch('QA-FAIL')
+        self.qa_post(action='inspect', batch_id=b.id, result='fail')
+        b.refresh_from_db()
+        self.assertEqual(b.status, 'Quarantined')
+
+    def test_expired_stock_is_held_by_the_sweep_and_cannot_be_released(self):
+        b = self.batch('QA-EXP', expires_in=-1)
+        so = SalesOrder.objects.create(so_number='SO-QA-EXP', client_name='C', origin_warehouse=self.wh, status='Ready to Ship')
+        StockAllocation.objects.create(batch=b, sales_order=so, quantity=Decimal('5'))
+        Batch.objects.filter(pk=b.pk).update(allocated_quantity=Decimal('5'))
+        counts = qa_logic.daily_sweep()
+        b.refresh_from_db()
+        self.assertEqual(counts['auto_held'], 1)
+        self.assertEqual((b.status, b.allocated_quantity), ('Quarantined', Decimal('0')))
+        self.assertTrue(QAEvent.objects.filter(batch=b, action='auto_hold', reason='expired').exists())
+        self.qa_post(action='release_quarantine', batch_id=b.id)
+        b.refresh_from_db()
+        self.assertEqual(b.status, 'Quarantined')
+        self.assertEqual(qa_logic.daily_sweep()['auto_held'], 0)
+
+    def test_expiry_warning_is_sent_once(self):
+        self.batch('QA-WARN', expires_in=3)
+        self.assertEqual(qa_logic.daily_sweep()['warned'], 1)
+        self.assertEqual(qa_logic.daily_sweep()['warned'], 0)
+
+    def test_small_partial_write_off_splits_the_batch(self):
+        b = self.batch('QA-PART')
+        self.qa_post(action='spoil_dispose', batch_id=b.id, reason='pest', quantity='3')
+        b.refresh_from_db()
+        child = Batch.objects.get(parent_batch=b)
+        self.assertEqual((b.status, b.quantity), ('Active', Decimal('7')))
+        self.assertEqual((child.status, child.quantity), ('Spoiled', Decimal('3')))
+        self.assertEqual(RegistryLog.objects.get(action_type='Spoiled_Disposal').quantity_changed, Decimal('3'))
+        self.assertEqual(QAEvent.objects.get(batch=child, action='disposed').value_rm, Decimal('30.00'))
+
+    def test_large_write_off_waits_for_a_manager(self):
+        b = self.batch('QA-BIG', qty='1000')  # RM 10,000, over the RM 5,000 default
+        self.qa_post(action='spoil_dispose', batch_id=b.id, reason='contamination')
+        b.refresh_from_db()
+        approval = QAApproval.objects.get()
+        self.assertEqual((b.status, approval.status, approval.value_rm), ('Quarantined', 'Pending', Decimal('10000.00')))
+        self.client.force_login(self.manager)
+        self.client.post(reverse('qa_dashboard'), {'action': 'approve_qa', 'approval_id': approval.id})
+        b.refresh_from_db(); approval.refresh_from_db()
+        self.assertEqual((b.status, approval.status), ('Spoiled', 'Approved'))
+
+    def test_editor_cannot_approve_a_write_off(self):
+        b = self.batch('QA-BIG2', qty='1000')
+        qa_logic.dispose_batch(b, self.editor, 'contamination')
+        approval = QAApproval.objects.get()
+        self.qa_post(action='approve_qa', approval_id=approval.id)
+        approval.refresh_from_db()
+        self.assertEqual(approval.status, 'Pending')
+
+    def test_shelf_life_extension_is_capped(self):
+        b = self.batch('QA-EXT', expires_in=100, made_ago=100)  # 200-day shelf life, 25% cap = 50 days
+        self.assertEqual(qa_logic.extension_cap_days(b), 50)
+        self.qa_post(action='extend_expiry', batch_id=b.id, extra_days='30', reason='routine_check')
+        b.refresh_from_db()
+        self.assertEqual((b.expiry_date, b.extension_days_total), (self.today + timedelta(days=130), 30))
+        self.qa_post(action='extend_expiry', batch_id=b.id, extra_days='30', reason='routine_check')
+        b.refresh_from_db()
+        self.assertEqual(b.extension_days_total, 30)
+        self.assertEqual(QAApproval.objects.get().kind, 'extend')
+
+    def test_supplier_return_is_a_write_off_noted_on_the_po(self):
+        po = PurchaseOrder.objects.create(po_number='PO-QA-RET', supplier_name='Acme', target_warehouse=self.wh, status='Completed')
+        b = self.batch('QA-RET', purchase_order=po)
+        self.qa_post(action='spoil_dispose', batch_id=b.id, reason='returned_to_supplier')
+        b.refresh_from_db()
+        self.assertEqual(b.status, 'Spoiled')
+        self.assertEqual(RegistryLog.objects.get(action_type='Spoiled_Disposal').quantity_changed, Decimal('10'))
+        self.assertTrue(OrderTimeline.objects.filter(purchase_order=po, action__icontains='returned to supplier').exists())
+        from core import analytics
+        self.assertEqual(analytics.supplier_quality()[('name', 'acme')]['returned_qty'], Decimal('10'))
+
+    def test_manager_can_undo_a_write_off_within_the_window(self):
+        from core import analytics
+        b = self.batch('QA-UNDO')
+        qa_logic.dispose_batch(b, self.editor, 'other')
+        b.refresh_from_db()
+        # Editors can write off but not undo
+        self.qa_post(action='undo_write_off', batch_id=b.id)
+        b.refresh_from_db()
+        self.assertEqual(b.status, 'Spoiled')
+        self.client.force_login(self.manager)
+        self.assertContains(self.client.get(reverse('batch_detail', args=[b.batch_number])), 'Undo write-off')
+        self.qa_post(action='undo_write_off', batch_id=b.id)
+        b.refresh_from_db()
+        self.assertEqual((b.status, b.closed_date, b.quantity), ('Active', None, Decimal('10')))
+        self.assertEqual(list(b.qa_events.filter(action__in=('disposed_undone', 'writeoff_undone')).values_list('action', flat=True).order_by('id')),
+                         ['disposed_undone', 'writeoff_undone'])
+        self.assertTrue(RegistryLog.objects.filter(action_type='Adjusted', item_name__icontains='write-off undone',
+                                                   quantity_changed=Decimal('10')).exists())
+        self.assertEqual(analytics.spoilage_report()['totals']['count'], 0)
+
+    def test_old_write_off_cannot_be_undone(self):
+        b = self.batch('QA-UNDO-OLD')
+        qa_logic.dispose_batch(b, self.manager, 'other')
+        QAEvent.objects.filter(batch=b, action='disposed').update(created_at=timezone.now() - timedelta(days=8))
+        b.refresh_from_db()
+        with self.assertRaises(qa_logic.QAError):
+            qa_logic.undo_write_off(b, self.manager)
+
+    def test_material_checked_on_arrival_is_received_on_hold_with_supplier_dates(self):
+        self.mat.inspect_on_receipt = True
+        self.mat.save()
+        po = PurchaseOrder.objects.create(po_number='PO-QA-IN', supplier_name='S', target_warehouse=self.wh, status='Pending')
+        detail = PurchaseOrderDetail.objects.create(purchase_order=po, material=self.mat, quantity_ordered=Decimal('10'))
+        expiry = self.today + timedelta(days=60)
+        apply_po_material_receipt(detail, Decimal('10'), self.manager, expiry_date=expiry)
+        b = Batch.objects.get(purchase_order=po)
+        self.assertEqual((b.status, b.expiry_date, b.original_expiry_date), ('Quarantined', expiry, expiry))
+        # Waiting for its check: listed under QA Check, not On hold
+        req = QARequest.objects.get(batch=b)
+        self.assertEqual((req.status, req.reason, req.source), ('Open', 'inbound_check', 'PO-QA-IN'))
+        self.client.force_login(self.manager)
+        resp = self.client.get(reverse('qa_dashboard'))
+        self.assertIn(req, resp.context['requests_open'])
+        self.assertNotIn(b, resp.context['quarantined'])
+        self.assertEqual(resp.context['tab_list'][0][:2], ('requests', 'QA Check'))
+
+    def test_run_holding_stock_on_qa_hold_cannot_start(self):
+        b = self.batch('QA-RUN')
+        run = ProductionRun.objects.create(run_number='RUN-QA', target_product=self.product, expected_yield=Decimal('5'),
+                                           status='Planned', manufacturing_plant=self.wh)
+        StockAllocation.objects.create(batch=b, production_run=run, quantity=Decimal('5'))
+        self.assertIsNone(qa_logic.run_hold_problem(run))
+        qa_logic.hold_batch(b, self.manager, 'moisture')
+        self.assertIn(b.batch_number, qa_logic.run_hold_problem(run))
+
+    def test_recall_holds_finished_batches_made_from_a_raw_batch(self):
+        raw = self.batch('QA-RAW')
+        run = ProductionRun.objects.create(run_number='RUN-QA-R', target_product=self.product, expected_yield=Decimal('5'),
+                                           status='Completed', manufacturing_plant=self.wh)
+        ProductionConsumption.objects.create(production_run=run, consumed_batch=raw, quantity_used=Decimal('5'))
+        fg = Batch.objects.create(batch_number='QA-FG', product=self.product, quantity=Decimal('5'), status='Active',
+                                  warehouse=self.wh, manufacturing_date=self.today,
+                                  expiry_date=self.today + timedelta(days=300), produced_in=run)
+        self.assertEqual(qa_logic.trace(fg)['upstream'], [raw])
+        self.qa_post(action='hold_downstream', batch_id=raw.id, note='Supplier recall')
+        fg.refresh_from_db()
+        self.assertEqual(fg.status, 'Quarantined')
+
+    def test_qa_pages_render(self):
+        b = self.batch('QA-PAGE', expires_in=5)
+        qa_logic.create_request(b, self.editor, 'odour_colour')
+        for tab in ('requests', 'expiring', 'at_risk', 'quarantined', 'approvals', 'history'):
+            self.assertEqual(self.client.get(reverse('qa_dashboard'), {'tab': tab}).status_code, 200)
+        self.client.force_login(self.manager)
+        self.assertContains(self.client.get(reverse('batch_detail', args=[b.batch_number])), 'Sent to QA')
+        self.assertEqual(self.client.get(reverse('spoilage_report')).status_code, 200)
+        self.assertEqual(self.client.get(reverse('supplier_scorecard')).status_code, 200)
+        self.assertEqual(self.client.get(reverse('approvals_inbox')).status_code, 200)
+
+    def test_open_qa_requests_show_in_my_open_jobs(self):
+        from core.analytics import my_open_jobs
+        qa_logic.create_request(self.batch('QA-JOB'), self.editor, 'moisture')
+        self.assertIn('QA Request', [r['kind'] for r in my_open_jobs(self.editor)])
+
+    def test_spoilage_report_counts_write_offs(self):
+        from core.analytics import spoilage_report
+        qa_logic.dispose_batch(self.batch('QA-REP'), self.manager, 'pest')
+        report = spoilage_report()
+        self.assertEqual(report['totals']['disposed_value'], Decimal('100.00'))
+        self.assertEqual([(r['count'], r['value']) for r in report['by_reason']], [(1, Decimal('100.00'))])
+
+
+# ============================================================================
+# Roles & Permissions page: create, rename, delete roles and tick their permissions
+# ============================================================================
+from django.contrib.auth.models import Permission  # noqa: E402
+
+from core.permissions import ROLE_PERMISSION_CODENAMES  # noqa: E402
+
+
+def _core_perm(codename):
+    return Permission.objects.get(content_type__app_label='core', codename=codename)
+
+
+class RolesPageTests(TestCase):
+    def setUp(self):
+        self.admin = make_user(username='rp_admin', password='admin-pw-123', role='Admin')
+        self.client.force_login(self.admin)
+
+    def post(self, **data):
+        return self.client.post(reverse('roles'), data)
+
+    def codes(self, role):
+        return set(role.permissions.values_list('codename', flat=True))
+
+    def test_every_listed_permission_exists(self):
+        found = set(Permission.objects.filter(content_type__app_label='core', codename__in=ROLE_PERMISSION_CODENAMES)
+                    .values_list('codename', flat=True))
+        self.assertEqual(set(ROLE_PERMISSION_CODENAMES) - found, set())
+
+    def test_page_lists_roles_and_sidebar_link(self):
+        page = self.client.get(reverse('roles'))
+        self.assertContains(page, 'Roles &amp; Permissions')
+        self.assertContains(page, 'Approve sales orders')
+        self.assertContains(page, 'Create role')
+        self.assertContains(self.client.get(reverse('user_management')), reverse('roles'))
+
+    def test_manager_can_look_but_not_change(self):
+        manager = make_user(username='rp_mgr', password='x-pw-123456', role='Manager')
+        self.client.force_login(manager)
+        page = self.client.get(reverse('roles'))
+        self.assertEqual(page.status_code, 200)
+        self.assertNotContains(page, 'Create role')
+        self.post(action='create_role', name='Sneaky')
+        self.assertFalse(Group.objects.filter(name='Sneaky').exists())
+
+    def test_user_without_manage_users_is_sent_away(self):
+        self.client.force_login(make_user(username='rp_sales', password='x-pw-123456', role='Sales'))
+        self.assertRedirects(self.client.get(reverse('roles')), reverse('dashboard'), fetch_redirect_response=False)
+
+    def test_create_role_copying_another_and_logged(self):
+        self.post(action='create_role', name='Night Shift', copy_from=Group.objects.get(name='Sales').id)
+        role = Group.objects.get(name='Night Shift')
+        self.assertEqual(self.codes(role), self.codes(Group.objects.get(name='Sales')))
+        entry = UserAuditLog.objects.get(action='role_created')
+        self.assertEqual((entry.target_username, entry.details, entry.actor), ('Night Shift', 'Copied from Sales', self.admin))
+
+    def test_duplicate_name_refused_ignoring_case(self):
+        self.post(action='create_role', name='sales')
+        self.assertEqual(Group.objects.filter(name__iexact='sales').count(), 1)
+
+    def test_save_changes_only_listed_permissions_and_logs(self):
+        role = Group.objects.create(name='Temp')
+        role.permissions.add(_core_perm('delete_batch'), _core_perm('view_shipment'))  # delete_batch isn't on the page
+        self.post(action='save_permissions', role_id=role.id, perms=['approve_sales_orders', 'add_salesorder'])
+        self.assertEqual(self.codes(role), {'delete_batch', 'approve_sales_orders', 'add_salesorder'})
+        entry = UserAuditLog.objects.get(action='role_permissions_changed')
+        self.assertEqual(entry.details, 'Added: Create sales orders, Approve sales orders. '
+                                        'Removed: Open Sales Orders, Purchase Orders and the Logistics Tracker')
+
+    def test_new_permission_applies_to_members(self):
+        role = Group.objects.create(name='Temp')
+        member = make_user(username='rp_member', password='x-pw-123456')
+        member.groups.add(role)
+        self.post(action='save_permissions', role_id=role.id, perms=['approve_sales_orders'])
+        self.assertTrue(User.objects.get(pk=member.pk).has_perm('core.approve_sales_orders'))
+
+    def test_admin_role_is_locked(self):
+        admin_role = Group.objects.get(name='Admin')
+        before = self.codes(admin_role)
+        self.post(action='save_permissions', role_id=admin_role.id, perms=['add_salesorder'])
+        self.post(action='rename_role', role_id=admin_role.id, name='Boss')
+        self.post(action='delete_role', role_id=admin_role.id)
+        admin_role.refresh_from_db()
+        self.assertEqual((admin_role.name, self.codes(admin_role)), ('Admin', before))
+        self.assertFalse(UserAuditLog.objects.filter(action__startswith='role_').exists())
+
+    def test_delete_only_when_nobody_has_the_role(self):
+        role = Group.objects.create(name='Temp')
+        member = make_user(username='rp_member', password='x-pw-123456')
+        member.groups.add(role)
+        self.post(action='delete_role', role_id=role.id)
+        self.assertTrue(Group.objects.filter(id=role.id).exists())
+        member.groups.remove(role)
+        self.post(action='delete_role', role_id=role.id)
+        self.assertFalse(Group.objects.filter(id=role.id).exists())
+        self.assertEqual(UserAuditLog.objects.get(action='role_deleted').target_username, 'Temp')
+
+    def test_rename_shows_in_audit_log(self):
+        role = Group.objects.create(name='Temp')
+        self.post(action='rename_role', role_id=role.id, name='Packers')
+        role.refresh_from_db()
+        self.assertEqual(role.name, 'Packers')
+        page = self.client.get(reverse('user_audit_log'), {'q': 'Packers'})
+        self.assertContains(page, 'Renamed from Temp to Packers')
+        self.assertContains(page, 'Role:')
+
+    def test_editor_cannot_give_permissions_they_lack(self):
+        boss = Group.objects.create(name='Boss')
+        boss.permissions.add(_core_perm('manage_users'), _core_perm('override_approvals'))
+        editor = make_user(username='rp_editor', password='x-pw-123456')
+        editor.groups.add(boss)
+        self.client.force_login(editor)
+        role = Group.objects.create(name='Temp')
+        self.post(action='save_permissions', role_id=role.id, perms=['approve_sales_orders'])
+        self.assertEqual(self.codes(role), set())
+
+    def test_editor_cannot_remove_their_own_access(self):
+        boss = Group.objects.create(name='Boss')
+        boss.permissions.add(_core_perm('manage_users'), _core_perm('override_approvals'))
+        editor = make_user(username='rp_editor', password='x-pw-123456')
+        editor.groups.add(boss)
+        self.client.force_login(editor)
+        self.post(action='save_permissions', role_id=boss.id, perms=['override_approvals'])
+        self.assertIn('manage_users', self.codes(boss))
+
+
+class PurchaseOrderCancelTests(TestCase):
+    """An approved PO with nothing received can be cancelled with a reason; its undeparted deliveries go with it."""
+
+    def setUp(self):
+        from core.models import Shipment
+        self.client = Client()
+        self.user = make_user(username='pocancel', password='pw', role='Manager')
+        self.client.force_login(self.user)
+        wh = Warehouse.objects.create(name='Cancel WH', location_type='Storage')
+        mat = Material.objects.create(name='Cancel Mat', sku='MAT-CANCEL', unit_of_measure='kg', safe_storage_days=365)
+        self.po = PurchaseOrder.objects.create(po_number='PO-CANCEL', supplier_name='S', target_warehouse=wh, status='Pending')
+        self.line = PurchaseOrderDetail.objects.create(purchase_order=self.po, material=mat, quantity_ordered=Decimal('10'))
+        self.ship = Shipment.objects.create(tracking_number='SHP-CANCEL', direction='Inbound', status='Draft',
+                                            purchase_order=self.po, destination_warehouse=wh)
+
+    def _cancel(self, reason='Supplier backed out'):
+        return self.client.post(reverse('po_detail', args=[self.po.pk]), {'action': 'cancel_po', 'reason': reason})
+
+    def test_cancel_marks_po_and_draft_delivery_cancelled(self):
+        from core.models import OrderTimeline
+        self._cancel()
+        self.po.refresh_from_db(); self.ship.refresh_from_db()
+        self.assertEqual((self.po.status, self.ship.status), ('Cancelled', 'Cancelled'))
+        self.assertTrue(OrderTimeline.objects.filter(purchase_order=self.po, action__contains='Supplier backed out').exists())
+        self.assertContains(self.client.get(reverse('po_detail', args=[self.po.pk])), 'Supplier backed out')
+
+    def test_reason_is_required(self):
+        self._cancel(reason='')
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, 'Pending')
+
+    def test_refused_once_goods_are_received(self):
+        self.line.quantity_received = Decimal('2')
+        self.line.save()
+        self._cancel()
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, 'Pending')
+
+    def test_refused_while_a_delivery_is_on_the_road(self):
+        self.ship.status = 'Dispatched'
+        self.ship.save()
+        self._cancel()
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, 'Pending')
+
+    def test_cancelled_po_takes_no_receipts(self):
+        self._cancel()
+        self.client.post(reverse('po_detail', args=[self.po.pk]), {'action': 'mark_received', 'item_id': self.line.id, 'qty_received': '5'})
+        self.line.refresh_from_db()
+        self.assertEqual(self.line.quantity_received, Decimal('0'))
+
+
+# ============================================================================
+# Login history: sign-ins, failed attempts and lockouts in the Audit Log
+# ============================================================================
+@override_settings(CACHES=LOCMEM)
+class LoginHistoryTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = make_user(username='lh_user', password='right-pw-123')
+
+    def login(self, username='lh_user', password='right-pw-123', ip='10.9.9.9'):
+        return self.client.post(reverse('login'), {'username': username, 'password': password}, REMOTE_ADDR=ip)
+
+    def entries(self, action):
+        return UserAuditLog.objects.filter(action=action).order_by('id')
+
+    def test_successful_sign_in_is_logged_with_ip(self):
+        self.login()
+        entry = self.entries('signed_in').get()
+        self.assertEqual((entry.target, entry.actor, entry.ip_address), (self.user, self.user, '10.9.9.9'))
+
+    def test_failed_sign_in_is_logged_without_actor(self):
+        self.login(password='wrong')
+        entry = self.entries('sign_in_failed').get()
+        self.assertEqual((entry.target, entry.actor, entry.details), (self.user, None, ''))
+        self.assertFalse(self.entries('signed_in').exists())
+
+    def test_unknown_username_keeps_what_was_typed(self):
+        self.login(username='ghost', password='whatever')
+        entry = self.entries('sign_in_failed').get()
+        self.assertEqual((entry.target, entry.target_username, entry.details), (None, 'ghost', 'No such username'))
+
+    def test_lockout_logged_once(self):
+        limit = get_setting('login_fail_limit')
+        for _ in range(limit + 2):
+            self.login(password='wrong')
+        self.assertEqual(self.entries('locked_out').count(), 1)
+        self.assertIn(f'{limit} failed attempts from this address', self.entries('locked_out').get().details)
+
+    def test_force_login_is_not_logged(self):
+        self.client.force_login(self.user)
+        self.assertFalse(self.entries('signed_in').exists())
+
+    def test_audit_log_page_shows_sign_ins(self):
+        self.login(username='ghost', password='whatever')
+        admin = make_user(username='lh_admin', password='x-pw-123456', role='Admin')
+        self.client.force_login(admin)
+        page = self.client.get(reverse('user_audit_log'), {'action': 'sign_in_failed'})
+        self.assertContains(page, 'ghost')
+        self.assertContains(page, 'No such username')
+        self.assertContains(page, 'Sign-in page')

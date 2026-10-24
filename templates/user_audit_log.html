@@ -13,7 +13,7 @@
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
             {% if target %}History for {{ target.username }}{% else %}Audit Log{% endif %}
         </h1>
-        <p style="font-size:0.9rem; color:var(--text-muted); margin-top:0.25rem;">Who created, reset, or changed each account or system setting, and when.</p>
+        <p style="font-size:0.9rem; color:var(--text-muted); margin-top:0.25rem;">Who signed in, and who created, reset, or changed each account, role or system setting, and when.</p>
     </div>
 </header>
 
@@ -21,7 +21,7 @@
     <form method="get" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:1.25rem;">
         {% if target %}<input type="hidden" name="user" value="{{ target.id }}">{% endif %}
         {% if not target %}
-        <input type="text" name="q" value="{{ query }}" placeholder="Search by username or setting..." class="form-input" style="padding:0.4rem 0.75rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem; width:220px;">
+        <input type="text" name="q" value="{{ query }}" placeholder="Search by username, role or setting..." class="form-input" style="padding:0.4rem 0.75rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem; width:220px;">
         {% endif %}
         <select name="action" class="form-input" style="padding:0.4rem 0.75rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
             <option value="">All changes</option>
@@ -51,12 +51,12 @@
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem; vertical-align:top;">
                     <td style="padding:0.85rem 1rem; white-space:nowrap;">{{ e.created_at|date:"M d, Y H:i" }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">
-                        {% if e.target %}<a href="{% url 'user_audit_log' %}?user={{ e.target_id }}">{{ e.target_username }}</a>{% elif e.action == 'setting_changed' %}<span style="color:var(--text-muted); font-weight:600;">System setting</span>{% else %}{{ e.target_username }}{% endif %}
+                        {% if e.target %}<a href="{% url 'user_audit_log' %}?user={{ e.target_id }}">{{ e.target_username }}</a>{% elif e.action == 'setting_changed' %}<span style="color:var(--text-muted); font-weight:600;">System setting</span>{% elif e.action|slice:":5" == "role_" %}<span style="color:var(--text-muted); font-weight:600;">Role:</span> {{ e.target_username }}{% else %}{{ e.target_username }}{% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem;">{{ e.get_action_display }}</td>
                     <td style="padding:0.85rem 1rem; color:var(--text-muted);">{{ e.details|default:"-" }}</td>
                     <td style="padding:0.85rem 1rem;">
-                        {{ e.actor.username|default:"System" }}
+                        {% if e.action == 'sign_in_failed' or e.action == 'locked_out' %}<span style="color:var(--text-muted);">Sign-in page</span>{% else %}{{ e.actor.username|default:"System" }}{% endif %}
                         {% if e.ip_address %}<div style="font-size:0.75rem; color:var(--text-muted);">{{ e.ip_address }}</div>{% endif %}
                     </td>
                 </tr>

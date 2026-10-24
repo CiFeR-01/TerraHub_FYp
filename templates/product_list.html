@@ -154,6 +154,10 @@
                     <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Price / Unit (RM)</label>
                     <input type="number" step="0.01" name="price_per_unit" value="100.00" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
                 </div>
+                <div>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Shelf Life (days)</label>
+                    <input type="number" min="1" name="shelf_life_days" placeholder="Blank = 365" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('product-modal').style.display='none'">Cancel</button>
@@ -173,7 +177,7 @@
         
         <div style="background:var(--surface-sunken); border:1px dashed var(--border-light); border-radius:8px; padding:1rem; margin-bottom:1.25rem; font-size:0.85rem;">
             <div style="font-weight:600; margin-bottom:0.3rem;">📋 CSV File Formatting Guide:</div>
-            <div style="color:var(--text-muted); margin-bottom:0.5rem;">Expected headers: <code>name, sku, description, unit_of_measure, weight_mt_per_unit, price_per_unit</code></div>
+            <div style="color:var(--text-muted); margin-bottom:0.5rem;">Expected headers: <code>name, sku, description, unit_of_measure, weight_mt_per_unit, price_per_unit</code> (optional: <code>shelf_life_days</code>)</div>
             <a href="{% url 'export_product_template' %}" style="color:var(--primary); font-weight:600; text-decoration:none;">📄 Click here to download sample CSV template</a>
         </div>
 

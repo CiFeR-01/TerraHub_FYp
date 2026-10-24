@@ -1,0 +1,73 @@
+<!-- "Send to QA" pop-up, included once by base.html for users who may raise QA requests.
+     Open it from any page with openSendToQA(batchId, batchNumber, quantity, unit). -->
+<div id="send-qa-modal" role="dialog" aria-modal="true" aria-labelledby="send-qa-title" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.5); z-index:1100; align-items:center; justify-content:center; padding:1rem;">
+    <div style="background:var(--bg-surface); border-radius:12px; width:100%; max-width:480px; padding:1.5rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.15); max-height:90vh; overflow:auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+            <h3 id="send-qa-title" style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700;">Send to QA</h3>
+            <button type="button" onclick="closeSendToQA()" aria-label="Close" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        </div>
+        <form method="post" action="{% url 'qa_request_create' %}">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="send_to_qa">
+            <input type="hidden" name="batch_id" id="send-qa-batch-id" value="">
+            <input type="hidden" name="next" value="{{ request.get_full_path }}">
+            <input type="hidden" name="source" id="send-qa-source" value="">
+            <p id="send-qa-batch" style="font-size:0.9rem; margin-bottom:1rem; color:var(--text-main); font-weight:600;"></p>
+
+            <label for="send-qa-reason" style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.3rem;">What's wrong?</label>
+            <select name="reason" id="send-qa-reason" required class="form-select" style="width:100%; padding:0.5rem; margin-bottom:0.9rem;">
+                <option value="">Choose a reason…</option>
+                {% for val, label in qa_reason_choices %}{% if val != 'expiry_warning' %}<option value="{{ val }}">{{ label }}</option>{% endif %}{% endfor %}
+            </select>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:0.9rem;">
+                <div>
+                    <label for="send-qa-qty" style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.3rem;">Quantity affected</label>
+                    <input type="number" step="0.01" min="0.01" name="quantity" id="send-qa-qty" class="form-input" style="width:100%; padding:0.5rem;" placeholder="All">
+                    <div id="send-qa-qty-hint" style="font-size:0.72rem; color:var(--text-muted); margin-top:0.2rem;"></div>
+                </div>
+                <div>
+                    <label for="send-qa-priority" style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.3rem;">Priority</label>
+                    <select name="priority" id="send-qa-priority" class="form-select" style="width:100%; padding:0.5rem;">
+                        <option value="Low">Low</option>
+                        <option value="Normal" selected>Normal</option>
+                        <option value="High">High</option>
+                        <option value="Urgent">Urgent</option>
+                    </select>
+                </div>
+            </div>
+
+            <label for="send-qa-note" style="display:block; font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.3rem;">Note for QA</label>
+            <textarea name="note" id="send-qa-note" rows="3" class="form-input" style="width:100%; padding:0.5rem; margin-bottom:0.9rem;" placeholder="What did you see? Where is it?"></textarea>
+
+            <label style="display:flex; gap:0.5rem; align-items:flex-start; font-size:0.85rem; margin-bottom:1.25rem; cursor:pointer;">
+                <input type="checkbox" name="hold" value="1" id="send-qa-hold" style="margin-top:0.2rem;">
+                <span><strong>Hold it now.</strong> The stock can't ship or go into production until QA looks at it.</span>
+            </label>
+
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
+                <button type="button" class="btn btn-secondary" onclick="closeSendToQA()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Send to QA</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+    function openSendToQA(batchId, batchNumber, quantity, unit) {
+        document.getElementById('send-qa-batch-id').value = batchId;
+        document.getElementById('send-qa-batch').innerText = 'Batch ' + batchNumber;
+        document.getElementById('send-qa-source').value = (document.title || '').split(' - ')[0];
+        var qty = document.getElementById('send-qa-qty');
+        qty.value = '';
+        qty.max = quantity || '';
+        document.getElementById('send-qa-qty-hint').innerText = quantity ? ('Blank = all ' + quantity + (unit ? ' ' + unit : '')) : 'Blank = the whole batch';
+        document.getElementById('send-qa-modal').style.display = 'flex';
+        document.getElementById('send-qa-reason').focus();
+    }
+    function closeSendToQA() {
+        document.getElementById('send-qa-modal').style.display = 'none';
+    }
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { closeSendToQA(); }
+    });
+</script>
