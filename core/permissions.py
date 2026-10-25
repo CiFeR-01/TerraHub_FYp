@@ -193,7 +193,8 @@ RECEIVE = 'core.add_shipmentitemreceipt'
 ACTION_PERMS = {
     'batch_detail': {'update_batch': 'core.change_batch'},
     'qa_request_create': {'send_to_qa': REQUEST_QA},
-    'stock_audit': {'create': 'core.add_stockaudit', 'resolve': 'core.change_stockaudit'},
+    'stock_audit': {'create': 'core.add_stockaudit', 'resolve': 'core.change_stockaudit',
+                    'reject': 'core.change_stockaudit'},
     'product_recipe_api': {a: 'core.change_productrecipe' for a in ('clone_recipe', 'delete_item', 'save_batch')},
     'product_list': {'create_product': 'core.add_product', 'add_recipe': 'core.add_productrecipe',
                      'toggle_active': 'core.change_product'},

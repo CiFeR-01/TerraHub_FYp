@@ -584,6 +584,7 @@ class StockAudit(models.Model):
     STATUS_CHOICES = (
         ('Pending', 'Pending (Duplicate/Conflict)'),
         ('Resolved', 'Resolved (Applied)'),
+        ('Rejected', 'Rejected (Not Applied)'),
     )
     batch = models.ForeignKey(Batch, on_delete=models.CASCADE)
     expected_quantity = models.DecimalField(max_digits=12, decimal_places=2)
@@ -592,6 +593,10 @@ class StockAudit(models.Model):
     auditor = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Pending')
     source = models.CharField(max_length=50, default='WebForm')
+    # Who applied or rejected the count, when, and (for a rejection) why.
+    reviewed_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_audits')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.TextField(blank=True, default='')
 
     @property
     def variance(self):

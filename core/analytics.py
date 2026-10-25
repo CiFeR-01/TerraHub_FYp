@@ -386,7 +386,7 @@ def audit_accuracy(*, since=None):
 
     audits = StockAudit.objects.select_related(
         "batch", "batch__material", "batch__product", "batch__warehouse"
-    )
+    ).exclude(status="Rejected")  # a rejected count was judged wrong, so it says nothing about stock accuracy
     if since is not None:
         audits = audits.filter(audit_date__date__gte=since)
 

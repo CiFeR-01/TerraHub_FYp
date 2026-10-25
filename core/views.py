@@ -286,6 +286,13 @@ def so_return_for_reapproval(so, user, what):
 
 # Outbound/Transfer cargo is locked once the truck leaves; edits while pending or approved return the shipment to Logistics Review.
 SHIPMENT_CARGO_LOCKED = ('Dispatched', 'Delayed', 'Arrived', 'Completed', 'Discrepant', 'Cancelled')
+# Inbound cargo is the supplier's declared load, so it stays editable on the road and locks once the truck arrives.
+INBOUND_CARGO_LOCKED = ('Arrived', 'Completed', 'Discrepant', 'Cancelled')
+
+
+def shipment_cargo_locked(shipment):
+    return shipment.status in (INBOUND_CARGO_LOCKED if shipment.direction == 'Inbound' else SHIPMENT_CARGO_LOCKED)
+
 # Statuses each shipment action may start from: nothing that has left can be scrapped or sent back, and only a finished one reopened.
 SHIPMENT_ACTION_STATUSES = {
     'scrap_shipment': ('Draft', 'Logistics Review', 'Pending Approval', 'Preparing'),
@@ -1219,6 +1226,10 @@ def stock_audit_view(request):
                 if not may_use_warehouse(request.user, batch.warehouse_id):
                     messages.error(request, FACILITY_REFUSED)
                     return redirect('stock_audit')
+                open_audit = StockAudit.objects.filter(batch=batch, status='Pending').first()
+                if open_audit:
+                    messages.error(request, f"Batch {batch.batch_number} already has a pending count (audit #{open_audit.id}). Apply or reject it before logging another.")
+                    return redirect('stock_audit')
                 StockAudit.objects.create(
                     batch=batch,
                     expected_quantity=batch.quantity,
@@ -1246,6 +1257,8 @@ def stock_audit_view(request):
                         return redirect('stock_audit')
                     variance = audit.variance
                     audit.status = 'Resolved'
+                    audit.reviewed_by = request.user
+                    audit.reviewed_at = timezone.now()
                     audit.save()
 
                     b.quantity = audit.actual_quantity
@@ -1261,10 +1274,29 @@ def stock_audit_view(request):
                         user=request.user
                     )
                 messages.success(request, f"Audit #{audit.id} resolved. Physical stock updated.")
+        elif action == 'reject':
+            audit = get_object_or_404(StockAudit, id=request.POST.get('audit_id'))
+            if not may_use_warehouse(request.user, audit.batch.warehouse_id):
+                messages.error(request, FACILITY_REFUSED)
+                return redirect('stock_audit')
+            reason = request.POST.get('reason', '').strip()
+            if audit.status != 'Pending':
+                messages.error(request, f"Audit #{audit.id} is already {audit.status.lower()}.")
+            elif not reason:
+                messages.error(request, "Give a reason for rejecting the count.")
+            else:
+                # Stock is left as it is; the count is kept on record with who rejected it and why.
+                audit.status = 'Rejected'
+                audit.reviewed_by = request.user
+                audit.reviewed_at = timezone.now()
+                audit.review_note = reason
+                audit.save()
+                messages.success(request, f"Audit #{audit.id} rejected. Stock was not changed.")
 
         return redirect('stock_audit')
 
-    audits = StockAudit.objects.select_related('batch', 'auditor').order_by('-id')
+    audits = StockAudit.objects.select_related('batch', 'batch__material', 'batch__product', 'batch__warehouse',
+                                               'auditor', 'reviewed_by').order_by('-id')
     active_batches = Batch.objects.filter(status='Active').select_related('material', 'product', 'warehouse')
     # Facility limit: users limited to some facilities only see those facilities' audits and batches
     limited = limited_warehouse_ids(request.user)
@@ -1274,8 +1306,14 @@ def stock_audit_view(request):
 
     pending_count = audits.filter(status='Pending').count()
     resolved_count = audits.filter(status='Resolved').count()
+    pending_batch_ids = set(audits.filter(status='Pending').values_list('batch_id', flat=True))
+    # Items for the filter on the form and the table: one entry per material/product, by name.
+    items = {(b.material or b.product).name for b in active_batches if b.material or b.product}
+    items |= {(a.batch.material or a.batch.product).name for a in audits if a.batch.material or a.batch.product}
 
     context = {
+        'pending_batch_ids': pending_batch_ids,
+        'item_names': sorted(items),
         'audits': audits,
         'active_batches': active_batches,
         'pending_count': pending_count,
@@ -4966,10 +5004,10 @@ def shipment_detail_view(request, pk):
         if action in ('add_item', 'remove_item') and shipment.direction == 'Transfer' and shipment.sales_order:
             messages.error(request, f"This stock move's cargo comes from {shipment.sales_order.so_number}. Change the order, or switch its delivery plan, instead.")
             return redirect('shipment_detail', pk=shipment.pk)
+        if action in ('add_item', 'remove_item') and shipment_cargo_locked(shipment):
+            messages.error(request, f"Cargo can't be changed once a shipment is {shipment.status}.")
+            return redirect('shipment_detail', pk=shipment.pk)
         if action in ('add_item', 'remove_item') and shipment.direction != 'Inbound':
-            if shipment.status in SHIPMENT_CARGO_LOCKED:
-                messages.error(request, f"Cargo can't be changed once a shipment is {shipment.status}.")
-                return redirect('shipment_detail', pk=shipment.pk)
             cargo_before = sorted(shipment.items.values_list('id', 'batch_id', 'quantity'))
         
         if action == 'add_item':
@@ -5612,8 +5650,7 @@ def shipment_detail_view(request, pk):
         'materials': materials,
         'products': products,
         'batches': batches,
-        # Same rule as the add_item/remove_item guard above
-        'cargo_locked': shipment.status in ('Cancelled', 'Completed', 'Arrived') or (shipment.direction != 'Inbound' and shipment.status in SHIPMENT_CARGO_LOCKED),
+        'cargo_locked': shipment_cargo_locked(shipment),
         'managers': managers,
         'all_users': all_users,
         'can_self_approve': request.user.has_perm(APPROVE_SHIPMENTS),

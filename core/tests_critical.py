@@ -19,18 +19,22 @@ from core.models import (
 )
 import ast
 import io
+import os
 import re
 from pathlib import Path
+from unittest import mock
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import Client, override_settings
 
+from core import briefing as briefing_mod
 from core import qa as qa_logic
-from core.models import QAApproval, QAEvent, QARequest
+from core.analytics import rent_reduction_opportunities, warehouse_rent_burn
+from core.models import OpsBriefing, QAApproval, QAEvent, QARequest, WarehouseUtilizationSnapshot
 from core.permissions import ACTION_PERMS
-from core.tests import LOCMEM, AdminEditBase, CriticalBase, _core_perm, make_user
+from core.tests import LOCMEM, AdminEditBase, CriticalBase, _FakeAnthropicModule, _core_perm, make_user
 from core.utils import allocate_stock, apply_po_material_receipt, deduct_stock_from_allocation
 
 D = Decimal
@@ -837,3 +841,101 @@ class PublicBatchPageTests(CriticalBase):
         self.assertNotContains(response, 'Secret Supplier')
         self.assertNotContains(response, 'Aisle 7 Bin 3')
         self.assertContains(response, 'CR Store')
+
+
+class RentBillingTests(TestCase):
+    """Daily rent is charged the right way for each billing method."""
+
+    def setUp(self):
+        self.material = Material.objects.create(
+            name='Rent Sand', sku='MAT-RS', category='Bulk', unit_of_measure='MT',
+            safe_storage_days=365, weight_mt_per_unit=D('1.0'),
+        )
+
+    def _wh(self, billing, rate, capacity='1000'):
+        return Warehouse.objects.create(
+            name=f'Rent WH {Warehouse.objects.count()}', location_type='Storage',
+            ownership_type='ExternalProvider', rental_billing_method=billing,
+            rental_cost_per_mt=D(rate), total_capacity_mt=D(capacity),
+        )
+
+    def _batch(self, wh, qty, rate):
+        return Batch.objects.create(
+            batch_number=f'B-{wh.id}-{qty}-{rate}', material=self.material, quantity=D(str(qty)),
+            status='Active', warehouse=wh, manufacturing_date=date.today(),
+            expiry_date=date.today() + timedelta(days=300), rental_rate_per_mt=D(rate),
+        )
+
+    def _row(self, wh):
+        return next(r for r in warehouse_rent_burn() if r['warehouse_id'] == wh.id)
+
+    def test_overall_billing_uses_capacity_times_rate_ignores_batches(self):
+        wh = self._wh('Overall', '2.00')
+        self._batch(wh, 999, '5.00')
+        self.assertEqual(self._row(wh)['daily_cost'], 2000.0)
+
+    def test_usage_billing_sums_open_batches_at_locked_in_rate(self):
+        wh = self._wh('Usage', '5.00')
+        self._batch(wh, 100, '3.00')
+        self._batch(wh, 50, '7.00')
+        self.assertEqual(self._row(wh)['daily_cost'], 650.0)  # not 150 * 5.00
+
+
+class RentMoveCapacityTests(TestCase):
+    """An accepted rent-saving move books room at the destination, so it can't be over-filled twice."""
+
+    def setUp(self):
+        self.client = Client()
+        self.client.force_login(get_user_model().objects.create_user(username='rs_admin', password='pw', is_superuser=True))
+        self.rented = Warehouse.objects.create(
+            name='Rented RS', location_type='Storage', ownership_type='ExternalProvider',
+            rental_billing_method='Usage', rental_cost_per_mt=D('5.00'), total_capacity_mt=D('1000'),
+        )
+        self.material = Material.objects.create(name='RS Sand', sku='MAT-RS', category='Bulk', unit_of_measure='MT',
+                                                safe_storage_days=365, weight_mt_per_unit=D('1.0'))
+        for pct, ago in ((80, 6), (90, 3), (97, 0)):
+            WarehouseUtilizationSnapshot.objects.create(
+                warehouse=self.rented, snapshot_date=date.today() - timedelta(days=ago),
+                used_mt=D(str(pct * 10)), capacity_mt=D('1000'), utilization_percent=D(str(pct)))
+
+    def _batch(self, qty, expiry_days=10):
+        return Batch.objects.create(
+            batch_number=f'B-RS-{Batch.objects.count()}', material=self.material, quantity=D(str(qty)), status='Active',
+            warehouse=self.rented, manufacturing_date=date.today(),
+            expiry_date=date.today() + timedelta(days=expiry_days), rental_rate_per_mt=D('5.00'))
+
+    def test_accepting_reserves_room_at_the_destination(self):
+        depot = Warehouse.objects.create(name='Depot RS', location_type='Storage', ownership_type='Internal',
+                                         rental_billing_method='Usage', rental_cost_per_mt=D('0'),
+                                         total_capacity_mt=D('500'))
+        a, b = self._batch(100), self._batch(50, expiry_days=200)
+        self.assertEqual(rent_reduction_opportunities()[0]['destination_options'][0]['spare_mt'], 500.0)
+        self.client.post(reverse('rent_suggestion_decide'), {'decision': 'accept', 'pick': [f'{a.id}:{depot.id}']})
+        opp = rent_reduction_opportunities()[0]
+        self.assertEqual(opp['destination_options'][0]['spare_mt'], 400.0)
+        self.assertEqual([c['batch_id'] for c in opp['candidate_batches']], [b.id])
+
+
+class CopilotAccessTests(TestCase):
+    """AI Copilot: plain users can't spend API calls on team briefings, and checklists stay private."""
+
+    def setUp(self):
+        self.owner = make_user(username='owner', password='pw')
+        self.other = make_user(username='other', password='pw')
+        self.client.login(username='owner', password='pw')
+
+    def test_generate_gated_to_admin_manager(self):
+        self.assertNotContains(self.client.get(reverse('category_briefing', args=['sales'])), 'Generate now')
+        with mock.patch.object(briefing_mod, 'anthropic', _FakeAnthropicModule()), \
+             mock.patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'k'}):
+            self.client.post(reverse('category_briefing', args=['sales']), {'period': 'daily'})
+        self.assertEqual(OpsBriefing.objects.count(), 0)
+
+    def test_checklist_scoped_to_generating_user_only(self):
+        OpsBriefing.objects.create(category='my_checklist', status='ok', headline='Owner one',
+                                   signal_count=1, generated_by=self.owner)
+        OpsBriefing.objects.create(category='my_checklist', status='ok', headline='Other one',
+                                   signal_count=1, generated_by=self.other)
+        response = self.client.get(reverse('ops_briefing'))
+        self.assertContains(response, 'Owner one')
+        self.assertNotContains(response, 'Other one')

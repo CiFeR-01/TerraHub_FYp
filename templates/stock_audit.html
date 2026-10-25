@@ -63,7 +63,14 @@
         <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700;">Audit Discrepancy Logs</h3>
     </div>
 
-    {% include "partials/_table_search.html" with target='#auditsTable' placeholder='Search batch #, item, auditor...' %}
+    <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:flex-start;">
+        {% include "partials/_table_search.html" with target='#auditsTable' placeholder='Search batch #, item, auditor...' %}
+        <select id="auditItemFilter" class="form-select" style="padding:0.55rem 0.8rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.875rem; max-width:260px;">
+            <option value="">All items</option>
+            {% for name in item_names %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+        </select>
+    </div>
+    <style>.item-filtered { display:none !important; }</style>
     <div class="table-responsive">
         <table id="auditsTable" class="modern-table sortable" style="width:100%; border-collapse:collapse;">
             <thead>
@@ -82,7 +89,7 @@
             </thead>
             <tbody>
                 {% for audit in audits %}
-                <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
+                <tr data-item="{% if audit.batch.material %}{{ audit.batch.material.name }}{% elif audit.batch.product %}{{ audit.batch.product.name }}{% endif %}" style="border-bottom:1px solid var(--border-light); font-size:0.875rem;">
                     <td style="padding:0.85rem 1rem; font-weight:600;">#{{ audit.id }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ audit.batch.batch_number }}</td>
                     <td style="padding:0.85rem 1rem;">{% if audit.batch.material %}{{ audit.batch.material.name }}{% elif audit.batch.product %}{{ audit.batch.product.name }}{% else %}Batch Item{% endif %}</td>
@@ -100,9 +107,12 @@
                     <td style="padding:0.85rem 1rem;">
                         {% if audit.status == 'Pending' %}
                         <span class="badge badge-amber">Pending</span>
+                        {% elif audit.status == 'Rejected' %}
+                        <span class="badge badge-rose">Rejected</span>
                         {% else %}
                         <span class="badge badge-emerald">Resolved</span>
                         {% endif %}
+                        {% if audit.reviewed_by %}<div style="font-size:0.72rem; color:var(--text-muted); margin-top:0.2rem;">by {{ audit.reviewed_by.username }}{% if audit.reviewed_at %}, {{ audit.reviewed_at|date:"j M Y H:i" }}{% endif %}{% if audit.review_note %}: {{ audit.review_note }}{% endif %}</div>{% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem; text-align:right;">
                         {% if audit.status == 'Pending' %}
@@ -114,6 +124,11 @@
                                 Apply &amp; Resolve
                             </button>
                         </form>
+                        <button type="button" class="btn btn-secondary" onclick="openRejectModal({{ audit.id }})" style="padding:0.3rem 0.6rem; font-size:0.78rem; border-color:var(--danger); color:var(--danger);">
+                            Reject
+                        </button>
+                        {% elif audit.status == 'Rejected' %}
+                        <span style="font-size:0.78rem; color:var(--text-muted);">not applied</span>
                         {% else %}
                         <span style="font-size:0.78rem; color:var(--text-muted);">reconciled</span>
                         {% endif %}
@@ -139,13 +154,22 @@
         <form method="post">
             {% csrf_token %}
             <input type="hidden" name="action" value="create">
+            <div style="display:flex; gap:0.5rem; margin-bottom:0.6rem;">
+                <select id="auditFormItem" class="form-select" style="flex:1; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
+                    <option value="">All items</option>
+                    {% for name in item_names %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+                </select>
+                <input type="text" id="auditFormSearch" placeholder="Search batch # or item..." class="form-input" style="flex:1; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
+            </div>
             <div style="margin-bottom:1rem;">
                 <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.4rem;">Select Active Batch</label>
                 <select name="batch_id" required class="form-select" style="width:100%; padding:0.6rem; border-radius:6px; border:1px solid var(--border-light);">
+                    <option value="">Choose a batch...</option>
                     {% for b in active_batches %}
-                    <option value="{{ b.id }}" data-batch-number="{{ b.batch_number }}">Batch {{ b.batch_number }} — {% if b.material %}{{ b.material.name }}{% elif b.product %}{{ b.product.name }}{% else %}Batch Item{% endif %} (Current: {{ b.quantity|floatformat:1 }})</option>
+                    <option value="{{ b.id }}" data-batch-number="{{ b.batch_number }}" data-item="{% if b.material %}{{ b.material.name }}{% elif b.product %}{{ b.product.name }}{% endif %}" data-qty="{{ b.quantity|floatformat:2 }}" data-unit="{% if b.material %}{{ b.material.unit_of_measure }}{% elif b.product %}{{ b.product.unit_of_measure }}{% endif %}"{% if b.id in pending_batch_ids %} disabled{% endif %}>Batch {{ b.batch_number }} — {% if b.material %}{{ b.material.name }}{% elif b.product %}{{ b.product.name }}{% else %}Batch Item{% endif %}{% if b.id in pending_batch_ids %} (count pending){% endif %}</option>
                     {% endfor %}
                 </select>
+                <div id="auditSystemQty" style="display:none; margin-top:0.5rem; font-size:0.82rem; padding:0.45rem 0.7rem; border-radius:6px; background:rgba(99,102,241,0.08); color:var(--text-main);"></div>
             </div>
             <div style="margin-bottom:1.25rem;">
                 <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.4rem;">Actual Counted Quantity</label>
@@ -159,8 +183,63 @@
     </div>
 </div>
 
+<!-- Reject Modal -->
+<div id="reject-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:var(--bg-surface); border-radius:12px; width:100%; max-width:420px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
+        <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700; margin-bottom:0.5rem;">Reject Count <span id="rejectAuditLabel"></span></h3>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">Stock stays as it is. The count is kept on record as rejected.</p>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="reject">
+            <input type="hidden" name="audit_id" id="rejectAuditId">
+            <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.4rem;">Reason</label>
+            <textarea name="reason" required rows="3" class="form-input" style="width:100%; padding:0.6rem; border-radius:6px; border:1px solid var(--border-light);" placeholder="e.g. Miscount, recounted the bay"></textarea>
+            <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:1rem;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('reject-modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary" style="background:var(--danger); border-color:var(--danger);">Reject Count</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
+    function openRejectModal(id) {
+        document.getElementById('rejectAuditId').value = id;
+        document.getElementById('rejectAuditLabel').textContent = '#' + id;
+        document.getElementById('reject-modal').style.display = 'flex';
+    }
+
     document.addEventListener("DOMContentLoaded", function() {
+        // Item filter on the audit table; a class so the text search's own show/hide can't undo it
+        document.getElementById('auditItemFilter').addEventListener('change', function () {
+            var item = this.value;
+            document.querySelectorAll('#auditsTable tbody tr[data-item]').forEach(function (tr) {
+                tr.classList.toggle('item-filtered', !!item && tr.getAttribute('data-item') !== item);
+            });
+        });
+
+        // Log form: narrow the batch list by item and search text, and show the chosen batch's system quantity
+        var batchSel = document.querySelector('select[name="batch_id"]');
+        var itemSel = document.getElementById('auditFormItem');
+        var searchEl = document.getElementById('auditFormSearch');
+        var qtyEl = document.getElementById('auditSystemQty');
+        function showQty() {
+            var o = batchSel.selectedOptions[0];
+            if (!o || !o.value) { qtyEl.style.display = 'none'; return; }
+            qtyEl.textContent = 'System quantity: ' + o.getAttribute('data-qty') + ' ' + o.getAttribute('data-unit');
+            qtyEl.style.display = '';
+        }
+        function filterBatches() {
+            var item = itemSel.value, q = searchEl.value.trim().toLowerCase();
+            Array.prototype.forEach.call(batchSel.options, function (o) {
+                if (o.value) o.hidden = !((!item || o.getAttribute('data-item') === item) && (!q || o.text.toLowerCase().indexOf(q) !== -1));
+            });
+            if (batchSel.selectedOptions[0] && batchSel.selectedOptions[0].hidden) { batchSel.value = ''; showQty(); }
+        }
+        itemSel.addEventListener('change', filterBatches);
+        searchEl.addEventListener('input', filterBatches);
+        batchSel.addEventListener('change', showQty);
+
         const urlParams = new URLSearchParams(window.location.search);
         const batchNum = urlParams.get('batch');
         if (batchNum) {
@@ -172,8 +251,9 @@
             if (selectEl) {
                 const options = selectEl.options;
                 for (let i = 0; i < options.length; i++) {
-                    if (options[i].getAttribute('data-batch-number') === batchNum) {
+                    if (options[i].getAttribute('data-batch-number') === batchNum && !options[i].disabled) {
                         selectEl.selectedIndex = i;
+                        showQty();
                         break;
                     }
                 }

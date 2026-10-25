@@ -9291,3 +9291,92 @@ class ManualReceiveTests(TestCase):
         self._post(product_id=self.prod.id)
         self.assertEqual(Batch.objects.get(warehouse=self.wh).product, self.prod)
 
+
+
+# ==== Inbound shipment cargo lock
+class InboundCargoLockTests(TestCase):
+    """Inbound cargo can change while the supplier's truck is on the road, but not once it has arrived."""
+
+    def setUp(self):
+        self.client = Client()
+        self.client.force_login(make_user(username='inlock', password='pw', role='Admin'))
+        self.wh = Warehouse.objects.create(name='In WH', location_type='Storage')
+        self.mat = Material.objects.create(name='Grit', sku='MAT-INL', category='Test', unit_of_measure='kg', safe_storage_days=365)
+
+    def _add(self, status):
+        s = Shipment.objects.create(tracking_number=f'SHP-INL-{status}', direction='Inbound', status=status, destination_warehouse=self.wh)
+        r = self.client.post(reverse('shipment_detail', args=[s.pk]), {'action': 'add_item', 'material_id': self.mat.id, 'quantity': '5'})
+        return s, r
+
+    def test_add_allowed_while_dispatched(self):
+        s, _ = self._add('Dispatched')
+        self.assertEqual(s.items.count(), 1)
+        self.assertContains(self.client.get(reverse('shipment_detail', args=[s.pk])), 'Add Cargo Line Item')
+
+    def test_add_refused_once_arrived(self):
+        for status in ('Arrived', 'Completed', 'Discrepant', 'Cancelled'):
+            s, _ = self._add(status)
+            self.assertFalse(s.items.exists(), status)
+            self.assertNotContains(self.client.get(reverse('shipment_detail', args=[s.pk])), 'Add Cargo Line Item')
+
+
+# ==== Stock audit: reject, one pending count per batch, form filter
+class StockAuditRejectTests(TestCase):
+    """A pending count can be rejected without touching stock, and a batch holds one pending count at a time."""
+
+    def setUp(self):
+        from core.models import StockAudit
+        self.admin = make_user(username='sa_admin', password='pw', role='Admin')
+        self.client.force_login(self.admin)
+        self.wh = Warehouse.objects.create(name='SA WH', location_type='Storage')
+        self.other_wh = Warehouse.objects.create(name='SA Other', location_type='Storage')
+        mat = Material.objects.create(name='SA Grit', sku='MAT-SA', category='c', unit_of_measure='kg', safe_storage_days=365)
+        self.batch = Batch.objects.create(batch_number='SA-1', material=mat, quantity=Decimal('40'), status='Active',
+                                          manufacturing_date=date(2026, 1, 1), expiry_date=date(2027, 1, 1), warehouse=self.wh)
+        self.audit = StockAudit.objects.create(batch=self.batch, expected_quantity=Decimal('40'), actual_quantity=Decimal('25'))
+
+    def _reject(self, reason='miscount'):
+        self.client.post(reverse('stock_audit'), {'action': 'reject', 'audit_id': self.audit.id, 'reason': reason})
+        self.audit.refresh_from_db(); self.batch.refresh_from_db()
+
+    def test_reject_keeps_stock_and_records_who_and_why(self):
+        self._reject()
+        self.assertEqual((self.audit.status, self.audit.reviewed_by, self.audit.review_note), ('Rejected', self.admin, 'miscount'))
+        self.assertIsNotNone(self.audit.reviewed_at)
+        self.assertEqual(self.batch.quantity, Decimal('40'))
+        self.assertFalse(RegistryLog.objects.filter(action_type='Adjusted').exists())
+
+    def test_reject_needs_a_reason_and_a_pending_count(self):
+        self._reject(reason='  ')
+        self.assertEqual(self.audit.status, 'Pending')
+        self.client.post(reverse('stock_audit'), {'action': 'resolve', 'audit_id': self.audit.id})
+        self._reject()
+        self.assertEqual((self.audit.status, self.batch.quantity), ('Resolved', Decimal('25')))
+
+    def test_viewer_and_other_facility_staff_cannot_reject(self):
+        viewer = make_user(username='sa_viewer', password='pw', role='Staff (Viewer)')
+        self.client.force_login(viewer)
+        self._reject()
+        self.assertEqual(self.audit.status, 'Pending')
+        wh_staff = make_user(username='sa_wh', password='pw', role='Warehouse')
+        wh_staff.allowed_locations.set([self.other_wh])
+        self.client.force_login(wh_staff)
+        self._reject()
+        self.assertEqual(self.audit.status, 'Pending')
+
+    def test_second_count_for_a_batch_waits_for_the_first(self):
+        from core.models import StockAudit
+        create = {'action': 'create', 'batch_id': self.batch.id, 'actual_quantity': '30'}
+        self.client.post(reverse('stock_audit'), create)
+        self.assertEqual(StockAudit.objects.filter(batch=self.batch).count(), 1)
+        resp = self.client.get(reverse('stock_audit'))
+        self.assertIn(self.batch.id, resp.context['pending_batch_ids'])
+        self.assertIn('SA Grit', resp.context['item_names'])
+        self._reject()
+        self.client.post(reverse('stock_audit'), create)
+        self.assertEqual(StockAudit.objects.filter(batch=self.batch, status='Pending').count(), 1)
+
+    def test_rejected_counts_are_left_out_of_audit_accuracy(self):
+        from core.analytics import audit_accuracy
+        self._reject()
+        self.assertEqual(audit_accuracy()['by_item'], [])
