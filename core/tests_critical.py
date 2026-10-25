@@ -5,7 +5,7 @@ A test belongs here only if breaking it would lose or invent stock or money, let
 permission, break a one-way status rule, or open a security hole. Each one is a copy of a test in core/tests.py.
 The full suite in core/tests.py is the complete safety net; CriticalBase lives there.
 """
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.contrib.auth.models import Group
@@ -31,7 +31,7 @@ from core import qa as qa_logic
 from core.models import QAApproval, QAEvent, QARequest
 from core.permissions import ACTION_PERMS
 from core.tests import LOCMEM, AdminEditBase, CriticalBase, _core_perm, make_user
-from core.utils import allocate_stock, deduct_stock_from_allocation
+from core.utils import allocate_stock, apply_po_material_receipt, deduct_stock_from_allocation
 
 D = Decimal
 
@@ -379,7 +379,8 @@ class TransferTests(CriticalBase):
     def _short_transfer(self):
         src = self.batch('CR-SRC3', '200', allocated='100', material=True)
         s, item = self.transfer(src, '100')
-        self.post('shipment_detail', s.pk, action='complete_shipment', **{f'received_qty_{item.id}': '70'})
+        self.post('shipment_detail', s.pk, action='log_item_receipt', item_id=item.id, quantity='70')
+        self.post('shipment_detail', s.pk, action='finalize_shipment_receiving')
         self.refresh(s)
         self.assertEqual(s.status, 'Discrepant')
         Shipment.objects.filter(pk=s.pk).update(assigned_manager=self.admin)
@@ -498,7 +499,8 @@ class PurchaseOrderCancelTests(TestCase):
 
 
 class QAWriteOffTests(TestCase):
-    """Big write-offs wait for a manager, only managers undo them, and expired stock can't be released."""
+    """Big write-offs wait for a manager, only managers undo them, expired stock can't be released,
+    and material checked on arrival is received on hold."""
 
     def setUp(self):
         self.wh = Warehouse.objects.create(name='QA Store', location_type='Both')
@@ -573,6 +575,24 @@ class QAWriteOffTests(TestCase):
         self.assertEqual(b.status, 'Quarantined')
         self.assertEqual(qa_logic.daily_sweep()['auto_held'], 0)
 
+    def test_material_checked_on_arrival_is_received_on_hold_with_supplier_dates(self):
+        self.mat.inspect_on_receipt = True
+        self.mat.save()
+        po = PurchaseOrder.objects.create(po_number='PO-QA-IN', supplier_name='S', target_warehouse=self.wh, status='Pending')
+        detail = PurchaseOrderDetail.objects.create(purchase_order=po, material=self.mat, quantity_ordered=Decimal('10'))
+        expiry = self.today + timedelta(days=60)
+        apply_po_material_receipt(detail, Decimal('10'), self.manager, expiry_date=expiry)
+        b = Batch.objects.get(purchase_order=po)
+        self.assertEqual((b.status, b.expiry_date, b.original_expiry_date), ('Quarantined', expiry, expiry))
+        # Waiting for its check: listed under QA Check, not On hold
+        req = QARequest.objects.get(batch=b)
+        self.assertEqual((req.status, req.reason, req.source), ('Open', 'inbound_check', 'PO-QA-IN'))
+        self.client.force_login(self.manager)
+        resp = self.client.get(reverse('qa_dashboard'))
+        self.assertIn(req, resp.context['requests_open'])
+        self.assertNotIn(b, resp.context['quarantined'])
+        self.assertEqual(resp.context['tab_list'][0][:2], ('requests', 'QA Check'))
+
 
 class ArchiveAndYieldTests(TestCase):
     """Archived items can't go on new order lines; logging past the expected yield needs a reason."""
@@ -612,6 +632,86 @@ class ArchiveAndYieldTests(TestCase):
         self.assertTrue(OrderTimeline.objects.filter(production_run=run, action__contains='leftover material').exists())
 
 
+class OrderCancelAndAbortTests(TestCase):
+    """Cancelling an order or aborting a run gives back every reservation and can't be undone."""
+
+    def setUp(self):
+        self.admin = make_user(username='sd_admin', password='pw', role='Admin')
+        self.client.force_login(self.admin)
+        self.wh = Warehouse.objects.create(name='SD Hub', location_type='Storage')
+        self.product = Product.objects.create(name='SD Product', sku='PRD-SD', unit_of_measure='kg', price_per_unit=1)
+
+    def _batch(self, number, qty, allocated=0, expires_in=100):
+        return Batch.objects.create(
+            batch_number=number, status='Active', product=self.product, quantity=Decimal(qty),
+            allocated_quantity=Decimal(allocated), manufacturing_date=date.today() - timedelta(days=200),
+            expiry_date=date.today() + timedelta(days=expires_in), warehouse=self.wh,
+        )
+
+    def _material_batch(self, number, qty, allocated=0):
+        mat, _ = Material.objects.get_or_create(sku='MAT-SD', defaults=dict(name='SD Mat', category='Bulk', unit_of_measure='kg', safe_storage_days=365))
+        return Batch.objects.create(batch_number=number, status='Active', material=mat, quantity=Decimal(qty),
+                                    allocated_quantity=Decimal(allocated), manufacturing_date=date.today(),
+                                    expiry_date=date.today() + timedelta(days=100), warehouse=self.wh)
+
+    def _so(self, ordered, status='Pending', shipped=0):
+        so = SalesOrder.objects.create(so_number=f'SO-SD-{SalesOrder.objects.count()}', client_name='C',
+                                       origin_warehouse=self.wh, status=status)
+        detail = SalesOrderDetail.objects.create(sales_order=so, product=self.product,
+                                                 quantity_ordered=Decimal(ordered), quantity_shipped=Decimal(shipped))
+        return so, detail
+
+    def _outbound(self, so, batch, qty, status='Arrived', **kw):
+        s = Shipment.objects.create(tracking_number=f'SHP-SD-{Shipment.objects.count()}', direction='Outbound',
+                                    status=status, origin_warehouse=self.wh, sales_order=so, **kw)
+        item = ShipmentItem.objects.create(shipment=s, product=self.product, batch=batch, quantity=Decimal(qty))
+        StockAllocation.objects.create(batch=batch, shipment=s, quantity=Decimal(qty))
+        return s, item
+
+    def test_cancelling_an_order_releases_its_stock_runs_and_shipments(self):
+        so, _ = self._so('10', status='Pending')
+        fg = self._batch('SD-CX', '10', allocated='5')
+        StockAllocation.objects.create(batch=fg, sales_order=so, quantity=Decimal('3'))
+        s, _ = self._outbound(so, fg, '2', status='Draft')
+        run = ProductionRun.objects.create(run_number='RUN-SD-CX', target_product=self.product, expected_yield=Decimal('5'),
+                                           status='Planned', sales_order=so)
+        mat = self._material_batch('SD-CX-M', '50', allocated='10')
+        StockAllocation.objects.create(batch=mat, production_run=run, quantity=Decimal('10'))
+        url = reverse('so_detail', args=[so.pk])
+        self.client.post(url, {'action': 'cancel_so'})          # a reason is required
+        so.refresh_from_db()
+        self.assertEqual(so.status, 'Pending')
+        self.client.post(url, {'action': 'cancel_so', 'reason': 'Client withdrew'})
+        for obj in (so, fg, s, run, mat):
+            obj.refresh_from_db()
+        self.assertEqual((so.status, so.cancel_reason), ('Cancelled', 'Client withdrew'))
+        self.assertEqual((fg.allocated_quantity, mat.allocated_quantity), (Decimal('0'), Decimal('0')))
+        self.assertEqual((s.status, run.status), ('Cancelled', 'Cancelled'))
+        self.assertFalse(StockAllocation.objects.exists())
+        # Final: it can't be sent back for approval or edited
+        self.client.post(url, {'action': 'request_approval', 'manager_id': self.admin.id})
+        self.client.post(url, {'action': 'add_so_item', 'product_id': self.product.id, 'quantity_ordered': '1'})
+        so.refresh_from_db()
+        self.assertEqual((so.status, so.items.count()), ('Cancelled', 1))
+
+    def test_aborting_a_run_refuses_more_than_allocated_and_frees_the_order(self):
+        from core.models import OrderTimeline
+        so, _ = self._so('5', status='In Production')
+        mat = self._material_batch('SD-AB2-M', '50', allocated='10')
+        ProductRecipe.objects.create(product=self.product, material=mat.material, quantity_required=2)
+        run = ProductionRun.objects.create(run_number='RUN-SD-AB2', target_product=self.product, expected_yield=Decimal('5'),
+                                           status='InProgress', manufacturing_plant=self.wh, sales_order=so)
+        StockAllocation.objects.create(batch=mat, production_run=run, quantity=Decimal('10'))
+        url = reverse('production_run_detail', args=[run.pk])
+        self.client.post(url, {'action': 'abort_run', 'reason': 'x', f'used_qty_{mat.material.id}': '12'})
+        run.refresh_from_db(); mat.refresh_from_db()
+        self.assertEqual((run.status, mat.quantity), ('InProgress', Decimal('50')))
+        self.client.post(url, {'action': 'abort_run', 'reason': 'x', f'used_qty_{mat.material.id}': '10'})
+        run.refresh_from_db(); so.refresh_from_db()
+        self.assertEqual((run.status, so.status), ('Cancelled', 'Pending'))
+        self.assertFalse(OrderTimeline.objects.filter(sales_order=so, action__contains='completed').exists())
+
+
 class OrderImportApprovalTests(TestCase):
     """An imported order with an approver only reaches Pending Approval, never approved."""
 
@@ -637,7 +737,8 @@ class OrderImportApprovalTests(TestCase):
 
 
 class RolesSecurityTests(TestCase):
-    """The Roles page can't be used to change the Admin role or hand out permissions you don't hold."""
+    """The Roles and Users pages can't be used to change the Admin role, hand out permissions you don't hold,
+    or reset the password of someone with more powers."""
 
     def setUp(self):
         self.admin = make_user(username='rp_admin', password='admin-pw-123', role='Admin')
@@ -669,6 +770,13 @@ class RolesSecurityTests(TestCase):
         role = Group.objects.create(name='Temp')
         self.post(action='save_permissions', role_id=role.id, perms=['approve_sales_orders'])
         self.assertEqual(self.codes(role), set())
+
+    def test_cannot_reset_the_password_of_someone_with_more_powers(self):
+        # copy of PasswordResetTests.test_cannot_reset_someone_with_more_powers
+        boss = make_user(username='pr_boss', password='boss-pw-123', is_superuser=True)
+        self.client.post(reverse('user_management'), {'action': 'reset_password', 'user_id': boss.id})
+        boss.refresh_from_db()
+        self.assertTrue(boss.check_password('boss-pw-123'))
 
 
 @override_settings(CACHES=LOCMEM, LOGIN_FAIL_LIMIT=3, LOGIN_LOCKOUT_SECONDS=900)

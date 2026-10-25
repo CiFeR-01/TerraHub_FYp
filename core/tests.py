@@ -3113,10 +3113,10 @@ class SOCreateShipmentAllocationTests(TestCase):
 
     def _complete(self, shipment, received=Decimal('600')):
         item = shipment.items.first()
-        return self.client.post(reverse('shipment_detail', args=[shipment.pk]), {
-            'action': 'complete_shipment',
-            f'received_qty_{item.id}': str(received),
-        })
+        url = reverse('shipment_detail', args=[shipment.pk])
+        if Decimal(str(received)) > 0:
+            self.client.post(url, {'action': 'log_item_receipt', 'item_id': item.id, 'quantity': str(received)})
+        return self.client.post(url, {'action': 'finalize_shipment_receiving'})
 
     def test_completing_shipment_credits_quantity_shipped_and_deducts_stock(self):
         self._create_shipment()
@@ -3671,10 +3671,10 @@ class TransferReceiptTests(TestCase):
         StockAllocation.objects.create(batch=self.batch, shipment=self.shipment, quantity=Decimal('200'))
 
     def _complete(self, received='200'):
-        return self.client.post(reverse('shipment_detail', args=[self.shipment.pk]), {
-            'action': 'complete_shipment',
-            f'received_qty_{self.item.id}': received,
-        })
+        url = reverse('shipment_detail', args=[self.shipment.pk])
+        if Decimal(received) > 0:
+            self.client.post(url, {'action': 'log_item_receipt', 'item_id': self.item.id, 'quantity': received})
+        return self.client.post(url, {'action': 'finalize_shipment_receiving'})
 
     def _dest_batch(self):
         return Batch.objects.get(batch_number=f'B-SRC-1-TRF-{self.shipment.id}')
@@ -7105,6 +7105,48 @@ class StockAccuracyTests(TestCase):
         self.assertEqual(self._stock(), Decimal('60'))
         self.assertEqual(self.po.status, 'Partially Received')
         self.assertIsNone(self.po.completed_date)
+
+    def test_partial_receipt_is_held_until_the_po_completes(self):
+        self._receive('40')
+        batch = Batch.objects.get(purchase_order=self.po)
+        self.assertEqual(batch.status, 'Quarantined')
+        page = self.client.get(reverse('po_detail', args=[self.po.pk]))
+        self.assertEqual(page.context['po_items_data'][0]['batches'][0]['tag'], 'On hold (PO)')
+        self._receive('100')
+        self.assertEqual(self.po.status, 'Completed')
+        for b in Batch.objects.filter(purchase_order=self.po):
+            self.assertEqual(b.status, 'Active')
+            self.assertTrue(self.po.timeline.filter(action__contains=b.batch_number).exists())
+
+    def test_one_delivery_logged_three_times_makes_one_batch(self):
+        s = Shipment.objects.create(tracking_number='SHP-SA-IN', direction='Inbound', status='Arrived',
+                                    destination_warehouse=self.wh, purchase_order=self.po)
+        item = ShipmentItem.objects.create(shipment=s, material=self.material, quantity=Decimal('100'))
+        for qty in ('30', '30', '40'):
+            self.client.post(reverse('shipment_detail', args=[s.pk]), {'action': 'log_item_receipt', 'item_id': item.id,
+                                                                      'quantity': qty, 'received_date': str(date.today())})
+        batch = Batch.objects.get(purchase_order=self.po)
+        self.po.refresh_from_db()
+        self.assertEqual((batch.quantity, batch.status, self.po.status), (Decimal('100'), 'Active', 'Completed'))
+        self.assertEqual(self.po.timeline.filter(action__contains=f"via SHP-SA-IN into Batch {batch.batch_number}").count(), 3)
+
+    def test_closing_short_by_hand_releases_and_blocks_more_receipts(self):
+        self._receive('40')
+        self.client.post(reverse('po_detail', args=[self.po.pk]), {'action': 'update_po_status', 'status': 'Completed'})
+        self.assertEqual(Batch.objects.get(purchase_order=self.po).status, 'Active')
+        self._receive('60')
+        self.assertEqual((self.line.quantity_received, self.po.status), (Decimal('40'), 'Completed'))
+        # Reopen, receive the rest: it's held until the PO completes again
+        self.client.post(reverse('po_detail', args=[self.po.pk]), {'action': 'update_po_status', 'status': 'Partially Received'})
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, 'Partially Received')
+        self._receive('100')
+        self.assertEqual(self.po.status, 'Completed')
+        self.assertFalse(Batch.objects.filter(purchase_order=self.po, status='Quarantined').exists())
+        # A fully received PO can't be reopened
+        self.client.post(reverse('po_detail', args=[self.po.pk]), {'action': 'update_po_status', 'status': 'Partially Received'})
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, 'Completed')
 
     def test_cannot_lower_a_receipt_below_what_is_already_reserved(self):
         self._receive('100')

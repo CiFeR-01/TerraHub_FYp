@@ -221,6 +221,7 @@
                     <th style="padding:0.6rem 1rem;">Qty Ordered</th>
                     <th style="padding:0.6rem 1rem;">Qty Received</th>
                     <th style="padding:0.6rem 1rem;">Receipt Progress</th>
+                    <th style="padding:0.6rem 1rem;">Batch</th>
                     <th style="padding:0.6rem 1rem;">Unit Price</th>
                     <th style="padding:0.6rem 1rem;">Rental Rate</th>
                     <th style="padding:0.6rem 1rem;">Subtotal</th>
@@ -243,13 +244,19 @@
                         </div>
                         <div style="font-size:0.72rem; color:var(--text-muted); margin-top:0.2rem;">{{ row.pct_received }}% received</div>
                     </td>
+                    <td style="padding:0.85rem 1rem; font-size:0.78rem; white-space:nowrap;">
+                        {% for rb in row.batches %}
+                        <div><a href="{% url 'batch_detail' rb.batch.batch_number %}" style="font-family:monospace; color:var(--primary);">{{ rb.batch.batch_number }}</a>
+                            <span style="font-weight:600; color:{% if rb.tag == 'Released' %}var(--success-strong){% elif rb.tag == 'Used up' or rb.tag == 'Written off' %}var(--text-muted){% else %}var(--warning-strong){% endif %};">{{ rb.tag }}</span></div>
+                        {% empty %}<span style="color:var(--text-muted);">—</span>{% endfor %}
+                    </td>
                     <td style="padding:0.85rem 1rem;">{% if row.item.unit_price %}RM {{ row.item.unit_price|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem;">{% if row.item.negotiated_rental_rate_per_mt %}RM {{ row.item.negotiated_rental_rate_per_mt|floatformat:2 }}{% else %}<span style="color:var(--text-muted); font-size:0.78rem;">warehouse rate</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600; white-space:nowrap;">{% if row.subtotal > 0 %}RM {{ row.subtotal|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
                         <!-- Receive form -->
-                        {% if po.status not in unapproved_statuses %}
-                        <button onclick="(function(){var el=document.getElementById('recv-{{ row.item.id }}');el.style.display=el.style.display==='none'?'table-row':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--text-muted); margin-right:0.3rem;">📥 Receive</button>
+                        {% if po.status not in unapproved_statuses and po.status != 'Cancelled' %}
+                        <button onclick="(function(){var el=document.getElementById('recv-{{ row.item.id }}');el.style.display=el.style.display==='none'?'table-row':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--text-muted); margin-right:0.3rem;"{% if row.pct_received >= 100 or po.status == 'Completed' %} title="Lower a wrong receipt">✎ Correct{% else %}>📥 Receive{% endif %}</button>
                         {% endif %}
                         {% if not items_locked %}
                         <form method="post" style="display:inline;">
@@ -263,7 +270,7 @@
                 </tr>
                 <!-- Receive quantity mini-form -->
                 <tr id="recv-{{ row.item.id }}" style="display:none; background:var(--success-soft);">
-                    <td colspan="10" style="padding:0.5rem 1rem 0.75rem 2rem;">
+                    <td colspan="11" style="padding:0.5rem 1rem 0.75rem 2rem;">
                         <form method="post" style="display:inline-flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="mark_received">
@@ -282,7 +289,7 @@
             </tbody>
             <tfoot>
                 <tr style="border-top:2px solid var(--border-light);">
-                    <td colspan="8" style="padding:0.85rem 1rem; text-align:right; font-size:0.78rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Order Total</td>
+                    <td colspan="9" style="padding:0.85rem 1rem; text-align:right; font-size:0.78rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Order Total</td>
                     <td style="padding:0.85rem 1rem; font-size:1.05rem; font-weight:700; color:var(--primary); white-space:nowrap;">RM {{ po_total|floatformat:2 }}</td>
                     <td></td>
                 </tr>

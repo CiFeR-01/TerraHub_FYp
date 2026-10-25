@@ -234,7 +234,16 @@ def so_manual_status_problem(so, new_status):
 # Only a partly received PO can be closed by hand; other PO statuses come from approval and receiving.
 PO_MANUAL_TRANSITIONS = {
     'Partially Received': ['Completed'],
+    'Completed': ['Partially Received'],   # reopen, only when closed short (see po_manual_transitions)
 }
+
+
+def po_manual_transitions(po):
+    """Statuses this PO may be set to by hand. A Completed PO can only be reopened if it was closed short."""
+    allowed = PO_MANUAL_TRANSITIONS.get(po.status, [])
+    if po.status == 'Completed' and all(i.quantity_received >= i.quantity_ordered for i in po.items.all()):
+        return []
+    return allowed
 
 # Unapproved orders cannot be allocated, received or produced against.
 UNAPPROVED_STATUSES = ('Draft', 'Pending Approval', 'Rejected')
@@ -2902,14 +2911,20 @@ def purchase_order_list_view(request):
             po_id = request.POST.get('po_id')
             new_status = request.POST.get('status')
             po = get_object_or_404(PurchaseOrder, id=po_id)
-            if new_status not in PO_MANUAL_TRANSITIONS.get(po.status, []):
+            if new_status not in po_manual_transitions(po):
                 messages.error(request, f"{po.po_number} can't be changed from {po.status} to {new_status} by hand.")
                 return redirect('po_list')
+            reopening = po.status == 'Completed'
             po.status = new_status
-            if new_status in ['Pending', 'Partially Received']:
+            if new_status in ['Pending', 'Partially Received'] and not reopening:
                 po.approved_by = request.user
+            if reopening:
+                po.completed_date = None
             po.save()
-            OrderTimeline.objects.create(purchase_order=po, action=f"Status changed to '{new_status}'", user=request.user)
+            OrderTimeline.objects.create(purchase_order=po, action="PO reopened to receive more" if reopening else f"Status changed to '{new_status}'", user=request.user)
+            if new_status == 'Completed':
+                from .utils import release_po_held_batches
+                release_po_held_batches(po, request.user)
             messages.success(request, f"Purchase Order {po.po_number} updated to {new_status}.")
 
         return redirect('po_list')
@@ -3819,6 +3834,9 @@ def po_detail_view(request, pk):
                 except InvalidOperation:
                     messages.error(request, "Enter the received quantity as a number.")
                     return redirect('po_detail', pk=po.pk)
+                if po.status == 'Completed' and new_qty > old_qty:
+                    messages.error(request, f"{po.po_number} is completed, so a receipt can only be lowered to correct it.")
+                    return redirect('po_detail', pk=po.pk)
                 if new_qty < 0 or new_qty > item.quantity_ordered:
                     messages.error(request, f"Received quantity must be between 0 and the {item.quantity_ordered} ordered. If the supplier sent more, change the line's ordered quantity first.")
                     return redirect('po_detail', pk=po.pk)
@@ -3837,11 +3855,15 @@ def po_detail_view(request, pk):
 
                 from .utils import apply_po_material_receipt
                 with transaction.atomic():
-                    apply_po_material_receipt(item, delta, request.user, expiry_date=supplier_expiry,
-                                              manufacturing_date=supplier_mfg)
-                OrderTimeline.objects.create(purchase_order=po, action=f"Received {new_qty} of {item.material.name}", user=request.user)
+                    batch = apply_po_material_receipt(item, delta, request.user, expiry_date=supplier_expiry,
+                                                      manufacturing_date=supplier_mfg)
+                into = f" (+{delta} into Batch {batch.batch_number})" if batch else ""
+                OrderTimeline.objects.create(purchase_order=po, action=f"Received {new_qty} of {item.material.name}{into}", user=request.user)
+                po.refresh_from_db()
                 if delta > 0 and item.material.inspect_on_receipt:
                     messages.success(request, f"Updated received quantity for {item.material.name}. The {delta} received is on QA hold until it's inspected.")
+                elif delta > 0 and po.status != 'Completed':
+                    messages.success(request, f"Added {delta} of {item.material.name} to Batch {batch.batch_number}. It stays on hold until {po.po_number} is completed.")
                 elif delta > 0:
                     messages.success(request, f"Updated received quantity for {item.material.name} and added {delta} to inventory.")
                 else:
@@ -3860,14 +3882,20 @@ def po_detail_view(request, pk):
 
         elif action == 'update_po_status':
             new_status = request.POST.get('status')
-            if new_status not in PO_MANUAL_TRANSITIONS.get(po.status, []):
+            if new_status not in po_manual_transitions(po):
                 messages.error(request, f"{po.po_number} can't be changed from {po.status} to {new_status} by hand.")
                 return redirect('po_detail', pk=po.pk)
+            reopening = po.status == 'Completed'
             po.status = new_status
-            if new_status in ['Pending', 'Partially Received']:
+            if new_status in ['Pending', 'Partially Received'] and not reopening:
                 po.approved_by = request.user
+            if reopening:
+                po.completed_date = None
             po.save()
-            OrderTimeline.objects.create(purchase_order=po, action=f"Status updated to '{new_status}'", user=request.user)
+            OrderTimeline.objects.create(purchase_order=po, action="PO reopened to receive more" if reopening else f"Status updated to '{new_status}'", user=request.user)
+            if new_status == 'Completed':
+                from .utils import release_po_held_batches
+                release_po_held_batches(po, request.user)
 
             # Notify followers of status change
             for follower in po.followers.all():
@@ -3935,6 +3963,23 @@ def po_detail_view(request, pk):
     # Build line item data with totals
     po_items_data = []
     po_total = 0
+    # Receipt batches link to the PO and material, not the line, so a line shows its material's batches
+    from .utils import po_wait_note
+    from .qa import HOLD_ACTIONS
+    po_batches = {}
+    for b in Batch.objects.filter(purchase_order=po, material__isnull=False).prefetch_related('qa_events', 'qa_requests').order_by('id'):
+        if b.status == 'Quarantined':
+            holds = [e for e in b.qa_events.all() if e.action in HOLD_ACTIONS]
+            last_hold = max(holds, key=lambda e: (e.created_at, e.id)) if holds else None
+            if any(r.status in ('Open', 'In Review') for r in b.qa_requests.all()):
+                tag = 'QA check'
+            elif last_hold and last_hold.note == po_wait_note(po):
+                tag = 'On hold (PO)'
+            else:
+                tag = 'On hold'
+        else:
+            tag = {'Active': 'Released', 'Depleted': 'Used up', 'Spoiled': 'Written off'}.get(b.status, b.status)
+        po_batches.setdefault(b.material_id, []).append({'batch': b, 'tag': tag})
     for item in po.items.select_related('material').all():
         subtotal = float(item.quantity_ordered) * float(item.unit_price or 0)
         po_total += subtotal
@@ -3942,6 +3987,7 @@ def po_detail_view(request, pk):
             'item': item,
             'subtotal': subtotal,
             'pct_received': min(100, int((float(item.quantity_received) / float(item.quantity_ordered) * 100))) if float(item.quantity_ordered) > 0 else 0,
+            'batches': po_batches.get(item.material_id, []),
         })
 
     context = {
@@ -3950,7 +3996,7 @@ def po_detail_view(request, pk):
         'po_total': po_total,
         'materials': materials,
         'warehouses': warehouses,
-        'po_status_choices': [c for c in PurchaseOrder.STATUS_CHOICES if c[0] == po.status or c[0] in PO_MANUAL_TRANSITIONS.get(po.status, [])],
+        'po_status_choices': [c for c in PurchaseOrder.STATUS_CHOICES if c[0] == po.status or c[0] in po_manual_transitions(po)],
         'unapproved_statuses': UNAPPROVED_STATUSES,
         'items_locked': po.status in PO_ITEMS_LOCKED,
         'can_cancel': po_cancel_problem(po) is None,
@@ -4797,10 +4843,17 @@ def record_item_receipt(shipment, item, qty, received_date, user, notes=None):
     if shipment.direction == 'Inbound' and shipment.purchase_order and item.material:
         detail = PurchaseOrderDetail.objects.filter(purchase_order=shipment.purchase_order, material=item.material).first()
         if detail:
-            apply_po_material_receipt(detail, qty, user)
+            batch = apply_po_material_receipt(detail, qty, user, into_batch=item.batch)
+            into = f" into Batch {batch.batch_number}" if batch else ""
+            if batch and item.batch_id != batch.id:
+                item.batch = batch
+                item.save(update_fields=['batch'])
+            OrderTimeline.objects.create(purchase_order=shipment.purchase_order, user=user,
+                                         action=f"Received {qty} of {item.material.name} via {shipment.tracking_number}{into}")
 
     item_name = item.material.name if item.material else (item.product.name if item.product else 'item')
-    OrderTimeline.objects.create(shipment=shipment, action=f"Logged receipt of {qty} for {item_name} on {received_date}.", user=user)
+    batch_note = f" into Batch {item.batch.batch_number}" if shipment.direction == 'Inbound' and item.batch else ""
+    OrderTimeline.objects.create(shipment=shipment, action=f"Logged receipt of {qty} for {item_name}{batch_note} on {received_date}.", user=user)
     return item_name
 
 
@@ -5300,19 +5353,6 @@ def shipment_detail_view(request, pk):
 
                 messages.success(request, f"Operational status updated to {new_st}.")
 
-        elif action == 'complete_shipment':
-            # Older one-form receipt: sets every line's received quantity at once.
-            if shipment.status not in RECEIVABLE_STATUSES:
-                messages.error(request, "A shipment can only be received once it has arrived.")
-                return redirect('shipment_detail', pk=shipment.pk)
-            for item in shipment.items.all():
-                req_qty_str = request.POST.get(f'received_qty_{item.id}')
-                if req_qty_str:
-                    item.received_quantity = Decimal(req_qty_str)
-                    item.date_confirmed = timezone.now()
-                    item.save()
-            finish_shipment_receiving(request, shipment)
-
         elif action == 'log_item_receipt':
             if shipment.status not in RECEIVABLE_STATUSES:
                 messages.error(request, "Receipts can only be logged once the shipment has arrived.")
@@ -5474,9 +5514,12 @@ def shipment_detail_view(request, pk):
                 lines = list(po.items.all())
                 if lines and all(i.quantity_received >= i.quantity_ordered for i in lines):
                     po.status = 'Completed'
-                elif any(i.quantity_received > 0 for i in lines):
+                elif any(i.quantity_received > 0 for i in lines) and po.status != 'Completed':
                     po.status = 'Partially Received'
                 po.save()
+                if po.status == 'Completed':
+                    from .utils import release_po_held_batches
+                    release_po_held_batches(po, request.user)
             
             messages.success(request, "Shipment Force Closed. Unreceived stock locks released.")
             
