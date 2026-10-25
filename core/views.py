@@ -616,36 +616,6 @@ def dashboard_view(request):
 
     return render(request, 'dashboard.html', context)
 
-@login_required
-def system_view(request):
-    # The console shows live SQL and DB details, so it's for superusers and Admins only (same rule as the clear/test buttons).
-    if not (request.user.is_superuser or is_admin_user(request.user)):
-        messages.error(request, "Permission Denied: the System Console is for Admins only.")
-        return redirect('dashboard')
-    system_metrics = {
-        'total_users': CustomUser.objects.count(),
-        'total_warehouses': Warehouse.objects.count(),
-        'total_batches': Batch.objects.count(),
-        'total_logs': RegistryLog.objects.count(),
-        'total_sales_orders': SalesOrder.objects.count(),
-        'total_purchase_orders': PurchaseOrder.objects.count(),
-        'total_shipments': Shipment.objects.count(),
-        'total_materials': Material.objects.count(),
-        'total_products': Product.objects.count(),
-    }
-    recent_registry = RegistryLog.objects.select_related('user', 'warehouse').order_by('-timestamp')[:8]
-    
-    from .db_tracker import get_db_status, DB_QUERY_LOGS
-    db_status = get_db_status()
-    initial_logs = list(DB_QUERY_LOGS)
-    
-    return render(request, 'system.html', {
-        'metrics': system_metrics,
-        'recent_logs': recent_registry,
-        'db_status': db_status,
-        'db_logs': initial_logs,
-    })
-
 
 def _setting_label(key):
     return key.replace('_', ' ').title()
@@ -746,47 +716,6 @@ def session_keepalive_view(request):
     from .account import idle_timeout_seconds
     return JsonResponse({'authenticated': True,
                          'expires_in': min(request.session.get_expiry_age(), idle_timeout_seconds(request))})
-
-@login_required
-def db_logs_api_view(request):
-    if not (request.user.is_superuser or is_admin_user(request.user)):
-        return JsonResponse({'status': 'error', 'message': "Permission denied."}, status=403)
-    from .db_tracker import DB_QUERY_LOGS, get_db_status
-    db_status = get_db_status()
-    return JsonResponse({
-        'logs': list(DB_QUERY_LOGS),
-        'db_status': db_status
-    })
-
-
-@login_required
-def db_clear_logs_view(request):
-    if request.method != 'POST' or not (request.user.is_superuser or is_admin_user(request.user)):
-        return JsonResponse({'status': 'error', 'message': "Permission denied."}, status=403)
-    from .db_tracker import DB_QUERY_LOGS
-    DB_QUERY_LOGS.clear()
-    return JsonResponse({'status': 'success'})
-
-
-@login_required
-def db_test_op_view(request):
-    if request.method != 'POST' or not (request.user.is_superuser or is_admin_user(request.user)):
-        return JsonResponse({'status': 'error', 'message': "Permission denied."}, status=403)
-    op_type = request.POST.get('type', 'read')
-    if op_type == 'write':
-        Notification.objects.create(
-            user=request.user,
-            message=f"DB Write Telemetry Test at {datetime.datetime.now().strftime('%H:%M:%S')}",
-            link="",
-            is_read=True
-        )
-        msg = "Write query (INSERT Notification) executed successfully."
-    else:
-        _ = list(CustomUser.objects.filter(id=request.user.id))
-        msg = "Read query (SELECT CustomUser) executed successfully."
-        
-    return JsonResponse({'status': 'success', 'message': msg})
-
 
 
 def home_view(request):

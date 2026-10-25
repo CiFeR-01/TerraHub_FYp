@@ -2,7 +2,6 @@ from django.test import TestCase, Client
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
-from core.db_tracker import get_db_status, DB_QUERY_LOGS
 from django.db import connection
 from core.models import (
     Warehouse, WarehouseLocation, Material, Product, ProductRecipe,
@@ -20,71 +19,6 @@ def make_user(role=None, **kwargs):
     if role:
         user.groups.add(Group.objects.get(name=role))
     return user
-
-class DatabaseConsoleTests(TestCase):
-    def setUp(self):
-        self.client = Client()
-        self.user = make_user(username='testadmin', password='password123', role='Admin')
-        
-    def test_db_status_keys(self):
-        status = get_db_status()
-        self.assertIn('status', status)
-        self.assertIn('engine', status)
-        self.assertIn('name', status)
-        self.assertIn('is_live', status)
-        
-    def test_db_query_interception(self):
-        # Clear buffer
-        DB_QUERY_LOGS.clear()
-        
-        # Run a query
-        list(User.objects.all())
-        
-        # Verify a query was logged
-        self.assertTrue(len(DB_QUERY_LOGS) > 0)
-        last_log = DB_QUERY_LOGS[-1]
-        self.assertIn('sql', last_log)
-        self.assertIn('type', last_log)
-        self.assertEqual(last_log['type'], 'READ')
-        
-    def test_db_logs_api_requires_login(self):
-        url = reverse('db_logs_api')
-        response = self.client.get(url)
-        self.assertEqual(response.status_code, 302) # Redirect to login
-        
-    def test_db_logs_api_authenticated(self):
-        self.client.login(username='testadmin', password='password123')
-        url = reverse('db_logs_api')
-        response = self.client.get(url)
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertIn('logs', data)
-        self.assertIn('db_status', data)
-        
-    def test_db_clear_logs(self):
-        self.client.login(username='testadmin', password='password123')
-        # Insert a dummy query in buffer
-        DB_QUERY_LOGS.append({'sql': 'SELECT 1', 'type': 'READ', 'timestamp': '12:00:00', 'duration': '0.1ms', 'success': True})
-        
-        url = reverse('db_clear_logs')
-        response = self.client.post(url)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(DB_QUERY_LOGS), 0)
-
-    def test_db_test_op_read(self):
-        self.client.login(username='testadmin', password='password123')
-        response = self.client.post(reverse('db_test_op'), {'type': 'read'})
-        self.assertEqual(response.status_code, 200)
-        self.assertIn('Read query', response.json()['message'])
-
-    def test_db_test_op_write(self):
-        self.client.login(username='testadmin', password='password123')
-        response = self.client.post(reverse('db_test_op'), {'type': 'write'})
-        self.assertEqual(response.status_code, 200)
-        self.assertIn('Write query', response.json()['message'])
-
-
-from core.models import Warehouse
 
 class WarehouseInventoryMaterialFilterTests(TestCase):
     """?material_id= on warehouse_inventory - linked from the Stockout Forecast page."""
@@ -7456,13 +7390,6 @@ class RemainingPermissionTests(TestCase):
         csv = SimpleUploadedFile('m.csv', b'name,sku,category,unit_of_measure\nNew,MAT-NEW,Bulk,kg\n', content_type='text/csv')
         self.client.post(reverse('import_materials'), {'csv_file': csv})
         self.assertFalse(Material.objects.filter(sku='MAT-NEW').exists())
-
-    def test_db_console_writes_need_post_and_admin(self):
-        from core.models import Notification
-        self.client.force_login(self.viewer)
-        self.assertEqual(self.client.get(reverse('db_test_op') + '?type=write').status_code, 403)
-        self.assertEqual(self.client.post(reverse('db_test_op'), {'type': 'write'}).status_code, 403)
-        self.assertFalse(Notification.objects.filter(message__startswith='DB Write').exists())
 
     def test_variance_approver_must_be_able_to_approve(self):
         from core.models import Product, ProductionRun
