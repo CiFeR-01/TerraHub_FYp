@@ -202,6 +202,11 @@
                     {% if perms.core.allocate_run_materials %}<a href="{% url 'production_run_allocate' run.pk %}" class="btn btn-primary" style="width:100%; justify-content:center; padding:0.75rem; font-size:1rem; text-decoration:none;">Allocate Materials</a>{% endif %}
                     {% else %}
                     <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;">Ready to begin manufacturing? Review the material inbound statuses on the right before starting.</p>
+                    {% if archived_materials %}
+                    <p style="text-align:left; font-size:0.82rem; color:var(--warning-strong); background:var(--warning-soft); border:1px solid var(--warning-border); border-radius:6px; padding:0.6rem 0.75rem; margin-bottom:1rem;">
+                        This recipe uses archived material(s): {% for m in archived_materials %}{{ m.name }}{% if not forloop.last %}, {% endif %}{% endfor %}.
+                    </p>
+                    {% endif %}
                     {% if materials_short %}
                     <p style="text-align:left; font-size:0.82rem; color:var(--warning-strong); background:var(--warning-soft); border:1px solid var(--warning-border); border-radius:6px; padding:0.6rem 0.75rem; margin-bottom:1rem;">
                         Not fully allocated:
@@ -300,13 +305,14 @@
                         <div>
                             <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.3rem;">Quantity (units, 1 = {{ 1|weight_display:run.target_product }})</label>
                             <input type="number" step="0.01" min="0.01" name="quantity" required class="form-input" style="width:120px; padding:0.5rem;">
+                            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:0.25rem;">{{ yield_logs_sum|floatformat:2 }} of {{ run.expected_yield|floatformat:2 }} logged</div>
                         </div>
                         <div>
                             <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.3rem;">Date</label>
                             <input type="date" name="log_date" value="{% now 'Y-m-d' %}" required class="form-input" style="width:150px; padding:0.5rem;">
                         </div>
                         <div style="flex:1; min-width:150px;">
-                            <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.3rem;">Notes (optional)</label>
+                            <label style="display:block; font-size:0.75rem; font-weight:600; margin-bottom:0.3rem;">Notes <span style="font-weight:400; color:var(--text-muted);">(required to log past {{ run.expected_yield|floatformat:2 }})</span></label>
                             <input type="text" name="notes" class="form-input" style="width:100%; padding:0.5rem;" placeholder="e.g. Batch 1 of 3">
                         </div>
                         <button type="submit" class="btn btn-secondary" style="padding:0.5rem 1rem; font-size:0.85rem;">+ Log Yield</button>

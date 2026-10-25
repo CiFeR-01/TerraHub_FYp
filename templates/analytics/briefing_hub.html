@@ -150,7 +150,7 @@
             </div>
             <div class="bh-drawer-foot">
                 {% if has_api_key %}
-                <form method="post" class="bh-gen-form">
+                <form method="post" class="bh-gen-form" data-bh-busy>
                     {% csrf_token %}
                     <input type="hidden" name="category" value="my_checklist">
                     <button type="submit" class="bh-btn bh-btn-primary">{% if mine %}Refresh my checklist{% else %}Generate my checklist{% endif %}</button>
@@ -212,12 +212,64 @@
         if (current && e.key === 'Escape') close();
     });
 
-    // Checklist generation is a normal form post that takes a few seconds; show it is working.
+    // One generation at a time (checklist or all six). While one runs, the other buttons are
+    // disabled and leaving the page asks first, since the run would stop part way.
+    var running = false;
+    var genButtons = Array.prototype.slice.call(document.querySelectorAll('[data-bh-busy] button[type="submit"], #bh-generate-all'));
+    function warnLeave(e) { e.preventDefault(); e.returnValue = ''; }
+    function startRun(own) {
+        running = true;
+        window.addEventListener('beforeunload', warnLeave);
+        genButtons.forEach(function (b) {
+            if (b === own || b.disabled) return;
+            b.disabled = true;
+            b.dataset.bhHeld = '1';
+            b.dataset.bhTitle = b.title;
+            b.title = 'Wait for the current run to finish';
+        });
+    }
+    function endRun() {
+        running = false;
+        window.removeEventListener('beforeunload', warnLeave);
+    }
+    function releaseButtons() {
+        genButtons.forEach(function (b) {
+            if (!b.dataset.bhHeld) return;
+            b.disabled = false;
+            b.title = b.dataset.bhTitle || '';
+            delete b.dataset.bhHeld;
+        });
+    }
+
+    // Checklist generation runs as a fetch so the page can warn on leave while Claude works.
     document.querySelectorAll('[data-bh-busy]').forEach(function (form) {
-        form.addEventListener('submit', function () {
-            var b = form.querySelector('button[type="submit"]');
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            if (running) return;
+            var b = form.querySelector('button[type="submit"]'), label = b.innerHTML;
             b.disabled = true;
             b.innerHTML = '<span class="bh-spin" aria-hidden="true"></span> Generating…';
+            startRun(b);
+            fetch(window.location.pathname, {
+                method: 'POST',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                body: new FormData(form)
+            }).then(function (r) { return r.json(); })
+              .then(function (d) {
+                  endRun();
+                  if (d.status === 'ok' || d.status === 'empty') {
+                      window.location.href = window.location.pathname + '?open=my_checklist';
+                      return;
+                  }
+                  throw new Error(d.error || 'Checklist generation failed.');
+              })
+              .catch(function (err) {
+                  endRun();
+                  releaseButtons();
+                  b.disabled = false;
+                  b.innerHTML = label;
+                  window.alert((err && err.message) || 'Checklist generation failed.');
+              });
         });
     });
 
@@ -239,7 +291,7 @@
     var cards = Array.prototype.slice.call(document.querySelectorAll('[data-bh-card]'));
     var labels = { ok: 'Updated', empty: 'All clear', skipped: 'Skipped', error: 'Failed' };
 
-    allBtn.addEventListener('click', function () { dialog.showModal(); });
+    allBtn.addEventListener('click', function () { if (!running) dialog.showModal(); });
     dialog.addEventListener('click', function (e) {
         var b = e.target.closest('[data-bh-confirm]');
         if (!b) return;
@@ -247,17 +299,14 @@
         if (b.dataset.bhConfirm === 'yes') runAll();
     });
 
-    // Warn before leaving mid-run: categories not yet started would never run.
-    function warnLeave(e) { e.preventDefault(); e.returnValue = ''; }
-
     function runAll() {
         var failed = 0;
         allBtn.disabled = true;
-        window.addEventListener('beforeunload', warnLeave);
+        startRun(allBtn);
         cards.forEach(function (c) { c.classList.add('bh-queued'); });
         (function next(i) {
             if (i >= cards.length) {
-                window.removeEventListener('beforeunload', warnLeave);
+                endRun();
                 allBtn.textContent = failed ? 'Done, ' + failed + ' failed. Reloading…' : 'Done. Reloading…';
                 setTimeout(function () { window.location.href = window.location.pathname; }, failed ? 1800 : 600);
                 return;

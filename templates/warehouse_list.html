@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load humanize %}
 
 {% block title %}Facility Management - TerraHub{% endblock %}
 
@@ -41,7 +42,7 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Combined Capacity</span>
         <div class="kpi-value-row">
-            <span class="kpi-value">{{ total_capacity|floatformat:0 }}</span>
+            <span class="kpi-value">{{ total_capacity|floatformat:0|intcomma }}</span>
             <span class="badge badge-emerald">MT</span>
         </div>
     </div>
@@ -61,7 +62,7 @@
     <div class="kpi-item-card">
         <span class="kpi-label">Daily Rental Burn</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="font-size: 1.75rem;">RM{{ total_daily_cost|floatformat:2 }}</span>
+            <span class="kpi-value">RM {{ total_daily_cost|floatformat:2|intcomma }}</span>
             <span class="badge badge-amber">Per Day</span>
         </div>
     </div>

@@ -112,7 +112,7 @@
             <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
                 [{{ material.sku }}] {{ material.name }}
                 {% if not material.is_active %}
-                <span class="badge badge-danger" style="vertical-align: middle; margin-left: 0.5rem;">Deactivated</span>
+                <span class="badge badge-danger" style="vertical-align: middle; margin-left: 0.5rem;">Archived</span>
                 {% endif %}
             </h1>
             <div style="margin-top: 0.35rem;"><span class="badge badge-neutral">{{ material.category }}</span></div>
@@ -122,13 +122,13 @@
                 Total Stock: {{ stock_display }}
             </div>
             <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.15rem;">
-                {{ total_qty|floatformat:2 }} {{ material.unit_of_measure }} &times; {{ material.weight_mt_per_unit }} MT/unit
+                {{ total_qty|floatformat:2 }} {{ material.unit_of_measure }} &times; {{ material.weight_kg_per_unit }} kg/unit
             </div>
             {% if perms.core.change_material %}
             <form method="post" style="margin-top: 0.5rem;">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="toggle_active">
-                <button type="submit" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;">
+                <button type="submit" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;"{% if material.is_active %} title="Archived materials can't be added to POs or recipes. Stock on hand can still be used."{% endif %}>
                     {% if material.is_active %}Archive material{% else %}Restore material{% endif %}
                 </button>
             </form>
@@ -231,12 +231,12 @@
                     <span><strong>QA check on arrival.</strong> New deliveries go on hold until QA inspects them.</span>
                 </label>
             </div>
-            <div class="form-group-inline">
-                <label>Weight (MT) per Unit</label>
-                <input type="number" step="0.0001" name="weight_mt_per_unit" value="{{ material.weight_mt_per_unit|floatformat:4 }}" class="form-input" required style="width: 100%;">
+            <div class="form-group-inline" data-unit-weight>
+                <label><span data-unit-weight-label>Weight of one piece (kg)</span></label>
+                <input type="number" step="any" min="0" name="weight_kg_per_unit" value="{{ material.weight_kg_per_unit }}" class="form-input" style="width: 100%;">
             </div>
             <div class="form-group-inline">
-                <label>Cost / Unit (RM)</label>
+                <label>Cost per <span data-unit-name>unit</span> (RM)</label>
                 <input type="number" step="0.01" name="cost_per_unit" value="{{ material.cost_per_unit|floatformat:2 }}" class="form-input" required style="width: 100%;">
             </div>
             <div class="form-group-inline">
@@ -338,7 +338,7 @@
                     {% for use in recipe_uses %}
                     <tr>
                         <td><a href="{% url 'product_detail' use.recipe.product.id %}" style="color: var(--primary); font-weight: 600; text-decoration: none;">{{ use.recipe.product.sku }}</a> &mdash; {{ use.recipe.product.name }}
-                            {% if not use.recipe.product.is_active %}<span class="badge badge-danger" style="margin-left:0.3rem;">Deactivated</span>{% endif %}</td>
+                            {% if not use.recipe.product.is_active %}<span class="badge badge-danger" style="margin-left:0.3rem;">Archived</span>{% endif %}</td>
                         <td class="num">{{ use.recipe.quantity_required|qty_display }} {{ material.unit_of_measure }}</td>
                         <td class="num">{{ use.line_cost|floatformat:2 }}</td>
                     </tr>

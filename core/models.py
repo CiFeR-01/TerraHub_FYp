@@ -99,7 +99,7 @@ class Material(models.Model):
     unit_of_measure = models.CharField(max_length=20, choices=UNIT_CHOICES, default='MT')
     is_active = models.BooleanField(default=True)
     safe_storage_days = models.IntegerField(help_text="Days until predictive degradation alert")
-    weight_mt_per_unit = models.DecimalField(max_digits=10, decimal_places=4, default=1.0000, help_text="Weight in MT per unit")
+    weight_mt_per_unit = models.DecimalField(max_digits=12, decimal_places=6, default=1, help_text="Weight in MT per unit; set from the unit for MT/kg/g")
     cost_per_unit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     reorder_point = models.DecimalField(
         max_digits=12, decimal_places=2, null=True, blank=True,
@@ -109,6 +109,12 @@ class Material(models.Model):
     inspect_on_receipt = models.BooleanField(
         default=False, help_text="Deliveries of this material start Quarantined until QA inspects and releases them."
     )
+
+    @property
+    def weight_kg_per_unit(self):
+        """Weight of one unit in kg, as the pcs/L forms ask for it."""
+        kg = self.weight_mt_per_unit * 1000
+        return kg.to_integral_value() if kg == kg.to_integral_value() else kg.normalize()
 
     def __str__(self):
         return f"{self.sku} - {self.name}"
@@ -120,7 +126,7 @@ class Product(models.Model):
     UNIT_CHOICES = (('MT', 'Metric Ton'), ('kg', 'Kilograms'), ('L', 'Litres'), ('g', 'Grams'), ('pcs', 'Pieces'))
     unit_of_measure = models.CharField(max_length=20, choices=UNIT_CHOICES, default='pcs')
     weight_mt_per_unit = models.DecimalField(
-        max_digits=10, decimal_places=4, default=1.0000,
+        max_digits=12, decimal_places=6, default=1,
         help_text="Weight in MT per unit, regardless of unit_of_measure's label"
     )
     price_per_unit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
@@ -128,6 +134,12 @@ class Product(models.Model):
     shelf_life_days = models.PositiveIntegerField(
         null=True, blank=True, help_text="Days a finished batch stays usable after production. Blank = 365."
     )
+
+    @property
+    def weight_kg_per_unit(self):
+        """Weight of one unit in kg, as the pcs/L forms ask for it."""
+        kg = self.weight_mt_per_unit * 1000
+        return kg.to_integral_value() if kg == kg.to_integral_value() else kg.normalize()
 
     def __str__(self):
         return f"{self.sku} - {self.name}"
@@ -669,6 +681,8 @@ class UserAuditLog(models.Model):
         ('signed_in', 'Signed in'),
         ('sign_in_failed', 'Sign-in failed'),
         ('locked_out', 'Locked out after failed sign-ins'),
+        ('item_archived', 'Item archived'),
+        ('item_restored', 'Item restored'),
     )
     # The username is copied so the history still reads right if the account is later renamed or deleted.
     target = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='audit_entries')

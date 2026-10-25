@@ -247,6 +247,29 @@
     {% if perms.core.request_qa %}{% include "partials/_send_to_qa_modal.html" %}{% endif %}
     {% block extra_js %}{% endblock %}
     {% include "partials/_sortable_tables.html" %}
+    <script>
+        // Weight-per-unit box: only pcs and L ask for one; MT, kg and g set it from the unit (core/utils.py read_unit_weight)
+        (function () {
+            var NAMES = { MT: 'MT', kg: 'kg', g: 'g', L: 'litre', pcs: 'piece' };
+            function sync(form) {
+                var sel = form.querySelector('select[name="unit_of_measure"]');
+                var box = form.querySelector('[data-unit-weight]');
+                if (!sel || !box) return;
+                // Price/cost is per one unit, so name the unit: per kg, per MT, per piece
+                form.querySelectorAll('[data-unit-name]').forEach(function (el) { el.textContent = NAMES[sel.value] || 'unit'; });
+                var need = sel.value === 'pcs' || sel.value === 'L';
+                var input = box.querySelector('input');
+                box.style.display = need ? '' : 'none';
+                input.required = need;
+                input.disabled = !need;
+                box.querySelector('[data-unit-weight-label]').textContent = sel.value === 'L' ? 'Weight of one litre (kg)' : 'Weight of one piece (kg)';
+            }
+            document.querySelectorAll('[data-unit-weight]').forEach(function (b) { if (b.closest('form')) sync(b.closest('form')); });
+            document.addEventListener('change', function (e) {
+                if (e.target.name === 'unit_of_measure' && e.target.form) sync(e.target.form);
+            });
+        })();
+    </script>
     {{ denied_actions|json_script:"th-denied-actions" }}
     <script>
         // Hide forms for actions the user can't run
@@ -389,4 +412,4 @@
     </script>
 </body>
 
-</html>
+</html>

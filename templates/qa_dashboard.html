@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load humanize %}
 {% load qa_extras %}
 
 {% block title %}QA & Spoilage Control - TerraHub{% endblock %}
@@ -58,20 +59,20 @@
         <span class="kpi-label">On Hold</span>
         <div class="kpi-value-row">
             <span class="kpi-value">{{ kpis.on_hold }}</span>
-            <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.4rem;">RM {{ kpis.on_hold_value|floatformat:2 }}</span>
+            <span style="font-size:0.75rem; color:var(--text-muted);">RM {{ kpis.on_hold_value|floatformat:2|intcomma }}</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Value at Risk</span>
         <div class="kpi-value-row">
-            <span class="kpi-value" style="{% if kpis.at_risk_value %}color:var(--warning-strong);{% endif %}">RM {{ kpis.at_risk_value|floatformat:2 }}</span>
+            <span class="kpi-value" style="{% if kpis.at_risk_value %}color:var(--warning-strong);{% endif %}">RM {{ kpis.at_risk_value|floatformat:2|intcomma }}</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Written Off (30 Days)</span>
         <div class="kpi-value-row">
-            <span class="kpi-value">RM {{ kpis.written_off_30d|floatformat:2 }}</span>
-            <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.4rem;">{{ spoiled.count }} spoiled batch{{ spoiled.count|pluralize:"es" }} in total</span>
+            <span class="kpi-value">RM {{ kpis.written_off_30d|floatformat:2|intcomma }}</span>
+            <span style="font-size:0.75rem; color:var(--text-muted);">{{ spoiled.count }} spoiled batch{{ spoiled.count|pluralize:"es" }} in total</span>
         </div>
     </div>
 </section>

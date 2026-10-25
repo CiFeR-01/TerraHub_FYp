@@ -661,7 +661,7 @@ unlocks its Outlook section.
 
 The only genuinely time-series view in Sales — `sales_order_delivery_risk()`
 is a point-in-time snapshot of currently-open orders; this looks at ordered
-quantity across **all** real orders (Draft/Rejected excluded) over a trailing
+quantity across **all** real orders (Draft/Rejected/Cancelled excluded) over a trailing
 6-month window, bucketed by month, split into two halves:
 
 ```

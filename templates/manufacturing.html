@@ -388,9 +388,9 @@
             <div style="margin-bottom:0.85rem;">
                 <label style="display:block; font-size:0.82rem; font-weight:600; margin-bottom:0.3rem;">Target Product</label>
                 <select id="modal-product" name="target_product_id" required class="form-select" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);" onchange="onYieldProductChange()">
-                    {% for p in products %}
+                    {% for p in products %}{% if p.is_active %}
                     <option value="{{ p.id }}" data-unit="{{ p.unit_of_measure }}" data-weight="{{ p.weight_mt_per_unit }}">{{ p.sku }} - {{ p.name }}</option>
-                    {% endfor %}
+                    {% endif %}{% endfor %}
                 </select>
             </div>
             <div style="margin-bottom:1.25rem;">

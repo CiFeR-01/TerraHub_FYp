@@ -72,6 +72,15 @@ def log_role_change(request, role_name, action, details=''):
                                 details=details, ip_address=_valid_ip(request))
 
 
+def log_archive_change(request, kind, obj):
+    """Record a material/product/supplier/client being archived or restored; its code sits where the username goes."""
+    from .models import UserAuditLog
+    code = getattr(obj, 'sku', None) or obj.name
+    UserAuditLog.objects.create(target=None, target_username=f"{kind} {code}"[:150], actor=request.user,
+                                action='item_restored' if obj.is_active else 'item_archived',
+                                details=obj.name, ip_address=_valid_ip(request))
+
+
 def log_sign_in(request, username, action, details=''):
     """Record a sign-in attempt. `username` is what was typed, so failures for unknown names still show it."""
     from .models import CustomUser, UserAuditLog

@@ -388,6 +388,104 @@ class BulkImportExportTests(TestCase):
         self.assertEqual(self.m1.safe_storage_days, 120)
         self.assertEqual(float(self.m1.cost_per_unit), 85.00)
 
+    def _order_csv(self, text):
+        f = io.BytesIO(text.encode('utf-8'))
+        f.name = 'orders.csv'
+        return f
+
+    def test_import_sales_orders_groups_lines_into_draft_orders(self):
+        from core.models import OrderTimeline
+        Warehouse.objects.create(name='Main WH', location_type='Storage')
+        p2 = Product.objects.create(name='Beta', sku='PROD0002', unit_of_measure='pcs', weight_mt_per_unit=1, price_per_unit=5)
+        csv_data = (
+            "so_number,client_name,origin_warehouse,fulfillment_deadline,product_sku,quantity_ordered,unit_price\n"
+            "SO-9001,Acme,main wh,2026-12-01,PROD0001,10,150.00\n"
+            "SO-9001,,,,PROD0002,4,\n"
+            ",Beta Retail,Main WH,,PROD0001,0,\n"  # bad quantity: whole order rejected
+        )
+        self.client.post(reverse('import_so'), {'csv_file': self._order_csv(csv_data), 'dry_run': '1'})
+        self.assertFalse(SalesOrder.objects.exists())  # dry run writes nothing
+
+        self.client.post(reverse('import_so'), {'csv_file': self._order_csv(csv_data)})
+        so = SalesOrder.objects.get()
+        self.assertEqual((so.so_number, so.status, so.created_by), ('SO-9001', 'Draft', self.user))
+        self.assertEqual(so.items.count(), 2)
+        self.assertEqual(so.items.get(product=p2).unit_price, None)
+        self.assertTrue(OrderTimeline.objects.filter(sales_order=so, action__contains='bulk import').exists())
+        self.assertFalse(StockAllocation.objects.exists())
+
+        # Re-importing skips the existing order number
+        self.client.post(reverse('import_so'), {'csv_file': self._order_csv(csv_data)})
+        self.assertEqual(SalesOrder.objects.count(), 1)
+
+    def test_import_purchase_orders_and_export_round_trip(self):
+        from core.models import PurchaseOrder
+        Warehouse.objects.create(name='Main WH', location_type='Storage')
+        csv_data = (
+            "po_number,supplier_name,target_warehouse,expected_delivery_date,material_sku,quantity_ordered,unit_price,negotiated_rental_rate_per_mt\n"
+            ",Global Chem,Main WH,,MAT0001,5,450,12.50\n"
+        )
+        self.client.post(reverse('import_po'), {'csv_file': self._order_csv(csv_data)})
+        po = PurchaseOrder.objects.get()
+        self.assertEqual(po.status, 'Draft')
+        self.assertTrue(po.po_number.startswith('PO-'))
+        self.assertEqual(float(po.items.get().negotiated_rental_rate_per_mt), 12.50)
+
+        export = self.client.get(reverse('export_po_csv')).content.decode()
+        self.assertIn(po.po_number, export)
+        self.assertIn('MAT0001', export)
+        self.assertIn('quantity_received', export.splitlines()[0])
+        self.assertIn('catalogmanager', export)  # created_by
+        self.assertEqual(self.client.get(reverse('export_po_template')).status_code, 200)
+
+    def test_import_order_with_approver_goes_to_pending_approval_only(self):
+        from core.models import Notification
+        Warehouse.objects.create(name='Main WH', location_type='Storage')
+        boss = make_user(username='boss', password='pw', role='Admin')
+        csv_data = (
+            "so_number,client_name,origin_warehouse,product_sku,quantity_ordered,approver,approval_remarks\n"
+            "SO-9100,Acme,Main WH,PROD0001,3,BOSS,urgent\n"
+            "SO-9101,Acme,Main WH,PROD0001,3,nobody,\n"  # unknown approver: order rejected
+        )
+        self.client.post(reverse('import_so'), {'csv_file': self._order_csv(csv_data)})
+        so = SalesOrder.objects.get()
+        self.assertEqual((so.so_number, so.status, so.assigned_to, so.approval_remarks, so.approved_by),
+                         ('SO-9100', 'Pending Approval', boss, 'urgent', None))
+        self.assertTrue(Notification.objects.filter(user=boss, message__contains='SO-9100').exists())
+
+    def test_import_past_records_closed_without_stock_or_approval_flow(self):
+        from core.models import PurchaseOrder, RegistryLog
+        Warehouse.objects.create(name='Main WH', location_type='Storage')
+        csv_data = (
+            "po_number,supplier_name,target_warehouse,material_sku,quantity_ordered,status,order_date,quantity_received,completed_date\n"
+            "PO-0420,Global Chem,Main WH,MAT0001,8,completed,01/02/2025,,2025-02-20\n"
+            "PO-0421,Global Chem,Main WH,MAT0001,8,Partially Received,2025-02-01,3,\n"  # open mid-flow: rejected
+            "PO-0422,Global Chem,Main WH,MAT0001,8,,,3,\n"  # Draft can't have received stock
+        )
+        self.client.post(reverse('import_po'), {'csv_file': self._order_csv(csv_data)})
+        po = PurchaseOrder.objects.get()
+        self.assertEqual((po.po_number, po.status, str(po.order_date), str(po.completed_date), po.approved_by),
+                         ('PO-0420', 'Completed', '2025-02-01', '2025-02-20', self.user))
+        self.assertEqual(po.items.get().quantity_received, 8)
+        self.assertFalse(Batch.objects.exists())
+        self.assertFalse(RegistryLog.objects.exists())
+
+        # Past records need the approve permission
+        from django.contrib.auth.models import Permission
+        clerk = make_user(username='clerk', password='pw')
+        clerk.user_permissions.add(Permission.objects.get(codename='add_purchaseorder'))
+        self.client.login(username='clerk', password='pw')
+        self.client.post(reverse('import_po'), {'csv_file': self._order_csv(csv_data.replace('PO-0420', 'PO-0430'))})
+        self.assertFalse(PurchaseOrder.objects.filter(po_number='PO-0430').exists())
+
+    def test_import_orders_requires_add_permission(self):
+        Warehouse.objects.create(name='Main WH', location_type='Storage')
+        make_user(username='orderviewer', password='pw', role='Staff (Viewer)')
+        self.client.login(username='orderviewer', password='pw')
+        csv_data = "so_number,client_name,origin_warehouse,product_sku,quantity_ordered\n,Acme,Main WH,PROD0001,1\n"
+        self.client.post(reverse('import_so'), {'csv_file': self._order_csv(csv_data)})
+        self.assertFalse(SalesOrder.objects.exists())
+
 
 class StockAllocationTests(TestCase):
     def setUp(self):
@@ -1239,6 +1337,19 @@ class ProductionRunDetailTests(TestCase):
             run_number='RD-1', target_product=self.product,
             expected_yield=Decimal('484.01'), status=status, **kw,
         )
+
+    def test_logging_past_expected_yield_needs_a_reason(self):
+        from core.models import OrderTimeline
+        run = self._run('InProgress')
+        self.client.force_login(self.boss)
+        log = lambda q, notes='': self.client.post(reverse('production_run_detail', args=[run.pk]),
+                                                  {'action': 'log_yield', 'quantity': q, 'notes': notes})
+        log('484.01')
+        log('10')
+        self.assertEqual(run.yield_logs.count(), 1)
+        log('10', 'Extra batch from leftover material')
+        self.assertEqual(run.yield_logs.count(), 2)
+        self.assertTrue(OrderTimeline.objects.filter(production_run=run, action__contains='leftover material').exists())
 
     def test_complete_autofills_remaining_yield(self):
         from core.models import ProductionRunYieldLog
@@ -2825,11 +2936,12 @@ class ProductSalesTrendAnalyticsTests(TestCase):
         self.assertIsNotNone(row['monthly_revenue'])
         self.assertEqual(row['total_revenue'], 300.0)  # 6 months * 10 qty * 5 price
 
-    def test_excludes_draft_and_rejected_orders(self):
+    def test_excludes_draft_rejected_and_cancelled_orders(self):
         for i, m in enumerate((5, 4, 3, 2, 1, 0)):
             self._so(f'SO-REAL-{i}', self.product, 50, m)
         self._so('SO-DRAFT', self.product, 99999, 0, status='Draft')
         self._so('SO-REJECTED', self.product, 99999, 0, status='Rejected')
+        self._so('SO-CANCELLED', self.product, 99999, 0, status='Cancelled')
         self.assertEqual(self._row()['total_qty'], 300.0)
 
     def test_sort_order_declining_first(self):
@@ -7155,7 +7267,8 @@ class InputValidationTests(TestCase):
         self.client.post(reverse('product_list'), {'action': 'create_product', 'name': '', 'sku_auto': '1', 'price_per_unit': '5'})
         self.client.post(reverse('product_list'), {'action': 'create_product', 'name': 'X', 'sku_auto': '1', 'price_per_unit': '-5'})
         self.assertEqual(Product.objects.count(), before)
-        self.client.post(reverse('product_list'), {'action': 'create_product', 'name': 'Good', 'sku_auto': '1', 'price_per_unit': '5'})
+        self.client.post(reverse('product_list'), {'action': 'create_product', 'name': 'Good', 'sku_auto': '1', 'price_per_unit': '5',
+                                                   'unit_of_measure': 'pcs', 'weight_kg_per_unit': '50'})
         self.assertEqual(Product.objects.count(), before + 1)
 
     def test_recipe_lines_are_positive_and_never_duplicated(self):
@@ -8841,6 +8954,13 @@ class PurchaseOrderCancelTests(TestCase):
         self.assertTrue(OrderTimeline.objects.filter(purchase_order=self.po, action__contains='Supplier backed out').exists())
         self.assertContains(self.client.get(reverse('po_detail', args=[self.po.pk])), 'Supplier backed out')
 
+    def test_draft_po_can_be_cancelled(self):
+        self.po.status = 'Draft'
+        self.po.save()
+        self._cancel()
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, 'Cancelled')
+
     def test_reason_is_required(self):
         self._cancel(reason='')
         self.po.refresh_from_db()
@@ -8917,3 +9037,280 @@ class LoginHistoryTests(TestCase):
         self.assertContains(page, 'ghost')
         self.assertContains(page, 'No such username')
         self.assertContains(page, 'Sign-in page')
+
+
+# ============================================================================
+# Users page: deactivated accounts hidden unless "Show inactive" is ticked
+# ============================================================================
+class UsersInactiveFilterTests(TestCase):
+    def setUp(self):
+        self.admin = make_user(username='if_admin', password='admin-pw-123', role='Admin')
+        self.gone = make_user(username='if_gone', password='x-pw-123456', is_active=False)
+        self.client.force_login(self.admin)
+
+    def usernames(self, **params):
+        page = self.client.get(reverse('user_management'), params)
+        return [u.username for u in page.context['users']], page
+
+    def test_inactive_hidden_by_default_with_count(self):
+        names, page = self.usernames()
+        self.assertNotIn('if_gone', names)
+        self.assertContains(page, 'Show inactive (1)')
+
+    def test_inactive_shown_when_ticked(self):
+        names, _ = self.usernames(inactive='1')
+        self.assertIn('if_gone', names)
+
+    def test_filter_combines_with_search(self):
+        names, _ = self.usernames(q='if_', inactive='1')
+        self.assertEqual(sorted(names), ['if_admin', 'if_gone'])
+        names, _ = self.usernames(q='if_')
+        self.assertEqual(names, ['if_admin'])
+
+
+# ============================================================================
+# Facility limits: shipments, audit list and facility edits follow the user's allowed facilities
+# ============================================================================
+class FacilityLimitTests(TestCase):
+    def setUp(self):
+        self.mine = Warehouse.objects.create(name='Mine WH', location_type='Storage')
+        self.other = Warehouse.objects.create(name='Other WH', location_type='Storage')
+        self.user = make_user(username='fl_user', password='x-pw-123456', role='Manager')
+        self.user.allowed_locations.add(self.mine)
+        self.client.force_login(self.user)
+
+    def test_cannot_edit_another_facility(self):
+        response = self.client.post(reverse('warehouse_edit', args=[self.other.pk]), {'name': 'Hacked'})
+        self.assertRedirects(response, reverse('warehouse_list'), fetch_redirect_response=False)
+        self.other.refresh_from_db()
+        self.assertEqual(self.other.name, 'Other WH')
+
+    def test_shipment_list_only_shows_own_facilities(self):
+        Shipment.objects.create(tracking_number='SHP-MINE', direction='Inbound', destination_warehouse=self.mine)
+        Shipment.objects.create(tracking_number='SHP-OTHER', direction='Inbound', destination_warehouse=self.other)
+        page = self.client.get(reverse('shipments'))
+        self.assertContains(page, 'SHP-MINE')
+        self.assertNotContains(page, 'SHP-OTHER')
+
+
+# ============================================================================
+# Django admin: IT can edit transactions; stock totals stay read-only and a batch facility move is guarded
+# ============================================================================
+from core.models import QARequest
+
+
+class AdminEditBase(TestCase):
+    def setUp(self):
+        self.su = get_user_model().objects.create_superuser('it', 'it@x.com', 'pw')
+        self.client.force_login(self.su)
+        self.a = Warehouse.objects.create(name='A', location_type='Storage')
+        self.b = Warehouse.objects.create(name='B', location_type='Storage')
+        mat = Material.objects.create(name='M', sku='M1', category='c', safe_storage_days=30)
+        self.batch = Batch.objects.create(batch_number='B1', material=mat, quantity=Decimal('10'),
+                                          manufacturing_date=date(2026, 1, 1), expiry_date=date(2027, 1, 1),
+                                          warehouse=self.a)
+
+    def _move(self, wh):
+        b = self.batch
+        b.refresh_from_db()
+        return self.client.post(reverse('admin:core_batch_change', args=[b.pk]), {
+            'batch_number': b.batch_number, 'status': b.status, 'material': b.material_id,
+            'manufacturing_date': b.manufacturing_date, 'expiry_date': b.expiry_date,
+            'warehouse': wh.pk, 'location': '', 'extension_days_total': 0,
+            'original_expiry_date': b.expiry_date,
+        })
+
+
+class AdminEditTests(AdminEditBase):
+    def test_move_saves_and_logs_both_sides(self):
+        r = self._move(self.b)
+        self.assertEqual(r.status_code, 302)
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.warehouse, self.b)
+        logs = RegistryLog.objects.filter(item_name__contains='B1')
+        self.assertEqual({(l.action_type, l.warehouse_id) for l in logs},
+                         {('Outbound', self.a.pk), ('Inbound', self.b.pk)})
+
+    def test_move_refused_when_reserved_or_in_qa(self):
+        Batch.objects.filter(pk=self.batch.pk).update(allocated_quantity=Decimal('1'))
+        self.assertContains(self._move(self.b), 'This batch is reserved')
+
+        Batch.objects.filter(pk=self.batch.pk).update(allocated_quantity=0)
+        QARequest.objects.create(batch=self.batch, reason='moisture')
+        self.assertContains(self._move(self.b), 'open QA request')
+
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.warehouse, self.a)
+        self.assertFalse(RegistryLog.objects.exists())
+
+    def test_quantity_is_read_only(self):
+        r = self.client.get(reverse('admin:core_batch_change', args=[self.batch.pk]))
+        self.assertNotContains(r, 'name="quantity"')
+
+    def test_staff_without_superuser_cannot_open_admin(self):
+        staff = get_user_model().objects.create_user('staff', password='pw', is_staff=True)
+        self.client.force_login(staff)
+        self.assertEqual(self.client.get(reverse('admin:index')).status_code, 302)
+
+
+# ============================================================================
+# Registry ledger: Last 30 days / All time toggle scopes the table and KPI cards
+# ============================================================================
+from datetime import timedelta as _td
+from django.utils import timezone as _tz
+
+
+class RegistryLedgerRangeTests(TestCase):
+    def setUp(self):
+        self.client.force_login(get_user_model().objects.create_superuser('ledger', 'l@x.com', 'pw'))
+        RegistryLog.objects.create(action_type='Inbound', item_name='Fresh Resin', quantity_changed=Decimal('10'))
+        old = RegistryLog.objects.create(action_type='Inbound', item_name='Old Resin', quantity_changed=Decimal('100'))
+        RegistryLog.objects.filter(pk=old.pk).update(timestamp=_tz.now() - _td(days=45))
+
+    def _get(self, **params):
+        return self.client.get(reverse('registry'), params)
+
+    def test_default_is_last_30_days(self):
+        r = self._get()
+        self.assertEqual(r.context['range_filter'], '30d')
+        self.assertContains(r, 'Fresh Resin')
+        self.assertNotContains(r, 'Old Resin')
+
+    def test_all_time_includes_older_log(self):
+        r = self._get(range='all')
+        self.assertContains(r, 'Fresh Resin')
+        self.assertContains(r, 'Old Resin')
+
+    def test_kpis_follow_range_not_search(self):
+        self.assertEqual(self._get().context['stats']['inbound'], Decimal('10'))
+        self.assertEqual(self._get(range='all').context['stats']['inbound'], Decimal('110'))
+        self.assertEqual(self._get(range='all', q='Fresh').context['stats']['inbound'], Decimal('110'))
+
+    def test_range_kept_with_filters_sort_and_toggle(self):
+        r = self._get(range='all', q='Resin', action='Inbound', sort='item_name')
+        self.assertContains(r, 'Old Resin')
+        self.assertContains(r, 'name="range" value="all"')
+        self.assertIn('range=all', r.context['sort_qs'])
+        self.assertIn('range=all', r.context['page_qs'])
+        # Toggle links drop only range/page, so switching keeps q/action/sort.
+        self.assertEqual(r.context['range_qs'], 'q=Resin&action=Inbound&sort=item_name')
+        self.assertNotContains(self._get(q='Resin', action='Inbound'), 'Old Resin')
+
+
+
+class UnitWeightTests(TestCase):
+    """MT, kg and g set their own weight per unit; pcs and L take the weight of one unit in kg."""
+
+    def setUp(self):
+        self.client = Client()
+        self.client.force_login(make_user(username='unitboss', password='pw', role='Manager'))
+
+    def _create(self, **extra):
+        self.client.post(reverse('product_list'), {'action': 'create_product', 'name': 'Unit Test', 'sku_auto': '1', **extra})
+        return Product.objects.filter(name='Unit Test').first()
+
+    def test_fixed_units_ignore_any_typed_weight(self):
+        from core.utils import read_unit_weight
+        self.assertEqual(read_unit_weight({}, 'MT'), (Decimal('1'), None))
+        self.assertEqual(read_unit_weight({'weight_kg_per_unit': '99'}, 'kg'), (Decimal('0.001'), None))
+        self.assertEqual(read_unit_weight({}, 'g'), (Decimal('0.000001'), None))
+
+    def test_grams_are_stored_without_rounding_to_zero(self):
+        p = self._create(unit_of_measure='g')
+        p.refresh_from_db()
+        self.assertEqual(p.weight_mt_per_unit, Decimal('0.000001'))
+
+    def test_pieces_take_kg_per_piece(self):
+        p = self._create(unit_of_measure='pcs', weight_kg_per_unit='15')
+        self.assertEqual(p.weight_mt_per_unit, Decimal('0.015'))
+        self.assertEqual(p.weight_kg_per_unit, Decimal('15'))
+
+    def test_pieces_without_a_weight_are_refused(self):
+        self.assertIsNone(self._create(unit_of_measure='pcs'))
+        self.assertIsNone(self._create(unit_of_measure='L', weight_kg_per_unit='0'))
+
+    def test_batch_weight_converts_to_mt(self):
+        from core.utils import format_stock_display
+        p = self._create(unit_of_measure='pcs', weight_kg_per_unit='50')
+        wh = Warehouse.objects.create(name='Unit WH', location_type='Storage')
+        b = Batch.objects.create(batch_number='B-UNIT', product=p, quantity=Decimal('385'), status='Active', warehouse=wh,
+                                 manufacturing_date='2026-01-01', expiry_date='2027-01-01')
+        self.assertEqual(b.total_weight_mt, Decimal('19.25'))
+        self.assertEqual(format_stock_display(385, p), '385 pcs')
+
+
+# ==== Archived materials and products
+class ArchivedItemTests(TestCase):
+    """Archived items can't go on new runs, recipes, SO or PO lines; a recipe that still uses one only warns."""
+
+    def setUp(self):
+        self.client = Client()
+        self.client.force_login(make_user(username='archboss', password='pw', role='Admin'))
+        self.wh = Warehouse.objects.create(name='Arch WH', location_type='Storage')
+        self.mat = Material.objects.create(name='Old Resin', sku='MAT-ARCH', category='Test', unit_of_measure='kg', safe_storage_days=365, is_active=False)
+        self.prod = Product.objects.create(name='Old Widget', sku='PRD-ARCH', unit_of_measure='MT', price_per_unit=10, is_active=False)
+        self.live = Product.objects.create(name='Live Widget', sku='PRD-LIVE', unit_of_measure='MT', price_per_unit=10)
+        ProductRecipe.objects.create(product=self.live, material=self.mat, quantity_required=1)
+
+    def test_po_and_so_lines_refuse_archived_items(self):
+        po = PurchaseOrder.objects.create(po_number='PO-ARCH', supplier_name='S', target_warehouse=self.wh)
+        self.client.post(reverse('po_detail', args=[po.pk]), {'action': 'add_po_item', 'material_id': self.mat.id, 'quantity_ordered': '5'})
+        self.assertEqual(po.items.count(), 0)
+        so = SalesOrder.objects.create(so_number='SO-ARCH', client_name='C', origin_warehouse=self.wh)
+        self.client.post(reverse('so_detail', args=[so.pk]), {'action': 'add_so_item', 'product_id': self.prod.id, 'quantity_ordered': '5'})
+        self.assertEqual(so.items.count(), 0)
+        # An active product whose recipe uses an archived material goes on, with a warning
+        r = self.client.post(reverse('so_detail', args=[so.pk]), {'action': 'add_so_item', 'product_id': self.live.id, 'quantity_ordered': '5'}, follow=True)
+        self.assertEqual(so.items.count(), 1)
+        self.assertContains(r, 'archived material(s): Old Resin')
+
+    def test_runs_and_recipes(self):
+        self.client.post(reverse('readiness'), {'action': 'create_run', 'target_product_id': self.prod.id,
+                                                    'manufacturing_plant_id': self.wh.id, 'expected_yield': '1', 'run_number_auto': '1'})
+        self.assertFalse(ProductionRun.objects.filter(target_product=self.prod).exists())
+        r = self.client.post(reverse('readiness'), {'action': 'create_run', 'target_product_id': self.live.id,
+                                                        'manufacturing_plant_id': self.wh.id, 'expected_yield': '1', 'run_number_auto': '1'}, follow=True)
+        self.assertTrue(ProductionRun.objects.filter(target_product=self.live).exists())
+        self.assertContains(r, 'archived material(s): Old Resin')
+        r = self.client.post(reverse('save_product_recipe_api'), {'action': 'save_batch', 'product_id': self.prod.id,
+                                                                  'material_ids[]': [self.mat.id], 'quantities[]': ['1']})
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse(ProductRecipe.objects.filter(product=self.prod).exists())
+
+    def test_archive_and_restore_are_logged(self):
+        from core.models import UserAuditLog
+        self.client.post(reverse('material_list'), {'action': 'toggle_active', 'material_id': self.mat.id})
+        self.client.post(reverse('product_list'), {'action': 'toggle_active', 'product_id': self.live.id})
+        self.assertEqual(list(UserAuditLog.objects.order_by('id').values_list('action', 'target_username')),
+                         [('item_restored', 'Material MAT-ARCH'), ('item_archived', 'Product PRD-LIVE')])
+
+    def test_archived_materials_left_off_shortage_po_go_on_run_timeline(self):
+        run = ProductionRun.objects.create(run_number='RUN-ARCH', target_product=self.live, expected_yield=1,
+                                           manufacturing_plant=self.wh, status='Awaiting Materials')
+        self.client.post(reverse('readiness'), {'action': 'draft_po_from_shortage', 'run_id': run.id})
+        self.assertFalse(PurchaseOrder.objects.filter(linked_production_run=run).exists())
+        self.assertTrue(run.timeline.filter(action__contains='left off the shortage PO: Old Resin').exists())
+
+
+class ManualReceiveTests(TestCase):
+    """Manual stock is for one material or one product, never both or neither."""
+
+    def setUp(self):
+        self.client = Client()
+        self.client.force_login(User.objects.create_superuser(username='mrboss', password='pw'))
+        self.wh = Warehouse.objects.create(name='MR WH', location_type='Storage')
+        self.mat = Material.objects.create(name='MR Mat', sku='MAT-MR', unit_of_measure='kg', safe_storage_days=365)
+        self.prod = Product.objects.create(name='MR Prod', sku='PROD-MR', unit_of_measure='kg', price_per_unit=1)
+
+    def _post(self, **ids):
+        self.client.post(reverse('warehouse_inventory'), {'action': 'manual_receive', 'warehouse_id': self.wh.id, 'quantity': '5', **ids})
+
+    def test_both_or_neither_is_refused(self):
+        self._post(material_id=self.mat.id, product_id=self.prod.id)
+        self._post()
+        self.assertFalse(Batch.objects.filter(warehouse=self.wh).exists())
+
+    def test_one_item_is_received(self):
+        self._post(product_id=self.prod.id)
+        self.assertEqual(Batch.objects.get(warehouse=self.wh).product, self.prod)
+

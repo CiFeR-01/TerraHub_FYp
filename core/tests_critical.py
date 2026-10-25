@@ -15,7 +15,8 @@ from core.models import (
     Batch, Material, Product, ProductionRun, ProductRecipe, PurchaseOrder, PurchaseOrderDetail,
     RegistryLog, SalesOrder, SalesOrderDetail, Shipment, ShipmentItem, StockAllocation, StockAudit, Warehouse,
 )
-from core.tests import CriticalBase, make_user
+from core.models import QARequest
+from core.tests import AdminEditBase, CriticalBase, make_user
 from core.utils import allocate_stock, deduct_stock_from_allocation
 
 D = Decimal
@@ -536,3 +537,31 @@ class SecurityTests(CriticalBase):
         DB_QUERY_LOGS.clear()
         list(Material.objects.filter(sku='SECRET-VALUE-123'))
         self.assertFalse(any('SECRET-VALUE-123' in log['sql'] for log in DB_QUERY_LOGS))
+
+
+
+class AdminIntegrityTests(AdminEditBase):
+    """The Django admin can't move a batch out from under a reservation, shipment or QA request, or edit stock totals."""
+
+    def test_facility_move_refused_when_reserved_on_shipment_or_in_qa(self):
+        Batch.objects.filter(pk=self.batch.pk).update(allocated_quantity=D('1'))
+        self.assertContains(self._move(self.b), 'This batch is reserved')
+        Batch.objects.filter(pk=self.batch.pk).update(allocated_quantity=0)
+
+        shp = Shipment.objects.create(tracking_number='SHP-ADM', direction='Transfer', origin_warehouse=self.a)
+        ShipmentItem.objects.create(shipment=shp, batch=self.batch, material=self.batch.material, quantity=D('5'))
+        self.assertContains(self._move(self.b), 'open shipment SHP-ADM')
+        shp.status = 'Completed'
+        shp.save()
+
+        QARequest.objects.create(batch=self.batch, reason='moisture')
+        self.assertContains(self._move(self.b), 'open QA request')
+
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.warehouse, self.a)
+        self.assertFalse(RegistryLog.objects.exists())
+
+    def test_batch_quantity_is_read_only(self):
+        r = self.client.get(reverse('admin:core_batch_change', args=[self.batch.pk]))
+        self.assertNotContains(r, 'name="quantity"')
+        self.assertNotContains(r, 'name="allocated_quantity"')

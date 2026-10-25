@@ -1755,18 +1755,18 @@ button[type="submit"]:disabled {
 
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 1rem;
 }
 
 .stat-card {
     background: var(--bg-card);
     border: 1px solid var(--border-light);
-    border-radius: 12px;
-    padding: 1.75rem;
+    border-radius: 10px;
+    padding: 0.95rem 1.15rem;
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 0.3rem;
     transition: var(--transition-smooth);
     box-shadow: 0 4px 12px rgba(15, 23, 42, 0.02);
 }
@@ -1787,7 +1787,8 @@ button[type="submit"]:disabled {
 
 .stat-value {
     font-family: 'Outfit', sans-serif;
-    font-size: 2rem;
+    font-size: 1.6rem;
+    line-height: 1.2;
     font-weight: 700;
     background: var(--accent-grad);
     -webkit-background-clip: text;
@@ -2051,19 +2052,19 @@ button[type="submit"]:disabled {
     border-radius: 2px;
 }
 
-/* KPI Counters Row */
+/* KPI Counters Row: compact standard shared by every page (one-line values, tight padding). */
 .kpi-wrapper-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 1.25rem;
-    margin-bottom: 2rem;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
 }
 
 .kpi-item-card {
     background: var(--bg-card);
     border: 1px solid var(--border-light);
-    border-radius: 12px;
-    padding: 1.25rem 1.5rem;
+    border-radius: 10px;
+    padding: 0.95rem 1.15rem;
     display: flex;
     flex-direction: column;
     position: relative;
@@ -2084,25 +2085,31 @@ button[type="submit"]:disabled {
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.35rem;
 }
 
+/* Side badges/captions wrap under the value instead of squeezing it. */
 .kpi-value-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     justify-content: space-between;
+    gap: 0.25rem 0.5rem;
 }
 
 .kpi-value {
     font-family: 'Outfit', sans-serif;
-    font-size: 2.25rem;
+    font-size: 1.6rem;
+    line-height: 1.2;
     font-weight: 700;
     color: var(--text-main);
-    letter-spacing: -0.5px;
+    letter-spacing: -0.3px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
 
 .kpi-sparkline-box {
-    margin-top: 1rem;
+    margin-top: 0.75rem;
     height: 10px;
     display: flex;
     align-items: flex-end;
@@ -2610,7 +2617,7 @@ button[type="submit"]:disabled {
 }
 
 .kpi-v2 .kpi-item-card {
-    padding: 1.35rem 1.4rem 1.25rem;
+    padding: 0.95rem 1.15rem;
     gap: 0;
     justify-content: flex-start;
 }
@@ -2618,8 +2625,8 @@ button[type="submit"]:disabled {
 /* Sparklines sit on the card's bottom edge so every value row lines up. */
 .kpi-v2 .kpi-sparkline-box {
     margin-top: auto;
-    padding-top: 1rem;
-    height: calc(10px + 1rem);
+    padding-top: 0.75rem;
+    height: calc(10px + 0.75rem);
 }
 
 .kpi-unit {
@@ -2634,7 +2641,7 @@ button[type="submit"]:disabled {
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    margin-bottom: 0.9rem;
+    margin-bottom: 0.6rem;
 }
 
 .kpi-v2 .kpi-icon {
@@ -2661,7 +2668,7 @@ button[type="submit"]:disabled {
 }
 
 .kpi-v2 .kpi-value {
-    font-size: 1.7rem;
+    font-size: 1.5rem;
     line-height: 1.15;
 }
 

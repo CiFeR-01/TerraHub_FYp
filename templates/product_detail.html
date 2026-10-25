@@ -156,7 +156,7 @@
             </div>
             {% if product.unit_of_measure != 'pcs' %}
             <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.15rem;">
-                {{ total_stock|floatformat:2 }} unit{{ total_stock|pluralize }} &times; {{ product.weight_mt_per_unit }} MT/unit
+                {{ total_stock|floatformat:2 }} unit{{ total_stock|pluralize }} &times; {{ product.weight_kg_per_unit }} kg/unit
             </div>
             {% endif %}
         </div>
@@ -242,12 +242,12 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="form-group-inline">
-                <label>Weight (MT) per Unit</label>
-                <input type="number" step="0.0001" name="weight_mt_per_unit" value="{{ product.weight_mt_per_unit|floatformat:4 }}" class="form-input" required style="width: 100%;">
+            <div class="form-group-inline" data-unit-weight>
+                <label><span data-unit-weight-label>Weight of one piece (kg)</span></label>
+                <input type="number" step="any" min="0" name="weight_kg_per_unit" value="{{ product.weight_kg_per_unit }}" class="form-input" style="width: 100%;">
             </div>
             <div class="form-group-inline">
-                <label>Price</label>
+                <label>Price per <span data-unit-name>unit</span> (RM)</label>
                 <input type="number" step="0.01" name="price_per_unit" value="{{ product.price_per_unit|floatformat:2 }}" class="form-input" required style="width: 100%;">
             </div>
             <div class="form-group-inline">
@@ -287,7 +287,7 @@
             <div class="list-item" style="flex-direction: column; align-items: stretch; gap: 0.35rem;">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <span>
-                        <strong style="color: var(--primary);">{{ row.batch.batch_number }}</strong>
+                        <a href="{% url 'batch_detail' row.batch.batch_number %}" style="color: var(--primary); font-weight: 700; text-decoration: none;">{{ row.batch.batch_number }}</a>
                         <span style="color:var(--text-soft); font-size:0.85em;"> @ {{ row.batch.warehouse.name|default:row.batch.location|default:"Unassigned" }}</span>
                     </span>
                     <span>

@@ -22,11 +22,28 @@ def format_mt(total_mt):
 
 
 def format_stock_display(quantity, product):
-    """Display figure for a Product's stock: a 'pcs' product stays a count; others convert to weight, switching kg -> MT via format_mt()."""
+    """Display figure for a Product's stock: pcs and L stay counts; others convert to weight, switching kg -> MT via format_mt()."""
     if product.unit_of_measure == 'pcs':
         return f"{float(quantity):,.0f} pcs"
+    if product.unit_of_measure == 'L':
+        return f"{float(quantity):,.2f} L"
     return format_mt(float(quantity) * float(product.weight_mt_per_unit))
 
+
+
+# MT, kg and g fix their own weight; pcs and L need one entered (kg per piece / per litre).
+UNIT_WEIGHT_MT = {'MT': Decimal('1'), 'kg': Decimal('0.001'), 'g': Decimal('0.000001')}
+UNITS = ('MT', 'kg', 'g', 'L', 'pcs')
+
+
+def read_unit_weight(data, uom):
+    """(weight in MT per unit, error) for a material/product form: set from the unit, or from 'weight_kg_per_unit'."""
+    if uom not in UNITS:
+        return None, "Choose a unit of measure."
+    if uom in UNIT_WEIGHT_MT:
+        return UNIT_WEIGHT_MT[uom], None
+    kg, err = read_decimal(data, 'weight_kg_per_unit', "Weight of one piece" if uom == 'pcs' else "Weight of one litre", above=0)
+    return (kg / 1000 if kg is not None else None), err
 
 def generate_next_code(model_class, field_name, prefix, default_num=1001, pad=4):
     """Next unique code for a prefix (e.g. SO-1004): the highest number among codes of exactly that form, plus 1.

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load humanize %}
 
 {% block title %}Registry Ledger - TerraHub{% endblock %}
 
@@ -20,29 +21,33 @@
 <section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay: 0.05s;">
     <div class="kpi-item-card">
         <span class="kpi-label">Total Inbound</span>
+        <span style="font-size:0.75rem; color:var(--text-muted);">{% if range_filter == "all" %}All time{% else %}Last 30 days{% endif %}</span>
         <div class="kpi-value-row">
-            <span class="kpi-value">{{ stats.inbound|floatformat:0 }}</span>
+            <span class="kpi-value">{{ stats.inbound|floatformat:0|intcomma }}</span>
             <span class="badge badge-emerald">Units</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Total Outbound</span>
+        <span style="font-size:0.75rem; color:var(--text-muted);">{% if range_filter == "all" %}All time{% else %}Last 30 days{% endif %}</span>
         <div class="kpi-value-row">
-            <span class="kpi-value">{{ stats.outbound|floatformat:0 }}</span>
+            <span class="kpi-value">{{ stats.outbound|floatformat:0|intcomma }}</span>
             <span class="badge badge-sky">Units</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Consumed (Manufacturing)</span>
+        <span style="font-size:0.75rem; color:var(--text-muted);">{% if range_filter == "all" %}All time{% else %}Last 30 days{% endif %}</span>
         <div class="kpi-value-row">
-            <span class="kpi-value">{{ stats.consumed|floatformat:0 }}</span>
+            <span class="kpi-value">{{ stats.consumed|floatformat:0|intcomma }}</span>
             <span class="badge badge-indigo">Units</span>
         </div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Spoiled / Disposed</span>
+        <span style="font-size:0.75rem; color:var(--text-muted);">{% if range_filter == "all" %}All time{% else %}Last 30 days{% endif %}</span>
         <div class="kpi-value-row">
-            <span class="kpi-value">{{ stats.disposed|floatformat:0 }}</span>
+            <span class="kpi-value">{{ stats.disposed|floatformat:0|intcomma }}</span>
             <span class="badge badge-rose">Units</span>
         </div>
     </div>
@@ -51,6 +56,15 @@
 <!-- Filter Bar & Table -->
 <div class="table-card-wrapper animate-fade-in-up" style="animation-delay: 0.1s; background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-top:1.5rem;">
     <form method="get" style="display:flex; flex-wrap:wrap; gap:1rem; align-items:center; justify-content:space-between; margin-bottom:1.25rem;">
+        <input type="hidden" name="range" value="{{ range_filter }}">
+        {# Pill toggle, same look as analytics/partials/_analytics_tabs.html #}
+        <div role="group" aria-label="Date range" style="display:flex; gap:0.4rem;">
+            {% for code, label in range_choices %}
+            <a href="?{% if range_qs %}{{ range_qs }}&{% endif %}range={{ code }}" {% if range_filter == code %}aria-current="true"{% endif %}
+               style="font-size:0.82rem; font-weight:600; text-decoration:none; padding:0.4rem 0.9rem; border-radius:999px; border:1px solid var(--border-light);
+                      {% if range_filter == code %}background:var(--accent); color:var(--on-primary); border-color:var(--accent);{% else %}color:var(--text-main); background:var(--bg-surface);{% endif %}">{{ label }}</a>
+            {% endfor %}
+        </div>
         <div style="display:flex; gap:0.5rem; align-items:center; flex:1; max-width:400px;">
             <input type="text" name="q" value="{{ search_query }}" placeholder="Search by item name or warehouse..." class="form-input" style="width:100%; padding:0.55rem 0.8rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.875rem;">
             <button type="submit" class="btn btn-secondary" style="padding:0.55rem 1rem;">Search</button>

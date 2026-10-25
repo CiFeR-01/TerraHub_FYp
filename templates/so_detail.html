@@ -203,9 +203,9 @@
                     <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Product</label>
                     <select name="product_id" required class="form-select" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
                         <option value="">— Select Product —</option>
-                        {% for p in products %}
+                        {% for p in products %}{% if p.is_active %}
                         <option value="{{ p.id }}">{{ p.sku }} — {{ p.name }}</option>
-                        {% endfor %}
+                        {% endif %}{% endfor %}
                     </select>
                 </div>
                 <div>

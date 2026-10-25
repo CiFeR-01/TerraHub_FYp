@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load humanize %}
 
 {% block title %}Spoilage & Write-offs - TerraHub{% endblock %}
 
@@ -39,19 +40,19 @@
 <section class="kpi-wrapper-grid animate-fade-in-up" style="animation-delay:0.05s; margin-bottom:1.5rem;">
     <div class="kpi-item-card">
         <span class="kpi-label">Total Loss</span>
-        <div class="kpi-value-row"><span class="kpi-value" style="color:{% if report.totals.total_value %}var(--danger){% else %}var(--text-main){% endif %};">RM {{ report.totals.total_value|floatformat:2 }}</span></div>
+        <div class="kpi-value-row"><span class="kpi-value" style="color:{% if report.totals.total_value %}var(--danger){% else %}var(--text-main){% endif %};">RM {{ report.totals.total_value|floatformat:2|intcomma }}</span></div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Written Off</span>
-        <div class="kpi-value-row"><span class="kpi-value">RM {{ report.totals.disposed_value|floatformat:2 }}</span></div>
+        <div class="kpi-value-row"><span class="kpi-value">RM {{ report.totals.disposed_value|floatformat:2|intcomma }}</span></div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Returned to Suppliers</span>
-        <div class="kpi-value-row"><span class="kpi-value">RM {{ report.totals.returned_value|floatformat:2 }}</span></div>
+        <div class="kpi-value-row"><span class="kpi-value">RM {{ report.totals.returned_value|floatformat:2|intcomma }}</span></div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Lost in Transit</span>
-        <div class="kpi-value-row"><span class="kpi-value">RM {{ report.totals.lost_value|floatformat:2 }}</span></div>
+        <div class="kpi-value-row"><span class="kpi-value">RM {{ report.totals.lost_value|floatformat:2|intcomma }}</span></div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">QA Write-off Records</span>

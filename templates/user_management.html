@@ -65,7 +65,11 @@
         <form method="get" style="display:flex; gap:0.5rem; align-items:center;">
             <input type="text" name="q" value="{{ query }}" placeholder="Search by name, email, or username..." class="form-input" style="padding:0.4rem 0.75rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem; width:250px;">
             <button type="submit" class="btn btn-secondary" style="padding:0.4rem 0.75rem; font-size:0.85rem;">Search</button>
-            {% if query %}
+            <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.85rem; color:var(--text-muted); white-space:nowrap; cursor:pointer;">
+                <input type="checkbox" name="inactive" value="1" {% if show_inactive %}checked{% endif %} onchange="this.form.submit()">
+                Show inactive ({{ inactive_count }})
+            </label>
+            {% if query or show_inactive %}
             <a href="{% url 'user_management' %}" class="btn" style="padding:0.4rem 0.75rem; font-size:0.85rem; color:var(--text-muted);">Clear</a>
             {% endif %}
         </form>

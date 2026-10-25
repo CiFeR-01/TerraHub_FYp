@@ -3,7 +3,7 @@
 {% block title %}{{ po.po_number }} — Purchase Order Detail - TerraHub{% endblock %}
 
 {% block content %}
-<header class="dashboard-header-row animate-fade-in-up">
+<header class="dashboard-header-row animate-fade-in-up" style="position:relative; z-index:30;">
     <div>
         <nav class="breadcrumb-nav">
             <span>Operations &amp; Logistics</span>
@@ -188,9 +188,9 @@
                     <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Material</label>
                     <select name="material_id" required class="form-select" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
                         <option value="">— Select Material —</option>
-                        {% for m in materials %}
+                        {% for m in materials %}{% if m.is_active %}
                         <option value="{{ m.id }}">{{ m.sku }} — {{ m.name }}</option>
-                        {% endfor %}
+                        {% endif %}{% endfor %}
                     </select>
                 </div>
                 <div>
@@ -249,7 +249,7 @@
                     <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
                         <!-- Receive form -->
                         {% if po.status not in unapproved_statuses %}
-                        <button onclick="(function(){var el=document.getElementById('recv-{{ row.item.id }}');el.style.display=el.style.display==='none'?'block':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--text-muted); margin-right:0.3rem;">📥 Receive</button>
+                        <button onclick="(function(){var el=document.getElementById('recv-{{ row.item.id }}');el.style.display=el.style.display==='none'?'table-row':'none';})()" style="background:none; border:1px solid var(--border-light); border-radius:4px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.75rem; color:var(--text-muted); margin-right:0.3rem;">📥 Receive</button>
                         {% endif %}
                         {% if not items_locked %}
                         <form method="post" style="display:inline;">

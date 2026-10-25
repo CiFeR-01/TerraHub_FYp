@@ -65,7 +65,7 @@
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">
                         <a href="{% url 'material_detail' item.material.id %}" style="color:var(--primary); text-decoration:none;">{{ item.material.sku }}</a>
                         {% if not item.material.is_active %}
-                        <span style="display:inline-block; font-size:0.65rem; background:var(--danger-soft); color:var(--danger); padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">Deactivated</span>
+                        <span style="display:inline-block; font-size:0.65rem; background:var(--danger-soft); color:var(--danger); padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.25rem;">Archived</span>
                         {% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem; font-weight:600;">{{ item.material.name }}</td>
@@ -86,7 +86,7 @@
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="toggle_active">
                                 <input type="hidden" name="material_id" value="{{ item.material.id }}">
-                                <button type="submit" class="btn btn-secondary" style="padding:0.35rem 0.65rem; font-size:0.775rem;">
+                                <button type="submit" class="btn btn-secondary" style="padding:0.35rem 0.65rem; font-size:0.775rem;"{% if item.material.is_active %} title="Archived materials can't be added to POs or recipes. Stock on hand can still be used."{% endif %}>
                                     {% if item.material.is_active %}Archive{% else %}Restore{% endif %}
                                 </button>
                             </form>
@@ -154,12 +154,12 @@
                 <span><strong>QA check on arrival.</strong> New deliveries go on hold until QA inspects them.</span>
             </label>
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:1.25rem;">
-                <div>
-                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">MT Weight / Unit</label>
-                    <input type="number" step="0.0001" name="weight_mt_per_unit" value="1.0000" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                <div data-unit-weight>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;"><span data-unit-weight-label>Weight of one piece (kg)</span></label>
+                    <input type="number" step="any" min="0" name="weight_kg_per_unit" placeholder="e.g. 25" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
                 </div>
                 <div>
-                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Cost / Unit (RM)</label>
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Cost per <span data-unit-name>unit</span> (RM)</label>
                     <input type="number" step="0.01" name="cost_per_unit" value="50.00" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
                 </div>
             </div>
