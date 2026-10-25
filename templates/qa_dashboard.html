@@ -19,6 +19,9 @@
             Requests sent to QA, stock nearing expiry, stock on hold and write-offs waiting for approval.
             Expired stock is put on hold automatically.
         </p>
+        <p style="color:var(--text-muted); font-size:0.8rem; margin-top:0.25rem;">
+            Expiry check last ran {{ sweep_at|date:"j M, H:i" }}{% if sweep.auto_held %} &middot; {{ sweep.auto_held }} expired batch{{ sweep.auto_held|pluralize:"es" }} just put on hold{% endif %}
+        </p>
     </div>
     <form method="get" style="display:flex; gap:0.5rem; align-items:center;">
         <input type="hidden" name="tab" value="{{ tab }}">

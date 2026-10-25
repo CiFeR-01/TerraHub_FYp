@@ -8567,6 +8567,14 @@ class QASpoilageTests(TestCase):
         b.refresh_from_db()
         self.assertEqual(b.status, 'Quarantined')
 
+    def test_opening_qa_page_holds_expired_stock_and_shows_last_checked(self):
+        b = self.batch('QA-PAGE-EXP', expires_in=-1)
+        resp = self.client.get(reverse('qa_dashboard'))
+        b.refresh_from_db()
+        self.assertEqual(b.status, 'Quarantined')
+        self.assertContains(resp, 'Expiry check last ran')
+        self.assertContains(resp, '1 expired batch just put on hold')
+
     def test_expired_stock_is_held_by_the_sweep_and_cannot_be_released(self):
         b = self.batch('QA-EXP', expires_in=-1)
         so = SalesOrder.objects.create(so_number='SO-QA-EXP', client_name='C', origin_warehouse=self.wh, status='Ready to Ship')

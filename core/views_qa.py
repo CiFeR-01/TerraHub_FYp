@@ -156,7 +156,8 @@ def qa_dashboard_view(request):
     if request.method == 'POST':
         return redirect(_handle_post(request))
 
-    qa.daily_sweep()
+    sweep = qa.daily_sweep()
+    sweep_at = timezone.localtime()
 
     today = timezone.localdate()
     window = get_setting('qa_near_expiry_days')
@@ -264,6 +265,8 @@ def qa_dashboard_view(request):
         'can_dispose': request.user.has_perm(DISPOSE_STOCK),
         'can_approve_qa': request.user.has_perm(APPROVE_QA_WRITEOFFS),
         'today': today,
+        'sweep': sweep,
+        'sweep_at': sweep_at,
     })
 
 
