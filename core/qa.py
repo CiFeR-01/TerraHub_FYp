@@ -377,6 +377,9 @@ def extend_expiry(batch, user, days, reason, note='', request=None, approved=Fal
         raise QAError("Enter the number of days to extend by.")
     if days <= 0:
         raise QAError("Extend the expiry by at least 1 day.")
+    max_days = get_setting('qa_extension_max_days')
+    if days > max_days:
+        raise QAError(f"Extend by at most {max_days} days at a time.")
     if batch.status not in OPEN_STATUSES:
         raise QAError(f"Batch {batch.batch_number} is {batch.get_status_display()}, so its shelf life can't be extended.")
     with transaction.atomic():

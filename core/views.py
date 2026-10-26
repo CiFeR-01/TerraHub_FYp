@@ -3583,8 +3583,26 @@ def so_detail_view(request, pk):
                 allocation = get_object_or_404(StockAllocation, id=alloc_id, sales_order=so)
                 target_so = SalesOrder.objects.filter(id=target_so_id).first() if target_so_id else None
 
-                from .utils import unallocate_so_batch
+                from .utils import unallocate_so_batch, so_line_deficit, UNSTARTED_RUN_STATUSES
+                if target_so:
+                    # Only an approved order that is still short of this product, and only up to what it still needs
+                    product = allocation.batch.product
+                    need = (so_line_deficit(target_so, product)
+                            if target_so != so and target_so.status in SO_ALLOCATABLE else Decimal('0'))
+                    qty, err = read_decimal(request.POST, 'quantity', "Quantity", above=0)
+                    if not err and qty > need:
+                        err = (f"{target_so.so_number} only needs {need} more {product.name}, so it can't take {qty}."
+                               if need > 0 else f"{target_so.so_number} doesn't need any more {product.name}.")
+                    if err:
+                        messages.error(request, err)
+                        return redirect('so_detail', pk=so.pk)
                 unallocate_so_batch(allocation, qty_str, request.user, target_so=target_so)
+                if target_so:
+                    planned = target_so.production_runs.filter(target_product=allocation.batch.product,
+                                                               status__in=UNSTARTED_RUN_STATUSES).values_list('run_number', flat=True)
+                    if planned:
+                        messages.warning(request, f"{target_so.so_number} also has run {', '.join(planned)} planned for this product. "
+                                                  "Scrap or resize it if this stock covers the order.")
 
                 if target_so:
                     messages.success(request, f"Transferred {qty_str} to {target_so.so_number}.")
@@ -3717,9 +3735,13 @@ def so_detail_view(request, pk):
                 'shipment': si.shipment,
             })
 
-        transfer_targets = SalesOrder.objects.filter(items__product=item.product).exclude(pk=so.pk).exclude(
-            status__in=['Draft', 'Cancelled', 'Rejected', 'Shipped', 'Delivered']
-        ).distinct().order_by('so_number')
+        # Same rule as unallocate_so_stock: approved orders still short of this product, with what each needs
+        from .utils import so_line_deficit
+        transfer_targets = []
+        for t in SalesOrder.objects.filter(items__product=item.product, status__in=SO_ALLOCATABLE).exclude(pk=so.pk).distinct().order_by('so_number'):
+            t.need = so_line_deficit(t, item.product)
+            if t.need > 0:
+                transfer_targets.append(t)
 
         fulfilled = float(commit['total']) >= float(item.quantity_ordered)
 
@@ -3987,12 +4009,24 @@ def po_detail_view(request, pk):
             messages.success(request, f"{po.po_number} status updated to {new_status}.")
 
         elif action == 'update_po_header':
-            po.supplier_name = request.POST.get('supplier_name', po.supplier_name)
+            if po.status in ('Completed', 'Cancelled'):
+                messages.error(request, f"{po.po_number} is {po.status}, so its details can't be changed.")
+                return redirect('po_detail', pk=po.pk)
+            supplier = request.POST.get('supplier_name', po.supplier_name).strip()
+            deadline, err = read_date(request.POST, 'expected_delivery_date', "Expected delivery date")
+            if not supplier:
+                err = "Supplier name can't be blank."
             wh_id = request.POST.get('target_warehouse_id')
-            if wh_id:
-                po.target_warehouse = get_object_or_404(Warehouse, id=wh_id)
-            deadline = request.POST.get('expected_delivery_date')
-            po.expected_delivery_date = deadline if deadline else po.expected_delivery_date
+            target = get_object_or_404(Warehouse, id=wh_id) if wh_id else po.target_warehouse
+            # Received goods are already sitting in the current facility
+            if not err and target != po.target_warehouse and any(i.quantity_received > 0 for i in po.items.all()):
+                err = f"Goods have already been received into {po.target_warehouse}, so the facility can't be changed."
+            if err:
+                messages.error(request, err)
+                return redirect('po_detail', pk=po.pk)
+            po.supplier_name = supplier
+            po.target_warehouse = target
+            po.expected_delivery_date = deadline or po.expected_delivery_date
             po.updated_by = request.user
             po.save()
             messages.success(request, f"{po.po_number} details updated.")
@@ -4002,10 +4036,15 @@ def po_detail_view(request, pk):
             remarks = request.POST.get('remarks', '').strip()
             
             mgr = CustomUser.objects.filter(id=manager_id).first()
-            problem = approver_problem(mgr, APPROVE_PURCHASE_ORDERS)
+            # Same rule as sales orders: only unapproved POs (or resending one still pending) go for approval
+            problem = (None if po.status in UNAPPROVED_STATUSES
+                       else f"{po.po_number} is {po.status}, so it can't be sent for approval again.")
+            problem = problem or approver_problem(mgr, APPROVE_PURCHASE_ORDERS)
             if problem:
                 messages.error(request, problem)
             else:
+                if po.status == 'Pending Approval':
+                    clear_approval_notifications(po.po_number)   # resent: the previous approver's request is void
                 po.status = 'Pending Approval'
                 po.assigned_to = mgr
                 po.approval_remarks = remarks
@@ -5438,8 +5477,15 @@ def shipment_detail_view(request, pk):
             try:
                 item = get_object_or_404(ShipmentItem, id=request.POST.get('item_id'), shipment=shipment)
                 qty = Decimal(request.POST.get('quantity'))
+                # A PO delivery credits the PO and creates stock, so it can't take more than the PO line still needs (as on the PO page)
+                po_line = (PurchaseOrderDetail.objects.filter(purchase_order=shipment.purchase_order, material=item.material).first()
+                           if shipment.direction == 'Inbound' and shipment.purchase_order and item.material else None)
                 if qty <= 0:
                     messages.error(request, "Enter a quantity greater than zero.")
+                elif po_line and po_line.quantity_received + qty > po_line.quantity_ordered:
+                    messages.error(request, f"That would receive {po_line.quantity_received + qty} of the {po_line.quantity_ordered} "
+                                            f"ordered on {shipment.purchase_order.po_number}. If the supplier sent more, "
+                                            "change the PO line's ordered quantity first.")
                 else:
                     received_date = request.POST.get('received_date') or date.today()
                     item_name = record_item_receipt(shipment, item, qty, received_date, request.user, request.POST.get('notes', '').strip())
@@ -6066,15 +6112,12 @@ def so_allocate_view(request, pk):
                 batches = _fg_fefo_batches(item.product)
                 chosen = []
                 for b in batches:
-                    raw = request.POST.get(f'batch_qty_{item.id}_{b.id}', '').strip()
-                    try:
-                        amt = Decimal(raw) if raw else Decimal('0')
-                    except InvalidOperation:
-                        messages.error(request, f"Invalid quantity for batch {b.batch_number}.")
+                    amt, err = read_decimal(request.POST, f'batch_qty_{item.id}_{b.id}', f"Quantity for batch {b.batch_number}",
+                                            min_value=0, required=False)
+                    if err:
+                        messages.error(request, err)
                         return redirect('so_allocate', pk=so.pk)
-                    if amt < 0:
-                        messages.error(request, f"Quantity for batch {b.batch_number} can't be negative.")
-                        return redirect('so_allocate', pk=so.pk)
+                    amt = amt or Decimal('0')
                     if amt > b.quantity - b.allocated_quantity:
                         messages.error(request, f"Cannot allocate {amt} from batch {b.batch_number}. Only {b.quantity - b.allocated_quantity} available.")
                         return redirect('so_allocate', pk=so.pk)
