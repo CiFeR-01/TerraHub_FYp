@@ -3168,6 +3168,12 @@ class OpsBriefingCategoryTests(TestCase):
             name='Blend A', sku='PRD-A', unit_of_measure='pcs', price_per_unit=10,
         )
 
+    def test_render_prompt_handles_decimal_signals(self):
+        from decimal import Decimal
+        out = briefing_mod.render_prompt({'q': {'expiry_risk': [{'unused_at_expiry': Decimal('12.50')}]}})
+        self.assertIn('12.5', out)
+        self.assertEqual(briefing_mod._num(Decimal('1.239')), 1.24)
+
     def _late_so(self, number='SO-LATE'):
         so = SalesOrder.objects.create(
             so_number=number, client_name='Acme', origin_warehouse=self.wh,
@@ -8500,6 +8506,58 @@ class ReorderPointTests(TestCase):
 
     def test_blank_reorder_point_is_not_flagged(self):
         self.assertFalse(self.row()['below_reorder_point'])
+
+
+class ReorderButtonTests(TestCase):
+    """Reorder on Stockout & Reorder opens the New PO pop-up with the material picked."""
+
+    def setUp(self):
+        self.wh = Warehouse.objects.create(name='RB Plant', location_type='Both')
+        self.mat = Material.objects.create(name='RB Urea', sku='RB-1', category='Raw', unit_of_measure='kg',
+                                           safe_storage_days=90, weight_mt_per_unit=Decimal('0.001'),
+                                           reorder_point=Decimal('500'))
+        Batch.objects.create(batch_number='RB-B1', material=self.mat, quantity=Decimal('100'), warehouse=self.wh,
+                             manufacturing_date=timezone.localdate(),
+                             expiry_date=timezone.localdate() + timedelta(days=90))
+        self.client = Client()
+        self.link = f"{reverse('po_list')}?new=1&amp;material_id={self.mat.id}"
+
+    def test_button_shown_only_with_po_permission(self):
+        self.client.force_login(make_user(username='rb_mgr', password='pw', role='Manager'))
+        self.assertContains(self.client.get(reverse('forecast')), self.link)
+        self.client.force_login(make_user(username='rb_none', password='pw'))
+        resp = self.client.get(reverse('forecast'))
+        self.assertNotContains(resp, self.link)
+        self.assertContains(resp, 'Reorder')
+
+    def test_popup_prefills_material_and_fastest_supplier(self):
+        slow = Supplier.objects.create(name='RB Slow')
+        fast = Supplier.objects.create(name='RB Fast')
+        SupplierMaterial.objects.create(supplier=slow, material=self.mat, lead_time_days=10)
+        SupplierMaterial.objects.create(supplier=fast, material=self.mat, lead_time_days=3)
+        self.client.force_login(make_user(username='rb_mgr2', password='pw', role='Manager'))
+        resp = self.client.get(reverse('po_list'), {'new': '1', 'material_id': self.mat.id})
+        self.assertEqual(resp.context['prefill_material'], self.mat)
+        self.assertEqual(resp.context['prefill_supplier'], fast)
+
+    def test_create_po_with_first_line(self):
+        self.client.force_login(make_user(username='rb_mgr3', password='pw', role='Manager'))
+        resp = self.client.post(reverse('po_list'), {
+            'action': 'create_po', 'po_number_auto': '1', 'supplier_name': 'RB Co',
+            'target_warehouse_id': self.wh.id, 'material_id': self.mat.id, 'quantity_ordered': '250',
+        })
+        po = PurchaseOrder.objects.get(supplier_name='RB Co')
+        self.assertRedirects(resp, reverse('po_detail', args=[po.pk]), fetch_redirect_response=False)
+        line = po.items.get()
+        self.assertEqual((line.material, line.quantity_ordered, po.status), (self.mat, Decimal('250'), 'Draft'))
+
+    def test_material_without_quantity_creates_nothing(self):
+        self.client.force_login(make_user(username='rb_mgr4', password='pw', role='Manager'))
+        self.client.post(reverse('po_list'), {
+            'action': 'create_po', 'po_number_auto': '1', 'supplier_name': 'RB Co',
+            'target_warehouse_id': self.wh.id, 'material_id': self.mat.id, 'quantity_ordered': '',
+        })
+        self.assertFalse(PurchaseOrder.objects.filter(supplier_name='RB Co').exists())
 
 
 class ReceiptShelfLifeTests(TestCase):

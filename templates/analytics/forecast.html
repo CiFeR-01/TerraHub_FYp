@@ -120,10 +120,14 @@
                         <div style="color:var(--text-muted); font-size:0.78rem;">{{ r.name }}</div>
                     </td>
                     <td style="padding:0.6rem 1rem;" data-sort-value="{% if r.status == 'critical' %}0{% elif r.status == 'reorder_now' %}1{% elif r.status == 'watch' %}2{% elif r.status == 'ok' %}3{% else %}4{% endif %}">
-                        <span class="badge badge-{{ r.display_color }}">{{ r.display_emoji }} {{ r.display_status }}</span>
+                        <span class="badge badge-{{ r.display_color }}">{{ r.display_status }}</span>
                     </td>
-                    <td style="padding:0.6rem 1rem; font-weight:600; {% if r.action_label == 'Reorder' %}color:var(--danger);{% else %}color:var(--text-muted);{% endif %}">
+                    <td style="padding:0.6rem 1rem; font-weight:600; {% if r.action_label == 'Reorder' %}color:var(--danger);{% else %}color:var(--text-muted);{% endif %}" data-sort-value="{{ r.action_label }}">
+                        {% if r.action_label == 'Reorder' and perms.core.add_purchaseorder %}
+                        <a href="{% url 'po_list' %}?new=1&amp;material_id={{ r.material_id }}" class="btn btn-outline btn-compact reorder-btn" title="Create a purchase order for {{ r.sku }}">Reorder</a>
+                        {% else %}
                         {{ r.action_label }}
+                        {% endif %}
                     </td>
                     <td style="padding:0.6rem 1rem; text-align:right;">
                         {{ r.available|floatformat:1 }}

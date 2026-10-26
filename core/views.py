@@ -2933,15 +2933,32 @@ def purchase_order_list_view(request):
             supplier_name = request.POST.get('supplier_name')
             supplier_id = request.POST.get('supplier_id')
             warehouse_id = request.POST.get('target_warehouse_id')
+            # Optional first line (the Reorder button on Stockout & Reorder pre-fills the material).
+            line_mat_id = request.POST.get('material_id', '').strip()
+            line_mat = line_qty = None
+            if line_mat_id:
+                line_mat = Material.objects.filter(pk=line_mat_id, is_active=True).first() if line_mat_id.isdigit() else None
+                line_qty, err = read_decimal(request.POST, 'quantity_ordered', "Quantity", above=0)
+                if not line_mat:
+                    err = "That material can't be ordered (not found or archived)."
+                if err:
+                    messages.error(request, err)
+                    return redirect(f"{reverse('po_list')}?new=1&material_id={line_mat_id}")
             try:
                 wh = get_object_or_404(Warehouse, id=warehouse_id)
                 supplier_obj = Supplier.objects.filter(id=supplier_id).first() if supplier_id else None
-                po = PurchaseOrder.objects.create(
-                    po_number=po_number, supplier_name=supplier_name, supplier=supplier_obj,
-                    target_warehouse=wh, status='Draft', created_by=request.user
-                )
-                OrderTimeline.objects.create(purchase_order=po, action="Purchase Order Created (Draft)", user=request.user)
+                with transaction.atomic():
+                    po = PurchaseOrder.objects.create(
+                        po_number=po_number, supplier_name=supplier_name, supplier=supplier_obj,
+                        target_warehouse=wh, status='Draft', created_by=request.user
+                    )
+                    OrderTimeline.objects.create(purchase_order=po, action="Purchase Order Created (Draft)", user=request.user)
+                    if line_mat:
+                        PurchaseOrderDetail.objects.create(purchase_order=po, material=line_mat, quantity_ordered=line_qty)
+                        OrderTimeline.objects.create(purchase_order=po, action=f"Line item added: {line_mat.name} x{line_qty}", user=request.user)
                 messages.success(request, f"Purchase Order {po_number} created.")
+                if line_mat:
+                    return redirect('po_detail', pk=po.pk)
             except Exception as e:
                 messages.error(request, f"Error creating Purchase Order: {e}")
 
@@ -2997,12 +3014,28 @@ def purchase_order_list_view(request):
     warehouses = Warehouse.objects.all().order_by('name')
     suppliers = Supplier.objects.filter(is_active=True).order_by('name')
 
+    # ?new=1&material_id=N (Reorder button) opens the New PO pop-up with that material
+    # and its fastest active supplier picked.
+    prefill_material = prefill_supplier = None
+    if request.GET.get('new') == '1':
+        mat_id = request.GET.get('material_id', '')
+        if mat_id.isdigit():
+            prefill_material = Material.objects.filter(pk=mat_id, is_active=True).first()
+        if prefill_material:
+            sm = (SupplierMaterial.objects.filter(material=prefill_material, supplier__is_active=True)
+                  .select_related('supplier').order_by(F('lead_time_days').asc(nulls_last=True), 'supplier__name').first())
+            prefill_supplier = sm.supplier if sm else None
+
     context = {
         'search_query': search_query,
         'status_filter': status_filter,
         'purchase_orders': purchase_orders,
         'warehouses': warehouses,
         'suppliers': suppliers,
+        'po_materials': Material.objects.filter(is_active=True).order_by('name'),
+        'open_po_modal': request.GET.get('new') == '1',
+        'prefill_material': prefill_material,
+        'prefill_supplier': prefill_supplier,
         'po_status_choices': PurchaseOrder.STATUS_CHOICES,
         'next_po_number': generate_next_code(PurchaseOrder, 'po_number', 'PO', 5001),
         'page_size': page_size,

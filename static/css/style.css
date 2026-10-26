@@ -3040,6 +3040,21 @@ button[type="submit"]:disabled {
     font-size: 0.85rem;
 }
 
+/* Row-level Reorder action on the Stockout & Reorder table. */
+.btn.reorder-btn {
+    padding: 0.3rem 0.85rem;
+    font-size: 0.8rem;
+    color: var(--danger);
+    border-color: var(--danger);
+    box-shadow: none;
+}
+
+.btn.reorder-btn:hover {
+    background: var(--danger);
+    color: #fff;
+    box-shadow: none;
+}
+
 /* Attention chips lead the page, right under the title. */
 .attn-section {
     margin-bottom: 1.75rem;

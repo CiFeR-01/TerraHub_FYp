@@ -231,13 +231,13 @@ def production_yield_view(request):
 # Burn-rate lookback windows (days); no "all time" since the rate is total / window.
 FORECAST_WINDOWS = (14, 30, 60, 90)
 
-# UI status buckets (critical/reorder_now merged) -> (label, badge color, emoji, action label).
+# UI status buckets (critical/reorder_now merged) -> (label, badge color, action label).
 _STATUS_DISPLAY = {
-    "critical": ("Action Required", "rose", "\U0001F534", "Reorder"),
-    "reorder_now": ("Action Required", "rose", "\U0001F534", "Reorder"),
-    "watch": ("Watch", "amber", "\U0001F7E0", "Review"),
-    "ok": ("Healthy", "emerald", "\U0001F7E2", "Monitor"),
-    "no_usage": ("No Usage Data", "slate", "⚪", "—"),
+    "critical": ("Action Required", "rose", "Reorder"),
+    "reorder_now": ("Action Required", "rose", "Reorder"),
+    "watch": ("Watch", "amber", "Review"),
+    "ok": ("Healthy", "emerald", "Monitor"),
+    "no_usage": ("No Usage Data", "slate", "—"),
 }
 
 # UI-facing status filter values -> the set of raw backend statuses they cover.
@@ -280,10 +280,9 @@ def forecast_view(request):
         ]
 
     for r in shown:
-        display_status, display_color, display_emoji, action_label = _STATUS_DISPLAY[r["status"]]
+        display_status, display_color, action_label = _STATUS_DISPLAY[r["status"]]
         r["display_status"] = display_status
         r["display_color"] = display_color
-        r["display_emoji"] = display_emoji
         r["action_label"] = action_label
 
     coverage_rows = [r for r in shown if r["days_cover"] is not None][:_COVERAGE_MAX_ROWS]
