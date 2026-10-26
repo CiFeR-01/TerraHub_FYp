@@ -1226,6 +1226,9 @@ def stock_audit_view(request):
                 if not may_use_warehouse(request.user, batch.warehouse_id):
                     messages.error(request, FACILITY_REFUSED)
                     return redirect('stock_audit')
+                if batch.status in ('Depleted', 'Spoiled'):
+                    messages.error(request, f"Batch {batch.batch_number} is {batch.get_status_display().lower()}, so it can't be counted.")
+                    return redirect('stock_audit')
                 open_audit = StockAudit.objects.filter(batch=batch, status='Pending').first()
                 if open_audit:
                     messages.error(request, f"Batch {batch.batch_number} already has a pending count (audit #{open_audit.id}). Apply or reject it before logging another.")
@@ -1250,7 +1253,12 @@ def stock_audit_view(request):
             if audit.status == 'Pending':
                 from .utils import trim_batch_reservations
                 with transaction.atomic():
-                    b = audit.batch
+                    b = Batch.objects.select_for_update().get(pk=audit.batch_id)
+                    # Stock moved since the count, so applying it would undo that movement
+                    if b.quantity != audit.expected_quantity:
+                        messages.error(request, f"Batch {b.batch_number} has changed since audit #{audit.id} was counted "
+                                                f"({audit.expected_quantity} then, {b.quantity} now). Reject it and count again.")
+                        return redirect('stock_audit')
                     problem = trim_batch_reservations(b, audit.actual_quantity, request.user, f"stock count found only {audit.actual_quantity}")
                     if problem:
                         messages.error(request, problem)
@@ -3389,8 +3397,9 @@ def so_detail_view(request, pk):
         if action == 'add_so_item':
             prod_id = request.POST.get('product_id')
             qty = request.POST.get('quantity_ordered', 0)
-            unit_price = request.POST.get('unit_price', None)
             qty, err = read_decimal(request.POST, 'quantity_ordered', "Quantity", above=0)
+            unit_price, price_err = read_decimal(request.POST, 'unit_price', "Unit price", min_value=0, required=False)
+            err = err or price_err
             if err:
                 messages.error(request, err)
                 return redirect('so_detail', pk=so.pk)
@@ -3404,8 +3413,8 @@ def so_detail_view(request, pk):
                 if existing:
                     old_qty = existing.quantity_ordered
                     existing.quantity_ordered += qty
-                    if unit_price:
-                        existing.unit_price = Decimal(unit_price)
+                    if unit_price is not None:
+                        existing.unit_price = unit_price
                     existing.save()
                     OrderTimeline.objects.create(sales_order=so, action=f"Line quantity raised: {prod.name} {old_qty} -> {existing.quantity_ordered}", user=request.user)
                     messages.success(request, f"{prod.name} was already on {so.so_number}, so its quantity was raised to {existing.quantity_ordered}.")
@@ -3414,7 +3423,7 @@ def so_detail_view(request, pk):
                         sales_order=so,
                         product=prod,
                         quantity_ordered=qty,
-                        unit_price=float(unit_price) if unit_price else None
+                        unit_price=unit_price
                     )
                     OrderTimeline.objects.create(sales_order=so, action=f"Line item added: {prod.name} x{qty}", user=request.user)
                     messages.success(request, f"Added {prod.name} to {so.so_number}.")
@@ -3516,9 +3525,7 @@ def so_detail_view(request, pk):
                 messages.success(request, f"Approval requested from {mgr.get_full_name() or mgr.username}.")
                 
         elif action == 'send_to_manufacturing':
-            from django.utils import timezone
             from datetime import timedelta
-            from decimal import Decimal
 
             # Only approved orders still being fulfilled; Draft/unapproved or already shipping orders can't raise runs.
             if so.status not in SO_MANUFACTURABLE:
@@ -6794,23 +6801,26 @@ def production_run_detail_view(request, pk):
                 messages.error(request, "Yield can only be logged while a run is In Progress or Paused.")
                 return redirect('production_run_detail', pk=pk)
 
-            qty_str = request.POST.get('quantity')
-            log_date_str = request.POST.get('log_date')
             notes = request.POST.get('notes', '').strip()
+            qty, err = read_decimal(request.POST, 'quantity', "Quantity", above=0)
+            log_date, date_err = read_date(request.POST, 'log_date', "Log date")
+            err = err or date_err
+            if not err and log_date and log_date > timezone.localdate():
+                err = "The log date can't be in the future."
+            if err:
+                messages.error(request, err)
+                return redirect('production_run_detail', pk=pk)
             try:
-                qty = Decimal(qty_str)
                 logged = run.yield_logs.aggregate(s=Sum('quantity'))['s'] or Decimal('0')
                 over = logged + qty - run.expected_yield
-                if qty <= 0:
-                    messages.error(request, "Enter a quantity greater than zero.")
-                elif over > 0 and not notes:
+                if over > 0 and not notes:
                     # Overrun is real sometimes, but it needs a reason on record
                     messages.error(request, f"That would log {logged + qty} of the {run.expected_yield} expected, {over} over. "
                                             "Give a reason in the notes to log more than expected.")
                 else:
                     if over > 0:
                         OrderTimeline.objects.create(production_run=run, action=f"Yield logged over the expected {run.expected_yield} by {over}. Reason: {notes}", user=request.user)
-                    log_date = log_date_str if log_date_str else timezone.now().date()
+                    log_date = log_date or timezone.localdate()
                     ProductionRunYieldLog.objects.create(
                         production_run=run, quantity=qty, log_date=log_date,
                         logged_by=request.user, notes=notes or None
