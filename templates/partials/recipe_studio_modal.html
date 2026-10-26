@@ -60,9 +60,9 @@
                 <div class="batch-row" style="display:grid; grid-template-columns: 2fr 1fr 30px; gap:0.5rem; align-items:center;">
                     <select class="form-select batch-mat-id" style="width:100%; padding:0.45rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.825rem; background:var(--bg-surface);">
                         <option value="">Choose Raw Material...</option>
-                        {% for m in materials %}
+                        {% for m in materials %}{% if m.is_active %}
                         <option value="{{ m.id }}">{{ m.sku }} — {{ m.name }} ({{ m.unit_of_measure }})</option>
-                        {% endfor %}
+                        {% endif %}{% endfor %}
                     </select>
                     <input type="number" step="0.0001" min="0.0001" placeholder="Quantity" class="form-input batch-mat-qty" style="width:100%; padding:0.45rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.825rem; background:var(--bg-surface);">
                     <button type="button" onclick="removeBatchRow(this)" style="background:none; border:none; color:var(--danger); cursor:pointer; font-weight:700;">&times;</button>

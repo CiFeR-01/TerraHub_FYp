@@ -22,11 +22,28 @@ def format_mt(total_mt):
 
 
 def format_stock_display(quantity, product):
-    """Display figure for a Product's stock: a 'pcs' product stays a count; others convert to weight, switching kg -> MT via format_mt()."""
+    """Display figure for a Product's stock: pcs and L stay counts; others convert to weight, switching kg -> MT via format_mt()."""
     if product.unit_of_measure == 'pcs':
         return f"{float(quantity):,.0f} pcs"
+    if product.unit_of_measure == 'L':
+        return f"{float(quantity):,.2f} L"
     return format_mt(float(quantity) * float(product.weight_mt_per_unit))
 
+
+
+# MT, kg and g fix their own weight; pcs and L need one entered (kg per piece / per litre).
+UNIT_WEIGHT_MT = {'MT': Decimal('1'), 'kg': Decimal('0.001'), 'g': Decimal('0.000001')}
+UNITS = ('MT', 'kg', 'g', 'L', 'pcs')
+
+
+def read_unit_weight(data, uom):
+    """(weight in MT per unit, error) for a material/product form: set from the unit, or from 'weight_kg_per_unit'."""
+    if uom not in UNITS:
+        return None, "Choose a unit of measure."
+    if uom in UNIT_WEIGHT_MT:
+        return UNIT_WEIGHT_MT[uom], None
+    kg, err = read_decimal(data, 'weight_kg_per_unit', "Weight of one piece" if uom == 'pcs' else "Weight of one litre", above=0)
+    return (kg / 1000 if kg is not None else None), err
 
 def generate_next_code(model_class, field_name, prefix, default_num=1001, pad=4):
     """Next unique code for a prefix (e.g. SO-1004): the highest number among codes of exactly that form, plus 1.
@@ -972,15 +989,20 @@ def deduct_stock_from_allocation(order_type, order, user=None):
             alloc.delete()
 
 
-def apply_po_material_receipt(po_detail, delta_qty, user, expiry_date=None, manufacturing_date=None):
+def apply_po_material_receipt(po_detail, delta_qty, user, expiry_date=None, manufacturing_date=None, into_batch=None):
     """Single source for goods received against a PO: adds delta_qty to quantity_received, creates a Batch and recomputes the PO status.
-    Dates default to today and the material's shelf life; a material marked inspect_on_receipt arrives on QA hold."""
+    Stock arrives on hold until the PO is completed (then release_po_held_batches frees it). Dates default to today and the
+    material's shelf life; inspect_on_receipt materials, and stock arriving after the PO was completed, also get a QA check.
+    into_batch: a still-held batch from the same delivery line to add to instead of starting a new one.
+    Returns the batch the stock went into, or None when the receipt was lowered."""
     import uuid
     from datetime import date, timedelta
     from .models import Batch, WarehouseLocation, RegistryLog
 
     po = po_detail.purchase_order
     delta_qty = Decimal(str(delta_qty))
+    was_completed = po.status == 'Completed'
+    batch = None
 
     if delta_qty < 0:
         # Lowered receipt: remove unreserved units from this PO's batches, newest first
@@ -1013,15 +1035,28 @@ def apply_po_material_receipt(po_detail, delta_qty, user, expiry_date=None, manu
     po_detail.quantity_received = (po_detail.quantity_received or Decimal('0')) + delta_qty
     po_detail.save(update_fields=['quantity_received'])
 
-    if delta_qty > 0:
+    if delta_qty > 0 and into_batch is not None and into_batch.status == 'Quarantined' \
+            and into_batch.purchase_order_id == po.id and into_batch.material_id == po_detail.material_id:
+        # Same delivery line logged again: it's the same lot, so it joins the held batch
+        batch = into_batch
+        batch.quantity += delta_qty
+        batch.save(update_fields=['quantity'])
+        RegistryLog.objects.create(
+            action_type='Inbound',
+            item_name=f"{po_detail.material.name} (Batch {batch.batch_number})",
+            material=po_detail.material,
+            quantity_changed=delta_qty,
+            warehouse=batch.warehouse,
+            user=user
+        )
+    elif delta_qty > 0:
         loc = WarehouseLocation.objects.filter(warehouse=po.target_warehouse).first()
         # None = track the warehouse's current rate live; only a negotiated per-PO rate is locked in.
         rental_rate = po_detail.negotiated_rental_rate_per_mt
         mfg = manufacturing_date or date.today()
-        hold = po_detail.material.inspect_on_receipt
         batch = Batch.objects.create(
             batch_number=po_batch_number(po, po_detail.material),
-            status='Quarantined' if hold else 'Active',
+            status='Quarantined',
             material=po_detail.material,
             quantity=delta_qty,
             manufacturing_date=mfg,
@@ -1040,13 +1075,15 @@ def apply_po_material_receipt(po_detail, delta_qty, user, expiry_date=None, manu
             warehouse=po.target_warehouse,
             user=user
         )
-        if hold:
-            from .qa import create_request, log_event
-            log_event(batch, 'quarantined', user, 'inbound_check',
-                      f"Received on {po.po_number}; {po_detail.material.name} is inspected on receipt.", delta_qty)
+        from .qa import create_request, log_event
+        if po_detail.material.inspect_on_receipt or was_completed:
+            why = (f"Received on {po.po_number} after it was completed." if was_completed
+                   else f"Received on {po.po_number}; {po_detail.material.name} is inspected on receipt.")
+            log_event(batch, 'quarantined', user, 'inbound_check', why, delta_qty)
             # Shows in the QA Check tab; passing the inspection releases it
-            create_request(batch, user, 'inbound_check', f"Received on {po.po_number}; checked on arrival.",
-                           source=po.po_number, hold=True, auto=True)
+            create_request(batch, user, 'inbound_check', why, source=po.po_number, hold=True, auto=True)
+        else:
+            log_event(batch, 'quarantined', user, 'other', po_wait_note(po), delta_qty)
 
     all_items = po.items.all()
     total_ordered = sum(Decimal(str(i.quantity_ordered)) for i in all_items)
@@ -1056,11 +1093,39 @@ def apply_po_material_receipt(po_detail, delta_qty, user, expiry_date=None, manu
         if po.completed_date is None:
             po.completed_date = date.today()
         po.save(update_fields=['status', 'completed_date'])
+        release_po_held_batches(po, user)
+    elif was_completed and delta_qty > 0:
+        pass  # closed short by hand: a late arrival doesn't reopen it
     else:
         # Not fully received
         po.status = 'Partially Received' if total_received > 0 else 'Pending'
         po.completed_date = None
         po.save(update_fields=['status', 'completed_date'])
+    return batch
+
+
+def po_wait_note(po):
+    return f"Waiting for {po.po_number} to be completed before this stock can be used."
+
+
+def release_po_held_batches(po, user):
+    """Frees the batches held only because their PO wasn't complete yet. Batches with a QA check open, held for
+    another reason, or expired stay on hold for QA."""
+    from .models import Batch, OrderTimeline
+    from .qa import HOLD_ACTIONS, is_expired, log_event
+    released = []
+    for b in Batch.objects.filter(purchase_order=po, status='Quarantined', material__isnull=False):
+        last_hold = b.qa_events.filter(action__in=HOLD_ACTIONS).order_by('-created_at', '-id').first()
+        if (not last_hold or last_hold.note != po_wait_note(po) or is_expired(b)
+                or b.qa_requests.filter(status__in=('Open', 'In Review')).exists()):
+            continue
+        b.status = 'Active'
+        b.save(update_fields=['status'])
+        log_event(b, 'released', user, note=f"{po.po_number} completed.", quantity=b.quantity)
+        released.append(b.batch_number)
+    if released:
+        OrderTimeline.objects.create(purchase_order=po, action=f"PO completed: released Batch {', '.join(released)} for use.", user=user)
+    return released
 
 
 def po_batch_number(po, material):
@@ -1072,7 +1137,7 @@ def po_batch_number(po, material):
 
 
 def receive_transfer_into_destination(shipment, user):
-    """Creates the destination-side batch for each received item of an internal Transfer (used by complete_shipment and force_close_shipment).
+    """Creates the destination-side batch for each received item of an internal Transfer (used by finish_shipment_receiving and force_close_shipment).
     An existing batch means it was already received and is left alone. The batch gets warehouse=destination and a NULL rental_rate_per_mt (tracks the destination's rate)."""
     from .models import Batch, RegistryLog, StockAllocation
 

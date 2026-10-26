@@ -25,10 +25,10 @@ from .models import (
     Shipment, ShipmentItem, ShipmentItemReceipt, StockAudit, RegistryLog, OrderTimeline, Notification,
     StockAllocation, Supplier, SupplierMaterial, Client
 )
-from .utils import generate_next_code, format_stock_display, unexpired, read_decimal, read_date
+from .utils import generate_next_code, format_stock_display, unexpired, read_decimal, read_date, read_unit_weight, UNIT_WEIGHT_MT
 from .validators import normalise_phone, normalise_phone_or_email, validate_email_address, validation_messages
 from .decorators import permission_or_redirect
-from .account import log_user_change
+from .account import log_archive_change, log_user_change
 from .permissions import (
     is_admin_user, can_approve, can_grant_group, action_denied,
     limited_warehouse_ids, may_use_warehouse, FACILITY_REFUSED, approvers, users_with_perm, pending_actions,
@@ -190,9 +190,9 @@ def cancel_sales_order(so, reason, user):
 
 
 def po_cancel_problem(po):
-    """Why `po` can't be cancelled right now, or None. Only approved POs with nothing received or on the road."""
-    if po.status != 'Pending':
-        return f"{po.po_number} is {po.status}. Only an approved PO with nothing received can be cancelled."
+    """Why `po` can't be cancelled right now, or None. Like a sales order: any PO before goods arrive or leave the supplier."""
+    if po.status not in ('Draft', 'Pending Approval', 'Pending'):
+        return f"{po.po_number} is {po.status}, so it can't be cancelled. A part-received PO can be closed short instead."
     if any(i.quantity_received > 0 for i in po.items.all()):
         return f"Goods have already been received on {po.po_number}. Close it short instead."
     out = po.shipments.filter(direction='Inbound', status__in=SHIPMENT_OUT + ('Completed',))
@@ -202,7 +202,7 @@ def po_cancel_problem(po):
 
 
 def cancel_purchase_order(po, reason, user):
-    """Cancels an approved PO and its deliveries that haven't left. Callers check po_cancel_problem first."""
+    """Cancels a PO and its deliveries that haven't left. Callers check po_cancel_problem first."""
     with transaction.atomic():
         for sh in po.shipments.filter(direction='Inbound').exclude(status='Cancelled'):
             sh.status = 'Cancelled'
@@ -234,7 +234,16 @@ def so_manual_status_problem(so, new_status):
 # Only a partly received PO can be closed by hand; other PO statuses come from approval and receiving.
 PO_MANUAL_TRANSITIONS = {
     'Partially Received': ['Completed'],
+    'Completed': ['Partially Received'],   # reopen, only when closed short (see po_manual_transitions)
 }
+
+
+def po_manual_transitions(po):
+    """Statuses this PO may be set to by hand. A Completed PO can only be reopened if it was closed short."""
+    allowed = PO_MANUAL_TRANSITIONS.get(po.status, [])
+    if po.status == 'Completed' and all(i.quantity_received >= i.quantity_ordered for i in po.items.all()):
+        return []
+    return allowed
 
 # Unapproved orders cannot be allocated, received or produced against.
 UNAPPROVED_STATUSES = ('Draft', 'Pending Approval', 'Rejected')
@@ -277,6 +286,13 @@ def so_return_for_reapproval(so, user, what):
 
 # Outbound/Transfer cargo is locked once the truck leaves; edits while pending or approved return the shipment to Logistics Review.
 SHIPMENT_CARGO_LOCKED = ('Dispatched', 'Delayed', 'Arrived', 'Completed', 'Discrepant', 'Cancelled')
+# Inbound cargo is the supplier's declared load, so it stays editable on the road and locks once the truck arrives.
+INBOUND_CARGO_LOCKED = ('Arrived', 'Completed', 'Discrepant', 'Cancelled')
+
+
+def shipment_cargo_locked(shipment):
+    return shipment.status in (INBOUND_CARGO_LOCKED if shipment.direction == 'Inbound' else SHIPMENT_CARGO_LOCKED)
+
 # Statuses each shipment action may start from: nothing that has left can be scrapped or sent back, and only a finished one reopened.
 SHIPMENT_ACTION_STATUSES = {
     'scrap_shipment': ('Draft', 'Logistics Review', 'Pending Approval', 'Preparing'),
@@ -616,36 +632,6 @@ def dashboard_view(request):
 
     return render(request, 'dashboard.html', context)
 
-@login_required
-def system_view(request):
-    # The console shows live SQL and DB details, so it's for superusers and Admins only (same rule as the clear/test buttons).
-    if not (request.user.is_superuser or is_admin_user(request.user)):
-        messages.error(request, "Permission Denied: the System Console is for Admins only.")
-        return redirect('dashboard')
-    system_metrics = {
-        'total_users': CustomUser.objects.count(),
-        'total_warehouses': Warehouse.objects.count(),
-        'total_batches': Batch.objects.count(),
-        'total_logs': RegistryLog.objects.count(),
-        'total_sales_orders': SalesOrder.objects.count(),
-        'total_purchase_orders': PurchaseOrder.objects.count(),
-        'total_shipments': Shipment.objects.count(),
-        'total_materials': Material.objects.count(),
-        'total_products': Product.objects.count(),
-    }
-    recent_registry = RegistryLog.objects.select_related('user', 'warehouse').order_by('-timestamp')[:8]
-    
-    from .db_tracker import get_db_status, DB_QUERY_LOGS
-    db_status = get_db_status()
-    initial_logs = list(DB_QUERY_LOGS)
-    
-    return render(request, 'system.html', {
-        'metrics': system_metrics,
-        'recent_logs': recent_registry,
-        'db_status': db_status,
-        'db_logs': initial_logs,
-    })
-
 
 def _setting_label(key):
     return key.replace('_', ' ').title()
@@ -747,47 +733,6 @@ def session_keepalive_view(request):
     return JsonResponse({'authenticated': True,
                          'expires_in': min(request.session.get_expiry_age(), idle_timeout_seconds(request))})
 
-@login_required
-def db_logs_api_view(request):
-    if not (request.user.is_superuser or is_admin_user(request.user)):
-        return JsonResponse({'status': 'error', 'message': "Permission denied."}, status=403)
-    from .db_tracker import DB_QUERY_LOGS, get_db_status
-    db_status = get_db_status()
-    return JsonResponse({
-        'logs': list(DB_QUERY_LOGS),
-        'db_status': db_status
-    })
-
-
-@login_required
-def db_clear_logs_view(request):
-    if request.method != 'POST' or not (request.user.is_superuser or is_admin_user(request.user)):
-        return JsonResponse({'status': 'error', 'message': "Permission denied."}, status=403)
-    from .db_tracker import DB_QUERY_LOGS
-    DB_QUERY_LOGS.clear()
-    return JsonResponse({'status': 'success'})
-
-
-@login_required
-def db_test_op_view(request):
-    if request.method != 'POST' or not (request.user.is_superuser or is_admin_user(request.user)):
-        return JsonResponse({'status': 'error', 'message': "Permission denied."}, status=403)
-    op_type = request.POST.get('type', 'read')
-    if op_type == 'write':
-        Notification.objects.create(
-            user=request.user,
-            message=f"DB Write Telemetry Test at {datetime.datetime.now().strftime('%H:%M:%S')}",
-            link="",
-            is_read=True
-        )
-        msg = "Write query (INSERT Notification) executed successfully."
-    else:
-        _ = list(CustomUser.objects.filter(id=request.user.id))
-        msg = "Read query (SELECT CustomUser) executed successfully."
-        
-    return JsonResponse({'status': 'success', 'message': msg})
-
-
 
 def home_view(request):
     """Public landing page. ?batch=<number> jumps to that batch's public page or shows a not-found note; signed-in users go to the dashboard."""
@@ -823,6 +768,8 @@ def warehouse_inventory_view(request):
             qty, err = read_decimal(request.POST, 'quantity', "Quantity", above=0)
             expiry_date, date_err = read_date(request.POST, 'expiry_date', "Expiry date")
             err = err or date_err
+            if not err and bool(material_id) == bool(product_id):
+                err = "Choose one material or one product (not both)."
             if not err and not Warehouse.objects.filter(id=wh_id or None).exists():
                 err = "Choose the facility the stock was received into."
             if not err and not may_use_warehouse(request.user, wh_id):
@@ -1176,6 +1123,9 @@ def warehouse_edit_view(request, pk):
     if not request.user.has_perm('core.change_warehouse'):
         messages.error(request, "Permission Denied: You do not have permissions to edit a facility.")
         return redirect('warehouse_list')
+    if not may_use_warehouse(request.user, warehouse.id):
+        messages.error(request, FACILITY_REFUSED)
+        return redirect('warehouse_list')
 
     if request.method == 'POST':
         form = WarehouseForm(request.POST, instance=warehouse)
@@ -1276,6 +1226,10 @@ def stock_audit_view(request):
                 if not may_use_warehouse(request.user, batch.warehouse_id):
                     messages.error(request, FACILITY_REFUSED)
                     return redirect('stock_audit')
+                open_audit = StockAudit.objects.filter(batch=batch, status='Pending').first()
+                if open_audit:
+                    messages.error(request, f"Batch {batch.batch_number} already has a pending count (audit #{open_audit.id}). Apply or reject it before logging another.")
+                    return redirect('stock_audit')
                 StockAudit.objects.create(
                     batch=batch,
                     expected_quantity=batch.quantity,
@@ -1303,6 +1257,8 @@ def stock_audit_view(request):
                         return redirect('stock_audit')
                     variance = audit.variance
                     audit.status = 'Resolved'
+                    audit.reviewed_by = request.user
+                    audit.reviewed_at = timezone.now()
                     audit.save()
 
                     b.quantity = audit.actual_quantity
@@ -1318,21 +1274,46 @@ def stock_audit_view(request):
                         user=request.user
                     )
                 messages.success(request, f"Audit #{audit.id} resolved. Physical stock updated.")
+        elif action == 'reject':
+            audit = get_object_or_404(StockAudit, id=request.POST.get('audit_id'))
+            if not may_use_warehouse(request.user, audit.batch.warehouse_id):
+                messages.error(request, FACILITY_REFUSED)
+                return redirect('stock_audit')
+            reason = request.POST.get('reason', '').strip()
+            if audit.status != 'Pending':
+                messages.error(request, f"Audit #{audit.id} is already {audit.status.lower()}.")
+            elif not reason:
+                messages.error(request, "Give a reason for rejecting the count.")
+            else:
+                # Stock is left as it is; the count is kept on record with who rejected it and why.
+                audit.status = 'Rejected'
+                audit.reviewed_by = request.user
+                audit.reviewed_at = timezone.now()
+                audit.review_note = reason
+                audit.save()
+                messages.success(request, f"Audit #{audit.id} rejected. Stock was not changed.")
 
         return redirect('stock_audit')
 
-    audits = StockAudit.objects.select_related('batch', 'auditor').order_by('-id')
+    audits = StockAudit.objects.select_related('batch', 'batch__material', 'batch__product', 'batch__warehouse',
+                                               'auditor', 'reviewed_by').order_by('-id')
     active_batches = Batch.objects.filter(status='Active').select_related('material', 'product', 'warehouse')
-    # Facility limit check - disabled for now; uncomment to enforce
-    # limited = limited_warehouse_ids(request.user)
-    # if limited is not None:
-    #     audits = audits.filter(batch__warehouse_id__in=limited)
-    #     active_batches = active_batches.filter(warehouse_id__in=limited)
+    # Facility limit: users limited to some facilities only see those facilities' audits and batches
+    limited = limited_warehouse_ids(request.user)
+    if limited is not None:
+        audits = audits.filter(batch__warehouse_id__in=limited)
+        active_batches = active_batches.filter(warehouse_id__in=limited)
 
     pending_count = audits.filter(status='Pending').count()
     resolved_count = audits.filter(status='Resolved').count()
+    pending_batch_ids = set(audits.filter(status='Pending').values_list('batch_id', flat=True))
+    # Items for the filter on the form and the table: one entry per material/product, by name.
+    items = {(b.material or b.product).name for b in active_batches if b.material or b.product}
+    items |= {(a.batch.material or a.batch.product).name for a in audits if a.batch.material or a.batch.product}
 
     context = {
+        'pending_batch_ids': pending_batch_ids,
+        'item_names': sorted(items),
         'audits': audits,
         'active_batches': active_batches,
         'pending_count': pending_count,
@@ -1346,8 +1327,14 @@ def stock_audit_view(request):
 def registry_ledger_view(request):
     action_filter = request.GET.get('action')
     search_query = request.GET.get('q', '').strip()
-    
-    logs = RegistryLog.objects.select_related('warehouse', 'user').order_by('-timestamp')
+    range_filter = 'all' if request.GET.get('range') == 'all' else '30d'
+
+    # Date range scopes both the table and the KPI cards; search/action only narrow the table.
+    base = RegistryLog.objects.all()
+    if range_filter == '30d':
+        base = base.filter(timestamp__gte=timezone.now() - timedelta(days=30))
+
+    logs = base.select_related('warehouse', 'user').order_by('-timestamp')
     if action_filter:
         logs = logs.filter(action_type=action_filter)
     if search_query:
@@ -1365,17 +1352,25 @@ def registry_ledger_view(request):
     logs = Paginator(logs, page_size).get_page(request.GET.get('page'))
 
     stats = {
-        'inbound': RegistryLog.objects.filter(action_type='Inbound').aggregate(s=Coalesce(Sum('quantity_changed'), Value(0, output_field=DecimalField())))['s'],
-        'outbound': RegistryLog.objects.filter(action_type='Outbound').aggregate(s=Coalesce(Sum('quantity_changed'), Value(0, output_field=DecimalField())))['s'],
-        'consumed': RegistryLog.objects.filter(action_type='Consumed_For_Manufacturing').aggregate(s=Coalesce(Sum('quantity_changed'), Value(0, output_field=DecimalField())))['s'],
-        'produced': RegistryLog.objects.filter(action_type='Produced').aggregate(s=Coalesce(Sum('quantity_changed'), Value(0, output_field=DecimalField())))['s'],
-        'disposed': RegistryLog.objects.filter(action_type='Spoiled_Disposal').aggregate(s=Coalesce(Sum('quantity_changed'), Value(0, output_field=DecimalField())))['s'],
+        'inbound': base.filter(action_type='Inbound').aggregate(s=Coalesce(Sum('quantity_changed'), Value(0, output_field=DecimalField())))['s'],
+        'outbound': base.filter(action_type='Outbound').aggregate(s=Coalesce(Sum('quantity_changed'), Value(0, output_field=DecimalField())))['s'],
+        'consumed': base.filter(action_type='Consumed_For_Manufacturing').aggregate(s=Coalesce(Sum('quantity_changed'), Value(0, output_field=DecimalField())))['s'],
+        'produced': base.filter(action_type='Produced').aggregate(s=Coalesce(Sum('quantity_changed'), Value(0, output_field=DecimalField())))['s'],
+        'disposed': base.filter(action_type='Spoiled_Disposal').aggregate(s=Coalesce(Sum('quantity_changed'), Value(0, output_field=DecimalField())))['s'],
     }
+
+    # Toggle links keep q/action/sort/page_size but restart at page 1.
+    keep = request.GET.copy()
+    keep.pop('page', None)
+    keep.pop('range', None)
 
     context = {
         'logs': logs,
         'action_filter': action_filter,
         'search_query': search_query,
+        'range_filter': range_filter,
+        'range_qs': keep.urlencode(),
+        'range_choices': (('30d', 'Last 30 days'), ('all', 'All time')),
         'stats': stats,
         'action_choices': RegistryLog.ACTION_CHOICES,
         'page_size': page_size,
@@ -1497,11 +1492,13 @@ def import_products(request):
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
 
+            fixed = {k.lower(): v for k, v in UNIT_WEIGHT_MT.items()}.get(uom.lower())
             try:
-                weight = float(weight_str) if weight_str else 1.0
-                if weight < 0: raise ValueError()
+                # MT, kg and g fix their own weight; pcs and L need weight_mt_per_unit in the file
+                weight = float(fixed) if fixed is not None else float(weight_str)
+                if weight <= 0: raise ValueError()
             except ValueError:
-                err = f"Line {idx}: Weight MT/Unit must be a non-negative number."
+                err = f"Line {idx}: weight_mt_per_unit must be a number above 0 for pcs and L."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
@@ -1739,11 +1736,13 @@ def import_materials(request):
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
 
+            fixed = {k.lower(): v for k, v in UNIT_WEIGHT_MT.items()}.get(uom.lower())
             try:
-                weight = float(weight_str) if weight_str else 1.0
-                if weight < 0: raise ValueError()
+                # MT, kg and g fix their own weight; pcs and L need weight_mt_per_unit in the file
+                weight = float(fixed) if fixed is not None else float(weight_str)
+                if weight <= 0: raise ValueError()
             except ValueError:
-                err = f"Line {idx}: Weight MT/Unit must be a non-negative number."
+                err = f"Line {idx}: weight_mt_per_unit must be a number above 0 for pcs and L."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
@@ -1927,6 +1926,11 @@ def recipe_locked(product):
     return None
 
 
+def archived_recipe_materials(product):
+    """Archived materials still on the product's recipe (runs and SO lines only warn about these)."""
+    return [r.material for r in ProductRecipe.objects.filter(product=product, material__is_active=False).select_related('material')]
+
+
 @login_required
 def save_product_recipe_api(request):
     """API endpoint for live inline recipe modifications (add, update, delete, clone)."""
@@ -1962,9 +1966,12 @@ def save_product_recipe_api(request):
             if locked:
                 return JsonResponse({'success': False, 'error': locked}, status=400)
 
-            source_items = ProductRecipe.objects.filter(product=source_prod)
-            cloned_count = 0
+            source_items = ProductRecipe.objects.filter(product=source_prod).select_related('material')
+            cloned_count = skipped = 0
             for item in source_items:
+                if not item.material.is_active:
+                    skipped += 1
+                    continue
                 ProductRecipe.objects.update_or_create(
                     product=target_prod,
                     material=item.material,
@@ -1974,7 +1981,8 @@ def save_product_recipe_api(request):
 
             return JsonResponse({
                 'success': True,
-                'message': f"Successfully cloned {cloned_count} requirement(s) from {source_prod.sku} to {target_prod.sku}.",
+                'message': f"Successfully cloned {cloned_count} requirement(s) from {source_prod.sku} to {target_prod.sku}."
+                           + (f" Skipped {skipped} archived material(s)." if skipped else ""),
                 'product_id': target_prod.id
             })
         except Exception as e:
@@ -2002,6 +2010,8 @@ def save_product_recipe_api(request):
                 qty = float(q_val)
                 if qty <= 0: continue
                 mat = get_object_or_404(Material, id=m_id)
+                if not mat.is_active:
+                    return JsonResponse({'success': False, 'error': f"{mat.name} is archived, so it can't be added to a recipe."}, status=400)
                 ProductRecipe.objects.update_or_create(
                     product=product,
                     material=mat,
@@ -2038,14 +2048,13 @@ def product_list_view(request):
             description = request.POST.get('description', '')
             uom = request.POST.get('unit_of_measure', 'pcs')
             name = (name or '').strip()
-            weight, err = read_decimal(request.POST, 'weight_mt_per_unit', "Weight per unit", above=0, required=False)
+            weight, err = read_unit_weight(request.POST, uom)
             price, price_err = read_decimal(request.POST, 'price_per_unit', "Price", min_value=0, required=False)
             shelf, shelf_err = read_decimal(request.POST, 'shelf_life_days', "Shelf life", above=0, required=False)
             err = err or price_err or shelf_err or (None if name else "Product name is required.")
             if err:
                 messages.error(request, err)
                 return redirect('product_list')
-            weight = weight if weight is not None else Decimal('1')
             price = price if price is not None else Decimal('0')
             try:
                 Product.objects.create(
@@ -2065,7 +2074,7 @@ def product_list_view(request):
                 prod = get_object_or_404(Product, id=product_id)
                 mat = get_object_or_404(Material, id=material_id)
                 qty, err = read_decimal(request.POST, 'quantity_required', "Quantity", above=0)
-                err = err or recipe_locked(prod)
+                err = err or recipe_locked(prod) or (None if mat.is_active else f"{mat.name} is archived, so it can't be added to a recipe.")
                 if err:
                     messages.error(request, err)
                     return redirect('product_list')
@@ -2085,7 +2094,8 @@ def product_list_view(request):
                 prod = get_object_or_404(Product, id=product_id)
                 prod.is_active = not prod.is_active
                 prod.save()
-                messages.success(request, f"Product {prod.sku} is now {'Active' if prod.is_active else 'Deactivated'}.")
+                messages.success(request, f"Product {prod.sku} is now {'Active' if prod.is_active else 'Archived'}.")
+                log_archive_change(request, 'Product', prod)
             else:
                 messages.error(request, "Permission denied. Only Managers and Admins can toggle status.")
 
@@ -2122,12 +2132,17 @@ def product_detail_view(request, pk):
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'update_product':
+            uom = request.POST.get('unit_of_measure', product.unit_of_measure)
+            weight, err = read_unit_weight(request.POST, uom)
+            if err:
+                messages.error(request, err)
+                return redirect('product_detail', pk=pk)
             try:
                 product.name = request.POST.get('name', product.name)
                 product.sku = request.POST.get('sku', product.sku)
                 product.description = request.POST.get('description', product.description)
-                product.unit_of_measure = request.POST.get('unit_of_measure', product.unit_of_measure)
-                product.weight_mt_per_unit = float(request.POST.get('weight_mt_per_unit', product.weight_mt_per_unit))
+                product.unit_of_measure = uom
+                product.weight_mt_per_unit = weight
                 product.price_per_unit = float(request.POST.get('price_per_unit', product.price_per_unit))
                 if 'shelf_life_days' in request.POST:
                     raw_shelf = request.POST.get('shelf_life_days', '').strip()
@@ -2235,7 +2250,8 @@ def material_list_view(request):
                 mat = get_object_or_404(Material, id=material_id)
                 mat.is_active = not mat.is_active
                 mat.save()
-                messages.success(request, f"Material {mat.sku} is now {'Active' if mat.is_active else 'Deactivated'}.")
+                messages.success(request, f"Material {mat.sku} is now {'Active' if mat.is_active else 'Archived'}.")
+                log_archive_change(request, 'Material', mat)
             else:
                 messages.error(request, "Permission denied. Only Managers and Admins can toggle status.")
             return redirect('material_list')
@@ -2248,12 +2264,13 @@ def material_list_view(request):
         category = request.POST.get('category')
         uom = request.POST.get('unit_of_measure', 'MT')
         reorder_point, err = read_decimal(request.POST, 'reorder_point', 'Reorder point', min_value=0, required=False)
+        weight, weight_err = read_unit_weight(request.POST, uom)
+        err = err or weight_err
         if err:
             messages.error(request, err)
             return redirect('material_list')
         try:
             safe_days = int(request.POST.get('safe_storage_days', 90))
-            weight = float(request.POST.get('weight_mt_per_unit', 1.0))
             cost = float(request.POST.get('cost_per_unit', 0.0))
             Material.objects.create(
                 name=name, sku=sku, category=category, unit_of_measure=uom,
@@ -2296,8 +2313,11 @@ def _apply_material_update(request, material):
 
     try:
         safe_days = int(request.POST.get('safe_storage_days', 90))
-        weight = float(request.POST.get('weight_mt_per_unit', 1.0))
         cost = float(request.POST.get('cost_per_unit', 0.0))
+        weight, weight_err = read_unit_weight(request.POST, uom)
+        if weight_err:
+            messages.error(request, weight_err)
+            return False
 
         if not name:
             messages.error(request, "Material name is required.")
@@ -2418,7 +2438,8 @@ def material_detail_view(request, pk):
         elif action == 'toggle_active':
             material.is_active = not material.is_active
             material.save()
-            messages.success(request, f"Material {material.sku} is now {'Active' if material.is_active else 'Deactivated'}.")
+            messages.success(request, f"Material {material.sku} is now {'Active' if material.is_active else 'Archived'}.")
+            log_archive_change(request, 'Material', material)
         return redirect('material_detail', pk=pk)
 
     today = timezone.localdate()
@@ -2520,7 +2541,8 @@ def supplier_list_view(request):
                 sup = get_object_or_404(Supplier, id=supplier_id)
                 sup.is_active = not sup.is_active
                 sup.save()
-                messages.success(request, f"Supplier {sup.name} is now {'Active' if sup.is_active else 'Deactivated'}.")
+                messages.success(request, f"Supplier {sup.name} is now {'Active' if sup.is_active else 'Archived'}.")
+                log_archive_change(request, 'Supplier', sup)
             else:
                 messages.error(request, "Permission denied. Only Managers and Admins can toggle status.")
             return redirect('supplier_list')
@@ -2614,7 +2636,8 @@ def client_list_view(request):
                 cli = get_object_or_404(Client, id=client_id)
                 cli.is_active = not cli.is_active
                 cli.save()
-                messages.success(request, f"Client {cli.name} is now {'Active' if cli.is_active else 'Deactivated'}.")
+                messages.success(request, f"Client {cli.name} is now {'Active' if cli.is_active else 'Archived'}.")
+                log_archive_change(request, 'Client', cli)
             else:
                 messages.error(request, "Permission denied. Only Managers and Admins can toggle status.")
             return redirect('client_list')
@@ -2706,6 +2729,7 @@ def supplier_detail_view(request, pk):
             supplier.is_active = not supplier.is_active
             supplier.save(update_fields=['is_active'])
             messages.success(request, f"{supplier.name} is now {'Active' if supplier.is_active else 'Archived'}.")
+            log_archive_change(request, 'Supplier', supplier)
         elif action == 'save_material':
             material = get_object_or_404(Material, pk=request.POST.get('material_id'))
             price, err = read_decimal(request.POST, 'unit_price', "Unit price", min_value=0, required=False)
@@ -2770,6 +2794,7 @@ def client_detail_view(request, pk):
         client.is_active = not client.is_active
         client.save(update_fields=['is_active'])
         messages.success(request, f"{client.name} is now {'Active' if client.is_active else 'Archived'}.")
+        log_archive_change(request, 'Client', client)
         return redirect('client_detail', pk=client.pk)
 
     sos = client.sales_orders.prefetch_related('items__product').order_by('-order_date', '-id')
@@ -2908,15 +2933,32 @@ def purchase_order_list_view(request):
             supplier_name = request.POST.get('supplier_name')
             supplier_id = request.POST.get('supplier_id')
             warehouse_id = request.POST.get('target_warehouse_id')
+            # Optional first line (the Reorder button on Stockout & Reorder pre-fills the material).
+            line_mat_id = request.POST.get('material_id', '').strip()
+            line_mat = line_qty = None
+            if line_mat_id:
+                line_mat = Material.objects.filter(pk=line_mat_id, is_active=True).first() if line_mat_id.isdigit() else None
+                line_qty, err = read_decimal(request.POST, 'quantity_ordered', "Quantity", above=0)
+                if not line_mat:
+                    err = "That material can't be ordered (not found or archived)."
+                if err:
+                    messages.error(request, err)
+                    return redirect(f"{reverse('po_list')}?new=1&material_id={line_mat_id}")
             try:
                 wh = get_object_or_404(Warehouse, id=warehouse_id)
                 supplier_obj = Supplier.objects.filter(id=supplier_id).first() if supplier_id else None
-                po = PurchaseOrder.objects.create(
-                    po_number=po_number, supplier_name=supplier_name, supplier=supplier_obj,
-                    target_warehouse=wh, status='Draft', created_by=request.user
-                )
-                OrderTimeline.objects.create(purchase_order=po, action="Purchase Order Created (Draft)", user=request.user)
+                with transaction.atomic():
+                    po = PurchaseOrder.objects.create(
+                        po_number=po_number, supplier_name=supplier_name, supplier=supplier_obj,
+                        target_warehouse=wh, status='Draft', created_by=request.user
+                    )
+                    OrderTimeline.objects.create(purchase_order=po, action="Purchase Order Created (Draft)", user=request.user)
+                    if line_mat:
+                        PurchaseOrderDetail.objects.create(purchase_order=po, material=line_mat, quantity_ordered=line_qty)
+                        OrderTimeline.objects.create(purchase_order=po, action=f"Line item added: {line_mat.name} x{line_qty}", user=request.user)
                 messages.success(request, f"Purchase Order {po_number} created.")
+                if line_mat:
+                    return redirect('po_detail', pk=po.pk)
             except Exception as e:
                 messages.error(request, f"Error creating Purchase Order: {e}")
 
@@ -2924,14 +2966,20 @@ def purchase_order_list_view(request):
             po_id = request.POST.get('po_id')
             new_status = request.POST.get('status')
             po = get_object_or_404(PurchaseOrder, id=po_id)
-            if new_status not in PO_MANUAL_TRANSITIONS.get(po.status, []):
+            if new_status not in po_manual_transitions(po):
                 messages.error(request, f"{po.po_number} can't be changed from {po.status} to {new_status} by hand.")
                 return redirect('po_list')
+            reopening = po.status == 'Completed'
             po.status = new_status
-            if new_status in ['Pending', 'Partially Received']:
+            if new_status in ['Pending', 'Partially Received'] and not reopening:
                 po.approved_by = request.user
+            if reopening:
+                po.completed_date = None
             po.save()
-            OrderTimeline.objects.create(purchase_order=po, action=f"Status changed to '{new_status}'", user=request.user)
+            OrderTimeline.objects.create(purchase_order=po, action="PO reopened to receive more" if reopening else f"Status changed to '{new_status}'", user=request.user)
+            if new_status == 'Completed':
+                from .utils import release_po_held_batches
+                release_po_held_batches(po, request.user)
             messages.success(request, f"Purchase Order {po.po_number} updated to {new_status}.")
 
         return redirect('po_list')
@@ -2966,18 +3014,358 @@ def purchase_order_list_view(request):
     warehouses = Warehouse.objects.all().order_by('name')
     suppliers = Supplier.objects.filter(is_active=True).order_by('name')
 
+    # ?new=1&material_id=N (Reorder button) opens the New PO pop-up with that material
+    # and its fastest active supplier picked.
+    prefill_material = prefill_supplier = None
+    if request.GET.get('new') == '1':
+        mat_id = request.GET.get('material_id', '')
+        if mat_id.isdigit():
+            prefill_material = Material.objects.filter(pk=mat_id, is_active=True).first()
+        if prefill_material:
+            sm = (SupplierMaterial.objects.filter(material=prefill_material, supplier__is_active=True)
+                  .select_related('supplier').order_by(F('lead_time_days').asc(nulls_last=True), 'supplier__name').first())
+            prefill_supplier = sm.supplier if sm else None
+
     context = {
         'search_query': search_query,
         'status_filter': status_filter,
         'purchase_orders': purchase_orders,
         'warehouses': warehouses,
         'suppliers': suppliers,
+        'po_materials': Material.objects.filter(is_active=True).order_by('name'),
+        'open_po_modal': request.GET.get('new') == '1',
+        'prefill_material': prefill_material,
+        'prefill_supplier': prefill_supplier,
         'po_status_choices': PurchaseOrder.STATUS_CHOICES,
         'next_po_number': generate_next_code(PurchaseOrder, 'po_number', 'PO', 5001),
         'page_size': page_size,
         **sort_ctx,
     }
     return render(request, 'po_list.html', context)
+
+
+# Bulk import/export for Sales and Purchase Orders. One CSV row per line item; rows
+# sharing an order number make one order. Two kinds of import:
+#  - live orders (status blank or Draft) land in Draft, or Pending Approval when an
+#    approver is named, and then follow the normal approval flow;
+#  - past manual records (status Delivered/Completed/Cancelled) are entered as closed
+#    history. They need the approve permission, never touch stock (today's stock comes
+#    in through batches) and can't be opened mid-flow.
+ORDER_IO = {
+    'so': {
+        'model': SalesOrder, 'line_model': SalesOrderDetail, 'label': 'Sales Order', 'list_url': 'so_list',
+        'perm': 'core.add_salesorder', 'request_perm': 'core.change_salesorder', 'approve_perm': APPROVE_SALES_ORDERS,
+        'number': 'so_number', 'prefix': 'SO', 'start': 1001,
+        'party': 'client_name', 'party_model': Client, 'party_fk': 'client',
+        'warehouse': 'origin_warehouse', 'date': 'fulfillment_deadline', 'date_label': 'Fulfilment deadline',
+        'item': 'product', 'item_model': Product, 'order_fk': 'sales_order', 'extra': [],
+        'done': 'quantity_shipped', 'closed': ('Delivered', 'Cancelled'), 'done_status': 'Delivered', 'history_dates': [],
+        'samples': [('SO-9001', 'Acme Trading', 'PROD1001', '100', '150.00', '2026-12-01', '', '', ''),
+                    ('SO-9001', '', 'PROD1002', '20', '85.50', '', '', '', ''),
+                    ('', 'Beta Retail (auto number)', 'PROD1001', '5', '', '', '', '', ''),
+                    ('SO-0420', 'Acme Trading (past record)', 'PROD1001', '50', '140.00', '2025-03-15', 'Delivered', '2025-03-01', '50')],
+    },
+    'po': {
+        'model': PurchaseOrder, 'line_model': PurchaseOrderDetail, 'label': 'Purchase Order', 'list_url': 'po_list',
+        'perm': 'core.add_purchaseorder', 'request_perm': 'core.change_purchaseorder', 'approve_perm': APPROVE_PURCHASE_ORDERS,
+        'number': 'po_number', 'prefix': 'PO', 'start': 5001,
+        'party': 'supplier_name', 'party_model': Supplier, 'party_fk': 'supplier',
+        'warehouse': 'target_warehouse', 'date': 'expected_delivery_date', 'date_label': 'Expected delivery date',
+        'item': 'material', 'item_model': Material, 'order_fk': 'purchase_order',
+        'extra': [('negotiated_rental_rate_per_mt', 'Rental rate')],
+        'done': 'quantity_received', 'closed': ('Completed', 'Cancelled'), 'done_status': 'Completed',
+        'history_dates': [('completed_date', 'Completed date')],
+        'samples': [('PO-9001', 'Global Chemicals', 'MAT1001', '10', '450.00', '2026-12-01', '', '', ''),
+                    ('PO-9001', '', 'MAT1002', '500', '2.50', '', '', '', ''),
+                    ('', 'Polymer Supply Co (auto number)', 'MAT1001', '2', '', '', '', '', ''),
+                    ('PO-0420', 'Global Chemicals (past record)', 'MAT1001', '8', '430.00', '2025-02-20', 'Completed', '2025-02-01', '8')],
+    },
+}
+
+
+def _order_columns(cfg):
+    return ([cfg['number'], cfg['party'], cfg['warehouse'], cfg['date'], f"{cfg['item']}_sku", 'quantity_ordered', 'unit_price']
+            + [col for col, _ in cfg['extra']] + ['approver', 'approval_remarks', 'status', 'order_date', cfg['done']]
+            + [col for col, _ in cfg['history_dates']])
+
+
+def _csv_date(row, col, label):
+    """Read a CSV date as YYYY-MM-DD or day-first DD/MM/YYYY (how Excel re-saves dates here)."""
+    from datetime import datetime
+    raw = row.get(col, '')
+    if not raw:
+        return None, None
+    for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y'):
+        try:
+            return datetime.strptime(raw, fmt).date(), None
+        except ValueError:
+            pass
+    return None, f"{label} '{raw}' must be a date like 2026-11-05 or 05/11/2026."
+
+
+def _csv_download(filename):
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response, csv.writer(response)
+
+
+@login_required
+def export_order_template(request, kind):
+    """Download the reference CSV template for Sales or Purchase Order import."""
+    cfg = ORDER_IO[kind]
+    response, writer = _csv_download(f"{kind}_import_template.csv")
+    writer.writerow(_order_columns(cfg))
+    wh = Warehouse.objects.order_by('name').values_list('name', flat=True).first() or 'Main Warehouse'
+    for number, party, sku, qty, price, due, status, ordered_on, done in cfg['samples']:
+        writer.writerow([number, party, wh if party else '', due, sku, qty, price] + [''] * len(cfg['extra'])
+                        + ['', '', status, ordered_on, done] + [due if status else '' for _ in cfg['history_dates']])
+    return response
+
+
+@login_required
+def export_orders_csv(request, kind):
+    """Export every Sales or Purchase Order as CSV, one row per line item. The import
+    columns come first so an export can be re-imported; the rest is for reference."""
+    cfg = ORDER_IO[kind]
+    if kind == 'so':
+        kind_extra = [('manufacturing_plant', 'manufacturing_plant'), ('cancel_reason', 'cancel_reason')]
+    else:
+        kind_extra = [('linked_production_run', 'linked_production_run.run_number')]
+    head_extra = ([('order_total', 'total_value'),
+                   ('client_linked' if kind == 'so' else 'supplier_linked', cfg['party_fk'] + '.name'),
+                   ('created_by', 'created_by.username'), ('approved_by', 'approved_by.username'),
+                   ('rejection_reason', 'rejection_reason'), ('revision_count', 'revision_count')]
+                  + kind_extra + [('updated_by', 'updated_by.username'), ('updated_at', 'updated_at')])
+
+    def val(obj, path):
+        for attr in path.split('.'):
+            obj = getattr(obj, attr, None) if obj is not None else None
+        if hasattr(obj, 'isoformat'):
+            return obj.isoformat(timespec='minutes') if hasattr(obj, 'hour') else obj.isoformat()
+        return '' if obj is None else getattr(obj, 'name', obj)
+
+    response, writer = _csv_download(f"{kind}_export.csv")
+    writer.writerow(_order_columns(cfg) + [f"{cfg['item']}_name", 'unit_of_measure', 'quantity_outstanding', 'line_total']
+                    + [h for h, _ in head_extra])
+    orders = (cfg['model'].objects
+              .select_related(cfg['warehouse'], cfg['party_fk'], 'created_by', 'assigned_to', 'approved_by', 'updated_by')
+              .prefetch_related(f"items__{cfg['item']}").order_by(cfg['number']))
+    for order in orders:
+        head = [val(order, f) for f in (cfg['number'], cfg['party'], cfg['warehouse'], cfg['date'])]
+        approval = [val(order, 'assigned_to.username'), val(order, 'approval_remarks'), order.status, val(order, 'order_date')]
+        dates = [val(order, col) for col, _ in cfg['history_dates']]
+        tail = [val(order, path) for _, path in head_extra]
+        lines = list(order.items.all())
+        if not lines:
+            writer.writerow(head + [''] * (3 + len(cfg['extra'])) + approval + [''] + dates + [''] * 4 + tail)
+        for line in lines:
+            item, done = getattr(line, cfg['item']), getattr(line, cfg['done'])
+            writer.writerow(head + [item.sku, line.quantity_ordered, val(line, 'unit_price')]
+                            + [val(line, col) for col, _ in cfg['extra']] + approval + [done] + dates
+                            + [item.name, item.unit_of_measure, max(line.quantity_ordered - done, 0),
+                               line.quantity_ordered * line.unit_price if line.unit_price is not None else '']
+                            + tail)
+    return response
+
+
+@login_required
+def import_orders(request, kind):
+    """Bulk import Sales or Purchase Orders from CSV, with dry-run and per-order error reporting."""
+    cfg = ORDER_IO[kind]
+    is_dry_run = request.POST.get('dry_run') == '1'
+
+    def fail(msg):
+        if is_dry_run:
+            return JsonResponse({'success': False, 'error': msg})
+        messages.error(request, msg)
+        return redirect(cfg['list_url'])
+
+    if request.method != 'POST':
+        return redirect(cfg['list_url'])
+    if not request.user.has_perm(cfg['perm']):
+        return fail(f"You don't have permission to import {cfg['label']}s.")
+    csv_file = request.FILES.get('csv_file')
+    if not csv_file or not csv_file.name.lower().endswith('.csv'):
+        return fail("Please select a .csv file to upload.")
+    try:
+        reader = csv.DictReader(io.StringIO(csv_file.read().decode('utf-8-sig')))
+        headers = [h.strip().lower() for h in (reader.fieldnames or []) if h]
+        rows = [{k.strip().lower(): (v or '').strip() for k, v in r.items() if k}
+                for r in reader]
+    except Exception as e:
+        return fail(f"Could not read CSV file: {e}")
+    sku_col = f"{cfg['item']}_sku"
+    missing = [c for c in (cfg['party'], cfg['warehouse'], sku_col, 'quantity_ordered') if c not in headers]
+    if missing:
+        return fail(f"CSV header is missing required column(s): {', '.join(missing)}.")
+
+    # Rows with the same order number form one order; a row with no number is its own order.
+    groups = {}
+    for idx, row in enumerate(rows, start=2):
+        if any(row.values()):
+            groups.setdefault(row.get(cfg['number'], '').upper() or f'#{idx}', []).append((idx, row))
+
+    items = {i.sku.upper(): i for i in cfg['item_model'].objects.all()}
+    warehouses = {w.name.strip().upper(): w for w in Warehouse.objects.all()}
+    existing = {n.upper() for n in cfg['model'].objects.values_list(cfg['number'], flat=True)}
+    status_names = {code.upper(): code for code in cfg['closed'] + ('Draft',)}
+    order_cols = ([cfg['party'], cfg['warehouse'], cfg['date'], 'approver', 'approval_remarks', 'status', 'order_date']
+                  + [col for col, _ in cfg['history_dates']])
+    today = timezone.localdate()
+    created = skipped = errors = 0
+    results = []
+
+    for lines in groups.values():
+        first_idx, head = lines[0]
+        number = head.get(cfg['number'], '').upper()
+        party = head.get(cfg['party'], '')
+        span = str(first_idx) if len(lines) == 1 else f"{first_idx}-{lines[-1][0]}"
+
+        def result(status, msg):
+            results.append({'line': span, 'name': party or '—', 'sku': number or 'Auto', 'status': status, 'msg': msg})
+
+        if number and number in existing:
+            skipped += 1
+            result('duplicate', f"{number} already exists, so it was skipped.")
+            continue
+
+        problems = []
+        if not party:
+            problems.append(f"{cfg['party']} is required.")
+        wh = warehouses.get(head.get(cfg['warehouse'], '').upper())
+        if not wh:
+            problems.append(f"warehouse '{head.get(cfg['warehouse'], '')}' not found. "
+                            f"Use one of: {', '.join(w.name for w in warehouses.values())}.")
+        due, err = _csv_date(head, cfg['date'], cfg['date_label'])
+        ordered_on, err2 = _csv_date(head, 'order_date', "Order date")
+        problems += [e for e in (err, err2) if e]
+        if ordered_on and ordered_on > today:
+            problems.append("Order date can't be in the future.")
+
+        raw_status = head.get('status', '')
+        status = status_names.get(raw_status.upper() or 'DRAFT')
+        historical = status not in (None, 'Draft')
+        if not status:
+            problems.append(f"status '{raw_status}' can't be imported. Use {', '.join(cfg['closed'])} for past records, "
+                            "or leave it blank to enter an open order as Draft and run it through the normal flow.")
+        elif historical and not request.user.has_perm(cfg['approve_perm']):
+            problems.append(f"only users who can approve {cfg['label']}s can import past records.")
+
+        history_dates = {}
+        for col, label in cfg['history_dates']:
+            history_dates[col], e = _csv_date(head, col, label)
+            if e:
+                problems.append(e)
+            elif history_dates[col] and not historical:
+                problems.append(f"{col} is only for past records.")
+            elif history_dates[col] and (history_dates[col] > today or (ordered_on and history_dates[col] < ordered_on)):
+                problems.append(f"{label} must be between the order date and today.")
+
+        # A live order with an approver goes straight to Request Approval (never past it);
+        # on a past record the approver is just who approved it at the time.
+        approver_name = head.get('approver', '')
+        approver = None
+        if approver_name:
+            approver = CustomUser.objects.filter(username__iexact=approver_name).first()
+            if not historical and not request.user.has_perm(cfg['request_perm']):
+                problems.append("you don't have permission to request approval; leave approver blank.")
+            elif not historical and not (approver and approver.is_active):
+                problems.append(f"approver '{approver_name}' is not an active user.")
+            elif approver_problem(approver, cfg['approve_perm']):
+                problems.append(f"approver '{approver_name}' can't approve {cfg['label']}s.")
+        remarks = head.get('approval_remarks', '')
+        problems = [f"Line {first_idx}: {p}" for p in problems]
+
+        parsed, seen = [], set()
+        for idx, row in lines:
+            errs = [f"{col} differs from line {first_idx} of the same order."
+                    for col in order_cols if row.get(col) and row[col].upper() != head.get(col, '').upper()]
+            sku = row.get(sku_col, '').upper()
+            item = items.get(sku)
+            if not item:
+                errs.append(f"SKU '{sku}' not found." if sku else "SKU is required.")
+            elif not item.is_active and not historical:
+                errs.append(f"{sku} is archived, so it can't go on a new order.")
+            elif kind == 'so' and item.pk in seen:
+                # SOs keep one line per product (same rule as adding a line by hand)
+                errs.append(f"{sku} is listed twice; put its total on one row.")
+            qty, e = read_decimal(row, 'quantity_ordered', "Quantity", above=0)
+            errs.append(e)
+            price, e = read_decimal(row, 'unit_price', "Unit price", min_value=0, required=False)
+            errs.append(e)
+            extra = {}
+            for col, label in cfg['extra']:
+                extra[col], e = read_decimal(row, col, label, min_value=0, required=False)
+                errs.append(e)
+            done, e = read_decimal(row, cfg['done'], cfg['done'].replace('_', ' ').capitalize(), min_value=0, required=False)
+            errs.append(e)
+            if done is None:
+                done = qty if status == cfg['done_status'] and qty else Decimal('0')
+            elif done and not historical:
+                errs.append(f"{cfg['done']} is only for past records; a Draft order hasn't moved any stock.")
+            elif qty and done > qty:
+                errs.append(f"{cfg['done']} can't be more than quantity_ordered.")
+            problems += [f"Line {idx}: {e}" for e in errs if e]
+            if item:
+                seen.add(item.pk)
+            parsed.append((item, qty, price, extra, done))
+
+        if problems:
+            errors += 1
+            result('error', ' '.join(problems))
+            continue
+
+        if not is_dry_run:
+            with transaction.atomic():
+                number = number or generate_next_code(cfg['model'], cfg['number'], cfg['prefix'], cfg['start'])
+                party_obj = cfg['party_model'].objects.filter(name__iexact=party).first()
+                order = cfg['model'].objects.create(**{
+                    cfg['number']: number, cfg['party']: party_obj.name if party_obj else party,
+                    cfg['party_fk']: party_obj, cfg['warehouse']: wh, cfg['date']: due,
+                    'status': 'Draft', 'created_by': request.user,
+                })
+                for item, qty, price, extra, done in parsed:
+                    cfg['line_model'].objects.create(**{cfg['order_fk']: order, cfg['item']: item, 'quantity_ordered': qty,
+                                                        'unit_price': price, cfg['done']: done, **extra})
+                if ordered_on:  # order_date is auto_now_add, so it can only be back-dated after creation
+                    order.order_date = ordered_on
+                    cfg['model'].objects.filter(pk=order.pk).update(order_date=ordered_on)
+                if historical:
+                    order.status, order.assigned_to, order.approval_remarks = status, approver, remarks
+                    order.approved_by = approver or request.user
+                    for col, value in history_dates.items():
+                        setattr(order, col, value)
+                    order.save()
+                    OrderTimeline.objects.create(**{cfg['order_fk']: order, 'user': request.user, 'action':
+                        f"Past record imported as {status} with {len(parsed)} line(s). No stock was moved."})
+                else:
+                    OrderTimeline.objects.create(**{cfg['order_fk']: order, 'user': request.user,
+                                                    'action': f"{cfg['label']} Created (Draft) by bulk import with {len(parsed)} line(s)"})
+                if approver and not historical:
+                    # Same steps as the order page's Request Approval
+                    order.status, order.assigned_to, order.approval_remarks = 'Pending Approval', approver, remarks
+                    order.save()
+                    OrderTimeline.objects.create(**{cfg['order_fk']: order, 'user': request.user, 'action':
+                        f"Approval Requested from {approver.get_full_name() or approver.username}{self_approval_note(request.user, approver)}. Remarks: {remarks}"})
+                    Notification.objects.create(user=approver, message=f"{cfg['label']} {number} requires your approval.",
+                                                link=reverse('approvals_inbox'))
+        if number:
+            existing.add(number)
+        created += 1
+        stage = (f"a past {status} record" if historical
+                 else f"sent to {approver.username} for approval" if approver else "Draft")
+        result('created', f"{'Ready to create' if is_dry_run else 'Created'} as {stage} with {len(parsed)} line(s).")
+
+    if is_dry_run:
+        return JsonResponse({'success': True, 'dry_run': True, 'created_count': created, 'updated_count': 0,
+                             'skipped_count': skipped, 'error_count': errors, 'results': results})
+
+    summary = f"{cfg['label']} import completed: {created} created, {skipped} skipped as already existing."
+    if errors:
+        messages.warning(request, f"{summary} {errors} order(s) had errors and were not imported; run the dry-run preview to see why.")
+    else:
+        messages.success(request, summary)
+    return redirect(cfg['list_url'])
 
 
 # Sales order detail
@@ -3008,6 +3396,9 @@ def so_detail_view(request, pk):
                 return redirect('so_detail', pk=so.pk)
             try:
                 prod = get_object_or_404(Product, id=prod_id)
+                if not prod.is_active:
+                    messages.error(request, f"{prod.name} is archived, so it can't be added to an order. Restore it first.")
+                    return redirect('so_detail', pk=so.pk)
                 # One line per product: adding a product already on the order raises that line instead.
                 existing = so.items.filter(product=prod).first()
                 if existing:
@@ -3027,6 +3418,9 @@ def so_detail_view(request, pk):
                     )
                     OrderTimeline.objects.create(sales_order=so, action=f"Line item added: {prod.name} x{qty}", user=request.user)
                     messages.success(request, f"Added {prod.name} to {so.so_number}.")
+                archived = archived_recipe_materials(prod)
+                if archived:
+                    messages.warning(request, f"Heads up: {prod.name}'s recipe uses archived material(s): {', '.join(m.name for m in archived)}.")
                 if so_return_for_reapproval(so, request.user, "Line item added"):
                     messages.warning(request, f"{so.so_number} was already approved, so it's back in Draft. Request approval again.")
             except Exception as e:
@@ -3454,6 +3848,9 @@ def po_detail_view(request, pk):
                 return redirect('po_detail', pk=pk)
             try:
                 mat = get_object_or_404(Material, id=mat_id)
+                if not mat.is_active:
+                    messages.error(request, f"{mat.name} is archived, so it can't be ordered. Restore it first.")
+                    return redirect('po_detail', pk=pk)
                 PurchaseOrderDetail.objects.create(
                     purchase_order=po,
                     material=mat,
@@ -3508,6 +3905,9 @@ def po_detail_view(request, pk):
                 except InvalidOperation:
                     messages.error(request, "Enter the received quantity as a number.")
                     return redirect('po_detail', pk=po.pk)
+                if po.status == 'Completed' and new_qty > old_qty:
+                    messages.error(request, f"{po.po_number} is completed, so a receipt can only be lowered to correct it.")
+                    return redirect('po_detail', pk=po.pk)
                 if new_qty < 0 or new_qty > item.quantity_ordered:
                     messages.error(request, f"Received quantity must be between 0 and the {item.quantity_ordered} ordered. If the supplier sent more, change the line's ordered quantity first.")
                     return redirect('po_detail', pk=po.pk)
@@ -3526,11 +3926,15 @@ def po_detail_view(request, pk):
 
                 from .utils import apply_po_material_receipt
                 with transaction.atomic():
-                    apply_po_material_receipt(item, delta, request.user, expiry_date=supplier_expiry,
-                                              manufacturing_date=supplier_mfg)
-                OrderTimeline.objects.create(purchase_order=po, action=f"Received {new_qty} of {item.material.name}", user=request.user)
+                    batch = apply_po_material_receipt(item, delta, request.user, expiry_date=supplier_expiry,
+                                                      manufacturing_date=supplier_mfg)
+                into = f" (+{delta} into Batch {batch.batch_number})" if batch else ""
+                OrderTimeline.objects.create(purchase_order=po, action=f"Received {new_qty} of {item.material.name}{into}", user=request.user)
+                po.refresh_from_db()
                 if delta > 0 and item.material.inspect_on_receipt:
                     messages.success(request, f"Updated received quantity for {item.material.name}. The {delta} received is on QA hold until it's inspected.")
+                elif delta > 0 and po.status != 'Completed':
+                    messages.success(request, f"Added {delta} of {item.material.name} to Batch {batch.batch_number}. It stays on hold until {po.po_number} is completed.")
                 elif delta > 0:
                     messages.success(request, f"Updated received quantity for {item.material.name} and added {delta} to inventory.")
                 else:
@@ -3549,14 +3953,20 @@ def po_detail_view(request, pk):
 
         elif action == 'update_po_status':
             new_status = request.POST.get('status')
-            if new_status not in PO_MANUAL_TRANSITIONS.get(po.status, []):
+            if new_status not in po_manual_transitions(po):
                 messages.error(request, f"{po.po_number} can't be changed from {po.status} to {new_status} by hand.")
                 return redirect('po_detail', pk=po.pk)
+            reopening = po.status == 'Completed'
             po.status = new_status
-            if new_status in ['Pending', 'Partially Received']:
+            if new_status in ['Pending', 'Partially Received'] and not reopening:
                 po.approved_by = request.user
+            if reopening:
+                po.completed_date = None
             po.save()
-            OrderTimeline.objects.create(purchase_order=po, action=f"Status updated to '{new_status}'", user=request.user)
+            OrderTimeline.objects.create(purchase_order=po, action="PO reopened to receive more" if reopening else f"Status updated to '{new_status}'", user=request.user)
+            if new_status == 'Completed':
+                from .utils import release_po_held_batches
+                release_po_held_batches(po, request.user)
 
             # Notify followers of status change
             for follower in po.followers.all():
@@ -3624,6 +4034,23 @@ def po_detail_view(request, pk):
     # Build line item data with totals
     po_items_data = []
     po_total = 0
+    # Receipt batches link to the PO and material, not the line, so a line shows its material's batches
+    from .utils import po_wait_note
+    from .qa import HOLD_ACTIONS
+    po_batches = {}
+    for b in Batch.objects.filter(purchase_order=po, material__isnull=False).prefetch_related('qa_events', 'qa_requests').order_by('id'):
+        if b.status == 'Quarantined':
+            holds = [e for e in b.qa_events.all() if e.action in HOLD_ACTIONS]
+            last_hold = max(holds, key=lambda e: (e.created_at, e.id)) if holds else None
+            if any(r.status in ('Open', 'In Review') for r in b.qa_requests.all()):
+                tag = 'QA check'
+            elif last_hold and last_hold.note == po_wait_note(po):
+                tag = 'On hold (PO)'
+            else:
+                tag = 'On hold'
+        else:
+            tag = {'Active': 'Released', 'Depleted': 'Used up', 'Spoiled': 'Written off'}.get(b.status, b.status)
+        po_batches.setdefault(b.material_id, []).append({'batch': b, 'tag': tag})
     for item in po.items.select_related('material').all():
         subtotal = float(item.quantity_ordered) * float(item.unit_price or 0)
         po_total += subtotal
@@ -3631,6 +4058,7 @@ def po_detail_view(request, pk):
             'item': item,
             'subtotal': subtotal,
             'pct_received': min(100, int((float(item.quantity_received) / float(item.quantity_ordered) * 100))) if float(item.quantity_ordered) > 0 else 0,
+            'batches': po_batches.get(item.material_id, []),
         })
 
     context = {
@@ -3639,7 +4067,7 @@ def po_detail_view(request, pk):
         'po_total': po_total,
         'materials': materials,
         'warehouses': warehouses,
-        'po_status_choices': [c for c in PurchaseOrder.STATUS_CHOICES if c[0] == po.status or c[0] in PO_MANUAL_TRANSITIONS.get(po.status, [])],
+        'po_status_choices': [c for c in PurchaseOrder.STATUS_CHOICES if c[0] == po.status or c[0] in po_manual_transitions(po)],
         'unapproved_statuses': UNAPPROVED_STATUSES,
         'items_locked': po.status in PO_ITEMS_LOCKED,
         'can_cancel': po_cancel_problem(po) is None,
@@ -3671,6 +4099,9 @@ def manufacturing_view(request):
             try:
                 yield_qty = float(request.POST.get('expected_yield', 100))
                 prod = get_object_or_404(Product, id=prod_id)
+                if not prod.is_active:
+                    messages.error(request, f"{prod.name} is archived, so no new production run can be scheduled for it. Restore it first.")
+                    return redirect('readiness')
                 plant = get_object_or_404(Warehouse, id=plant_id)
                 so = SalesOrder.objects.filter(id=so_id).first() if so_id else None
                 if so and so.status in UNAPPROVED_STATUSES + ('Cancelled',):
@@ -3701,6 +4132,9 @@ def manufacturing_view(request):
                     )
 
                 messages.success(request, f"Production Run {run_number} scheduled for {prod.name}.")
+                archived = archived_recipe_materials(prod)
+                if archived:
+                    messages.warning(request, f"Heads up: {prod.name}'s recipe uses archived material(s): {', '.join(m.name for m in archived)}.")
             except Exception as e:
                 messages.error(request, f"Error scheduling run: {e}")
         elif action == 'cancel_allocation':
@@ -3791,20 +4225,26 @@ def manufacturing_view(request):
                 return redirect('readiness')
                 
             # Find shortages
-            shortages = []
+            shortages, archived_short = [], []
             for req in run.target_product.recipe_items.all():
                 needed = float(req.quantity_required) * float(run.expected_yield)
                 # Count allocated quantities for THIS run
                 allocated = sum(alloc.quantity for alloc in run.allocations.filter(batch__material=req.material))
                 short = max(0, needed - float(allocated))
-                if short > 0:
+                if short > 0 and not req.material.is_active:
+                    archived_short.append(req.material.name)
+                elif short > 0:
                     shortages.append({
                         'material': req.material,
                         'qty': short
                     })
-                    
+            if archived_short:
+                messages.warning(request, f"Left off the PO because they're archived: {', '.join(archived_short)}.")
+                OrderTimeline.objects.create(production_run=run, user=request.user,
+                                             action=f"Archived material(s) left off the shortage PO: {', '.join(archived_short)}")
+
             if not shortages:
-                messages.info(request, "No shortages found.")
+                messages.info(request, "No shortages found." if not archived_short else "Nothing else to order.")
                 return redirect('readiness')
                 
             # Create Draft PO
@@ -4072,11 +4512,11 @@ def shipments_view(request):
             actual_arrival_dt = request.POST.get('actual_arrival_date')
             external_origin = request.POST.get('external_origin')
 
-            # Facility limit check - disabled for now; uncomment to enforce
-            # ends = [i for i in (origin_id, dest_id) if i]
-            # if ends and not any(may_use_warehouse(request.user, i) for i in ends):
-            #     messages.error(request, FACILITY_REFUSED)
-            #     return redirect('shipments')
+            # Facility limit: at least one end of the shipment must be a facility the user may use
+            ends = [i for i in (origin_id, dest_id) if i]
+            if ends and not any(may_use_warehouse(request.user, i) for i in ends):
+                messages.error(request, FACILITY_REFUSED)
+                return redirect('shipments')
 
             try:
                 if tracking_mode == 'auto' or not tracking_number:
@@ -4160,10 +4600,10 @@ def shipments_view(request):
     shipments = Shipment.objects.select_related(
         'origin_warehouse', 'destination_warehouse', 'purchase_order', 'sales_order'
     ).prefetch_related('items').order_by('-id')
-    # Facility limit check - disabled for now; uncomment to enforce
-    # limited = limited_warehouse_ids(request.user)
-    # if limited is not None:
-    #     shipments = shipments.filter(Q(origin_warehouse_id__in=limited) | Q(destination_warehouse_id__in=limited))
+    # Facility limit: only shipments starting or ending at one of the user's facilities
+    limited = limited_warehouse_ids(request.user)
+    if limited is not None:
+        shipments = shipments.filter(Q(origin_warehouse_id__in=limited) | Q(destination_warehouse_id__in=limited))
 
     if status_filter:
         shipments = shipments.filter(status=status_filter)
@@ -4474,10 +4914,17 @@ def record_item_receipt(shipment, item, qty, received_date, user, notes=None):
     if shipment.direction == 'Inbound' and shipment.purchase_order and item.material:
         detail = PurchaseOrderDetail.objects.filter(purchase_order=shipment.purchase_order, material=item.material).first()
         if detail:
-            apply_po_material_receipt(detail, qty, user)
+            batch = apply_po_material_receipt(detail, qty, user, into_batch=item.batch)
+            into = f" into Batch {batch.batch_number}" if batch else ""
+            if batch and item.batch_id != batch.id:
+                item.batch = batch
+                item.save(update_fields=['batch'])
+            OrderTimeline.objects.create(purchase_order=shipment.purchase_order, user=user,
+                                         action=f"Received {qty} of {item.material.name} via {shipment.tracking_number}{into}")
 
     item_name = item.material.name if item.material else (item.product.name if item.product else 'item')
-    OrderTimeline.objects.create(shipment=shipment, action=f"Logged receipt of {qty} for {item_name} on {received_date}.", user=user)
+    batch_note = f" into Batch {item.batch.batch_number}" if shipment.direction == 'Inbound' and item.batch else ""
+    OrderTimeline.objects.create(shipment=shipment, action=f"Logged receipt of {qty} for {item_name}{batch_note} on {received_date}.", user=user)
     return item_name
 
 
@@ -4571,11 +5018,11 @@ def shipment_detail_view(request, pk):
     
     route_error = False
     if request.method == 'POST':
-        # Facility limit check - disabled for now; uncomment to enforce
-        # ends = [i for i in (shipment.origin_warehouse_id, shipment.destination_warehouse_id) if i]
-        # if ends and not any(may_use_warehouse(request.user, i) for i in ends):
-        #     messages.error(request, FACILITY_REFUSED)
-        #     return redirect('shipment_detail', pk=shipment.pk)
+        # Facility limit: at least one end of the shipment must be a facility the user may use
+        ends = [i for i in (shipment.origin_warehouse_id, shipment.destination_warehouse_id) if i]
+        if ends and not any(may_use_warehouse(request.user, i) for i in ends):
+            messages.error(request, FACILITY_REFUSED)
+            return redirect('shipment_detail', pk=shipment.pk)
         old_status = shipment.status
         action = request.POST.get('action')
 
@@ -4590,10 +5037,10 @@ def shipment_detail_view(request, pk):
         if action in ('add_item', 'remove_item') and shipment.direction == 'Transfer' and shipment.sales_order:
             messages.error(request, f"This stock move's cargo comes from {shipment.sales_order.so_number}. Change the order, or switch its delivery plan, instead.")
             return redirect('shipment_detail', pk=shipment.pk)
+        if action in ('add_item', 'remove_item') and shipment_cargo_locked(shipment):
+            messages.error(request, f"Cargo can't be changed once a shipment is {shipment.status}.")
+            return redirect('shipment_detail', pk=shipment.pk)
         if action in ('add_item', 'remove_item') and shipment.direction != 'Inbound':
-            if shipment.status in SHIPMENT_CARGO_LOCKED:
-                messages.error(request, f"Cargo can't be changed once a shipment is {shipment.status}.")
-                return redirect('shipment_detail', pk=shipment.pk)
             cargo_before = sorted(shipment.items.values_list('id', 'batch_id', 'quantity'))
         
         if action == 'add_item':
@@ -4977,19 +5424,6 @@ def shipment_detail_view(request, pk):
 
                 messages.success(request, f"Operational status updated to {new_st}.")
 
-        elif action == 'complete_shipment':
-            # Older one-form receipt: sets every line's received quantity at once.
-            if shipment.status not in RECEIVABLE_STATUSES:
-                messages.error(request, "A shipment can only be received once it has arrived.")
-                return redirect('shipment_detail', pk=shipment.pk)
-            for item in shipment.items.all():
-                req_qty_str = request.POST.get(f'received_qty_{item.id}')
-                if req_qty_str:
-                    item.received_quantity = Decimal(req_qty_str)
-                    item.date_confirmed = timezone.now()
-                    item.save()
-            finish_shipment_receiving(request, shipment)
-
         elif action == 'log_item_receipt':
             if shipment.status not in RECEIVABLE_STATUSES:
                 messages.error(request, "Receipts can only be logged once the shipment has arrived.")
@@ -5151,9 +5585,12 @@ def shipment_detail_view(request, pk):
                 lines = list(po.items.all())
                 if lines and all(i.quantity_received >= i.quantity_ordered for i in lines):
                     po.status = 'Completed'
-                elif any(i.quantity_received > 0 for i in lines):
+                elif any(i.quantity_received > 0 for i in lines) and po.status != 'Completed':
                     po.status = 'Partially Received'
                 po.save()
+                if po.status == 'Completed':
+                    from .utils import release_po_held_batches
+                    release_po_held_batches(po, request.user)
             
             messages.success(request, "Shipment Force Closed. Unreceived stock locks released.")
             
@@ -5246,8 +5683,7 @@ def shipment_detail_view(request, pk):
         'materials': materials,
         'products': products,
         'batches': batches,
-        # Same rule as the add_item/remove_item guard above
-        'cargo_locked': shipment.status in ('Cancelled', 'Completed', 'Arrived') or (shipment.direction != 'Inbound' and shipment.status in SHIPMENT_CARGO_LOCKED),
+        'cargo_locked': shipment_cargo_locked(shipment),
         'managers': managers,
         'all_users': all_users,
         'can_self_approve': request.user.has_perm(APPROVE_SHIPMENTS),
@@ -5385,7 +5821,12 @@ def user_management_view(request):
             Q(last_name__icontains=query) |
             Q(email__icontains=query)
         )
-        
+    # Deactivated accounts are kept for their history but hidden unless asked for
+    show_inactive = request.GET.get('inactive') == '1'
+    inactive_count = users.filter(is_active=False).count()
+    if not show_inactive:
+        users = users.filter(is_active=True)
+
     users, sort_ctx = apply_list_sort(request, users, {
         'username': 'username',
         'status': 'is_active',
@@ -5512,6 +5953,8 @@ def user_management_view(request):
         'roles': roles,
         'warehouses': warehouses,
         'query': query,
+        'show_inactive': show_inactive,
+        'inactive_count': inactive_count,
         'page_size': page_size,
         **sort_ctx,
     }
@@ -5539,7 +5982,7 @@ def user_audit_log_view(request):
     query = request.GET.get('q', '').strip()
     if query:
         entries = entries.filter(Q(target_username__icontains=query) | Q(actor__username__icontains=query)
-                                 | Q(action='setting_changed', details__icontains=query))
+                                 | Q(action__in=('setting_changed', 'item_archived', 'item_restored'), details__icontains=query))
 
     page_size = get_page_size(request, default=50)
     keep = request.GET.copy()
@@ -5628,7 +6071,8 @@ def so_allocate_view(request, pk):
                     if amt > b.quantity - b.allocated_quantity:
                         messages.error(request, f"Cannot allocate {amt} from batch {b.batch_number}. Only {b.quantity - b.allocated_quantity} available.")
                         return redirect('so_allocate', pk=so.pk)
-                    # Facility limit check - disabled for now; uncomment to enforce
+                    # Facility limit deliberately OFF here: orders are filled from whichever facility has stock,
+                    # so a site-limited planner must still be able to reserve it. Uncomment to enforce.
                     # if amt > 0 and not may_use_warehouse(request.user, b.warehouse_id):
                     #     messages.error(request, f"Batch {b.batch_number}: {FACILITY_REFUSED}")
                     #     return redirect('so_allocate', pk=so.pk)
@@ -5941,7 +6385,8 @@ def production_run_allocate_view(request, pk):
                     except (ValueError, TypeError):
                         pass
 
-            # Facility limit check - disabled for now; uncomment to enforce
+            # Facility limit deliberately OFF here: runs draw materials from whichever facility has them,
+            # so a site-limited planner must still be able to reserve them. Uncomment to enforce.
             # limited = limited_warehouse_ids(request.user)
             # if limited is not None and Batch.objects.filter(id__in=selected_allocations).exclude(warehouse_id__in=limited).exists():
             #     messages.error(request, FACILITY_REFUSED)
@@ -6354,9 +6799,17 @@ def production_run_detail_view(request, pk):
             notes = request.POST.get('notes', '').strip()
             try:
                 qty = Decimal(qty_str)
+                logged = run.yield_logs.aggregate(s=Sum('quantity'))['s'] or Decimal('0')
+                over = logged + qty - run.expected_yield
                 if qty <= 0:
                     messages.error(request, "Enter a quantity greater than zero.")
+                elif over > 0 and not notes:
+                    # Overrun is real sometimes, but it needs a reason on record
+                    messages.error(request, f"That would log {logged + qty} of the {run.expected_yield} expected, {over} over. "
+                                            "Give a reason in the notes to log more than expected.")
                 else:
+                    if over > 0:
+                        OrderTimeline.objects.create(production_run=run, action=f"Yield logged over the expected {run.expected_yield} by {over}. Reason: {notes}", user=request.user)
                     log_date = log_date_str if log_date_str else timezone.now().date()
                     ProductionRunYieldLog.objects.create(
                         production_run=run, quantity=qty, log_date=log_date,
@@ -6579,6 +7032,7 @@ def production_run_detail_view(request, pk):
     return render(request, 'production_run_detail.html', {
         'run': run,
         'materials_short': materials_short,
+        'archived_materials': archived_recipe_materials(run.target_product),
         'can_decide_approval': may_decide_run_approval(request.user, run),
         'linked_shipments': linked_shipments,
         'all_shipments_arrived': all_shipments_arrived,

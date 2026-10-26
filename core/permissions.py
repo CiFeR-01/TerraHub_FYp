@@ -193,7 +193,8 @@ RECEIVE = 'core.add_shipmentitemreceipt'
 ACTION_PERMS = {
     'batch_detail': {'update_batch': 'core.change_batch'},
     'qa_request_create': {'send_to_qa': REQUEST_QA},
-    'stock_audit': {'create': 'core.add_stockaudit', 'resolve': 'core.change_stockaudit'},
+    'stock_audit': {'create': 'core.add_stockaudit', 'resolve': 'core.change_stockaudit',
+                    'reject': 'core.change_stockaudit'},
     'product_recipe_api': {a: 'core.change_productrecipe' for a in ('clone_recipe', 'delete_item', 'save_batch')},
     'product_list': {'create_product': 'core.add_product', 'add_recipe': 'core.add_productrecipe',
                      'toggle_active': 'core.change_product'},
@@ -227,7 +228,7 @@ ACTION_PERMS = {
                                           'return_to_manufacturing', 'cancel_escalation')}
     | {'request_force_close': (SHIP, RECEIVE)}
     | {'add_item': 'core.change_shipmentitem', 'remove_item': 'core.change_shipmentitem'}
-    | {a: RECEIVE for a in ('log_item_receipt', 'receive_all', 'complete_shipment', 'finalize_shipment_receiving')}
+    | {a: RECEIVE for a in ('log_item_receipt', 'receive_all', 'finalize_shipment_receiving')}
     | {a: OWN_CHECK for a in ('approve', 'reject', 'force_close_shipment', 'add_follower', 'remove_follower', 'toggle_follow')},
     'user_management': {'update_user': OWN_CHECK, 'reset_password': OWN_CHECK,
                         'create_user': OWN_CHECK, 'unlock_user': OWN_CHECK, 'sign_out_everywhere': OWN_CHECK},

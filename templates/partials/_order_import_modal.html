@@ -1,0 +1,119 @@
+{% comment %}
+Bulk order import modal, shared by the Sales and Purchase Order lists.
+Include with: kind ('so'/'po'), label, import_url, template_url, columns, item_label.
+{% endcomment %}
+<div id="import-{{ kind }}-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.5); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:var(--bg-surface); border-radius:12px; width:100%; max-width:680px; padding:1.75rem; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1); max-height:90vh; overflow-y:auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+            <h3 style="font-family:'Outfit', sans-serif; font-size:1.2rem; font-weight:700;">Bulk Import {{ label }}s (CSV)</h3>
+            <button onclick="document.getElementById('import-{{ kind }}-modal').style.display='none'" style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+        </div>
+
+        <div style="background:var(--surface-sunken); border:1px dashed var(--border-light); border-radius:8px; padding:1rem; margin-bottom:1.25rem; font-size:0.85rem;">
+            <div style="font-weight:600; margin-bottom:0.3rem;">📋 CSV File Formatting Guide:</div>
+            <div style="color:var(--text-muted); margin-bottom:0.5rem;">
+                Expected headers: <code>{{ columns }}</code>
+                <ul style="margin:0.4rem 0 0 1.1rem; padding:0;">
+                    <li>One row per {{ item_label }}. Rows with the same order number become one order; leave it blank to auto-number. Order details are read from the order's first row. Dates can be YYYY-MM-DD or DD/MM/YYYY.</li>
+                    <li><strong>New orders:</strong> leave <code>status</code> blank. They are created as Draft, or sent to <strong>Pending Approval</strong> when <code>approver</code> names a user who can approve. The import never approves them.</li>
+                    <li><strong>Past manual records:</strong> set <code>status</code> to {% if kind == 'so' %}Delivered{% else %}Completed{% endif %} or Cancelled, with the original <code>order_date</code>{% if kind == 'po' %} and <code>completed_date</code>{% endif %}. <code>{% if kind == 'so' %}quantity_shipped{% else %}quantity_received{% endif %}</code> defaults to the full quantity. Needs approve permission; no stock is moved. Orders still in progress must be entered as new orders.</li>
+                    <li>Orders whose number already exists are skipped, and an order with any bad row is not imported.</li>
+                </ul>
+            </div>
+            <a href="{{ template_url }}" style="color:var(--primary); font-weight:600; text-decoration:none;">📄 Click here to download sample CSV template</a>
+        </div>
+
+        <form id="{{ kind }}-import-form" action="{{ import_url }}" method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div style="margin-bottom:1rem;">
+                <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.35rem;">Select CSV File</label>
+                <input type="file" id="{{ kind }}_csv_file" name="csv_file" accept=".csv" required class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+            </div>
+
+            <div id="{{ kind }}-dryrun-container" style="display:none; margin-bottom:1.25rem; background:var(--surface-muted); border-radius:8px; padding:1rem; max-height:260px; overflow-y:auto;">
+                <div style="font-weight:700; font-size:0.85rem; margin-bottom:0.5rem; display:flex; justify-content:space-between;">
+                    <span>Dry-Run Validation Results:</span>
+                    <span id="{{ kind }}-dryrun-badges"></span>
+                </div>
+                <table style="width:100%; border-collapse:collapse; font-size:0.775rem; background:var(--bg-surface); border-radius:6px; overflow:hidden;">
+                    <thead>
+                        <tr style="background:var(--surface-strong); text-align:left;">
+                            <th style="padding:0.4rem 0.6rem;">Lines</th>
+                            <th style="padding:0.4rem 0.6rem;">Order #</th>
+                            <th style="padding:0.4rem 0.6rem;">{% if kind == 'so' %}Client{% else %}Supplier{% endif %}</th>
+                            <th style="padding:0.4rem 0.6rem;">Status</th>
+                            <th style="padding:0.4rem 0.6rem;">Details</th>
+                        </tr>
+                    </thead>
+                    <tbody id="{{ kind }}-dryrun-tbody"></tbody>
+                </table>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; gap:0.75rem;">
+                <button type="button" class="btn btn-secondary" onclick="runOrderDryRun('{{ kind }}')" style="font-size:0.85rem;">
+                    🔍 Dry-Run Preview
+                </button>
+                <div style="display:flex; gap:0.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('import-{{ kind }}-modal').style.display='none'">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Confirm &amp; Import {{ label }}s</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function runOrderDryRun(kind) {
+    // Escape text before it goes into innerHTML: names and SKUs are user-entered.
+    function esc(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    }
+    var fileInput = document.getElementById(kind + '_csv_file');
+    if (!fileInput.files || fileInput.files.length === 0) {
+        alert('Please select a CSV file first.');
+        return;
+    }
+    var form = document.getElementById(kind + '-import-form');
+    var formData = new FormData(form);
+    formData.append('dry_run', '1');
+
+    fetch(form.action, {method: 'POST', body: formData, headers: {'X-Requested-With': 'XMLHttpRequest'}})
+    .then(r => r.json())
+    .then(data => {
+        if (!data.success) {
+            alert(data.error || 'Dry run failed.');
+            return;
+        }
+        document.getElementById(kind + '-dryrun-container').style.display = 'block';
+        var tbody = document.getElementById(kind + '-dryrun-tbody');
+        tbody.innerHTML = '';
+        document.getElementById(kind + '-dryrun-badges').innerHTML = `
+            <span style="color:var(--success-strong); font-weight:700;">+${data.created_count} New</span> |
+            <span style="color:var(--warning-strong); font-weight:700;">=${data.skipped_count} Skip</span> |
+            <span style="color:var(--danger); font-weight:700;">!${data.error_count} Error</span>
+        `;
+        var badges = {
+            created: '<span style="background:var(--success-soft); color:var(--success-strong); padding:2px 6px; border-radius:4px; font-weight:600;">NEW</span>',
+            duplicate: '<span style="background:var(--warning-soft); color:var(--warning-strong); padding:2px 6px; border-radius:4px; font-weight:600;">SKIP</span>',
+            error: '<span style="background:var(--danger-soft); color:var(--danger-strong); padding:2px 6px; border-radius:4px; font-weight:600;">ERROR</span>',
+        };
+        data.results.forEach(r => {
+            var tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid var(--border-strong)';
+            tr.innerHTML = `
+                <td style="padding:0.4rem 0.6rem; font-weight:600;">L${esc(r.line)}</td>
+                <td style="padding:0.4rem 0.6rem; font-weight:600;">${esc(r.sku)}</td>
+                <td style="padding:0.4rem 0.6rem;">${esc(r.name)}</td>
+                <td style="padding:0.4rem 0.6rem;">${badges[r.status] || badges.error}</td>
+                <td style="padding:0.4rem 0.6rem; color:var(--text-muted);">${esc(r.msg)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    })
+    .catch(err => {
+        alert('Error performing dry run: ' + err);
+    });
+}
+</script>

@@ -1,5 +1,5 @@
 """Daily QA sweep: put expired stock on hold, warn QA about batches nearing expiry and about long holds.
-The QA page runs the same sweep when it loads; schedule this (e.g. once a day on Railway) to cover quiet days.
+The QA page runs the same sweep every time it loads, so scheduling this is optional (no cron is needed).
 Usage: python manage.py qa_sweep"""
 from django.core.management.base import BaseCommand
 

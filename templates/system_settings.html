@@ -87,7 +87,7 @@
     {% if sections %}
     <div style="margin-top:1.25rem; display:flex; gap:0.75rem; align-items:center;">
         <button type="submit" class="btn btn-primary" style="padding:0.55rem 1.5rem; font-size:0.9rem;">Save Settings</button>
-        <a href="{% url 'system' %}" style="font-size:0.85rem; color:var(--text-muted); text-decoration:none;">Cancel</a>
+        <a href="{% url 'dashboard' %}" style="font-size:0.85rem; color:var(--text-muted); text-decoration:none;">Cancel</a>
         <a href="{% url 'user_audit_log' %}?action=setting_changed" style="font-size:0.85rem; margin-left:auto;">Change history</a>
     </div>
     {% endif %}

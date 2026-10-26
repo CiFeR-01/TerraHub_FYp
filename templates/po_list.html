@@ -17,25 +17,11 @@
         </h1>
     </div>
     <div class="header-action-tray" style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
-        <form method="get" action="{% url 'po_list' %}" style="display:flex; gap:0.5rem; margin:0;">
-            <select name="status" class="form-select" style="padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.85rem;" onchange="this.form.submit()">
-                <option value="">All Statuses</option>
-                <option value="Draft" {% if status_filter == 'Draft' %}selected{% endif %}>Draft</option>
-                <option value="Pending" {% if status_filter == 'Pending' %}selected{% endif %}>Pending</option>
-                <option value="Partially Received" {% if status_filter == 'Partially Received' %}selected{% endif %}>Partially Received</option>
-                <option value="Completed" {% if status_filter == 'Completed' %}selected{% endif %}>Completed</option>
-                <option value="Cancelled" {% if status_filter == 'Cancelled' %}selected{% endif %}>Cancelled</option>
-            </select>
-            <input type="text" name="q" value="{{ search_query }}" placeholder="Search PO #, supplier, material..."
-                style="padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.85rem; min-width:250px;">
-            <button type="submit" class="btn btn-secondary"
-                style="padding: 0.5rem 1rem; font-size: 0.85rem;">Search</button>
-            {% if search_query or status_filter %}
-            <a href="{% url 'po_list' %}" class="btn btn-secondary"
-                style="padding: 0.5rem; font-size: 1rem; text-decoration:none; display:flex; align-items:center; justify-content:center; line-height:1;"
-                title="Clear Search">&times;</a>
-            {% endif %}
-        </form>
+        <a href="{% url 'export_po_template' %}" class="btn btn-secondary" style="padding: 0.5rem 0.85rem; font-size: 0.85rem; text-decoration:none;">📄 PO Template</a>
+        <a href="{% url 'export_po_csv' %}" class="btn btn-secondary" style="padding: 0.5rem 0.85rem; font-size: 0.85rem; text-decoration:none;">📥 Export POs</a>
+        {% if perms.core.add_purchaseorder %}
+        <button class="btn btn-secondary" onclick="document.getElementById('import-po-modal').style.display='flex'" style="padding: 0.5rem 0.85rem; font-size: 0.85rem;">📤 Import POs</button>
+        {% endif %}
         <button class="btn btn-secondary" onclick="document.getElementById('po-modal').style.display='flex'"
             style="padding: 0.5rem 1rem; font-size: 0.85rem;">
             ✚ New Purchase Order (PO)
@@ -60,8 +46,29 @@
 <!-- Purchase Orders Section -->
 <div id="po-section" class="table-card-wrapper animate-fade-in-up"
     style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem;">
-    <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; margin-bottom:1rem;">Purchase
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; flex-wrap:wrap; margin-bottom:1rem;">
+        <h3 style="font-family:'Outfit', sans-serif; font-size:1.15rem; font-weight:700; margin:0;">Purchase
         Orders (Supplier Procurement)</h3>
+        <form method="get" action="{% url 'po_list' %}" style="display:flex; gap:0.5rem; margin:0;">
+            <select name="status" class="form-select" style="padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.85rem;" onchange="this.form.submit()">
+                <option value="">All Statuses</option>
+                <option value="Draft" {% if status_filter == 'Draft' %}selected{% endif %}>Draft</option>
+                <option value="Pending" {% if status_filter == 'Pending' %}selected{% endif %}>Pending</option>
+                <option value="Partially Received" {% if status_filter == 'Partially Received' %}selected{% endif %}>Partially Received</option>
+                <option value="Completed" {% if status_filter == 'Completed' %}selected{% endif %}>Completed</option>
+                <option value="Cancelled" {% if status_filter == 'Cancelled' %}selected{% endif %}>Cancelled</option>
+            </select>
+            <input type="text" name="q" value="{{ search_query }}" placeholder="Search PO #, supplier, material..."
+                style="padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.85rem; min-width:250px;">
+            <button type="submit" class="btn btn-secondary"
+                style="padding: 0.5rem 1rem; font-size: 0.85rem;">Search</button>
+            {% if search_query or status_filter %}
+            <a href="{% url 'po_list' %}" class="btn btn-secondary"
+                style="padding: 0.5rem; font-size: 1rem; text-decoration:none; display:flex; align-items:center; justify-content:center; line-height:1;"
+                title="Clear Search">&times;</a>
+            {% endif %}
+        </form>
+    </div>
     <div class="table-responsive">
         <table class="modern-table" style="width:100%; border-collapse:collapse;">
             <thead>
@@ -155,7 +162,7 @@
                     style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
                     <option value="">-- Select a supplier to autofill, or type below --</option>
                     {% for s in suppliers %}
-                    <option value="{{ s.id }}" data-name="{{ s.name|escapejs }}">{{ s.name }}</option>
+                    <option value="{{ s.id }}" data-name="{{ s.name|escapejs }}"{% if prefill_supplier and s.id == prefill_supplier.id %} selected{% endif %}>{{ s.name }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -163,9 +170,28 @@
                 <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Supplier
                     Name</label>
                 <input type="text" id="po_supplier_name" name="supplier_name" required placeholder="e.g. Chemical Global Industries"
-                    class="form-input"
+                    value="{{ prefill_supplier.name|default:'' }}" class="form-input"
                     style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
-                <input type="hidden" id="po_supplier_id" name="supplier_id" value="">
+                <input type="hidden" id="po_supplier_id" name="supplier_id" value="{{ prefill_supplier.id|default:'' }}">
+            </div>
+            <div style="display:flex; gap:0.75rem; margin-bottom:0.85rem;">
+                <div style="flex:2; min-width:0;">
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Material <span style="font-weight:400; color:var(--text-muted);">(optional)</span></label>
+                    <select name="material_id" id="po_material_select" class="form-select"
+                        onchange="document.getElementById('po_line_qty').required = !!this.value"
+                        style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                        <option value="">-- Add lines later --</option>
+                        {% for m in po_materials %}
+                        <option value="{{ m.id }}"{% if prefill_material and m.id == prefill_material.id %} selected{% endif %}>{{ m.sku }} - {{ m.name }} ({{ m.unit_of_measure }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div style="flex:1; min-width:0;">
+                    <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Quantity</label>
+                    <input type="number" name="quantity_ordered" id="po_line_qty" min="0" step="any" class="form-input"
+                        {% if prefill_material %}required{% endif %}
+                        style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
+                </div>
             </div>
             <div style="margin-bottom:1.25rem;">
                 <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Destination
@@ -185,6 +211,9 @@
         </form>
     </div>
 </div>
+
+{% url 'import_po' as import_url %}{% url 'export_po_template' as template_url %}
+{% include 'partials/_order_import_modal.html' with kind='po' label='Purchase Order' item_label='material line' columns='po_number, supplier_name, target_warehouse, expected_delivery_date, material_sku, quantity_ordered, unit_price, negotiated_rental_rate_per_mt, approver, approval_remarks, status, order_date, quantity_received, completed_date' %}
 
 <script>
     function autofillSupplier(select) {
@@ -219,6 +248,9 @@
             input.focus();
         }
     }
-
+    {% if open_po_modal %}
+    document.getElementById('po-modal').style.display = 'flex';
+    {% if prefill_material %}document.getElementById('po_line_qty').focus();{% endif %}
+    {% endif %}
 </script>
 {% endblock %}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+from decimal import Decimal
 import os
 
 from django.utils import timezone
@@ -28,11 +29,11 @@ MAX_OUTPUT_TOKENS = 4000
 # Shared helpers
 
 def _num(x, places=2):
-    """Round floats for the payload; pass through None / ints unchanged."""
+    """Round floats/Decimals for the payload; pass through None / ints unchanged."""
     if x is None:
         return None
-    if isinstance(x, float):
-        return round(x, places)
+    if isinstance(x, (float, Decimal)):
+        return round(float(x), places)
     return x
 
 
@@ -434,7 +435,7 @@ def render_prompt(signals, *, period="daily"):
         f"({signals.get('category')}, {period} briefing, {signals.get('signal_count', 0)} notable). "
         "Write the briefing.\n\n"
     )
-    return header + json.dumps(signals, indent=2, sort_keys=True)
+    return header + json.dumps(signals, indent=2, sort_keys=True, default=str)
 
 
 def generate_briefing(*, category, period="daily", user=None, window_days=SIGNAL_WINDOW_DAYS):
@@ -550,7 +551,7 @@ def render_checklist_prompt(signals):
         f"Open items for {signals.get('generated_for')} "
         f"({signals.get('signal_count', 0)} total). Write the checklist.\n\n"
     )
-    return header + json.dumps(signals, indent=2, sort_keys=True)
+    return header + json.dumps(signals, indent=2, sort_keys=True, default=str)
 
 
 def generate_my_checklist(*, user, window_days=SIGNAL_WINDOW_DAYS):

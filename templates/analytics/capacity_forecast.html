@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load humanize %}
 
 {% block title %}Inventory Capacity - TerraHub{% endblock %}
 
@@ -90,7 +91,7 @@
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Total Daily Rent</span>
-        <div class="kpi-value-row"><span class="kpi-value">RM {{ summary.total_daily_rent|floatformat:2 }}</span></div>
+        <div class="kpi-value-row"><span class="kpi-value">RM {{ summary.total_daily_rent|floatformat:2|intcomma }}</span></div>
     </div>
 </section>
 

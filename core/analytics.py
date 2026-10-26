@@ -386,7 +386,7 @@ def audit_accuracy(*, since=None):
 
     audits = StockAudit.objects.select_related(
         "batch", "batch__material", "batch__product", "batch__warehouse"
-    )
+    ).exclude(status="Rejected")  # a rejected count was judged wrong, so it says nothing about stock accuracy
     if since is not None:
         audits = audits.filter(audit_date__date__gte=since)
 
@@ -1217,7 +1217,7 @@ def capacity_forecast():
 
 
 def _daily_usage_rates(material_ids, product_ids, today):
-    """Units leaving stock per day: materials from recent production consumption, products from the last 180 days of sales orders (excluding Draft/Rejected)."""
+    """Units leaving stock per day: materials from recent production consumption, products from the last 180 days of sales orders (excluding Draft/Rejected/Cancelled)."""
     from .models import SalesOrderDetail
 
     rates = {('material', mid): r for mid, r in
@@ -1570,7 +1570,7 @@ TREND_WINDOW_MONTHS = 6
 _MIN_MONTHS_FOR_TREND = 3
 # A change of +/- this % (recent vs earlier average) counts as a real trend.
 # SO statuses that never became a commitment are excluded.
-_TREND_EXCLUDED_SO_STATUSES = ("Draft", "Rejected")
+_TREND_EXCLUDED_SO_STATUSES = ("Draft", "Rejected", "Cancelled")
 
 
 def _trailing_month_keys(end, window_months):

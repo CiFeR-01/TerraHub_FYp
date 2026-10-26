@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load humanize %}
 {% load quantity_extras %}
 
 {% block title %}Warehouse Inventory Ledger - TerraHub{% endblock %}
@@ -80,7 +81,7 @@
         <div class="kpi-item-card">
             <span class="kpi-label">{% if selected_warehouse %}Billing Mode{% else %}Total Facilities{% endif %}</span>
             <div class="kpi-value-row">
-                <span class="kpi-value" style="font-size: 1.5rem; line-height: 2.25rem;">
+                <span class="kpi-value">
                     {% if selected_warehouse %}
                         {% if selected_warehouse.ownership_type == 'Internal' %}
                             Free (Owned)
@@ -238,7 +239,7 @@
 
             <div style="margin-bottom:1.25rem;">
                 <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-main); margin-bottom:0.5rem;">Material (Raw)</label>
-                <select name="material_id" class="form-select" style="width:100%; padding:0.65rem 1rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
+                <select onchange="if (this.value) this.form.product_id.value = ''" name="material_id" class="form-select" style="width:100%; padding:0.65rem 1rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
                     <option value="">-- Select Material (Or choose Product below) --</option>
                     {% for m in materials %}
                     <option value="{{ m.id }}">{{ m.sku }} - {{ m.name }}</option>
@@ -248,7 +249,7 @@
             
             <div style="margin-bottom:1.25rem;">
                 <label style="display:block; font-size:0.85rem; font-weight:600; color:var(--text-main); margin-bottom:0.5rem;">Product (Finished)</label>
-                <select name="product_id" class="form-select" style="width:100%; padding:0.65rem 1rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
+                <select onchange="if (this.value) this.form.material_id.value = ''" name="product_id" class="form-select" style="width:100%; padding:0.65rem 1rem; border-radius:8px; border:1px solid var(--border-light); font-size:0.95rem;">
                     <option value="">-- Select Product (Or choose Material above) --</option>
                     {% for p in products %}
                     <option value="{{ p.id }}">{{ p.sku }} - {{ p.name }}</option>

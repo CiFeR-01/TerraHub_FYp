@@ -198,7 +198,6 @@ def sidebar_nav(request):
         admin_items.append({'label': 'Roles & Permissions', 'url_name': 'roles'})
         admin_items.append({'label': 'Audit Log', 'url_name': 'user_audit_log'})
     if user.is_superuser or is_admin_user(user):
-        admin_items.append({'label': 'System Console', 'url_name': 'system'})
         admin_items.append({'label': 'System Settings', 'url_name': 'system_settings'})
     if admin_items:
         groups.append({

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load humanize %}
 {% load quantity_extras %}
 
 {% block title %}Rent Reduction - TerraHub{% endblock %}
@@ -47,11 +48,11 @@
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Potential Daily Saving</span>
-        <div class="kpi-value-row"><span class="kpi-value" style="color:var(--success-strong);">RM {{ summary.total_potential_daily_saving|floatformat:2 }}</span></div>
+        <div class="kpi-value-row"><span class="kpi-value" style="color:var(--success-strong);">RM {{ summary.total_potential_daily_saving|floatformat:2|intcomma }}</span></div>
     </div>
     <div class="kpi-item-card">
         <span class="kpi-label">Potential Total Saving</span>
-        <div class="kpi-value-row"><span class="kpi-value" style="color:var(--success-strong);">RM {{ summary.total_potential_saving|floatformat:2 }}</span></div>
+        <div class="kpi-value-row"><span class="kpi-value" style="color:var(--success-strong);">RM {{ summary.total_potential_saving|floatformat:2|intcomma }}</span></div>
     </div>
 </section>
 

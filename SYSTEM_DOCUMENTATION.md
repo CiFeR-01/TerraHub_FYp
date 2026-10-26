@@ -15,7 +15,6 @@ Core capabilities:
 - **Shipments**: transfer and outbound shipments with pick lists, generated from sales-order allocation using FEFO (first-expired-first-out) batch selection.
 - **Stock Allocation**: a shared allocation engine (`StockAllocation`) used by both sales orders and production runs to reserve batch quantities.
 - **QA Dashboard** and **Registry Ledger** for traceability and audit history (`RegistryLog`, `OrderTimeline`).
-- **System Console**: authenticated live database diagnostics and SQL query-logging dashboard.
 
 ---
 
@@ -49,7 +48,7 @@ D:\TerraHub
 │   ├── migrations/             # Database migration history
 │   ├── models.py               # Domain models (see §5)
 │   ├── views.py                # Controller views for all modules
-│   ├── analytics.py            # Analytics & forecasting computation layer (see §8)
+│   ├── analytics.py            # Analytics & forecasting computation layer (see §7)
 │   ├── settings_store.py       # Typed access to admin-editable operational settings
 │   ├── management/commands/    # Scheduled jobs (daily snapshots, AI briefing)
 │   ├── urls.py                 # Application URL routing (see §4)
@@ -57,7 +56,6 @@ D:\TerraHub
 │   ├── decorators.py           # permission_or_redirect view decorator
 │   ├── permissions.py          # Central permission helpers (approvers, admin override, ...)
 │   ├── context_processors.py   # Template context (nav, notifications, etc.)
-│   ├── db_tracker.py           # DB query interception & diagnostics
 │   ├── admin.py                # Django admin registrations
 │   └── tests.py                # Test suite
 ├── static/
@@ -91,12 +89,8 @@ D:\TerraHub
 | `/logout/` | `logout` | `LogoutView` | Clears session, redirects home |
 | `/dashboard/` | `dashboard` | `dashboard_view` | Main authenticated dashboard |
 | `/profile/` | `profile` | `profile_view` | User profile |
-| `/system/` | `system` | `system_view` | System telemetry console |
-| `/system/settings/` | `system_settings` | `system_settings_view` | Operational settings editor (superuser; see §8) |
+| `/system/settings/` | `system_settings` | `system_settings_view` | Operational settings editor (superuser; see §7) |
 | `/system/users/` | `user_management` | `user_management_view` | User/role administration |
-| `/system/db-logs/` | `db_logs_api` | `db_logs_api_view` | DB query logs & connection status (JSON) |
-| `/system/db-logs/clear/` | `db_clear_logs` | `db_clear_logs_view` | Clears in-memory query log buffer |
-| `/system/db-logs/test/` | `db_test_op` | `db_test_op_view` | Triggers dummy read/write for diagnostics |
 | `/warehouse/inventory/` | `warehouse_inventory` | `warehouse_inventory_view` | Inventory across warehouses |
 | `/warehouse/batch/<batch_number>/` | `batch_detail` | `batch_detail_view` | Batch/lot detail & traceability |
 | `/warehouse/batch/<batch_number>/print/` | `batch_print_label` | `batch_print_label_view` | Printable batch label |
@@ -107,15 +101,15 @@ D:\TerraHub
 | `/warehouse/stock-audit/` | `stock_audit` | `stock_audit_view` | Stock audit workflow |
 | `/warehouse/registry/` | `registry` | `registry_ledger_view` | Registry/audit ledger |
 | `/catalog/products/` | `product_list` | `product_list_view` | Product catalog |
-| `/catalog/products/<pk>/` | `product_detail` | `product_detail_view` | Product detail — stock KPIs, recipe cost & margin, production-vs-sales chart (sales series = `analytics.product_sales_trend`, §8.12) |
+| `/catalog/products/<pk>/` | `product_detail` | `product_detail_view` | Product detail — stock KPIs, recipe cost & margin, production-vs-sales chart (sales series = `analytics.product_sales_trend`, §7.12) |
 | `/catalog/products/export/` | `export_products_csv` | `export_products_csv` | Export products (CSV) |
 | `/catalog/products/template/` | `export_product_template` | `export_product_template` | Product import template |
 | `/catalog/products/import/` | `import_products` | `import_products` | Bulk import products |
-| `/analytics/sales-trends/` | `product_sales_trend` | `views_analytics.product_sales_trend_view` | Monthly sales-volume trend per product — "Analytics → Demand" (see §8.12) |
+| `/analytics/sales-trends/` | `product_sales_trend` | `views_analytics.product_sales_trend_view` | Monthly sales-volume trend per product — "Analytics → Demand" (see §7.12) |
 | `/catalog/products/<id>/recipe/get/` | `get_product_recipe_api` | `get_product_recipe_api` | Fetch product recipe (JSON) |
 | `/catalog/products/recipe/save/` | `save_product_recipe_api` | `save_product_recipe_api` | Save product recipe (JSON) |
 | `/catalog/materials/` | `material_list` | `material_list_view` | Material catalog |
-| `/catalog/materials/<pk>/` | `material_detail` | `material_detail_view` | Material detail — editable info, batches, stock by warehouse, cover/reorder forecast (`analytics.stockout_forecast`, §8.7), consumption chart (RegistryLog `Consumed_For_Manufacturing`, §8.1–8.2), recipes, suppliers, POs, movements, unrecorded run usage. Edit/archive need `core.change_material` |
+| `/catalog/materials/<pk>/` | `material_detail` | `material_detail_view` | Material detail — editable info, batches, stock by warehouse, cover/reorder forecast (`analytics.stockout_forecast`, §7.7), consumption chart (RegistryLog `Consumed_For_Manufacturing`, §7.1–8.2), recipes, suppliers, POs, movements, unrecorded run usage. Edit/archive need `core.change_material` |
 | `/catalog/materials/<pk>/edit/` | `material_edit` | `material_edit_view` | Edit material |
 | `/catalog/materials/export/` | `export_materials_csv` | `export_materials_csv` | Export materials (CSV) |
 | `/catalog/materials/template/` | `export_material_template` | `export_material_template` | Material import template |
@@ -136,15 +130,15 @@ D:\TerraHub
 | `/operations/qa/` | `qa_dashboard` | `qa_dashboard_view` | QA dashboard |
 | `/approvals/` | `approvals_inbox` | `approvals_inbox_view` | Pending approvals inbox |
 | `/operations/notifications/read/` | `mark_notifications_read` | `mark_notifications_read` | Mark notifications read |
-| `/analytics/supplier-performance/` | `supplier_scorecard` | `views_analytics.supplier_scorecard_view` | Supplier reliability scorecard — "Scorecard" tab of the Suppliers hub (see §8) |
-| `/decision-support/delivery/` | `so_delivery_risk` | `views_analytics.sales_order_delivery_risk_view` | Sales-order delivery-risk board — "Delivery Risk" tab of the Sales Orders hub (see §8) |
-| `/analytics/audit-accuracy/` | `audit_accuracy` | `views_analytics.audit_accuracy_view` | Stock-audit accuracy roll-up — "Accuracy" tab of the Stock Audit hub (see §8) |
-| `/analytics/yield/` | `production_yield` | `views_analytics.production_yield_view` | Production yield variance — "Yield" tab of the Manufacturing hub (see §8) |
-| `/decision-support/stockout/` | `forecast` | `views_analytics.forecast_view` | Consumption-rate stockout & reorder forecast (see §8) |
-| `/decision-support/capacity/` | `capacity_forecast` | `views_analytics.capacity_forecast_view` | Warehouse capacity runway — daily-snapshot trend (see §8) |
-| `/assistant/briefing/` | `ops_briefing` | `views_analytics.ops_briefing_view` | My Open Jobs — the personal checklist; *Overview → AI Copilot* (see §8.11) |
-| `/assistant/briefing/<category>/` | `category_briefing` | `views_analytics.category_briefing_view` | One of the six domain briefings (materials/products/sales/purchase/logistics/warehouse) — Claude narration of that category's Tier 1/2 signals (see §8.9) |
-| `/analytics/logistics-performance/` | `shipment_logistics` | `views_analytics.shipment_logistics_view` | In-flight shipment risk roll-up — "Analytics → Supply Chain" (see §8.10) |
+| `/analytics/supplier-performance/` | `supplier_scorecard` | `views_analytics.supplier_scorecard_view` | Supplier reliability scorecard — "Scorecard" tab of the Suppliers hub (see §7) |
+| `/decision-support/delivery/` | `so_delivery_risk` | `views_analytics.sales_order_delivery_risk_view` | Sales-order delivery-risk board — "Delivery Risk" tab of the Sales Orders hub (see §7) |
+| `/analytics/audit-accuracy/` | `audit_accuracy` | `views_analytics.audit_accuracy_view` | Stock-audit accuracy roll-up — "Accuracy" tab of the Stock Audit hub (see §7) |
+| `/analytics/yield/` | `production_yield` | `views_analytics.production_yield_view` | Production yield variance — "Yield" tab of the Manufacturing hub (see §7) |
+| `/decision-support/stockout/` | `forecast` | `views_analytics.forecast_view` | Consumption-rate stockout & reorder forecast (see §7) |
+| `/decision-support/capacity/` | `capacity_forecast` | `views_analytics.capacity_forecast_view` | Warehouse capacity runway — daily-snapshot trend (see §7) |
+| `/assistant/briefing/` | `ops_briefing` | `views_analytics.ops_briefing_view` | My Open Jobs — the personal checklist; *Overview → AI Copilot* (see §7.11) |
+| `/assistant/briefing/<category>/` | `category_briefing` | `views_analytics.category_briefing_view` | One of the six domain briefings (materials/products/sales/purchase/logistics/warehouse) — Claude narration of that category's Tier 1/2 signals (see §7.9) |
+| `/analytics/logistics-performance/` | `shipment_logistics` | `views_analytics.shipment_logistics_view` | In-flight shipment risk roll-up — "Analytics → Supply Chain" (see §7.10) |
 | `/admin/` | — | Django admin | Django admin site |
 
 ---
@@ -161,12 +155,12 @@ Defined in `core/models.py`:
 - **Purchasing**: `PurchaseOrder`, `PurchaseOrderDetail`
 - **Sales**: `SalesOrder`, `SalesOrderDetail`
 - **Fulfillment**: `Shipment`, `ShipmentItem`
-- **Quality & Audit**: `StockAudit`, `RegistryLog` (movement ledger; `RegistryLog.material` FK is the machine-readable key behind the analytics engine — see §8), `OrderTimeline`
+- **Quality & Audit**: `StockAudit`, `RegistryLog` (movement ledger; `RegistryLog.material` FK is the machine-readable key behind the analytics engine — see §7), `OrderTimeline`
 - **Allocation**: `StockAllocation` (shared reservation engine used by sales orders and production runs, resolved via FEFO in `core/utils.py`)
 - **Messaging**: `Notification`
-- **Configuration**: `SystemSetting` (key/value store for admin-editable operational tunables; read via `core/settings_store.py` — see §8)
-- **Analytics snapshots**: `WarehouseUtilizationSnapshot` (one row per warehouse per day, written by `manage.py snapshot_utilization`; see §8)
-- **AI Copilot**: `OpsBriefing` (one row per category-briefing run or per-user checklist run — stored Claude output plus its input `signals_json` and token counts, keyed by `category`; see §8.9/§8.11)
+- **Configuration**: `SystemSetting` (key/value store for admin-editable operational tunables; read via `core/settings_store.py` — see §7)
+- **Analytics snapshots**: `WarehouseUtilizationSnapshot` (one row per warehouse per day, written by `manage.py snapshot_utilization`; see §7)
+- **AI Copilot**: `OpsBriefing` (one row per category-briefing run or per-user checklist run — stored Claude output plus its input `signals_json` and token counts, keyed by `category`; see §7.9/§7.11)
 
 ---
 
@@ -208,31 +202,7 @@ python manage.py test
 
 ---
 
-## 7. Live Database Diagnostics & Query Logging Console
-
-TerraHub includes an integrated real-time database connection diagnostics helper and SQL query tracker log dashboard built directly into the **System Control Console** (`/system/`).
-
-### 7.1. DB Diagnostics (Connection Health & Latency)
-- **Automatic Status Check**: Dynamically checks database connectivity using `connection.ensure_connection()` and runs a benchmark query (`SELECT 1`) to calculate latency.
-- **Environment Context Identification**: Detects whether settings are configured to use the live database (PostgreSQL via `django.db.backends.postgresql` backend) or a local development database (SQLite via `django.db.backends.sqlite3` backend).
-- **On-Demand Health Testing**: Users can test the latency and active status directly using the "Test Latency & Status" interactive AJAX trigger on the page.
-
-### 7.2. SQL Read/Write Console
-- **Query Interception**: Implemented in [core/db_tracker.py](core/db_tracker.py) using a custom `db_query_logging_wrapper` registered via the `connection_created` signal on Django initialization.
-- **Classification Badges**: Automatically parses SQL commands to identify operation type:
-  - `READ` for `SELECT` queries
-  - `WRITE` for `INSERT`, `UPDATE`, and `DELETE` queries
-  - `TRANSACTION` for `BEGIN`, `COMMIT`, and `ROLLBACK` commands
-- **In-Memory Buffering**: Logs are stored in a thread-safe, size-limited Python `deque` (maximum 100 entries) to guarantee safety and avoid memory expansion or disk write overhead.
-- **Tabbed Interactive UI console**:
-  - Toggles between the **System Console** (mock commands and registry ledger events) and the **SQL DB queries** console.
-  - **Autorefresh Toggle**: Initiates an AJAX polling query (every 2 seconds) to `/system/db-logs/` to update database query logs dynamically.
-  - **Clear Console**: Empties the in-memory log buffer via `/system/db-logs/clear/` JSON POST.
-  - **Read/Write Debug Operations**: Simple interactive test triggers that run a safe `SELECT` (reading user details) or `INSERT` (creating a dummy notification record) query, showing immediately in the console.
-
----
-
-## 8. Analytics & Forecasting Engine
+## 7. Analytics & Forecasting Engine
 
 A layered analytics capability built on data the platform already records. All
 computation lives in **`core/analytics.py`** as pure functions (no request /
@@ -272,7 +242,7 @@ Analytics; the six briefings share one page with the same tab-strip pattern
 (`/assistant/briefing/<category>/`), and the checklist is `/assistant/briefing/`
 itself.
 
-### 8.1. The RegistryLog material spine  *(Phase 0 — implemented)*
+### 7.1. The RegistryLog material spine  *(Phase 0 — implemented)*
 
 `RegistryLog` is the append-only ledger of every physical stock movement
 (`Inbound`, `Outbound`, `Consumed_For_Manufacturing`, `Produced`, `Adjusted`,
@@ -294,7 +264,7 @@ the first hit — `<name> (Run …)`, `<name> (Batch …)` (± ` - force closed`
 `Batch <b> (<sku> - <name>)`, or an exact `<name>`. No match ⇒ leave null
 (conservative: a null row is excluded from rates, never mis-attributed).
 
-### 8.2. Consumption rate  *(Phase 0 — implemented)*
+### 7.2. Consumption rate  *(Phase 0 — implemented)*
 
 ```
 daily_consumption(material, window_days=30, end=today) -> { date: Decimal }
@@ -315,7 +285,7 @@ stockout forecast (`on_hand / rate → days of cover`) that will replace the
 current flat degradation threshold in `dashboard_view`
 (`days_remaining <= 30 or < material.safe_storage_days`).
 
-### 8.3. Supplier reliability scorecard  *(Phase 1 — implemented)*
+### 7.3. Supplier reliability scorecard  *(Phase 1 — implemented)*
 
 `supplier_reliability(since=None, until=None)` → `views_analytics.supplier_scorecard_view`
 → `/analytics/supplier-performance/` (nav: *Analytics → Supply Chain*, tab: Supplier Performance; Suppliers links to it via a header call-out).
@@ -349,14 +319,14 @@ their estimated share is shown, so committed-date and estimated rates are not
 blended silently.
 
 `po_default_lead_time_days` (default 14) is one `SystemSetting`. Edit it in-site at
-**System Console → Operational Settings** (`/system/settings/`, superuser-only) —
+**Admin → System Settings** (`/system/settings/`, superuser-only) —
 a form generated from the registry; the raw Django admin (`/admin/core/systemsetting/`)
 is a fallback. `core/settings_store.py` holds the registry of such tunables
 (`REGISTRY`, keyed to `(default, type, description)`), `cast_value()`, and
 `get_setting(key)` which returns the typed DB override or the default. A data
 migration seeds one row per registry entry so they are all editable from day one.
 
-### 8.4. Sales-order delivery risk  *(Phase 1 — implemented)*
+### 7.4. Sales-order delivery risk  *(Phase 1 — implemented)*
 
 `sales_order_delivery_risk()` → `views_analytics.sales_order_delivery_risk_view`
 → `/decision-support/delivery/` (nav: *Analytics → Supply Chain*, tab: Delivery Performance; Sales Orders links to it via a header call-out).
@@ -381,7 +351,7 @@ Open = status in Pending / Awaiting Acknowledgement / In Production / Ready to
 Ship / Partially Shipped / Shipped. Sorted `(risk rank, days_slack, so_number)`.
 `so_at_risk_window_days` (default 7) is a `SystemSetting` (see below).
 
-### 8.5. Stock-audit accuracy  *(Phase 1 — implemented)*
+### 7.5. Stock-audit accuracy  *(Phase 1 — implemented)*
 
 `audit_accuracy(since=None)` → `views_analytics.audit_accuracy_view` →
 `/analytics/audit-accuracy/` (nav: *Analytics → Operations*, tab: Inventory Audit Accuracy; Stock Tally links to it via a header call-out).
@@ -392,7 +362,7 @@ Ship / Partially Shipped / Shipped. Sorted `(risk rank, days_slack, so_number)`.
 `chronic_shrinkage` when net < 0 over ≥ 3 audits), plus a monthly `trend`
 (count / mean |variance| / net). Sorted lowest accuracy, then largest mean |var|.
 
-### 8.6. Production yield variance  *(Phase 1 — implemented)*
+### 7.6. Production yield variance  *(Phase 1 — implemented)*
 
 `production_yield_variance()` → `views_analytics.production_yield_view` →
 `/analytics/yield/` (nav: *Analytics → Operations*, tab: Yield Performance; Manufacture links to it via a header call-out).
@@ -423,7 +393,7 @@ top_reasons    = the 3 most common reasons (case / spacing merged);  top_people 
 
 Sorted highest share first (unknown share last), then window quantity, then name.
 
-### 8.7. Stockout & reorder forecast  *(Phase 2a — implemented)*
+### 7.7. Stockout & reorder forecast  *(Phase 2a — implemented)*
 
 `stockout_forecast(window_days=30)` → `views_analytics.forecast_view` →
 `/decision-support/stockout/` (nav: *Analytics → Inventory*, tab: Stockout & Reorder; Materials Hub links to it via a header call-out).
@@ -457,7 +427,7 @@ sorted `(status rank, reorder_by, -burn/day, name)`. `consumption_rates()` is th
 batched sibling of Phase 0's `consumption_rate()` — one grouped query for many
 materials.
 
-### 8.8. Capacity runway  *(Phase 2b — implemented)*
+### 7.8. Capacity runway  *(Phase 2b — implemented)*
 
 `capacity_forecast()` → `views_analytics.capacity_forecast_view` →
 `/decision-support/capacity/` (nav: *Analytics → Inventory*, tab: Inventory Capacity; Facility Management
@@ -501,14 +471,14 @@ status = no_data   if < 3 calendar days of history (first snapshot -> today)
 Sorted `(status rank, days_to_full, -current, name)`. The UI shows a "collecting
 data" banner until there are 7 calendar days of history.
 
-### 8.9. AI Copilot — category briefings  *(Phase 3 — implemented; split into categories in Phase 4)*
+### 7.9. AI Copilot — category briefings  *(Phase 3 — implemented; split into categories in Phase 4)*
 
 `core/briefing.py` → `generate_ops_briefing` command / `category_briefing_view` →
 `/assistant/briefing/<category>/` for `category` in `materials`, `products`,
 `sales`, `purchase`, `logistics`, `warehouse` (nav: *Overview → AI Copilot*,
 tab strip across the top of the page). Phase 3 shipped one company-wide
 briefing mixing all six domains; Phase 4 split it so each domain reads on its
-own, and added the previously-missing Logistics signal (§8.10).
+own, and added the previously-missing Logistics signal (§7.10).
 
 Two steps per category, **one stateless LLM call**, no agent loop and no tools:
 
@@ -552,7 +522,7 @@ prompt naturally omits Outlook there — adding it to another category is
 purely a matter of computing and attaching that category's own trend field;
 no prompt or template change is needed.
 
-**`OpsBriefing`** row per run: `category` (see §8.11 for `my_checklist`),
+**`OpsBriefing`** row per run: `category` (see §7.11 for `my_checklist`),
 `period`, `status` (`ok|empty|skipped|error`), `headline`, `body_text`,
 `signals_json`, `signal_count`, `model_id`, `input_tokens`/`output_tokens`
 (cost trace), `error_detail`, `generated_by` (null for the scheduled job).
@@ -573,15 +543,15 @@ records the failure on the row so the scheduled job stays green. **Like
 (`python manage.py generate_ops_briefing --category all`, or `--period weekly`,
 or one category at a time) via Heroku Scheduler, cron, or a scheduled GitHub
 Action (on Railway: a second Cron Schedule service, same pattern as
-`snapshot_utilization` in §8.8 — remember to give it the `ANTHROPIC_API_KEY`
+`snapshot_utilization` in §7.8 — remember to give it the `ANTHROPIC_API_KEY`
 env var too). Admin/Manager can also trigger a run for one category from its
 page. `--dry-run` prints the signal payload(s) without calling the API.
 
-### 8.10. Shipment logistics  *(Phase 4 — implemented)*
+### 7.10. Shipment logistics  *(Phase 4 — implemented)*
 
 `analytics.shipment_logistics()` → `views_analytics.shipment_logistics_view` →
 `/analytics/logistics-performance/` (nav: *Analytics → Supply Chain*, tab: Logistics
-Performance). Also feeds the Logistics category briefing (§8.9).
+Performance). Also feeds the Logistics category briefing (§7.9).
 
 Before this, `Shipment` was only read indirectly — the outbound leg inside
 `sales_order_delivery_risk()`, the inbound leg inside `supplier_reliability()`.
@@ -607,7 +577,7 @@ worst first. `logistics_at_risk_window_days` (default 3) and
 `logistics_stall_days` (default 5) are `SystemSetting`s, editable at
 `/system/settings/`.
 
-### 8.11. Personal checklist — "My Open Jobs"  *(Phase 4 — implemented)*
+### 7.11. Personal checklist — "My Open Jobs"  *(Phase 4 — implemented)*
 
 `analytics.my_open_jobs(user)` + `core/briefing.py::generate_my_checklist()` →
 `ops_briefing_view` → `/assistant/briefing/` (nav: *Overview → AI Copilot*,
@@ -651,17 +621,17 @@ click) — never scheduled, since a per-user daily job would multiply the API
 cost by the number of active users. `generate_ops_briefing` explicitly never
 produces `my_checklist` rows.
 
-### 8.12. Product sales trend  *(Phase 5 — implemented)*
+### 7.12. Product sales trend  *(Phase 5 — implemented)*
 
 `analytics.product_sales_trend()` → `views_analytics.product_sales_trend_view`
 → `/analytics/sales-trends/` (nav: *Analytics → Demand*; the category's
 only report, so no tab strip).
-Also feeds the Sales category briefing (§8.9) and is the trend field that
+Also feeds the Sales category briefing (§7.9) and is the trend field that
 unlocks its Outlook section.
 
 The only genuinely time-series view in Sales — `sales_order_delivery_risk()`
 is a point-in-time snapshot of currently-open orders; this looks at ordered
-quantity across **all** real orders (Draft/Rejected excluded) over a trailing
+quantity across **all** real orders (Draft/Rejected/Cancelled excluded) over a trailing
 6-month window, bucketed by month, split into two halves:
 
 ```
@@ -684,4 +654,4 @@ partial total.
 `_product_trend_signals()` in `core/briefing.py` feeds the `declining`/`rising`
 rows (with their full `monthly_qty_trend` series) into the Sales briefing —
 the same real history a manager would want to know is behind the Outlook
-(estimate) section described in §8.9.
+(estimate) section described in §7.9.
