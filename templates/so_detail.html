@@ -325,7 +325,7 @@
                                             <select name="target_so_id" class="form-select" style="width:200px; padding:0.4rem; font-size:0.8rem;">
                                                 <option value="">-- Release to available stock --</option>
                                                 {% for t in row.transfer_targets %}
-                                                <option value="{{ t.id }}">Transfer to {{ t.so_number }} ({{ t.client_name }})</option>
+                                                <option value="{{ t.id }}">Transfer to {{ t.so_number }} ({{ t.client_name }}, needs {{ t.need|floatformat:2 }})</option>
                                                 {% endfor %}
                                             </select>
                                         </div>

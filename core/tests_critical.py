@@ -2,7 +2,8 @@
 
 Run on its own with:  python manage.py test core.tests_critical
 A test belongs here only if breaking it would lose or invent stock or money, let someone skip an approval or
-permission, break a one-way status rule, or open a security hole. Each one is a copy of a test in core/tests.py.
+permission, break a one-way status rule, open a security hole, or skew a decision-support forecast
+(stock-out cover, warehouse capacity, unit weights). Each one is a copy of a test in core/tests.py.
 The full suite in core/tests.py is the complete safety net; CriticalBase lives there.
 """
 from datetime import date, timedelta
@@ -31,8 +32,12 @@ from django.test import Client, override_settings
 
 from core import briefing as briefing_mod
 from core import qa as qa_logic
-from core.analytics import rent_reduction_opportunities, warehouse_rent_burn
-from core.models import OpsBriefing, QAApproval, QAEvent, QARequest, WarehouseUtilizationSnapshot
+from core.analytics import (
+    capacity_forecast, rent_reduction_opportunities, stockout_forecast, warehouse_rent_burn, warehouse_utilization,
+)
+from core.models import (
+    OpsBriefing, QAApproval, QAEvent, QARequest, Supplier, SupplierMaterial, WarehouseUtilizationSnapshot,
+)
 from core.permissions import ACTION_PERMS
 from core.tests import LOCMEM, AdminEditBase, CriticalBase, _FakeAnthropicModule, _core_perm, make_user
 from core.utils import allocate_stock, apply_po_material_receipt, deduct_stock_from_allocation
@@ -939,3 +944,212 @@ class CopilotAccessTests(TestCase):
         response = self.client.get(reverse('ops_briefing'))
         self.assertContains(response, 'Owner one')
         self.assertNotContains(response, 'Other one')
+
+
+class StockoutForecastTests(TestCase):
+    """Decision support: days of stock cover against supplier lead time, counting POs that land before run-out."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = get_user_model().objects.create_user(username='planner', password='pw')
+        self.wh = Warehouse.objects.create(name='RM Depot', location_type='Storage')
+
+    def _material(self, sku, safe_days=90):
+        return Material.objects.create(
+            name=f'Mat {sku}', sku=sku, category='X', unit_of_measure='kg',
+            safe_storage_days=safe_days,
+        )
+
+    def _stock(self, material, qty, allocated=0):
+        return Batch.objects.create(
+            batch_number=f'B-{material.sku}-{qty}', material=material, quantity=Decimal(str(qty)),
+            allocated_quantity=Decimal(str(allocated)), status='Active', warehouse=self.wh,
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=300),
+        )
+
+    def _consume(self, material, total, window_days=30):
+        """One consumption RegistryLog of `total`, dated inside the window."""
+        row = RegistryLog.objects.create(
+            action_type='Consumed_For_Manufacturing', item_name=f'{material.name} (Run X)',
+            material=material, quantity_changed=Decimal(str(total)), warehouse=self.wh,
+        )
+        RegistryLog.objects.filter(pk=row.pk).update(
+            timestamp=timezone.now() - timedelta(days=window_days // 2)
+        )
+
+    def _lead(self, material, days):
+        s = Supplier.objects.create(name=f'Sup {material.sku}')
+        SupplierMaterial.objects.create(supplier=s, material=material, lead_time_days=days)
+
+    def _row(self, sku, **kw):
+        return next(r for r in stockout_forecast(**kw) if r['sku'] == sku)
+
+    def _po(self, material, qty, expected_in_days, number):
+        po = PurchaseOrder.objects.create(
+            po_number=number, supplier_name='S', target_warehouse=self.wh, status='Pending',
+            expected_delivery_date=date.today() + timedelta(days=expected_in_days),
+        )
+        PurchaseOrderDetail.objects.create(purchase_order=po, material=material, quantity_ordered=Decimal(str(qty)))
+
+    def _burning(self, sku):
+        """100 in stock, 10/day burn (10 days cover), 14-day lead -> critical on its own."""
+        m = self._material(sku)
+        self._stock(m, 100)
+        self._consume(m, 300)
+        self._lead(m, 14)
+        return m
+
+    def test_burn_rate_and_days_cover(self):
+        m = self._material('MK-2')
+        self._stock(m, 200)
+        self._consume(m, 300)          # 300 / 30 = 10 per day
+        row = self._row('MK-2')
+        self.assertAlmostEqual(row['daily_rate'], 10.0)
+        self.assertAlmostEqual(row['days_cover'], 20.0)
+
+    def test_critical_when_cover_below_lead_time(self):
+        m = self._material('MK-3')
+        self._stock(m, 80)
+        self._consume(m, 300)          # 10/day -> 8 days cover
+        self._lead(m, 14)
+        row = self._row('MK-3')
+        self.assertEqual(row['status'], 'critical')
+        self.assertFalse(row['lead_time_estimated'])
+
+    def test_already_out_is_critical(self):
+        m = self._material('MK-6')
+        self._stock(m, 100, allocated=100)   # available 0
+        self._consume(m, 300)
+        row = self._row('MK-6')
+        self.assertEqual(row['status'], 'critical')
+        self.assertEqual(row['days_cover'], 0.0)
+
+    def test_allocated_reduces_available(self):
+        m = self._material('MK-8')
+        self._stock(m, 300, allocated=100)
+        self._consume(m, 300)          # 10/day, available 200 -> 20 days cover
+        self.assertAlmostEqual(self._row('MK-8')['days_cover'], 20.0)
+
+    def test_po_arriving_before_run_out_extends_cover(self):
+        m = self._burning('MK-PO1')
+        self.assertEqual(self._row('MK-PO1')['status'], 'critical')
+        self._po(m, 500, 5, 'PO-PO1')
+        row = self._row('MK-PO1')
+        self.assertAlmostEqual(row['days_cover'], 60.0)        # (100 + 500) / 10
+        self.assertAlmostEqual(row['days_cover_on_hand'], 10.0)
+        self.assertEqual((row['on_order_counted'], row['on_order_late']), (500.0, 0.0))
+        self.assertEqual(row['status'], 'ok')                  # 60 - 14 = 46 days to reorder
+        self.assertEqual(row['next_po_number'], 'PO-PO1')
+
+    def test_po_arriving_after_run_out_does_not_help(self):
+        m = self._burning('MK-PO2')
+        self._po(m, 500, 20, 'PO-PO2')                         # stock gone on day 10
+        row = self._row('MK-PO2')
+        self.assertAlmostEqual(row['days_cover'], 10.0)
+        self.assertEqual((row['on_order_counted'], row['on_order_late']), (0.0, 500.0))
+        self.assertEqual(row['status'], 'critical')
+
+
+class CapacityForecastTests(TestCase):
+    """Decision support: weight-based warehouse utilisation and the projected date a warehouse fills up."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = get_user_model().objects.create_user(username='capacity', password='pw')
+        self.wh = Warehouse.objects.create(
+            name='Depot 1', location_type='Storage', total_capacity_mt=Decimal('1000'),
+        )
+        self.material = Material.objects.create(
+            name='Sand', sku='MAT-S', category='Bulk', unit_of_measure='MT',
+            safe_storage_days=365, weight_mt_per_unit=Decimal('1.0'),
+        )
+
+    def _batch(self, qty):
+        return Batch.objects.create(
+            batch_number=f'B-{self.wh.id}-{qty}', material=self.material,
+            quantity=Decimal(str(qty)), status='Active', warehouse=self.wh,
+            manufacturing_date=date.today(), expiry_date=date.today() + timedelta(days=300),
+        )
+
+    def _snap(self, pct, days_ago):
+        return WarehouseUtilizationSnapshot.objects.create(
+            warehouse=self.wh, snapshot_date=date.today() - timedelta(days=days_ago),
+            used_mt=Decimal(str(pct * 10)), capacity_mt=Decimal('1000'),
+            utilization_percent=Decimal(str(pct)),
+        )
+
+    def _row(self):
+        return next(r for r in capacity_forecast() if r['warehouse_id'] == self.wh.id)
+
+    def test_warehouse_utilization_weighted_by_unit_weight(self):
+        self._batch(300)  # 300 MT into a 1000 MT warehouse -> 30%
+        row = next(r for r in warehouse_utilization() if r['warehouse_id'] == self.wh.id)
+        self.assertAlmostEqual(row['used_mt'], 300.0)
+        self.assertAlmostEqual(row['utilization_percent'], 30.0)
+
+    def test_no_data_below_three_days_of_history(self):
+        self._snap(50, 1)
+        self._snap(55, 0)   # two calendar days since the first snapshot
+        self.assertEqual(self._row()['status'], 'no_data')
+
+    def test_filling_trend_projects_full_date(self):
+        # 60 (20d ago) -> 70 (10d ago) -> 80 (today), quiet days carried forward: slope ~0.85 pp/day, ~24 days to 100.
+        self._snap(60, 20)
+        self._snap(70, 10)
+        self._snap(80, 0)
+        row = self._row()
+        self.assertEqual(row['current_percent'], 80.0)
+        self.assertAlmostEqual(row['weekly_rate_pp'], 5.9, places=1)
+        self.assertAlmostEqual(row['days_to_full'], 23.7, places=0)
+        self.assertEqual(row['projected_full_date'], timezone.localdate() + timedelta(days=round(row['days_to_full'])))
+        self.assertEqual(row['status'], 'watch')  # within 60 days, past 14
+
+    def test_fast_fill_is_critical(self):
+        self._snap(80, 6)
+        self._snap(90, 3)
+        self._snap(97, 0)  # already >= 95
+        self.assertEqual(self._row()['status'], 'critical')
+
+    def test_flat_trend_is_stable(self):
+        self._snap(50, 20)
+        self._snap(50, 10)
+        self._snap(50, 0)
+        row = self._row()
+        self.assertEqual(row['status'], 'stable')
+        self.assertIsNone(row['projected_full_date'])
+
+
+class UnitWeightTests(TestCase):
+    """Decision support: every forecast runs on MT, so each unit must convert to the right weight."""
+
+    def setUp(self):
+        self.client = Client()
+        self.client.force_login(make_user(username='unitboss', password='pw', role='Manager'))
+
+    def _create(self, **extra):
+        self.client.post(reverse('product_list'), {'action': 'create_product', 'name': 'Unit Test', 'sku_auto': '1', **extra})
+        return Product.objects.filter(name='Unit Test').first()
+
+    def test_fixed_units_ignore_any_typed_weight(self):
+        from core.utils import read_unit_weight
+        self.assertEqual(read_unit_weight({}, 'MT'), (Decimal('1'), None))
+        self.assertEqual(read_unit_weight({'weight_kg_per_unit': '99'}, 'kg'), (Decimal('0.001'), None))
+        self.assertEqual(read_unit_weight({}, 'g'), (Decimal('0.000001'), None))
+
+    def test_pieces_take_kg_per_piece(self):
+        p = self._create(unit_of_measure='pcs', weight_kg_per_unit='15')
+        self.assertEqual(p.weight_mt_per_unit, Decimal('0.015'))
+        self.assertEqual(p.weight_kg_per_unit, Decimal('15'))
+
+    def test_pieces_without_a_weight_are_refused(self):
+        self.assertIsNone(self._create(unit_of_measure='pcs'))
+        self.assertIsNone(self._create(unit_of_measure='L', weight_kg_per_unit='0'))
+
+    def test_batch_weight_converts_to_mt(self):
+        from core.utils import format_stock_display
+        p = self._create(unit_of_measure='pcs', weight_kg_per_unit='50')
+        wh = Warehouse.objects.create(name='Unit WH', location_type='Storage')
+        b = Batch.objects.create(batch_number='B-UNIT', product=p, quantity=Decimal('385'), status='Active', warehouse=wh,
+                                 manufacturing_date='2026-01-01', expiry_date='2027-01-01')
+        self.assertEqual(b.total_weight_mt, Decimal('19.25'))
+        self.assertEqual(format_stock_display(385, p), '385 pcs')

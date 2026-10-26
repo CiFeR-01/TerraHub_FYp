@@ -262,6 +262,16 @@ def incoming_from_started_runs(so, product):
     return Decimal(str(started)) + Decimal(str(in_qa))
 
 
+def so_line_deficit(so, product):
+    """Units of `product` the order still needs after reservations, shipments and runs already under way.
+    Runs that haven't started don't count: they can still be scrapped if stock is moved in instead."""
+    line = so.items.filter(product=product).first()
+    if not line:
+        return Decimal('0')
+    covered = so_line_commitment(so, product, line.quantity_shipped)['total'] + incoming_from_started_runs(so, product)
+    return max(Decimal(str(line.quantity_ordered)) - covered, Decimal('0'))
+
+
 def create_shortage_production_runs(so, plant, user):
     """Makes sure every SO line's shortfall is being produced: resizes a run that hasn't started to match it,
     or creates a 'Pending Approval' run (a top-up if one is already under way). Returns True if any run was created or resized."""

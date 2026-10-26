@@ -170,6 +170,11 @@ REGISTRY: dict[str, tuple[object, str, str]] = {
         "Shelf-life extensions on a batch may add up to this share (%) of its original shelf life "
         "without approval; anything beyond goes to the Action Center.",
     ),
+    "qa_extension_max_days": (
+        730,
+        "int",
+        "Longest single shelf-life extension (days) anyone can request, even with approval. At most 730 (2 years).",
+    ),
     "qa_writeoff_approval_rm": (
         5000.0,
         "float",
@@ -221,6 +226,7 @@ LIMITS = {
     "qa_expiry_warning_days": (0, 365),
     "qa_quarantine_alert_days": (1, 365),
     "qa_extension_cap_pct": (0, 500),
+    "qa_extension_max_days": (1, 730),
     "qa_writeoff_approval_rm": (0, None),
     "qa_writeoff_undo_days": (0, 365),
 }
@@ -233,7 +239,7 @@ SECTIONS = [
     ("Purchasing & sales", ["po_default_lead_time_days", "so_at_risk_window_days"]),
     ("Logistics", ["logistics_at_risk_window_days", "logistics_stall_days"]),
     ("Quality", ["qa_hold_new_finished_goods", "qa_near_expiry_days", "qa_expiry_warning_days", "qa_auto_hold_expired",
-                 "qa_quarantine_alert_days", "qa_extension_cap_pct", "qa_writeoff_approval_rm",
+                 "qa_quarantine_alert_days", "qa_extension_cap_pct", "qa_extension_max_days", "qa_writeoff_approval_rm",
                  "qa_writeoff_undo_days", "qa_release_needs_second_person"]),
     ("Stockout & reorder", ["stockout_reorder_now_days", "stockout_watch_days"]),
     ("Inventory capacity", ["capacity_trend_window_days", "capacity_critical_percent", "capacity_critical_days",
