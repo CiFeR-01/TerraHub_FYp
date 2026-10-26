@@ -2292,9 +2292,10 @@ class CapacityForecastTests(TestCase):
 
     def test_snapshot_command_is_idempotent_per_day(self):
         from django.core.management import call_command
+        from io import StringIO
         self._batch(400)
-        call_command('snapshot_utilization')
-        call_command('snapshot_utilization')
+        call_command('snapshot_utilization', stdout=StringIO())
+        call_command('snapshot_utilization', stdout=StringIO())
         rows = WarehouseUtilizationSnapshot.objects.filter(warehouse=self.wh)
         self.assertEqual(rows.count(), 1)
         self.assertAlmostEqual(float(rows.first().utilization_percent), 40.0)

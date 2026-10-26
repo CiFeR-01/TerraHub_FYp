@@ -44,7 +44,6 @@ def backfill_completed_date(apps, schema_editor):
             po.completed_date = max(dates)
             po.save(update_fields=["completed_date"])
             filled += 1
-    print(f"\n  PurchaseOrder.completed_date backfill: filled {filled}")
 
 
 def noop(apps, schema_editor):

@@ -25,7 +25,6 @@ def backfill(apps, schema_editor):
         s.billing_mode = mode
         s.rent_estimated = True
     Snapshot.objects.bulk_update(rows, ["daily_rent_cost", "billing_mode", "rent_estimated"], batch_size=500)
-    print(f"\n  snapshot rent backfill: estimated {len(rows)} row(s)")
 
 
 def clear(apps, schema_editor):
