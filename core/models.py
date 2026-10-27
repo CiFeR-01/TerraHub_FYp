@@ -1,4 +1,5 @@
 from django.db import models
+from django.core.validators import MinValueValidator
 from django.contrib.auth.models import AbstractUser
 from datetime import date
 from django.utils import timezone
@@ -77,8 +78,15 @@ class Warehouse(models.Model):
     )
     rental_billing_method = models.CharField(max_length=20, choices=BILLING_CHOICES, default='Usage')
 
-    rental_cost_per_mt = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="Daily rental cost per Metric Ton")
+    rental_cost_per_mt = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="Rental cost per Metric Ton per billing term")
+    rental_term_days = models.PositiveIntegerField(
+        default=1, validators=[MinValueValidator(1)],
+        help_text="Days in one billing term. 1 = daily rate; 30 = each lot is charged the rate per MT for every 30 days (or part) it stays.")
     total_capacity_mt = models.DecimalField(max_digits=12, decimal_places=2, default=1000.00, help_text="Total capacity in Metric Tons")
+
+    @property
+    def term_label(self):
+        return "per day" if self.rental_term_days == 1 else f"per {self.rental_term_days} days"
 
     def __str__(self):
         return f"{self.name} ({self.ownership_type})"
@@ -308,10 +316,12 @@ class Batch(models.Model):
     allocated_quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     rental_rate_per_mt = models.DecimalField(
         max_digits=10, decimal_places=2, null=True, blank=True,
-        help_text="Rate charged for this batch's rent (RM/MT/day), locked in at receipt "
+        help_text="Rate charged for this batch's rent (RM/MT per the warehouse's billing term), locked in at receipt "
                    "(warehouse's rate at the time, or the PO line's negotiated override). "
                    "Immune to later changes to Warehouse.rental_cost_per_mt."
     )
+    # Day the lot arrived at its current facility; billing terms count from here. Transfers create a new batch, so they restart it.
+    term_start_date = models.DateField(default=date.today)
     closed_date = models.DateField(
         null=True, blank=True,
         help_text="Date this batch stopped costing rent - fully consumed to zero, or "
@@ -333,6 +343,24 @@ class Batch(models.Model):
     @property
     def available_quantity(self):
         return self.quantity - self.allocated_quantity
+
+    def rent_term(self, as_of=None):
+        """Billing-term position at a Usage-billed rented facility: {'term_no', 'ends_in', 'rate', 'charged'}, else None.
+        A term is charged in full once it starts (31 days at 30-day terms = 2 terms)."""
+        w = self.warehouse
+        if w is None or w.ownership_type == 'Internal' or w.rental_billing_method != 'Usage':
+            return None
+        end = self.closed_date or as_of or date.today()
+        elapsed = max((end - self.term_start_date).days, 0)
+        term_no = elapsed // w.rental_term_days + 1
+        rate = self.rental_rate_per_mt if self.rental_rate_per_mt is not None else w.rental_cost_per_mt
+        return {
+            'term_no': term_no,
+            'ends_in': term_no * w.rental_term_days - elapsed,
+            'rate': rate,
+            # ponytail: uses today's MT for every term; per-term opening MT would need quantity history
+            'charged': self.total_weight_mt * rate * term_no,
+        }
 
     @property
     def days_until_expiry(self):

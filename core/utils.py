@@ -999,11 +999,12 @@ def deduct_stock_from_allocation(order_type, order, user=None):
             alloc.delete()
 
 
-def apply_po_material_receipt(po_detail, delta_qty, user, expiry_date=None, manufacturing_date=None, into_batch=None):
+def apply_po_material_receipt(po_detail, delta_qty, user, expiry_date=None, manufacturing_date=None, into_batch=None, received_date=None):
     """Single source for goods received against a PO: adds delta_qty to quantity_received, creates a Batch and recomputes the PO status.
     Stock arrives on hold until the PO is completed (then release_po_held_batches frees it). Dates default to today and the
     material's shelf life; inspect_on_receipt materials, and stock arriving after the PO was completed, also get a QA check.
     into_batch: a still-held batch from the same delivery line to add to instead of starting a new one.
+    received_date: when the goods actually arrived (a back-dated receipt); the billing term counts from it. Defaults to today.
     Returns the batch the stock went into, or None when the receipt was lowered."""
     import uuid
     from datetime import date, timedelta
@@ -1075,7 +1076,8 @@ def apply_po_material_receipt(po_detail, delta_qty, user, expiry_date=None, manu
             warehouse=po.target_warehouse,
             purchase_order=po,
             location=f"Zone {loc.zone_name} Aisle {loc.aisle}" if loc else None,
-            rental_rate_per_mt=rental_rate
+            rental_rate_per_mt=rental_rate,
+            term_start_date=received_date or date.today(),
         )
         RegistryLog.objects.create(
             action_type='Inbound',
@@ -1160,6 +1162,8 @@ def receive_transfer_into_destination(shipment, user):
             continue
         b = item.batch
         rcv_qty = Decimal(str(item.received_quantity))
+        # Billing terms count from the first receipt's date, not the day receiving was finalised
+        first_received = item.receipts.order_by('received_date').values_list('received_date', flat=True).first()
 
         # Keep the original batch number and add only this transfer's id so repeated moves don't stack suffixes past the column length.
         root_number = re.sub(r'(-TRF-\d+)+$', '', b.batch_number)
@@ -1175,6 +1179,7 @@ def receive_transfer_into_destination(shipment, user):
                 'warehouse': dest,
                 'purchase_order': b.purchase_order,
                 'produced_in': b.produced_in,
+                'term_start_date': first_received or date.today(),
             }
         )
         if not created:
@@ -1239,7 +1244,7 @@ def create_rent_transfer(origin, destination, candidates, user):
             direction='Transfer', status='Draft',
             origin_warehouse=origin, destination_warehouse=destination, last_edited_by=user,
         )
-        total_daily = Decimal('0')
+        total_est = Decimal('0')
         for batch, c, qty, moved_mt in planned:
             ShipmentItem.objects.create(shipment=shipment, material=batch.material, product=batch.product,
                                         batch=batch, quantity=qty)
@@ -1248,20 +1253,24 @@ def create_rent_transfer(origin, destination, candidates, user):
             StockAllocation.objects.create(batch=batch, shipment=shipment, quantity=qty)
 
             rate = Decimal(str(c['rate_per_mt']))
-            daily = (moved_mt * rate).quantize(Decimal('0.01'))
-            total_daily += daily
+            term_days = int(c.get('term_days', 1))
+            # Nothing saved when the lot is likely gone before its next term
+            daily = (moved_mt * rate / term_days).quantize(Decimal('0.01')) if int(c['terms_avoided']) else Decimal('0')
+            est_total = (daily * int(c['stay_days']) if term_days == 1
+                         else (moved_mt * rate * int(c['terms_avoided'])).quantize(Decimal('0.01')))
+            total_est += est_total
             RentSuggestion.objects.create(
                 decision='Accepted', decided_by=user, batch=batch, batch_number=batch.batch_number,
                 item_name=(batch.material.name if batch.material_id else batch.product.name),
                 origin_warehouse=origin, destination_warehouse=destination, shipment=shipment,
                 move_mt=moved_mt.quantize(Decimal('0.001')), rate_per_mt=rate,
-                est_daily_saving=daily, est_total_saving=(daily * int(c['stay_days'])),
+                est_daily_saving=daily, est_total_saving=est_total,
                 est_stay_days=int(c['stay_days']),
             )
         OrderTimeline.objects.create(
             shipment=shipment,
             action=(f"Drafted from a Rent Opportunities suggestion: {len(planned)} batch(es) from {origin.name} "
-                    f"to {destination.name}, estimated to save RM {total_daily}/day in rent."),
+                    f"to {destination.name}, estimated to save RM {total_est} in rent."),
             user=user,
         )
     return shipment

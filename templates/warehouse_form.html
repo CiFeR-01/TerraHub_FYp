@@ -80,16 +80,24 @@
                     Billing & Cost Settings
                 </h4>
                 
+                <div class="form-group">
+                    <label class="form-label" for="id_rental_billing_method">Billing Basis Method</label>
+                    {{ form.rental_billing_method }}
+                </div>
+
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
                     <div class="form-group" style="margin: 0;">
-                        <label class="form-label" for="id_rental_billing_method">Billing Basis Method</label>
-                        {{ form.rental_billing_method }}
-                    </div>
-                    <div class="form-group" style="margin: 0;">
-                        <label class="form-label" for="id_rental_cost_per_mt">Daily Rental Cost (RM / MT)</label>
+                        <label class="form-label" for="id_rental_cost_per_mt">Rental Rate (RM / MT)</label>
                         {{ form.rental_cost_per_mt }}
                     </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label class="form-label" for="id_rental_term_days">Billing Term (days)</label>
+                        {{ form.rental_term_days }}
+                    </div>
                 </div>
+                <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 0.35rem;">
+                    The rate is charged per MT for each term a lot starts. Use 1 for a daily rate, or 30 when the provider bills per 30 days (31 days = 2 terms).
+                </span>
             </div>
         </div>
 
@@ -132,7 +140,6 @@
         const ownershipSelect = document.getElementById('id_ownership_type');
         const billingSection = document.getElementById('billing-section');
         const billingMethodSelect = document.getElementById('id_rental_billing_method');
-        const costInput = document.getElementById('id_rental_cost_per_mt');
 
         function toggleBillingSection() {
             if (ownershipSelect.value === 'Internal') {
@@ -140,14 +147,14 @@
                 billingSection.style.maxHeight = '0px';
                 billingSection.style.opacity = '0';
                 billingSection.style.pointerEvents = 'none';
-                
-                // Set default/reset values
-                costInput.value = '0.00';
+                billingSection.style.overflow = 'hidden';
+                // Rate and term are kept while hidden; the server zeroes them only when saved as Internal
             } else {
                 // Show billing fields
                 billingSection.style.maxHeight = '400px';
                 billingSection.style.opacity = '1';
                 billingSection.style.pointerEvents = 'auto';
+                billingSection.style.overflow = 'visible';  // don't clip the fields' focus ring
             }
         }
 

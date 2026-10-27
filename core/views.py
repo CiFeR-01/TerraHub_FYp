@@ -11,6 +11,7 @@ from django.db.models import Sum, F, Case, When, Value, DecimalField, Count, Q, 
 from django.db.models.functions import Abs, Coalesce, TruncWeek
 from django.core.paginator import Paginator
 from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import csv
@@ -1072,15 +1073,35 @@ def batch_detail_view(request, batch_number):
 class WarehouseForm(forms.ModelForm):
     class Meta:
         model = Warehouse
-        fields = ['name', 'location_type', 'ownership_type', 'rental_billing_method', 'rental_cost_per_mt', 'total_capacity_mt']
+        fields = ['name', 'location_type', 'ownership_type', 'rental_billing_method', 'rental_cost_per_mt', 'rental_term_days', 'total_capacity_mt']
         widgets = {
             'name': forms.TextInput(attrs={'class': 'form-input', 'placeholder': 'e.g. Port Klang Hub B', 'required': 'required'}),
             'location_type': forms.Select(attrs={'class': 'form-select', 'required': 'required'}),
             'ownership_type': forms.Select(attrs={'class': 'form-select', 'id': 'id_ownership_type', 'required': 'required'}),
             'rental_billing_method': forms.Select(attrs={'class': 'form-select', 'id': 'id_rental_billing_method'}),
             'rental_cost_per_mt': forms.NumberInput(attrs={'class': 'form-input', 'step': '0.01', 'id': 'id_rental_cost_per_mt'}),
+            'rental_term_days': forms.NumberInput(attrs={'class': 'form-input', 'step': '1', 'min': '1', 'id': 'id_rental_term_days'}),
             'total_capacity_mt': forms.NumberInput(attrs={'class': 'form-input', 'step': '0.1', 'required': 'required'}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        term = self.fields['rental_term_days']
+        term.required = False  # blank = daily (1)
+        term.label = "Billing Term"
+        term.validators = [MinValueValidator(1, "Billing Term must be at least 1 day (1 = daily).")]
+
+    def clean_rental_term_days(self):
+        term = self.cleaned_data.get('rental_term_days')
+        return 1 if term is None else term
+
+    def clean(self):
+        cleaned = super().clean()
+        # Internal facilities are free; reset here (not in the page's JS) so toggling ownership on the form loses nothing until save
+        if cleaned.get('ownership_type') == 'Internal':
+            cleaned['rental_cost_per_mt'] = Decimal('0')
+            cleaned['rental_term_days'] = 1
+        return cleaned
 
     def clean_rental_cost_per_mt(self):
         rate = self.cleaned_data.get('rental_cost_per_mt')
@@ -4960,7 +4981,7 @@ def record_item_receipt(shipment, item, qty, received_date, user, notes=None):
     if shipment.direction == 'Inbound' and shipment.purchase_order and item.material:
         detail = PurchaseOrderDetail.objects.filter(purchase_order=shipment.purchase_order, material=item.material).first()
         if detail:
-            batch = apply_po_material_receipt(detail, qty, user, into_batch=item.batch)
+            batch = apply_po_material_receipt(detail, qty, user, into_batch=item.batch, received_date=received_date)
             into = f" into Batch {batch.batch_number}" if batch else ""
             if batch and item.batch_id != batch.id:
                 item.batch = batch
@@ -5480,14 +5501,20 @@ def shipment_detail_view(request, pk):
                 # A PO delivery credits the PO and creates stock, so it can't take more than the PO line still needs (as on the PO page)
                 po_line = (PurchaseOrderDetail.objects.filter(purchase_order=shipment.purchase_order, material=item.material).first()
                            if shipment.direction == 'Inbound' and shipment.purchase_order and item.material else None)
+                received_date = date.fromisoformat(request.POST.get('received_date') or date.today().isoformat())
                 if qty <= 0:
                     messages.error(request, "Enter a quantity greater than zero.")
+                elif received_date > date.today():
+                    messages.error(request, "The received date can't be in the future.")
+                elif shipment.direction == 'Transfer' and (item.received_quantity or 0) + qty > item.quantity:
+                    # A transfer receipt creates the destination batch, so it can't exceed what left the origin
+                    messages.error(request, f"That would receive {(item.received_quantity or 0) + qty} of the {item.quantity} "
+                                            "sent on this transfer.")
                 elif po_line and po_line.quantity_received + qty > po_line.quantity_ordered:
                     messages.error(request, f"That would receive {po_line.quantity_received + qty} of the {po_line.quantity_ordered} "
                                             f"ordered on {shipment.purchase_order.po_number}. If the supplier sent more, "
                                             "change the PO line's ordered quantity first.")
                 else:
-                    received_date = request.POST.get('received_date') or date.today()
                     item_name = record_item_receipt(shipment, item, qty, received_date, request.user, request.POST.get('notes', '').strip())
                     item.refresh_from_db()
                     messages.success(request, f"Logged {qty} received for {item_name}. Running total: {item.received_quantity}.")

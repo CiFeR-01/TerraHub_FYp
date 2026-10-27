@@ -202,7 +202,7 @@
                     <input type="number" step="0.01" name="unit_price" placeholder="Optional" class="form-input" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
                 </div>
                 <div>
-                    <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Rental Rate (RM/MT/day)</label>
+                    <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Rental Rate (RM/MT {{ po.target_warehouse.term_label|default:'per term' }})</label>
                     <input type="number" step="0.01" name="negotiated_rental_rate_per_mt" placeholder="Optional — uses warehouse rate" class="form-input" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
                 </div>
                 <button type="submit" class="btn btn-primary" style="padding:0.5rem 1rem; font-size:0.85rem; white-space:nowrap;">Add Item</button>

@@ -79,8 +79,8 @@
         <div style="position: absolute; top: 0; left: 0; right: 0; height: 3px; background: {% if f.raw_ownership == 'Internal' %}var(--accent-grad){% elif f.raw_ownership == 'ExternalProvider' %}linear-gradient(135deg, #f59e0b, #f97316){% else %}linear-gradient(135deg, #10b981, #059669){% endif %};"></div>
 
         <!-- Card Header -->
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; padding-top: 0.5rem;">
-            <div>
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 0.75rem; margin-bottom: 1rem; padding-top: 0.5rem;">
+            <div style="min-width: 0;">
                 <h3 style="font-family: 'Outfit', sans-serif; font-size: 1.1rem; font-weight: 700; color: var(--text-main); margin: 0;">
                     {{ f.name }}
                 </h3>
@@ -92,7 +92,7 @@
                 </div>
             </div>
             {% if perms.core.change_warehouse %}
-            <a href="{% url 'warehouse_edit' f.id %}" class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.75rem;">
+            <a href="{% url 'warehouse_edit' f.id %}" class="btn btn-secondary" style="padding: 0.3rem 0.7rem; font-size: 0.75rem; white-space: nowrap; flex-shrink: 0;">
                 ⚙️ Edit
             </a>
             {% endif %}
