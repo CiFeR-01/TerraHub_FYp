@@ -86,7 +86,7 @@
                         {% if selected_warehouse.ownership_type == 'Internal' %}
                             Free (Owned)
                         {% else %}
-                            RM{{ selected_warehouse.rental_cost_per_mt }}/MT
+                            RM{{ selected_warehouse.rental_cost_per_mt }}/MT {{ selected_warehouse.term_label }}
                         {% endif %}
                     {% else %}
                         {{ global_kpis.total_warehouses }}

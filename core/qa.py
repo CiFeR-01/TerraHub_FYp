@@ -138,6 +138,7 @@ def split_batch(batch, quantity, user, why):
         manufacturing_date=batch.manufacturing_date, expiry_date=batch.expiry_date,
         original_expiry_date=batch.original_expiry_date, extension_days_total=batch.extension_days_total,
         warehouse=batch.warehouse, location=batch.location, rental_rate_per_mt=batch.rental_rate_per_mt,
+        term_start_date=batch.term_start_date,
         parent_batch=batch,
     )
     batch.refresh_from_db(fields=['allocated_quantity'])

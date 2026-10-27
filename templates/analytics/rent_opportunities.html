@@ -195,7 +195,7 @@
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Weight</th>
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Rate / MT</th>
                         <th style="padding:0.5rem 0.75rem;">Move To</th>
-                        <th style="padding:0.5rem 0.75rem; text-align:right;">Daily Saving</th>
+                        <th style="padding:0.5rem 0.75rem; text-align:right;">Saving / Term</th>
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Would Stay</th>
                         <th style="padding:0.5rem 0.75rem; text-align:right;">Total Saving</th>
                     </tr>
@@ -207,11 +207,11 @@
                         <td style="padding:0.55rem 0.75rem; font-family:monospace; font-size:0.8rem;">{{ c.batch_number }}</td>
                         <td style="padding:0.55rem 0.75rem;">{{ c.item }}</td>
                         <td style="padding:0.55rem 0.75rem; text-align:right;">{{ c.move_mt|mt_display }}{% if c.move_mt < c.mt %}<div style="font-size:0.72rem; color:var(--text-muted);">of {{ c.mt|mt_display }} (destination full)</div>{% endif %}</td>
-                        <td style="padding:0.55rem 0.75rem; text-align:right;">RM {{ c.rate_per_mt|floatformat:2 }}</td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right;">RM {{ c.rate_per_mt|floatformat:2 }}{% if c.term_days > 1 %}<div style="font-size:0.72rem; color:var(--text-muted);">per {{ c.term_days }} days</div>{% endif %}</td>
                         <td style="padding:0.55rem 0.75rem;">{{ c.destination }}</td>
-                        <td style="padding:0.55rem 0.75rem; text-align:right;">RM {{ c.daily_saving|floatformat:2 }}</td>
-                        <td style="padding:0.55rem 0.75rem; text-align:right;">~{{ c.stay_days }} day{{ c.stay_days|pluralize }}<div style="font-size:0.72rem; color:var(--text-muted);">{% if c.stay_reason == 'expires' %}until it expires{% elif c.stay_reason == 'used up' %}until used up{% else %}capped{% endif %}</div></td>
-                        <td style="padding:0.55rem 0.75rem; text-align:right; font-weight:700; color:var(--success-strong);">RM {{ c.total_saving|floatformat:2 }}</td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right;">RM {{ c.next_term_saving|floatformat:2 }}<div style="font-size:0.72rem; color:var(--text-muted);">{% if c.term_days > 1 %}per {{ c.term_days }} days{% else %}per day{% endif %}</div></td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right;">~{{ c.stay_days }} day{{ c.stay_days|pluralize }}<div style="font-size:0.72rem; color:var(--text-muted);">{% if c.stay_reason == 'expires' %}until it expires{% elif c.stay_reason == 'used up' %}until used up{% else %}capped{% endif %}</div>{% if c.term_days > 1 %}<div style="font-size:0.72rem; color:var(--text-muted);">{% if c.terms_avoided %}saves {{ c.terms_avoided }} term{{ c.terms_avoided|pluralize }}; move within {{ c.term_ends_in }} day{{ c.term_ends_in|pluralize }}{% else %}likely gone before its next term in {{ c.term_ends_in }} day{{ c.term_ends_in|pluralize }}; saves RM {{ c.next_term_saving|floatformat:2 }} if it stays longer{% endif %}</div>{% endif %}</td>
+                        <td style="padding:0.55rem 0.75rem; text-align:right; font-weight:700; color:var(--success-strong);">RM {{ c.total_saving|floatformat:2 }}{% if c.terms_avoided %}<div style="font-size:0.72rem; font-weight:400; color:var(--text-muted);">RM {{ c.next_term_saving|floatformat:2 }} &times; {{ c.terms_avoided|floatformat:0 }} {% if c.term_days > 1 %}term{{ c.terms_avoided|pluralize }}{% else %}days{% endif %}</div>{% endif %}</td>
                     </tr>
                     {% endfor %}
                 </tbody>

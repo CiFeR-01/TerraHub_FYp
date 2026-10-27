@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import math
 import re
 from decimal import Decimal
 
@@ -877,12 +878,12 @@ def snapshot_warehouse_utilization(snap_date=None, warehouse_ids=None):
 
 def estimate_snapshot_rent(snapshot, warehouse):
     """(daily_cost, billing_mode) for a snapshot row that has no recorded rent:
-    the day's tonnage x the warehouse's CURRENT rate. Same rule as migration 0058."""
+    the day's tonnage x the warehouse's CURRENT rate, spread over its billing term."""
     if warehouse.ownership_type == 'Internal':
         return 0.0, 'Internal'
     if warehouse.rental_billing_method == 'Overall':
-        return float(warehouse.total_capacity_mt * warehouse.rental_cost_per_mt), 'Overall Capacity'
-    return float(snapshot.used_mt * warehouse.rental_cost_per_mt), 'Usage'
+        return float(warehouse.total_capacity_mt * warehouse.rental_cost_per_mt) / warehouse.rental_term_days, 'Overall Capacity'
+    return float(snapshot.used_mt * warehouse.rental_cost_per_mt) / warehouse.rental_term_days, 'Usage'
 
 
 def rent_history(days=180, end=None):
@@ -1076,7 +1077,7 @@ def open_batch_rent_expr():
 
 def warehouse_rent_burn(warehouse_ids=None):
     """Per-warehouse daily rent burn (single source of truth for rental cost). Internal = 0, Overall = capacity x rate,
-    Usage = sum of each open batch's effective rate via open_batch_rent_expr()."""
+    Usage = sum of each open batch's effective rate via open_batch_rent_expr(); both spread over the billing term (rate / term days)."""
     from .models import Warehouse
 
     qs = Warehouse.objects.all()
@@ -1088,9 +1089,9 @@ def warehouse_rent_burn(warehouse_ids=None):
         if w.ownership_type == 'Internal':
             daily_cost, billing_mode = 0.0, 'Internal'
         elif w.rental_billing_method == 'Overall':
-            daily_cost, billing_mode = float(w.total_capacity_mt * w.rental_cost_per_mt), 'Overall Capacity'
+            daily_cost, billing_mode = float(w.total_capacity_mt * w.rental_cost_per_mt) / w.rental_term_days, 'Overall Capacity'
         else:
-            daily_cost, billing_mode = float(w.batch_rent or 0), 'Usage'
+            daily_cost, billing_mode = float(w.batch_rent or 0) / w.rental_term_days, 'Usage'
         rows.append({
             'warehouse_id': w.id,
             'name': w.name,
@@ -1281,6 +1282,18 @@ def incoming_transfer_mt():
     return incoming
 
 
+def terms_avoided_by_moving(batch, term_days, stay_days, today):
+    """(billing terms a move today avoids, days until the lot's next term starts) for a lot that would otherwise stay `stay_days`.
+    The current term is already paid, so only terms starting within the stay count. Daily billing (term 1): every remaining day counts."""
+    if term_days == 1:
+        return stay_days, 0
+    elapsed = max((today - batch.term_start_date).days, 0)
+    next_start = term_days - elapsed % term_days
+    if stay_days <= next_start:
+        return 0, next_start
+    return math.ceil((stay_days - next_start) / term_days), next_start
+
+
 @cached_analytics
 def rent_reduction_opportunities():
     """DSS: for each Usage-billed rented warehouse, suggests batches to move into our own storage warehouses and estimates the rent saved.
@@ -1337,20 +1350,23 @@ def rent_reduction_opportunities():
         rate = float(b.rental_rate_per_mt if b.rental_rate_per_mt is not None else w.rental_cost_per_mt)
         stay_days, stay_reason = _days_batch_would_stay(b, rates, ahead, horizon)
         mt = float(b.available_weight_mt)
-        if mt * rate * stay_days < min_saving:
+        terms, term_ends_in = terms_avoided_by_moving(b, w.rental_term_days, stay_days, today)
+        # Stay is an estimate: a lot expected to leave before its next term is still shown (listed last),
+        # judged on the one term it would cost if it stays longer.
+        if mt * rate * max(terms, 1) < min_saving:
             origins[w.id]['excluded_low_saving'] += 1
             continue  # leaves soon / too small - not worth relocating
-        pool.append((rate * stay_days, rate, stay_days, stay_reason, mt, b, w.id))
+        pool.append((rate * terms, rate, stay_days, stay_reason, mt, b, w.id, terms, term_ends_in, w.rental_term_days))
 
     # Place best saving per MT first, drawing down each destination's free space.
     pool.sort(key=lambda p: (-p[0], -p[4], p[5].batch_number))
-    for per_mt, rate, stay_days, stay_reason, mt, b, origin_id in pool:
+    for per_mt, rate, stay_days, stay_reason, mt, b, origin_id, terms, term_ends_in, term_days in pool:
         dest_id = max(remaining, key=lambda d: remaining[d])
         if remaining[dest_id] <= 0:
             break  # every destination is full
         take_mt = min(mt, remaining[dest_id])
         total = take_mt * per_mt
-        if total < min_saving:
+        if take_mt * rate * max(terms, 1) < min_saving:
             origins[origin_id]['excluded_low_saving'] += 1
             continue  # only a sliver of space left for it
         remaining[dest_id] -= take_mt
@@ -1361,7 +1377,12 @@ def rent_reduction_opportunities():
             'mt': round(mt, 3),
             'move_mt': round(take_mt, 3),
             'rate_per_mt': rate,
-            'daily_saving': round(take_mt * rate, 2),
+            # A lot likely gone before its next term saves nothing, so it adds nothing to the daily totals (still listed)
+            'daily_saving': round(take_mt * rate / term_days, 2) if terms else 0.0,
+            'term_days': term_days,
+            'terms_avoided': terms,
+            'term_ends_in': term_ends_in,
+            'next_term_saving': round(take_mt * rate, 2),
             'stay_days': round(stay_days),
             'stay_reason': stay_reason,
             'total_saving': round(total, 2),

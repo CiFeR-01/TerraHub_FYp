@@ -9439,3 +9439,78 @@ class StockAuditRejectTests(TestCase):
         from core.analytics import audit_accuracy
         self._reject()
         self.assertEqual(audit_accuracy()['by_item'], [])
+
+
+class RentalBillingTermTests(TestCase):
+    """Warehouse.rental_term_days: rate is RM/MT per term, a started term is charged in full."""
+
+    def setUp(self):
+        from datetime import date
+        from decimal import Decimal
+        self.today = date.today()
+        self.material = Material.objects.create(
+            name='Term Sand', sku='MAT-TS', category='Bulk', unit_of_measure='MT',
+            safe_storage_days=365, weight_mt_per_unit=Decimal('1.0'),
+        )
+        self.rented = Warehouse.objects.create(
+            name='Term Depot', location_type='Storage', ownership_type='ExternalProvider',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('8.00'), rental_term_days=30,
+            total_capacity_mt=Decimal('1000'),
+        )
+
+    def _batch(self, qty, started_days_ago=0, expiry_days=300):
+        from datetime import timedelta
+        from decimal import Decimal
+        return Batch.objects.create(
+            batch_number=f'T-{qty}-{started_days_ago}-{expiry_days}', material=self.material,
+            quantity=Decimal(str(qty)), status='Active', warehouse=self.rented,
+            manufacturing_date=self.today, expiry_date=self.today + timedelta(days=expiry_days),
+            term_start_date=self.today - timedelta(days=started_days_ago),
+        )
+
+    def _depot(self):
+        from decimal import Decimal
+        Warehouse.objects.create(
+            name='Own Depot', location_type='Storage', ownership_type='Internal',
+            rental_billing_method='Usage', rental_cost_per_mt=Decimal('0'), total_capacity_mt=Decimal('5000'),
+        )
+
+    def test_daily_burn_spreads_the_term_rate(self):
+        from core.analytics import warehouse_rent_burn
+        self._batch(300)
+        row = next(r for r in warehouse_rent_burn() if r['warehouse_id'] == self.rented.id)
+        self.assertAlmostEqual(row['daily_cost'], 80.0)  # 300 MT x 8 / 30
+
+    def test_new_lot_starts_its_term_today(self):
+        from datetime import timedelta
+        b = Batch.objects.create(batch_number='T-NEW', material=self.material, quantity=1, warehouse=self.rented,
+                                 manufacturing_date=self.today - timedelta(days=90), expiry_date=self.today + timedelta(days=9))
+        self.assertEqual(b.term_start_date, self.today)
+        self.assertEqual((b.rent_term()['term_no'], b.rent_term()['ends_in']), (1, 30))
+
+    def test_day_31_is_a_second_full_term(self):
+        b = self._batch(171, started_days_ago=30)  # 31st day in store
+        t = b.rent_term()
+        self.assertEqual((t['term_no'], t['ends_in'], float(t['charged'])), (2, 30, 171 * 8 * 2))
+
+    def test_qa_split_keeps_the_lot_term(self):
+        from core.qa import split_batch
+        b = self._batch(100, started_days_ago=12)
+        child = split_batch(b, 40, None, 'test')
+        self.assertEqual(child.term_start_date, b.term_start_date)
+
+    def test_move_only_saves_terms_not_yet_started(self):
+        from core.analytics import rent_reduction_opportunities
+        self._batch(100, started_days_ago=10, expiry_days=100)  # next term in 20 days, then 80 more days
+        self._depot()
+        c = rent_reduction_opportunities()[0]['candidate_batches'][0]
+        self.assertEqual((c['terms_avoided'], c['term_ends_in'], c['total_saving']), (3, 20, 2400.0))  # 100 MT x 8 x 3
+
+    def test_lot_expected_to_leave_before_its_next_term_is_still_shown_last(self):
+        from core.analytics import rent_reduction_opportunities
+        self._batch(50, started_days_ago=10, expiry_days=15)   # estimated gone before the term ends
+        self._batch(100, started_days_ago=10, expiry_days=100)
+        self._depot()
+        cands = rent_reduction_opportunities()[0]['candidate_batches']
+        self.assertEqual([(c['terms_avoided'], c['total_saving'], c['next_term_saving']) for c in cands],
+                         [(3, 2400.0, 800.0), (0, 0.0, 400.0)])

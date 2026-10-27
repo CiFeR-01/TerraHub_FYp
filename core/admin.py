@@ -114,7 +114,7 @@ class BatchAdminForm(forms.ModelForm):
 @admin.register(Batch)
 class BatchAdmin(EditableAdmin):
     form = BatchAdminForm
-    readonly_fields = ('quantity', 'allocated_quantity')
+    readonly_fields = ('quantity', 'allocated_quantity', 'term_start_date')
     list_display = ('batch_number', 'status', 'material', 'product', 'quantity',
                      'warehouse', 'rental_rate_per_mt', 'closed_date', 'expiry_date')
     list_filter = ('status', 'warehouse')
