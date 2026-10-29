@@ -22,9 +22,11 @@
         <a href="{% url 'export_products_csv' %}" class="btn btn-secondary" style="padding: 0.5rem 0.85rem; font-size: 0.85rem; text-decoration:none;">
             📥 Export Products
         </a>
+        {% if perms.core.add_product %}
         <button class="btn btn-secondary" onclick="document.getElementById('import-prod-modal').style.display='flex'" style="padding: 0.5rem 0.85rem; font-size: 0.85rem;">
             📤 Import Products
         </button>
+        {% endif %}
         <a href="{% url 'export_recipes_csv' %}" class="btn btn-secondary" style="padding: 0.5rem 0.85rem; font-size: 0.85rem; text-decoration:none;">
             📥 Export Recipes
         </a>

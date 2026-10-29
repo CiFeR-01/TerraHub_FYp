@@ -120,7 +120,8 @@ ROLE_PERMISSION_SECTIONS = (
     )),
     ('Reports & admin', (
         ('view_registrylog', 'See the registry ledger'),
-        ('add_opsbriefing', 'Run AI Copilot briefings (each run is a paid model call)'),
+        ('add_opsbriefing', 'Run the six AI Copilot category briefings (each run is a paid model call)'),
+        ('generate_my_checklist', 'Generate their own AI My Open Jobs checklist (each run is a paid model call)'),
         ('manage_users', 'Manage users, their roles and facility access'),
         ('override_approvals', 'Work in every facility and use the system tools (Admin level)'),
     )),
@@ -199,10 +200,10 @@ ACTION_PERMS = {
     'product_list': {'create_product': 'core.add_product', 'add_recipe': 'core.add_productrecipe',
                      'toggle_active': 'core.change_product'},
     'product_detail': {'update_product': 'core.change_product'},
-    'material_list': {'toggle_active': 'core.change_material'},
+    'material_list': {'create_material': 'core.add_material', 'toggle_active': 'core.change_material'},
     'material_detail': {'toggle_active': 'core.change_material', 'update_material': 'core.change_material'},
-    'supplier_list': {'toggle_active': 'core.change_supplier'},
-    'client_list': {'toggle_active': 'core.change_client'},
+    'supplier_list': {'create_supplier': 'core.change_supplier', 'toggle_active': 'core.change_supplier'},
+    'client_list': {'create_client': 'core.change_client', 'toggle_active': 'core.change_client'},
     'supplier_detail': {'toggle_active': 'core.change_supplier', 'save_material': 'core.change_supplier',
                         'remove_material': 'core.change_supplier'},
     'client_detail': {'toggle_active': 'core.change_client'},
@@ -254,7 +255,8 @@ def action_denied(request, page):
         return None
     action = request.POST.get('action')
     if not action:
-        return None
+        # Every form on these pages names its action, so a bare POST is refused rather than left unchecked
+        return "That action isn't available on this page."
     rules = ACTION_PERMS.get(page, {})
     if action not in rules:
         return "That action isn't available on this page."

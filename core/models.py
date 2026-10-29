@@ -29,6 +29,7 @@ class Capability(models.Model):
             ('perform_qa', 'Can quarantine, inspect, release and extend batches'),
             ('dispose_stock', 'Can write off spoiled stock and return it to suppliers'),
             ('approve_qa_writeoffs', 'Can approve large write-offs and long shelf-life extensions'),
+            ('generate_my_checklist', 'Can generate their own AI My Open Jobs checklist'),
         ]
 
 

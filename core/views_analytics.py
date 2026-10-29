@@ -668,11 +668,17 @@ def briefing_hub_view(request):
     from .models import OpsBriefing
 
     can_generate = request.user.has_perm("core.add_opsbriefing")
+    can_generate_mine = request.user.has_perm("core.generate_my_checklist")
     wants_json = request.headers.get("x-requested-with") == "XMLHttpRequest"
 
     if request.method == "POST":
         category = request.POST.get("category", "")
         if category == "my_checklist":
+            if not can_generate_mine:
+                if wants_json:
+                    return JsonResponse({"error": "You don't have permission to generate a checklist."}, status=403)
+                messages.error(request, "You don't have permission to generate a checklist.")
+                return redirect("briefing_hub")
             from .briefing import generate_my_checklist
             b = generate_my_checklist(user=request.user)
         elif category in _CATEGORY_LABELS:
@@ -720,6 +726,7 @@ def briefing_hub_view(request):
         "next_point": next_point,
         "live_items": live_items,
         "can_generate": can_generate,
+        "can_generate_mine": can_generate_mine,
         "has_api_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
         "briefing_enabled": get_setting("ops_briefing_enabled"),
         "open_key": open_key if open_key == "my_checklist" else "",
@@ -735,6 +742,9 @@ def ops_briefing_view(request):
     live_items = analytics.my_open_jobs(request.user)
 
     if request.method == "POST":
+        if not request.user.has_perm("core.generate_my_checklist"):
+            messages.error(request, "You don't have permission to generate a checklist.")
+            return redirect("ops_briefing")
         from .briefing import generate_my_checklist
         b = generate_my_checklist(user=request.user)
         if b.status == "ok":
@@ -766,6 +776,7 @@ def ops_briefing_view(request):
         "last_attempt": last_attempt,
         "stale_attempt": last_attempt if (last_attempt and last_attempt != latest) else None,
         "recent": OpsBriefing.objects.filter(category="my_checklist", generated_by=request.user)[:8],
+        "can_generate_mine": request.user.has_perm("core.generate_my_checklist"),
         "has_api_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
         "model_setting": get_setting("ops_briefing_model"),
         "briefing_enabled": get_setting("ops_briefing_enabled"),
