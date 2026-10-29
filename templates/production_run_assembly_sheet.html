@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Stock Assembly - {{ run.run_number }}</title>
+    <style>
+        body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 20px; color: #000; font-size: 12px; }
+        .sheet { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; min-height: 26cm; }
+        .brand { text-align: center; border-bottom: 1px solid #000; padding-bottom: 10px; }
+        .brand-name { font-size: 20px; font-weight: bold; }
+        .brand-sub { font-size: 12px; }
+        .title { text-align: center; font-size: 18px; letter-spacing: 3px; margin: 16px 0; }
+        .top { display: flex; gap: 16px; align-items: stretch; }
+        fieldset { flex: 1.4; border: 1px solid #000; margin: 0; padding: 6px 10px 10px; }
+        legend { font-weight: bold; font-size: 11px; padding: 0 6px; }
+        .item-row { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px; font-size: 11px; }
+        .doc { flex: 1; }
+        .doc td { padding: 3px 4px; font-size: 12px; }
+        .doc td.label { width: 42%; }
+        .lines { margin-top: 16px; border-collapse: collapse; width: 100%; }
+        .lines th { border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 6px 4px; font-weight: normal; text-align: left; }
+        .lines td { padding: 3px 4px; vertical-align: top; }
+        .lines .num { text-align: right; white-space: nowrap; }
+        .muted { color: #555; font-size: 10px; }
+        .footer { margin-top: auto; border-top: 1px solid #000; padding-top: 6px; display: flex; justify-content: space-between; }
+        .print-btn { padding: 10px 20px; background: #2563eb; color: #fff; border: none; cursor: pointer; border-radius: 4px; }
+
+        @media print {
+            .no-print { display: none !important; }
+            body { padding: 0; }
+            .sheet { min-height: 26.5cm; }
+            @page { size: A4; margin: 1cm; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="no-print" style="margin-bottom: 20px; text-align: right;">
+    <button class="print-btn" onclick="window.print()">Print Assembly Sheet</button>
+</div>
+
+<div class="sheet">
+    <div class="brand">
+        <div class="brand-name">TerraHub</div>
+        <div class="brand-sub">{{ run.manufacturing_plant.name|default:"" }}</div>
+    </div>
+
+    <div class="title">STOCK ASSEMBLY</div>
+
+    <div class="top">
+        <fieldset>
+            <legend>Item Assembly</legend>
+            <div class="item-row">
+                <span>Item Code: {{ run.target_product.sku }}</span>
+                <span>Batch No.: {% for b in produced_batches %}{{ b.batch_number }}{% if not forloop.last %}, {% endif %}{% empty %}-{% endfor %}</span>
+                <span>Location: {{ run.manufacturing_plant.name|default:"-" }}</span>
+            </div>
+            <div class="item-row">
+                <span>{{ run.target_product.name }}</span>
+                <span>Qty: {{ run.actual_yield|floatformat:3 }} {{ run.target_product.unit_of_measure }}</span>
+            </div>
+            <div class="item-row">
+                <span>Project: {% if run.sales_order %}{{ run.sales_order.so_number }}{% endif %}</span>
+            </div>
+        </fieldset>
+        <table class="doc">
+            <tr><td class="label"><strong>No.</strong></td><td>: <strong>{{ run.run_number }}</strong></td></tr>
+            <tr><td class="label">Date</td><td>: {{ sheet_date|date:"d/m/Y" }}</td></tr>
+            <tr><td class="label">Ref. Doc. No.</td><td>: MS {{ run.run_number }}</td></tr>
+            <tr><td class="label">Page</td><td>: 1 of 1</td></tr>
+        </table>
+    </div>
+
+    <table class="lines">
+        <thead>
+            <tr>
+                <th style="width:5%;">Item</th>
+                <th style="width:15%;">Raw Item Code</th>
+                <th>Description</th>
+                <th style="width:22%;">Batch</th>
+                <th class="num" style="width:12%;">Qty</th>
+                <th style="width:7%;">UOM</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for line in lines %}
+            <tr>
+                <td>{{ forloop.counter }}</td>
+                <td>{{ line.material.sku }}</td>
+                <td>{{ line.material.name }}</td>
+                <td class="muted">{% for number, qty in line.batches %}{{ number }}{% if line.batches|length > 1 %} ({{ qty|floatformat:3 }}){% endif %}{% if not forloop.last %}<br>{% endif %}{% endfor %}</td>
+                <td class="num">{% if line.actual is not None %}{{ line.actual|floatformat:3 }}{% else %}{{ line.planned|floatformat:3 }}{% endif %}</td>
+                <td>{{ line.material.unit_of_measure }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6">No materials were recorded for this run.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="footer">
+        <span>Note :</span>
+        <span>Total weight used: {{ total_mt|floatformat:3 }} MT</span>
+    </div>
+</div>
+
+</body>
+</html>

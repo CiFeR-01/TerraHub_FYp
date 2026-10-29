@@ -26,6 +26,7 @@ class WarehouseInventoryMaterialFilterTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='invfilter', password='pw')
+        self.user.groups.add(Group.objects.get(name='Staff (Viewer)'))  # pages need a 'See ...' permission
         self.client.login(username='invfilter', password='pw')
         self.warehouse = Warehouse.objects.create(name='Filter WH', location_type='Storage')
         self.wanted = Material.objects.create(
@@ -82,6 +83,7 @@ class FacilityEditTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='teststaff', password='password123')
+        self.user.groups.add(Group.objects.get(name='Staff (Viewer)'))  # pages need a 'See ...' permission
         self.warehouse = Warehouse.objects.create(
             name="Test facility A",
             location_type="Storage",
@@ -700,6 +702,7 @@ class SupplierScorecardTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='scorecard', password='pw')
+        self.user.groups.add(Group.objects.get(name='Staff (Viewer)'))  # pages need a 'See ...' permission
         self.wh = Warehouse.objects.create(name='RM Store', location_type='Storage')
         self.material = Material.objects.create(
             name='Potash', sku='MAT-K', category='Salts',
@@ -900,6 +903,7 @@ class SupplierHubNavTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='hubnav', password='pw')
+        self.user.groups.add(Group.objects.get(name='Staff (Viewer)'))  # pages need a 'See ...' permission
 
     def test_directory_page_links_to_scorecard(self):
         self.client.login(username='hubnav', password='pw')
@@ -952,6 +956,7 @@ class SalesOrderDeliveryRiskTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='risk', password='pw')
+        self.user.groups.add(Group.objects.get(name='Staff (Viewer)'))  # pages need a 'See ...' permission
         self.wh = Warehouse.objects.create(name='FG Store', location_type='Storage')
         self.product = Product.objects.create(
             name='Blend A', sku='PRD-A', unit_of_measure='pcs', price_per_unit=10,
@@ -1092,6 +1097,7 @@ class AuditAccuracyTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='auditor', password='pw')
+        self.user.groups.add(Group.objects.get(name='Staff (Viewer)'))  # pages need a 'See ...' permission
         self.wh1 = Warehouse.objects.create(name='WH North', location_type='Storage')
         self.wh2 = Warehouse.objects.create(name='WH South', location_type='Storage')
         self.material = Material.objects.create(
@@ -1963,6 +1969,7 @@ class StockoutForecastTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='planner', password='pw')
+        self.user.groups.add(Group.objects.get(name='Staff (Viewer)'))  # pages need a 'See ...' permission
         self.wh = Warehouse.objects.create(name='RM Depot', location_type='Storage')
 
     def _material(self, sku, safe_days=90):
@@ -2259,6 +2266,7 @@ class CapacityForecastTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='capacity', password='pw')
+        self.user.groups.add(Group.objects.get(name='Staff (Viewer)'))  # pages need a 'See ...' permission
         self.wh = Warehouse.objects.create(
             name='Depot 1', location_type='Storage', total_capacity_mt=Decimal('1000'),
         )
@@ -2494,6 +2502,7 @@ class RentReductionOpportunitiesTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='rentopp', password='pw')
+        self.user.groups.add(Group.objects.get(name='Staff (Viewer)'))  # pages need a 'See ...' permission
         self.material = Material.objects.create(
             name='Opp Sand', sku='MAT-OS', category='Bulk', unit_of_measure='MT',
             safe_storage_days=365, weight_mt_per_unit=Decimal('1.0'),
@@ -2794,6 +2803,7 @@ class ProductSalesTrendAnalyticsTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.user = User.objects.create_user(username='trendcheck', password='pw')
+        self.user.groups.add(Group.objects.get(name='Staff (Viewer)'))  # pages need a 'See ...' permission
         self.wh = Warehouse.objects.create(name='Trend WH', location_type='Storage')
         self.product = Product.objects.create(
             name='Trend Product', sku='PRD-TREND', unit_of_measure='pcs', price_per_unit=10,
@@ -2973,6 +2983,7 @@ class ShipmentLogisticsAnalyticsTests(TestCase):
         self._ship('S-VIEW', status='Delayed')
         client = Client()
         user = User.objects.create_user(username='logi', password='pw')
+        user.groups.add(Group.objects.get(name='Staff (Viewer)'))  # pages need a 'See ...' permission
         client.login(username='logi', password='pw')
         resp = client.get(reverse('shipment_logistics'))
         self.assertEqual(resp.status_code, 200)
@@ -5088,6 +5099,7 @@ class RentSuggestionDecisionTests(TestCase):
         self.RentSuggestion = RentSuggestion
         self.admin = User.objects.create_user(username='rs_admin', password='pw', is_superuser=True)
         self.plain = User.objects.create_user(username='rs_plain', password='pw')
+        self.plain.groups.add(Group.objects.get(name='Staff (Viewer)'))  # pages need a 'See ...' permission
         self.client = Client()
         self.client.force_login(self.admin)
         self.rented = Warehouse.objects.create(
@@ -7711,7 +7723,7 @@ class DenyByDefaultActionTests(CriticalBase):
         self.assertEqual(missing, {})
 
     def test_own_check_actions_are_not_hidden(self):
-        viewer = make_user(username='sec_viewer', password='pw')
+        viewer = make_user(username='sec_viewer', password='pw', role='Staff (Viewer)')
         self.as_user(viewer)
         so, _ = self.so(1)
         response = self.client.get(reverse('so_detail', args=[so.pk]))
@@ -8530,7 +8542,7 @@ class ReorderButtonTests(TestCase):
     def test_button_shown_only_with_po_permission(self):
         self.client.force_login(make_user(username='rb_mgr', password='pw', role='Manager'))
         self.assertContains(self.client.get(reverse('forecast')), self.link)
-        self.client.force_login(make_user(username='rb_none', password='pw'))
+        self.client.force_login(make_user(username='rb_none', password='pw', role='Staff (Viewer)'))
         resp = self.client.get(reverse('forecast'))
         self.assertNotContains(resp, self.link)
         self.assertContains(resp, 'Reorder')

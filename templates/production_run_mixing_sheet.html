@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Mixing Sheet - {{ run.run_number }}</title>
+    <style>
+        body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 20px; color: #000; font-size: 12px; }
+        .sheet { max-width: 760px; margin: 0 auto; }
+        .brand { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #000; padding-bottom: 8px; }
+        .brand-name { font-size: 20px; font-weight: bold; }
+        .brand-sub { font-size: 11px; color: #444; }
+        .title-row { display: flex; justify-content: space-between; align-items: baseline; margin: 14px 0 8px; }
+        .title { font-size: 16px; font-weight: bold; letter-spacing: 0.5px; }
+        .ms-no { font-size: 14px; font-weight: bold; }
+        .ms-no span { font-weight: normal; margin-left: 12px; }
+        table { width: 100%; border-collapse: collapse; }
+        .info td { border: 1px solid #000; padding: 4px 6px; }
+        .info td.label { width: 22%; font-weight: bold; }
+        .info td.colon { width: 2%; border-left: none; border-right: none; }
+        .grid { margin-top: 14px; }
+        .grid th, .grid td { border: 1px solid #000; padding: 4px 6px; height: 16px; }
+        .grid th { font-size: 11px; font-weight: bold; text-align: center; }
+        .grid td.num { text-align: right; white-space: nowrap; }
+        .grid td.hand { width: 11%; }
+        .grid tr.group td { font-weight: bold; background: #f2f2f2; }
+        .grid tr.total td { font-weight: bold; }
+        .grid .batch { font-size: 10px; }
+        .times-box { border: 2px solid #000 !important; text-align: center; font-size: 10px; }
+        .banner { border: 2px solid #b91c1c; color: #b91c1c; font-weight: bold; text-align: center; padding: 6px; margin-top: 10px; }
+        .muted { color: #555; font-size: 10px; }
+        .signs { display: flex; justify-content: space-between; gap: 20px; margin-top: 60px; }
+        .sign { flex: 1; border-top: 1px solid #000; padding-top: 4px; text-align: center; }
+        .print-btn { padding: 10px 20px; background: #2563eb; color: #fff; border: none; cursor: pointer; border-radius: 4px; }
+
+        @media print {
+            .no-print { display: none !important; }
+            body { padding: 0; }
+            .grid tr.group td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            @page { size: A4; margin: 1cm; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="no-print" style="margin-bottom: 20px; text-align: right;">
+    <button class="print-btn" onclick="window.print()">Print Mixing Sheet</button>
+</div>
+
+<div class="sheet">
+    <div class="brand">
+        <div>
+            <div class="brand-name">TerraHub</div>
+            <div class="brand-sub">{{ run.manufacturing_plant.name|default:"Manufacturing plant not set" }}</div>
+        </div>
+        <div class="brand-sub">Printed {% now "d/m/Y H:i" %}</div>
+    </div>
+
+    <div class="title-row">
+        <div class="title">MIXING SHEET</div>
+        <div class="ms-no">MS NO: <span>{{ run.run_number }}</span></div>
+    </div>
+
+    {% if run.status == 'Pending Approval' %}
+    <div class="banner">DRAFT - this run is not approved yet</div>
+    {% elif run.status == 'Cancelled' %}
+    <div class="banner">CANCELLED - do not use this sheet</div>
+    {% endif %}
+
+    <table class="info" style="margin-top: 8px;">
+        <tr><td class="label">DATE</td><td class="colon">:</td><td>{{ sheet_date|date:"d/m/Y" }}</td></tr>
+        <tr><td class="label">CUSTOMER</td><td class="colon">:</td><td>{% if run.sales_order %}{{ run.sales_order.client.name|default:run.sales_order.client_name }} <span class="muted">({{ run.sales_order.so_number }})</span>{% endif %}</td></tr>
+        <tr><td class="label">PRODUCT</td><td class="colon">:</td><td>{{ run.target_product.name }} <span class="muted">({{ run.target_product.sku }})</span></td></tr>
+        <tr><td class="label">QUANTITY</td><td class="colon">:</td><td>{{ run.expected_yield|floatformat:2 }} {{ run.target_product.unit_of_measure }}{% if run.status == 'Completed' and run.actual_yield is not None %} <span class="muted">(actual {{ run.actual_yield|floatformat:2 }})</span>{% endif %}</td></tr>
+        <tr><td class="label">TYPE OF BAGS</td><td class="colon">:</td><td>{% if run.target_product.unit_of_measure != 'MT' %}{{ run.target_product.weight_kg_per_unit }} kg per {{ run.target_product.unit_of_measure }}{% endif %}</td></tr>
+    </table>
+
+    <table class="grid">
+        <thead>
+            <tr>
+                <th style="width:22%;">RAW MATERIAL</th>
+                <th style="width:18%;">BATCH / ORIGIN</th>
+                <th style="width:7%;">%</th>
+                <th>TOTAL MIXING OF BAGS</th>
+                <th>TOTAL BAG</th>
+                <th>ADDITIONAL OF BAG</th>
+                <th style="width:12%;">TOTAL MT</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for group in groups %}
+            <tr class="group"><td colspan="7">{{ group.category }}:</td></tr>
+            {% for line in group.lines %}
+            <tr>
+                <td>{{ line.material.name }}</td>
+                <td class="batch">{% for number, qty in line.batches %}{{ number }}{% if not forloop.last %}, {% endif %}{% endfor %}</td>
+                <td class="num">{% if line.pct is not None %}{{ line.pct|floatformat:1 }}{% endif %}</td>
+                <td class="hand"></td>
+                <td class="hand"></td>
+                <td class="hand"></td>
+                <td class="num">{{ line.planned_mt|floatformat:3 }}</td>
+            </tr>
+            {% endfor %}
+            {% empty %}
+            <tr><td colspan="7" style="text-align:center;">This product has no recipe materials.</td></tr>
+            {% endfor %}
+
+            {% if other_lines %}
+            <tr class="group"><td colspan="7">Packaging &amp; other:</td></tr>
+            {% for line in other_lines %}
+            <tr>
+                <td>{{ line.material.name }}</td>
+                <td class="batch">{% for number, qty in line.batches %}{{ number }}{% if not forloop.last %}, {% endif %}{% endfor %}</td>
+                <td></td>
+                <td class="hand"></td>
+                <td class="hand"></td>
+                <td class="hand"></td>
+                <td class="num">{{ line.planned|floatformat:3 }} {{ line.material.unit_of_measure }}</td>
+            </tr>
+            {% endfor %}
+            {% endif %}
+
+            <tr><td></td><td class="times-box">TIMES OF MIXING</td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr class="total">
+                <td>Total Mixing</td>
+                <td class="times-box" style="height:20px;"></td>
+                <td class="num">{% if total_mt %}100.0{% endif %}</td>
+                <td></td><td></td><td></td>
+                <td class="num">{{ total_mt|floatformat:3 }}</td>
+            </tr>
+            <tr>
+                <td>Finished Good</td>
+                <td colspan="5">{% if finished_mt is not None %}{{ run.actual_yield|floatformat:2 }} {{ run.target_product.unit_of_measure }}{% endif %}</td>
+                <td class="num">{% if finished_mt is not None %}{{ finished_mt|floatformat:3 }}{% endif %}</td>
+            </tr>
+            <tr>
+                <td>Wastage</td>
+                <td colspan="5" class="muted">{% if wastage_mt is not None %}Materials used minus finished goods{% endif %}</td>
+                <td class="num">{% if wastage_mt is not None %}{{ wastage_mt|floatformat:3 }}{% endif %}</td>
+            </tr>
+            <tr>
+                <td>Notes &amp; Remarks</td>
+                <td colspan="6" style="height:40px;"></td>
+            </tr>
+        </tbody>
+    </table>
+    <p class="muted">Total MT is the planned quantity for {{ run.expected_yield|floatformat:2 }} {{ run.target_product.unit_of_measure }}. Bag columns are filled in by hand.</p>
+
+    <div class="signs">
+        <div class="sign">Prepared by</div>
+        <div class="sign">Finished by</div>
+        <div class="sign">Checked by</div>
+        <div class="sign">Office Received</div>
+    </div>
+</div>
+
+</body>
+</html>

@@ -27,9 +27,11 @@
             📤 Import Products
         </button>
         {% endif %}
+        {% if perms.core.view_productrecipe %}
         <a href="{% url 'export_recipes_csv' %}" class="btn btn-secondary" style="padding: 0.5rem 0.85rem; font-size: 0.85rem; text-decoration:none;">
             📥 Export Recipes
         </a>
+        {% endif %}
         <button class="btn btn-secondary" onclick="openRecipeStudio(null)" style="padding: 0.5rem 0.85rem; font-size: 0.85rem;">
             ⚙ Recipe Studio
         </button>

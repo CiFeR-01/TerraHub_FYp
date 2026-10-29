@@ -31,7 +31,7 @@ from .validators import normalise_phone, normalise_phone_or_email, validate_emai
 from .decorators import permission_or_redirect
 from .account import log_archive_change, log_user_change
 from .permissions import (
-    is_admin_user, can_approve, can_grant_group, action_denied,
+    is_admin_user, can_approve, has_any_perm, can_grant_group, action_denied,
     limited_warehouse_ids, may_use_warehouse, FACILITY_REFUSED, approvers, users_with_perm, pending_actions,
     ADJUST_PHYSICAL_STOCK, MANAGE_USERS, HANDLE_PURCHASING, approve_perm,
     APPROVE_SALES_ORDERS, APPROVE_PURCHASE_ORDERS, APPROVE_PRODUCTION_RUNS, APPROVE_SHIPMENTS,
@@ -849,15 +849,16 @@ def warehouse_inventory_view(request):
     if warehouse_id:
         try:
             selected_warehouse = warehouses.get(id=warehouse_id)
+            # Quarantined stock still sits in the facility, so it stays on the ledger.
             batches = Batch.objects.filter(warehouse=selected_warehouse,
-status='Active').select_related('warehouse',
+status__in=('Active', 'Quarantined')).select_related('warehouse',
                 'material', 'product'
             ).order_by('location', '-manufacturing_date')
         except Warehouse.DoesNotExist:
             pass
 
     if not selected_warehouse:
-        batches = Batch.objects.filter(status='Active').select_related(
+        batches = Batch.objects.filter(status__in=('Active', 'Quarantined')).select_related(
             'material', 'product'
         ).order_by('-manufacturing_date')
         if limited is not None:
@@ -875,7 +876,7 @@ status='Active').select_related('warehouse',
             | Q(location__icontains=search_query)
         )
 
-    # Count after all filters, before pagination (Active Batches KPI and "Showing X of Y").
+    # Count after all filters, before pagination (Batches in Stock KPI and "Showing X of Y").
     total_batches = batches.count()
 
     if not selected_warehouse:
@@ -1168,6 +1169,7 @@ def warehouse_edit_view(request, pk):
 
 
 @login_required
+@permission_or_redirect('core.view_warehouse')
 def facility_management_view(request):
     """Facility Management — overview of all warehouse facilities with capacity, cost, and zone data."""
     from .analytics import warehouse_rent_burn
@@ -1210,6 +1212,7 @@ def facility_management_view(request):
             'daily_cost': daily_cost,
             'billing_method': w.get_rental_billing_method_display(),
             'cost_per_mt': float(w.rental_cost_per_mt),
+            'term_label': w.term_label,
             'zone_count': w.zone_count,
             'batch_count': batch_counts.get(w.id, 0),
         })
@@ -1230,6 +1233,9 @@ def facility_management_view(request):
 # Stock audit (tally)
 @login_required
 def stock_audit_view(request):
+    if not has_any_perm(request.user, ('core.view_stockaudit', 'core.add_stockaudit')):
+        messages.error(request, "Permission Denied: You do not have permission to access this area.")
+        return redirect('dashboard')
     denied = action_denied(request, 'stock_audit')
     if denied:
         messages.error(request, denied)
@@ -1353,6 +1359,7 @@ def stock_audit_view(request):
 
 # Registry ledger
 @login_required
+@permission_or_redirect('core.view_registrylog')
 def registry_ledger_view(request):
     action_filter = request.GET.get('action')
     search_query = request.GET.get('q', '').strip()
@@ -1411,6 +1418,7 @@ def registry_ledger_view(request):
 # Bulk import/export and reference templates
 
 @login_required
+@permission_or_redirect('core.view_product')
 def export_product_template(request):
     """Download reference CSV template for Products."""
     response = HttpResponse(content_type='text/csv; charset=utf-8')
@@ -1424,6 +1432,7 @@ def export_product_template(request):
 
 
 @login_required
+@permission_or_redirect('core.view_product')
 def export_products_csv(request):
     """Export all registered Products as CSV."""
     response = HttpResponse(content_type='text/csv; charset=utf-8')
@@ -1646,6 +1655,7 @@ def import_products(request):
 
 
 @login_required
+@permission_or_redirect('core.view_material')
 def export_material_template(request):
     """Download reference CSV template for Materials."""
     response = HttpResponse(content_type='text/csv; charset=utf-8')
@@ -1659,6 +1669,7 @@ def export_material_template(request):
 
 
 @login_required
+@permission_or_redirect('core.view_material')
 def export_materials_csv(request):
     """Export all registered Materials as CSV."""
     response = HttpResponse(content_type='text/csv; charset=utf-8')
@@ -1882,6 +1893,7 @@ def import_materials(request):
 
 
 @login_required
+@permission_or_redirect('core.view_productrecipe')
 def export_product_recipes_csv(request):
     """Export all Product Recipes as CSV."""
     response = HttpResponse(content_type='text/csv; charset=utf-8')
@@ -2061,6 +2073,7 @@ def save_product_recipe_api(request):
 
 # Products catalog
 @login_required
+@permission_or_redirect('core.view_product')
 def product_list_view(request):
     denied = action_denied(request, 'product_list')
     if denied:
@@ -2153,6 +2166,7 @@ def product_list_view(request):
 
 
 @login_required
+@permission_or_redirect('core.view_product')
 def product_detail_view(request, pk):
     denied = action_denied(request, 'product_detail')
     if denied:
@@ -2268,6 +2282,7 @@ def product_detail_view(request, pk):
 
 # Materials hub
 @login_required
+@permission_or_redirect('core.view_material')
 def material_list_view(request):
     denied = action_denied(request, 'material_list')
     if denied:
@@ -2451,6 +2466,7 @@ _MOVEMENT_SIGN = {
 
 
 @login_required
+@permission_or_redirect('core.view_material')
 def material_detail_view(request, pk):
     """One raw material: core info, stock and batches, cover/reorder forecast, usage and suppliers (figures from core.analytics)."""
     denied = action_denied(request, 'material_detail')
@@ -2562,6 +2578,7 @@ def material_detail_view(request, pk):
 
 # Suppliers
 @login_required
+@permission_or_redirect('core.view_supplier')
 def supplier_list_view(request):
     denied = action_denied(request, 'supplier_list')
     if denied:
@@ -2657,6 +2674,7 @@ def supplier_edit_view(request, pk):
 
 # Clients
 @login_required
+@permission_or_redirect('core.view_client')
 def client_list_view(request):
     denied = action_denied(request, 'client_list')
     if denied:
@@ -2750,6 +2768,7 @@ def client_edit_view(request, pk):
     return redirect('client_detail', pk=client.pk)
 
 @login_required
+@permission_or_redirect('core.view_supplier')
 def supplier_detail_view(request, pk):
     denied = action_denied(request, 'supplier_detail')
     if denied:
@@ -2818,6 +2837,7 @@ def supplier_detail_view(request, pk):
 
 
 @login_required
+@permission_or_redirect('core.view_client')
 def client_detail_view(request, pk):
     denied = action_denied(request, 'client_detail')
     if denied:
@@ -2851,6 +2871,7 @@ def client_detail_view(request, pk):
 
 # Sales orders
 @login_required
+@permission_or_redirect('core.view_shipment')
 def sales_order_list_view(request):
     denied = action_denied(request, 'so_list')
     if denied:
@@ -2952,6 +2973,7 @@ def sales_order_list_view(request):
 
 # Purchase orders
 @login_required
+@permission_or_redirect('core.view_shipment')
 def purchase_order_list_view(request):
     denied = action_denied(request, 'po_list')
     if denied:
@@ -3144,6 +3166,7 @@ def _csv_download(filename):
 
 
 @login_required
+@permission_or_redirect('core.view_shipment')
 def export_order_template(request, kind):
     """Download the reference CSV template for Sales or Purchase Order import."""
     cfg = ORDER_IO[kind]
@@ -3157,6 +3180,7 @@ def export_order_template(request, kind):
 
 
 @login_required
+@permission_or_redirect('core.view_shipment')
 def export_orders_csv(request, kind):
     """Export every Sales or Purchase Order as CSV, one row per line item. The import
     columns come first so an export can be re-imported; the rest is for reference."""
@@ -3404,6 +3428,7 @@ def import_orders(request, kind):
 
 # Sales order detail
 @login_required
+@permission_or_redirect('core.view_shipment')
 def so_detail_view(request, pk):
     denied = action_denied(request, 'so_detail')
     if denied:
@@ -3869,6 +3894,7 @@ def so_detail_view(request, pk):
 
 # Purchase order detail
 @login_required
+@permission_or_redirect('core.view_shipment')
 def po_detail_view(request, pk):
     denied = action_denied(request, 'po_detail')
     if denied:
@@ -3979,10 +4005,17 @@ def po_detail_view(request, pk):
                     messages.error(request, "The expiry date must be after the manufacture date.")
                     return redirect('po_detail', pk=po.pk)
 
-                from .utils import apply_po_material_receipt
+                from .utils import apply_po_material_receipt, po_held_batch
                 with transaction.atomic():
+                    # Locked and re-read so a double-clicked Confirm waits, then sees nothing left to add
+                    item = PurchaseOrderDetail.objects.select_for_update().get(pk=item.pk)
+                    delta = new_qty - item.quantity_received
+                    if delta == 0:
+                        return redirect('po_detail', pk=po.pk)
+                    # A later receipt joins the batch still on hold for this PO instead of starting another
                     batch = apply_po_material_receipt(item, delta, request.user, expiry_date=supplier_expiry,
-                                                      manufacturing_date=supplier_mfg)
+                                                      manufacturing_date=supplier_mfg,
+                                                      into_batch=po_held_batch(po, item.material) if delta > 0 else None)
                 into = f" (+{delta} into Batch {batch.batch_number})" if batch else ""
                 OrderTimeline.objects.create(purchase_order=po, action=f"Received {new_qty} of {item.material.name}{into}", user=request.user)
                 po.refresh_from_db()
@@ -4556,6 +4589,7 @@ def manufacturing_view(request):
 
 # Logistics tracker and shipments
 @login_required
+@permission_or_redirect('core.view_shipment')
 def shipments_view(request):
     denied = action_denied(request, 'shipments')
     if denied:
@@ -5081,6 +5115,7 @@ def shipment_dispatch_problem(shipment):
 
 
 @login_required
+@permission_or_redirect('core.view_shipment')
 def shipment_detail_view(request, pk):
     denied = action_denied(request, 'shipment_detail')
     if denied:
@@ -5501,28 +5536,32 @@ def shipment_detail_view(request, pk):
                 messages.error(request, "Receipts can only be logged once the shipment has arrived.")
                 return redirect('shipment_detail', pk=shipment.pk)
             try:
-                item = get_object_or_404(ShipmentItem, id=request.POST.get('item_id'), shipment=shipment)
-                qty = Decimal(request.POST.get('quantity'))
-                # A PO delivery credits the PO and creates stock, so it can't take more than the PO line still needs (as on the PO page)
-                po_line = (PurchaseOrderDetail.objects.filter(purchase_order=shipment.purchase_order, material=item.material).first()
-                           if shipment.direction == 'Inbound' and shipment.purchase_order and item.material else None)
-                received_date = date.fromisoformat(request.POST.get('received_date') or date.today().isoformat())
-                if qty <= 0:
-                    messages.error(request, "Enter a quantity greater than zero.")
-                elif received_date > date.today():
-                    messages.error(request, "The received date can't be in the future.")
-                elif shipment.direction == 'Transfer' and (item.received_quantity or 0) + qty > item.quantity:
-                    # A transfer receipt creates the destination batch, so it can't exceed what left the origin
-                    messages.error(request, f"That would receive {(item.received_quantity or 0) + qty} of the {item.quantity} "
-                                            "sent on this transfer.")
-                elif po_line and po_line.quantity_received + qty > po_line.quantity_ordered:
-                    messages.error(request, f"That would receive {po_line.quantity_received + qty} of the {po_line.quantity_ordered} "
-                                            f"ordered on {shipment.purchase_order.po_number}. If the supplier sent more, "
-                                            "change the PO line's ordered quantity first.")
-                else:
-                    item_name = record_item_receipt(shipment, item, qty, received_date, request.user, request.POST.get('notes', '').strip())
-                    item.refresh_from_db()
-                    messages.success(request, f"Logged {qty} received for {item_name}. Running total: {item.received_quantity}.")
+                # Rows locked so a double-clicked submit waits and is checked against the first one's totals
+                with transaction.atomic():
+                    item = get_object_or_404(ShipmentItem.objects.select_for_update(), id=request.POST.get('item_id'), shipment=shipment)
+                    qty = Decimal(request.POST.get('quantity'))
+                    # A PO delivery credits the PO and creates stock, so it can't take more than the PO line still needs (as on the PO page)
+                    po_line = (PurchaseOrderDetail.objects.select_for_update().filter(purchase_order=shipment.purchase_order, material=item.material).first()
+                               if shipment.direction == 'Inbound' and shipment.purchase_order and item.material else None)
+                    received_date = date.fromisoformat(request.POST.get('received_date') or date.today().isoformat())
+                    if qty <= 0:
+                        messages.error(request, "Enter a quantity greater than zero.")
+                    elif received_date > date.today():
+                        messages.error(request, "The received date can't be in the future.")
+                    elif shipment.dispatch_date and received_date < shipment.dispatch_date:
+                        messages.error(request, f"The received date can't be before the dispatch date ({shipment.dispatch_date:%d %b %Y}).")
+                    elif shipment.direction == 'Transfer' and (item.received_quantity or 0) + qty > item.quantity:
+                        # A transfer receipt creates the destination batch, so it can't exceed what left the origin
+                        messages.error(request, f"That would receive {(item.received_quantity or 0) + qty} of the {item.quantity} "
+                                                "sent on this transfer.")
+                    elif po_line and po_line.quantity_received + qty > po_line.quantity_ordered:
+                        messages.error(request, f"That would receive {po_line.quantity_received + qty} of the {po_line.quantity_ordered} "
+                                                f"ordered on {shipment.purchase_order.po_number}. If the supplier sent more, "
+                                                "change the PO line's ordered quantity first.")
+                    else:
+                        item_name = record_item_receipt(shipment, item, qty, received_date, request.user, request.POST.get('notes', '').strip())
+                        item.refresh_from_db()
+                        messages.success(request, f"Logged {qty} received for {item_name}. Running total: {item.received_quantity}.")
             except Exception as e:
                 messages.error(request, f"Error logging receipt: {e}")
 
@@ -7147,6 +7186,99 @@ def shipment_pick_list_view(request, pk):
     return render(request, 'shipment_pick_list.html', {
         'shipment': shipment,
         'items': shipment.items.all().order_by('batch__location')
+    })
+
+SHEET_WEIGHT_UNITS = ('MT', 'kg', 'g')
+
+
+def _run_sheet_lines(run):
+    """One row per run material for the printable sheets: planned and actual qty, batches used, and MT for weight units (pcs/L have no MT)."""
+    usages = {u.material_id: u for u in run.material_usages.select_related('material')}
+    materials = [r.material for r in run.target_product.recipe_items.select_related('material').order_by('material__category', 'material__name')]
+    seen = {m.id for m in materials}
+    materials += [u.material for mid, u in usages.items() if mid not in seen]
+
+    # Completed runs list the batches actually drawn; earlier runs list what is reserved
+    batches = {}
+    consumed = run.consumptions.select_related('consumed_batch')
+    rows = [(c.consumed_batch, c.quantity_used) for c in consumed] or \
+           [(a.batch, a.quantity) for a in run.allocations.select_related('batch')]
+    for batch, qty in rows:
+        batches.setdefault(batch.material_id, {})
+        batches[batch.material_id][batch.batch_number] = batches[batch.material_id].get(batch.batch_number, Decimal('0')) + qty
+
+    recipe_qty = {r.material_id: r.quantity_required for r in run.target_product.recipe_items.all()}
+    lines = []
+    for m in materials:
+        usage = usages.get(m.id)
+        planned = usage.expected_qty if usage else Decimal(str(recipe_qty.get(m.id, 0))) * Decimal(str(run.expected_yield))
+        actual = usage.actual_qty if usage else None
+        is_weight = m.unit_of_measure in SHEET_WEIGHT_UNITS
+        lines.append({
+            'material': m,
+            'planned': planned,
+            'actual': actual,
+            'planned_mt': planned * m.weight_mt_per_unit if is_weight else None,
+            'actual_mt': actual * m.weight_mt_per_unit if is_weight and actual is not None else None,
+            'is_weight': is_weight,
+            'batches': sorted(batches.get(m.id, {}).items()),
+        })
+    return lines
+
+
+@login_required
+def production_run_mixing_sheet_view(request, pk):
+    """Printable mixing sheet for the shop floor; bag counts and signatures are filled in by hand."""
+    run = get_object_or_404(ProductionRun.objects.select_related(
+        'target_product', 'sales_order__client', 'manufacturing_plant', 'created_by'), pk=pk)
+    lines = _run_sheet_lines(run)
+    mix = [l for l in lines if l['is_weight']]
+    other = [l for l in lines if not l['is_weight']]
+    total_mt = sum((l['planned_mt'] for l in mix), Decimal('0'))
+    for l in mix:
+        l['pct'] = (l['planned_mt'] / total_mt * 100) if total_mt else None
+
+    # Group mix rows under their material category, like the N/P/K source headings on paper
+    groups = []
+    for l in mix:
+        cat = l['material'].category or 'Other'
+        if not groups or groups[-1]['category'] != cat:
+            groups.append({'category': cat, 'lines': []})
+        groups[-1]['lines'].append(l)
+
+    finished_mt = wastage_mt = None
+    if run.status == 'Completed' and run.actual_yield is not None:
+        finished_mt = run.actual_yield * run.target_product.weight_mt_per_unit
+        used_mt = sum((l['actual_mt'] if l['actual_mt'] is not None else l['planned_mt'] for l in mix), Decimal('0'))
+        wastage_mt = used_mt - finished_mt
+
+    return render(request, 'production_run_mixing_sheet.html', {
+        'run': run,
+        'groups': groups,
+        'other_lines': other,
+        'total_mt': total_mt,
+        'finished_mt': finished_mt,
+        'wastage_mt': wastage_mt,
+        'sheet_date': run.exact_start_time or run.start_time or timezone.now(),
+    })
+
+
+@login_required
+def production_run_assembly_sheet_view(request, pk):
+    """Printable stock assembly record of a completed run: materials used in, finished goods out."""
+    run = get_object_or_404(ProductionRun.objects.select_related(
+        'target_product', 'manufacturing_plant'), pk=pk)
+    if run.status != 'Completed':
+        messages.error(request, "The assembly sheet is available once the run is completed.")
+        return redirect('production_run_detail', pk=run.pk)
+    lines = _run_sheet_lines(run)
+    total_mt = sum((l['actual_mt'] if l['actual_mt'] is not None else l['planned_mt'] for l in lines if l['is_weight']), Decimal('0'))
+    return render(request, 'production_run_assembly_sheet.html', {
+        'run': run,
+        'lines': lines,
+        'total_mt': total_mt,
+        'produced_batches': run.produced_batches.all(),
+        'sheet_date': run.exact_end_time or run.end_time or timezone.now(),
     })
 
 def batch_public_info_view(request, batch_number):

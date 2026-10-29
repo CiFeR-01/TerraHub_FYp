@@ -132,11 +132,16 @@
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; font-size: 0.8rem; padding-top: 0.65rem; border-top: 1px solid var(--border-light);">
             <div>
                 <span style="color: var(--text-muted);">Billing: </span>
+                {% if f.raw_ownership == 'Internal' %}
+                <span style="font-weight: 600; color: var(--text-main);">None (owned)</span>
+                {% else %}
                 <span style="font-weight: 600; color: var(--text-main);">{{ f.billing_method }}</span>
+                <div style="font-size: 0.72rem; color: var(--text-muted);">RM{{ f.cost_per_mt|floatformat:2 }}/MT {{ f.term_label }}</div>
+                {% endif %}
             </div>
             <div>
                 <span style="font-weight: 700; color: {% if f.daily_cost > 0 %}var(--danger){% else %}var(--success-strong){% endif %};">
-                    {% if f.daily_cost > 0 %}RM{{ f.daily_cost|floatformat:2 }}/day{% else %}Free (Owned){% endif %}
+                    {% if f.daily_cost > 0 %}RM{{ f.daily_cost|floatformat:2 }}/day{% elif f.raw_ownership == 'Internal' %}Free (Owned){% else %}RM0.00/day (no stock){% endif %}
                 </span>
             </div>
         </div>

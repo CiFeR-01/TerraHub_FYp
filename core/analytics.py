@@ -1379,6 +1379,7 @@ def rent_reduction_opportunities():
             'rate_per_mt': rate,
             # A lot likely gone before its next term saves nothing, so it adds nothing to the daily totals (still listed)
             'daily_saving': round(take_mt * rate / term_days, 2) if terms else 0.0,
+            'daily_exact': take_mt * rate / term_days if terms else 0.0,  # summed before rounding, as the facility list does
             'term_days': term_days,
             'terms_avoided': terms,
             'term_ends_in': term_ends_in,
@@ -1398,7 +1399,7 @@ def rent_reduction_opportunities():
                 'name': o['warehouse'].name,
                 'status': forecast_rows[wid]['status'],
                 'candidate_batches': o['candidates'],
-                'total_daily_saving': round(sum(c['daily_saving'] for c in o['candidates']), 2),
+                'total_daily_saving': round(sum(c['daily_exact'] for c in o['candidates']), 2),
                 'total_saving': round(sum(c['total_saving'] for c in o['candidates']), 2),
                 'destination_options': destination_options,
                 'excluded_low_saving': o['excluded_low_saving'],

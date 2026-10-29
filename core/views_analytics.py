@@ -14,6 +14,8 @@ from django.views.decorators.http import require_POST
 from . import analytics
 from .analytics_cache import invalidate as invalidate_analytics_cache
 from .context_processors import ANALYTICS_CATEGORIES, DECISION_SUPPORT_PAGES, _perm_ok
+from .decorators import permission_or_redirect
+from .permissions import has_any_perm
 from .models import RentSuggestion, Warehouse
 from .settings_store import get_setting
 from .utils import create_rent_transfer, dismiss_rent_suggestions
@@ -71,6 +73,7 @@ def _analytics_tabs(request, url_name):
 
 
 @login_required
+@permission_or_redirect('core.view_supplier')
 @refreshable
 def supplier_scorecard_view(request):
     window_days = _parse_window(request)
@@ -115,6 +118,7 @@ def supplier_scorecard_view(request):
 
 
 @login_required
+@permission_or_redirect('core.view_shipment')
 @refreshable
 def sales_order_delivery_risk_view(request):
     rows = analytics.sales_order_delivery_risk()
@@ -163,6 +167,9 @@ def sales_order_delivery_risk_view(request):
 @login_required
 @refreshable
 def audit_accuracy_view(request):
+    if not has_any_perm(request.user, ("core.view_stockaudit", "core.add_stockaudit")):
+        messages.error(request, "Permission Denied: You do not have permission to access this area.")
+        return redirect("dashboard")
     window_days = _parse_window(request, default=365)
     since = timezone.now().date() - timedelta(days=window_days) if window_days else None
     data = analytics.audit_accuracy(since=since)
@@ -253,6 +260,7 @@ _COVERAGE_MAX_ROWS = 15
 
 
 @login_required
+@permission_or_redirect('core.view_material')
 @refreshable
 def forecast_view(request):
     try:
@@ -336,6 +344,7 @@ def forecast_view(request):
 
 
 @login_required
+@permission_or_redirect('core.view_warehouse')
 @refreshable
 def capacity_forecast_view(request):
     can_run_snapshot = request.user.has_perm("core.add_warehouseutilizationsnapshot")
@@ -393,6 +402,7 @@ def capacity_forecast_view(request):
 
 
 @login_required
+@permission_or_redirect('core.view_warehouse')
 @refreshable
 def rent_opportunities_view(request):
     rows, as_of = analytics.rent_reduction_opportunities.with_meta()
@@ -784,6 +794,7 @@ def ops_briefing_view(request):
 
 
 @login_required
+@permission_or_redirect('core.view_shipment')
 @refreshable
 def shipment_logistics_view(request):
     rows = analytics.shipment_logistics()
@@ -808,6 +819,7 @@ def shipment_logistics_view(request):
 
 
 @login_required
+@permission_or_redirect('core.view_product')
 @refreshable
 def product_sales_trend_view(request):
     rows = analytics.product_sales_trend()
