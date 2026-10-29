@@ -23,9 +23,11 @@
             <a href="{% url 'client_list' %}" class="btn btn-secondary" style="padding:0.5rem; font-size:1rem; text-decoration:none; display:flex; align-items:center; justify-content:center; line-height:1;" title="Clear Search">&times;</a>
             {% endif %}
         </form>
+        {% if perms.core.change_client %}
         <button class="btn btn-primary" onclick="document.getElementById('client-modal').style.display='flex'" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
             ✚ Add Client
         </button>
+        {% endif %}
     </div>
 </header>
 
@@ -100,6 +102,7 @@
         </div>
         <form method="post">
             {% csrf_token %}
+            <input type="hidden" name="action" value="create_client">
             <div style="margin-bottom:0.85rem;">
                 <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Client Name</label>
                 <input type="text" name="name" required placeholder="e.g. Apex Dynamics Ltd" class="form-input" style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">

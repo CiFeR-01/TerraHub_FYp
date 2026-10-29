@@ -41,7 +41,7 @@
 <!-- My Open Jobs -->
 <div class="bh-section-row">
     <p class="bh-section-label">My open jobs</p>
-    {% if has_api_key %}
+    {% if has_api_key and can_generate_mine %}
     <form method="post" class="bh-gen-form" data-bh-busy>
         {% csrf_token %}
         <input type="hidden" name="category" value="my_checklist">
@@ -149,7 +149,7 @@
                 <p class="bh-meta">Claude sees only your open items list; it cannot query the database.</p>
             </div>
             <div class="bh-drawer-foot">
-                {% if has_api_key %}
+                {% if has_api_key and can_generate_mine %}
                 <form method="post" class="bh-gen-form" data-bh-busy>
                     {% csrf_token %}
                     <input type="hidden" name="category" value="my_checklist">

@@ -22,9 +22,11 @@
         <a href="{% url 'export_products_csv' %}" class="btn btn-secondary" style="padding: 0.5rem 0.85rem; font-size: 0.85rem; text-decoration:none;">
             📥 Export Products
         </a>
+        {% if perms.core.add_product %}
         <button class="btn btn-secondary" onclick="document.getElementById('import-prod-modal').style.display='flex'" style="padding: 0.5rem 0.85rem; font-size: 0.85rem;">
             📤 Import Products
         </button>
+        {% endif %}
         <a href="{% url 'export_recipes_csv' %}" class="btn btn-secondary" style="padding: 0.5rem 0.85rem; font-size: 0.85rem; text-decoration:none;">
             📥 Export Recipes
         </a>
@@ -278,6 +280,20 @@
 {% include 'partials/recipe_studio_modal.html' %}
 
 <script>
+function toggleProductSkuAuto() {
+    var input = document.getElementById('prod_sku_input');
+    var toggle = document.getElementById('sku_auto');
+    if (toggle.checked) {
+        input.value = "{{ next_product_sku }}";
+        input.readOnly = true;
+        input.style.background = 'var(--surface-sunken)';
+    } else {
+        input.readOnly = false;
+        input.style.background = 'var(--bg-surface)';
+        input.focus();
+    }
+}
+
 // Escape text before it goes into innerHTML: names and SKUs are user-entered.
 function escHtml(value) {
     return String(value == null ? '' : value)

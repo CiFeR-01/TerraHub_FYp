@@ -3471,6 +3471,9 @@ class MyChecklistTests(TestCase):
         self.client = Client()
         self.owner = User.objects.create_user(username='owner', password='pw')
         self.other = User.objects.create_user(username='other', password='pw')
+        checklist = Permission.objects.get(codename='generate_my_checklist')
+        self.owner.user_permissions.add(checklist)
+        self.other.user_permissions.add(checklist)
         self.wh = Warehouse.objects.create(name='FG Store', location_type='Storage')
         self.product = Product.objects.create(
             name='Blend A', sku='PRD-A', unit_of_measure='pcs', price_per_unit=10,
@@ -6083,16 +6086,16 @@ class ContactValidationTests(TestCase):
 
     def test_client_add_rejects_bad_phone_and_email(self):
         from core.models import Client as ClientModel
-        resp = self.client.post(reverse('client_list'), {'name': 'Bad Phone Co', 'phone': '12345', 'phone_country': 'MY'}, follow=True)
+        resp = self.client.post(reverse('client_list'), {'action': 'create_client', 'name': 'Bad Phone Co', 'phone': '12345', 'phone_country': 'MY'}, follow=True)
         self.assertFalse(ClientModel.objects.filter(name='Bad Phone Co').exists())
         self.assertContains(resp, 'not a valid Malaysia phone number')
-        self.client.post(reverse('client_list'), {'name': 'Bad Mail Co', 'email': 'sales@badmail'})
+        self.client.post(reverse('client_list'), {'action': 'create_client', 'name': 'Bad Mail Co', 'email': 'sales@badmail'})
         self.assertFalse(ClientModel.objects.filter(name='Bad Mail Co').exists())
 
     def test_client_add_saves_normalised_phone(self):
         from core.models import Client as ClientModel
-        self.client.post(reverse('client_list'), {'name': 'Local Co', 'phone': '0123456789', 'phone_country': 'MY', 'email': 'a@local.com.my'})
-        self.client.post(reverse('client_list'), {'name': 'SG Co', 'phone': '9123 4567', 'phone_country': 'SG'})
+        self.client.post(reverse('client_list'), {'action': 'create_client', 'name': 'Local Co', 'phone': '0123456789', 'phone_country': 'MY', 'email': 'a@local.com.my'})
+        self.client.post(reverse('client_list'), {'action': 'create_client', 'name': 'SG Co', 'phone': '9123 4567', 'phone_country': 'SG'})
         self.assertEqual(ClientModel.objects.get(name='Local Co').phone, '012-345 6789')
         self.assertEqual(ClientModel.objects.get(name='SG Co').phone, '+65 9123 4567')
 
@@ -6104,9 +6107,9 @@ class ContactValidationTests(TestCase):
         self.assertEqual(c.phone, '012-345 6789')
 
     def test_supplier_add_and_edit(self):
-        self.client.post(reverse('supplier_list'), {'name': 'Bad Sup', 'phone': '0000', 'phone_country': 'MY'})
+        self.client.post(reverse('supplier_list'), {'action': 'create_supplier', 'name': 'Bad Sup', 'phone': '0000', 'phone_country': 'MY'})
         self.assertFalse(Supplier.objects.filter(name='Bad Sup').exists())
-        self.client.post(reverse('supplier_list'), {'name': 'CN Sup', 'phone': '138 0013 8000', 'phone_country': 'CN', 'email': 'sales@cnsup.cn'})
+        self.client.post(reverse('supplier_list'), {'action': 'create_supplier', 'name': 'CN Sup', 'phone': '138 0013 8000', 'phone_country': 'CN', 'email': 'sales@cnsup.cn'})
         sup = Supplier.objects.get(name='CN Sup')
         self.assertEqual(sup.phone, '+86 138 0013 8000')
         self.client.post(reverse('supplier_edit', args=[sup.pk]), {'name': 'CN Sup', 'phone': '+86 138 0013 8000', 'phone_country': 'MY', 'email': 'nope@'})
@@ -7680,10 +7683,10 @@ class DenyByDefaultActionTests(CriticalBase):
         self.assertIsNone(self.post('so_detail', 'add_so_item'))
         self.assertIsNone(self.post('shipment_detail', 'approve'))  # checked inside the view
 
-    def test_posts_without_action_are_untouched(self):
+    def test_posts_without_action_are_refused(self):
         request = RequestFactory().post('/', {})
         request.user = self.admin
-        self.assertIsNone(action_denied(request, 'so_detail'))
+        self.assertIsNotNone(action_denied(request, 'so_detail'))
 
     def test_every_action_a_view_handles_is_listed(self):
         """Guards the deny-by-default list: a new `action == '...'` branch must be added to ACTION_PERMS."""
@@ -7774,6 +7777,7 @@ class BriefingHubTests(TestCase):
         self.client = Client()
         self.url = reverse('briefing_hub')
         self.plain = make_user(username='hubplain', password='pw')
+        self.plain.user_permissions.add(Permission.objects.get(codename='generate_my_checklist'))
         self.manager = make_user(username='hubmgr', password='pw', role='Manager')
 
     def _ajax_post(self, data):

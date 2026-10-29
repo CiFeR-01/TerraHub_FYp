@@ -95,7 +95,7 @@
         </a>
         {% endif %}
         {% if attention.quarantined %}
-        <a href="{% url 'warehouse_inventory' %}" class="attn-chip attn-amber">
+        <a href="{% url 'qa_dashboard' %}?tab=quarantined" class="attn-chip attn-amber">
             <svg aria-hidden="true"><use href="#i-shield"/></svg><strong>{{ attention.quarantined }}</strong> quarantined batch{{ attention.quarantined|pluralize:"es" }}
         </a>
         {% endif %}
@@ -116,7 +116,7 @@
 <!-- ===================== KPI Row ===================== -->
 <section class="kpi-wrapper-grid kpi-v2 animate-fade-in-up" aria-label="Key figures" style="animation-delay: 0.06s;">
 
-    <div class="kpi-item-card">
+    <a href="{% url 'warehouse_inventory' %}" class="kpi-item-card">
         <div class="kpi-top">
             <span class="kpi-icon" aria-hidden="true"><svg><use href="#i-box"/></svg></span>
             <span class="kpi-label">Raw materials on hand</span>
@@ -135,9 +135,9 @@
             <div class="sparkbar" style="height: 6%;"></div>
             {% endfor %}
         </div>
-    </div>
+    </a>
 
-    <div class="kpi-item-card">
+    <a href="{% url 'product_list' %}" class="kpi-item-card">
         <div class="kpi-top">
             <span class="kpi-icon" aria-hidden="true"><svg><use href="#i-package-check"/></svg></span>
             <span class="kpi-label">Finished goods</span>
@@ -156,9 +156,9 @@
             <div class="sparkbar" style="height: 6%;"></div>
             {% endfor %}
         </div>
-    </div>
+    </a>
 
-    <div class="kpi-item-card">
+    <a href="{% url 'warehouse_list' %}" class="kpi-item-card">
         <div class="kpi-top">
             <span class="kpi-icon" aria-hidden="true"><svg><use href="#i-layers"/></svg></span>
             <span class="kpi-label">Space used</span>
@@ -182,9 +182,9 @@
             Average across all facilities.
             {% endif %}
         </div>
-    </div>
+    </a>
 
-    <div class="kpi-item-card">
+    <a href="{% url 'warehouse_inventory' %}" class="kpi-item-card">
         <div class="kpi-top">
             <span class="kpi-icon" aria-hidden="true"><svg><use href="#i-wallet"/></svg></span>
             <span class="kpi-label">Inventory value</span>
@@ -193,7 +193,7 @@
             <span class="kpi-value" title="RM {{ inventory_value|floatformat:0|intcomma }}">{{ inventory_value_compact }}</span>
         </div>
         <div class="kpi-foot">RM {{ inventory_value|floatformat:0|intcomma }} &mdash; raw-material cost + finished-goods price, active batches.</div>
-    </div>
+    </a>
 </section>
 
 <!-- ===================== Production ===================== -->

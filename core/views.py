@@ -2081,6 +2081,8 @@ def product_list_view(request):
             price, price_err = read_decimal(request.POST, 'price_per_unit', "Price", min_value=0, required=False)
             shelf, shelf_err = read_decimal(request.POST, 'shelf_life_days', "Shelf life", above=0, required=False)
             err = err or price_err or shelf_err or (None if name else "Product name is required.")
+            if not err and Product.objects.filter(sku=sku).exists():
+                err = f"SKU '{sku}' is already assigned to another product."
             if err:
                 messages.error(request, err)
                 return redirect('product_list')
@@ -2297,6 +2299,9 @@ def material_list_view(request):
         err = err or weight_err
         if err:
             messages.error(request, err)
+            return redirect('material_list')
+        if Material.objects.filter(sku=sku).exists():
+            messages.error(request, f"SKU '{sku}' is already assigned to another material.")
             return redirect('material_list')
         try:
             safe_days = int(request.POST.get('safe_storage_days', 90))
