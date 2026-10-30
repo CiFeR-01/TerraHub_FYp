@@ -4626,14 +4626,7 @@ def shipments_view(request):
 
             try:
                 if tracking_mode == 'auto' or not tracking_number:
-                    import random, string
-                    today_str = date.today().strftime('%Y%m%d')
-                    while True:
-                        random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
-                        generated = f"SHIP-{today_str}-{random_suffix}"
-                        if not Shipment.objects.filter(tracking_number=generated).exists():
-                            tracking_number = generated
-                            break
+                    tracking_number = generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4)
 
                 origin_wh = Warehouse.objects.filter(id=origin_id).first() if origin_id else None
                 dest_wh = Warehouse.objects.filter(id=dest_id).first() if dest_id else None
@@ -4766,7 +4759,7 @@ def shipments_view(request):
         'status_choices': Shipment.STATUS_CHOICES,
         'initial_status_choices': initial_status_choices,
         'direction_choices': Shipment.DIRECTION_CHOICES,
-        'next_tracking_number': generate_next_code(Shipment, 'tracking_number', 'TRK', 101, pad=4),
+        'next_tracking_number': generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4),
         'search_query': search_query,
         'page_size': page_size,
         **sort_ctx,
