@@ -271,7 +271,7 @@
                 <!-- Receive quantity mini-form -->
                 <tr id="recv-{{ row.item.id }}" style="display:none; background:var(--success-soft);">
                     <td colspan="11" style="padding:0.5rem 1rem 0.75rem 2rem;">
-                        <form method="post" style="display:inline-flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
+                        <form method="post" onsubmit="this.querySelector('[type=submit]').disabled = true" style="display:inline-flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="mark_received">
                             <input type="hidden" name="item_id" value="{{ row.item.id }}">

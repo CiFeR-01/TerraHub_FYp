@@ -22,6 +22,16 @@
     </div>
     
     <div style="display:flex; align-items:center; gap:1rem;">
+        <a href="{% url 'production_run_mixing_sheet' run.pk %}" target="_blank" class="btn btn-secondary" title="Open a printable mixing sheet">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin-right:0.4rem;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+            Print mixing sheet
+        </a>
+        {% if run.status == 'Completed' %}
+        <a href="{% url 'production_run_assembly_sheet' run.pk %}" target="_blank" class="btn btn-secondary" title="Open a printable stock assembly record">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin-right:0.4rem;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+            Print assembly sheet
+        </a>
+        {% endif %}
         {% if priority %}
         <span class="badge" style="font-size:0.78rem; padding:0.35rem 0.85rem;
             {% if priority == 'Overdue' %}background:var(--danger-soft); color:var(--danger-strong); border:1px solid var(--danger-border);
@@ -852,7 +862,8 @@
         var total = 0;
         sources(panel).forEach(function (s) { total += parseFloat(s.querySelector('.src-qty').value) || 0; });
         var out = panel.querySelector('.src-total');
-        var ok = Math.abs(total - excess) < 0.005;
+        var picked = Array.prototype.every.call(sources(panel), function (s) { return s.querySelector('.src-batch').value; });
+        var ok = picked && Math.abs(total - excess) < 0.005;
         out.textContent = 'Accounted for ' + total.toFixed(2) + ' of ' + excess.toFixed(2) + ' ' + unit;
         out.style.color = ok ? 'var(--success-strong)' : 'var(--danger-strong)';
     }
@@ -866,6 +877,7 @@
             var un = sel.value === 'unrecorded';
             r.style.display = un ? '' : 'none';
             r.required = un;
+            panel.dispatchEvent(new Event('recount'));
         });
         node.querySelector('.rm-src').addEventListener('click', function () {
             if (sources(panel).length > 1) { node.remove(); panel.dispatchEvent(new Event('recount')); }

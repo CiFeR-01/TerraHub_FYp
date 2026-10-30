@@ -72,7 +72,7 @@
             </div>
         </div>
         <div class="kpi-item-card">
-            <span class="kpi-label">Active Batches</span>
+            <span class="kpi-label">Batches in Stock</span>
             <div class="kpi-value-row">
                 <span class="kpi-value">{{ total_batches }}</span>
                 <span class="badge badge-emerald">In Stock</span>
@@ -97,7 +97,6 @@
         </div>
     </section>
 
-    {% if batches %}
     <div class="pane-card animate-fade-in-up" style="animation-delay: 0.15s; margin-top: 1rem;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
             <h3 style="margin-bottom: 0;">📋 {% if selected_warehouse %}Physical Stock Ledger: {{ selected_warehouse.name }}{% else %}Global Physical Stock Ledger{% endif %}{% if selected_material %} — {{ selected_material.sku }}{% endif %}</h3>
@@ -117,6 +116,7 @@
             {% endif %}
         </form>
 
+        {% if batches %}
         <div class="data-table-container">
             <table class="custom-table" id="batchTable">
                 <thead>
@@ -143,6 +143,7 @@
                         </td>
                         <td style="font-family: monospace; font-weight: 700; color: var(--primary);">
                             {{ b.batch_number }}
+                            {% if b.status == 'Quarantined' %}<span class="badge badge-amber" style="margin-left: 0.35rem;">Quarantined</span>{% endif %}
                         </td>
                         <td>
                             {% if b.material %}
@@ -186,7 +187,7 @@
                         </td>
                         {% if can_adjust or perms.core.request_qa %}
                         <td style="text-align: right; white-space: nowrap;">
-                            {% if perms.core.request_qa %}
+                            {% if perms.core.request_qa and b.status == 'Active' %}
                             <button type="button" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem; border-radius: 6px;" onclick="event.stopPropagation(); openSendToQA('{{ b.id }}', '{{ b.batch_number|escapejs }}', '{{ b.quantity }}', '{% if b.material %}{{ b.material.unit_of_measure|escapejs }}{% else %}units{% endif %}');">
                                 Send to QA
                             </button>
@@ -204,16 +205,16 @@
             </table>
         </div>
         {% include "partials/_pagination.html" with page_obj=batches page_qs=page_qs page_size=page_size noun='batches' %}
+        {% else %}
+        <div style="text-align: center; padding: 3rem;">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">🛡️</div>
+            <h4 style="font-weight: 600; color: var(--text-main); margin-bottom: 0.25rem;">Empty Ledger</h4>
+            <p style="font-size: 0.85rem; color: var(--text-muted);">
+                {% if search_query %}No batches match "{{ search_query }}".{% else %}No stock batches were found.{% endif %}
+            </p>
+        </div>
+        {% endif %}
     </div>
-    {% else %}
-    <div class="pane-card animate-fade-in-up" style="text-align: center; padding: 3rem; animation-delay: 0.15s;">
-        <div style="font-size: 3rem; margin-bottom: 1rem;">🛡️</div>
-        <h4 style="font-weight: 600; color: var(--text-main); margin-bottom: 0.25rem;">Empty Ledger</h4>
-        <p style="font-size: 0.85rem; color: var(--text-muted);">
-            No active stock batches were found.
-        </p>
-    </div>
-    {% endif %}
 
 {% if can_adjust %}
 <!-- Manual Stock Entry Modal -->

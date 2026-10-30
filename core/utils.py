@@ -1120,16 +1120,31 @@ def po_wait_note(po):
     return f"Waiting for {po.po_number} to be completed before this stock can be used."
 
 
+def held_only_for_po(batch, po):
+    """True when the batch's only hold is waiting for its PO to complete (no QA check open, no other hold)."""
+    from .qa import HOLD_ACTIONS
+    last_hold = batch.qa_events.filter(action__in=HOLD_ACTIONS).order_by('-created_at', '-id').first()
+    return (last_hold is not None and last_hold.note == po_wait_note(po)
+            and not batch.qa_requests.filter(status__in=('Open', 'In Review')).exists())
+
+
+def po_held_batch(po, material):
+    """The newest batch of this PO line still on hold only for the PO, for a later receipt to join; None if there isn't one."""
+    from .models import Batch
+    for b in Batch.objects.filter(purchase_order=po, material=material, status='Quarantined').order_by('-id'):
+        if held_only_for_po(b, po):
+            return b
+    return None
+
+
 def release_po_held_batches(po, user):
     """Frees the batches held only because their PO wasn't complete yet. Batches with a QA check open, held for
     another reason, or expired stay on hold for QA."""
     from .models import Batch, OrderTimeline
-    from .qa import HOLD_ACTIONS, is_expired, log_event
+    from .qa import is_expired, log_event
     released = []
     for b in Batch.objects.filter(purchase_order=po, status='Quarantined', material__isnull=False):
-        last_hold = b.qa_events.filter(action__in=HOLD_ACTIONS).order_by('-created_at', '-id').first()
-        if (not last_hold or last_hold.note != po_wait_note(po) or is_expired(b)
-                or b.qa_requests.filter(status__in=('Open', 'In Review')).exists()):
+        if not held_only_for_po(b, po) or is_expired(b):
             continue
         b.status = 'Active'
         b.save(update_fields=['status'])

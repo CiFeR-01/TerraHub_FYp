@@ -481,12 +481,12 @@
                     </div>
 
                     {% if shipment.status != 'Completed' %}
-                    <form method="POST" style="display:flex; align-items:center; flex-wrap:wrap; gap:0.6rem; margin-top:0.85rem; padding-top:0.75rem; border-top:1px dashed var(--success-border);">
+                    <form method="POST" onsubmit="this.querySelector('[type=submit]').disabled = true" style="display:flex; align-items:center; flex-wrap:wrap; gap:0.6rem; margin-top:0.85rem; padding-top:0.75rem; border-top:1px dashed var(--success-border);">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="log_item_receipt">
                         <input type="hidden" name="item_id" value="{{ item.id }}">
                         <input type="number" step="0.01" min="0.01" name="quantity" placeholder="Qty" required class="form-input" style="width:100px; padding:0.4rem; border:1px solid var(--success-border); background:var(--bg-surface);">
-                        <input type="date" name="received_date" value="{% now 'Y-m-d' %}" required class="form-input" style="width:150px; padding:0.4rem; border:1px solid var(--success-border); background:var(--bg-surface);">
+                        <input type="date" name="received_date" value="{% now 'Y-m-d' %}" max="{% now 'Y-m-d' %}"{% if shipment.dispatch_date %} min="{{ shipment.dispatch_date|date:'Y-m-d' }}"{% endif %} required class="form-input" style="width:150px; padding:0.4rem; border:1px solid var(--success-border); background:var(--bg-surface);">
                         <button type="submit" class="btn" style="padding:0.4rem 0.9rem; font-size:0.78rem; font-weight:700; background:var(--success-strong); color:white; border-radius:6px; border:none;">+ Log Receipt</button>
                     </form>
                     {% endif %}
