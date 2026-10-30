@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} | TerraHub</title>
+    {# Standalone on purpose: no static files, base.html or DB lookups, so it renders even when the app is broken. #}
+    <style>
+        body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+               background: #f2f3f4; color: #1f2328; font-family: "Plus Jakarta Sans", system-ui, sans-serif; }
+        .card { background: #fff; max-width: 440px; margin: 16px; padding: 40px 32px; border-radius: 14px;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, .06); text-align: center; }
+        .code { font-size: 56px; font-weight: 800; color: #9a4f24; margin: 0; line-height: 1; }
+        h1 { font-size: 22px; margin: 12px 0 8px; }
+        p { color: #5b6168; line-height: 1.5; margin: 0 0 24px; }
+        a { display: inline-block; padding: 10px 20px; border-radius: 8px; background: #9a4f24; color: #fff;
+            text-decoration: none; font-weight: 600; }
+        a:hover { background: #7a3d1b; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <p class="code">{{ status }}</p>
+        <h1>{{ title }}</h1>
+        <p>{{ message }}</p>
+        <a href="/dashboard/">Back to dashboard</a>
+    </div>
+</body>
+</html>
