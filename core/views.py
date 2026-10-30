@@ -3227,6 +3227,7 @@ def export_orders_csv(request, kind):
 
 
 @login_required
+@transaction.atomic  # safety net: an unexpected crash rolls back the whole file, not just the failing order
 def import_orders(request, kind):
     """Bulk import Sales or Purchase Orders from CSV, with dry-run and per-order error reporting."""
     cfg = ORDER_IO[kind]
@@ -3290,6 +3291,10 @@ def import_orders(request, kind):
         problems = []
         if not party:
             problems.append(f"{cfg['party']} is required.")
+        for col, value in ((cfg['number'], number), (cfg['party'], party)):
+            limit = cfg['model']._meta.get_field(col).max_length
+            if len(value) > limit:
+                problems.append(f"{col} can't be longer than {limit} characters.")
         wh = warehouses.get(head.get(cfg['warehouse'], '').upper())
         if not wh:
             problems.append(f"warehouse '{head.get(cfg['warehouse'], '')}' not found. "
@@ -3363,6 +3368,14 @@ def import_orders(request, kind):
                 errs.append(f"{cfg['done']} is only for past records; a Draft order hasn't moved any stock.")
             elif qty and done > qty:
                 errs.append(f"{cfg['done']} can't be more than quantity_ordered.")
+            if not any(errs):
+                # Catch numbers too big for the database column here, not as a crash on save
+                values = {'quantity_ordered': qty, 'unit_price': price, cfg['done']: done, **extra}
+                try:
+                    cfg['line_model'](**values).clean_fields(
+                        exclude=[f.name for f in cfg['line_model']._meta.fields if f.name not in values])
+                except ValidationError as ve:
+                    errs += [f"{col}: {' '.join(msgs)}" for col, msgs in ve.message_dict.items()]
             problems += [f"Line {idx}: {e}" for e in errs if e]
             if item:
                 seen.add(item.pk)

@@ -163,6 +163,7 @@ AUTH_USER_MODEL = 'core.CustomUser'
 LOGIN_REDIRECT_URL = 'dashboard'
 LOGIN_URL = 'login'
 LOGOUT_REDIRECT_URL = 'home'
+CSRF_FAILURE_VIEW = 'core.errors.csrf_failure'
 
 # Idle timeout: sessions end after this long with no requests; static/js/session-timeout.js keeps active tabs alive via session_keepalive.
 # This is the cap: the System Settings page can shorten it (core.account.IdleTimeoutMiddleware) but not raise it.
