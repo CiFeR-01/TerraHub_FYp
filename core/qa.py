@@ -32,6 +32,13 @@ class QAError(Exception):
 
 # Small helpers
 
+def qty_with_unit(batch):
+    """The batch quantity with its unit, e.g. "10 kg" or "1,250 pcs"."""
+    from .templatetags.quantity_extras import qty_display
+    item = batch.material or batch.product
+    return f"{qty_display(batch.quantity)} {item.unit_of_measure}" if item else qty_display(batch.quantity)
+
+
 def item_name(batch):
     if batch.material_id:
         return batch.material.name
@@ -69,10 +76,13 @@ def check_reason(reason):
     return reason
 
 
-def read_quantity(raw, batch, label="Quantity"):
-    """None (whole batch) for a blank value, else a Decimal between 0 and the batch's quantity."""
+def read_quantity(raw, batch, label="Quantity", required=False):
+    """None (whole batch) for a blank value, else a Decimal between 0 and the batch's quantity.
+    With `required`, a blank value is refused instead of meaning the whole batch."""
     raw = (raw or '').strip() if isinstance(raw, str) else raw
     if raw in (None, ''):
+        if required:
+            raise QAError(f"Enter the {label.lower()} to write off (the batch has {batch.quantity}).")
         return None
     try:
         qty = Decimal(str(raw))
@@ -282,6 +292,14 @@ def dispose_batch(batch, user, reason, note='', quantity=None, request=None, app
     if batch.status not in OPEN_STATUSES:
         raise QAError(f"Batch {batch.batch_number} is {batch.get_status_display()}, so it can't be written off.")
     qty = batch.quantity if quantity is None else quantity
+    free = batch.quantity - batch.allocated_quantity
+    if qty > free:
+        # Reserved stock is never written off: whoever holds the reservation releases it first
+        holders = sorted({a.sales_order.so_number if a.sales_order_id else a.production_run.run_number if a.production_run_id
+                          else a.shipment.tracking_number if a.shipment_id else 'an order'
+                          for a in batch.allocations.select_related('sales_order', 'production_run', 'shipment')})
+        raise QAError(f"{batch.allocated_quantity} of batch {batch.batch_number} is reserved for {', '.join(holders)}. "
+                      f"Release that reservation first" + (f", or write off no more than {free}." if free > 0 else "."))
     value = batch_value(batch, qty)
     with transaction.atomic():
         if not approved and _needs_approval(user, value):
@@ -308,7 +326,7 @@ def dispose_batch(batch, user, reason, note='', quantity=None, request=None, app
         if reason == 'returned_to_supplier' and target.purchase_order_id:
             OrderTimeline.objects.create(
                 purchase_order=target.purchase_order, user=user, notes=note or None,
-                action=f"Wrote off {target.quantity} of {item_name(target)} (batch {target.batch_number}): returned to supplier.",
+                action=f"Wrote off {qty_with_unit(target)} of {item_name(target)} (batch {target.batch_number}): returned to supplier.",
             )
         log_event(target, 'disposed', user, reason, note, target.quantity, batch_value(target), request)
     return 'done', target

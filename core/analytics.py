@@ -1398,7 +1398,7 @@ def rent_reduction_opportunities():
                 'warehouse_id': wid,
                 'name': o['warehouse'].name,
                 'status': forecast_rows[wid]['status'],
-                'candidate_batches': o['candidates'],
+                'candidate_batches': sorted(o['candidates'], key=lambda c: -c['total_saving']),  # biggest saving first (space was given out per MT above)
                 'total_daily_saving': round(sum(c['daily_exact'] for c in o['candidates']), 2),
                 'total_saving': round(sum(c['total_saving'] for c in o['candidates']), 2),
                 'destination_options': destination_options,

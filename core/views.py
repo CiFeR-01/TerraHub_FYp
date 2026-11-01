@@ -260,29 +260,39 @@ PO_REAPPROVE_ON_EDIT = ('Pending Approval', 'Pending')
 
 
 def po_return_for_reapproval(po, user, what):
+    """Returns the status the order had (truthy) when it was sent back to Draft, else False."""
     if po.status not in PO_REAPPROVE_ON_EDIT:
         return False
+    was = po.status
     po.status = 'Draft'
     po.assigned_to = None
     po.approved_by = None
     po.revision_count += 1
     po.save()
     clear_approval_notifications(po.po_number)
-    OrderTimeline.objects.create(purchase_order=po, action=f"{what} after approval - returned to Draft for re-approval.", user=user)
-    return True
+    OrderTimeline.objects.create(purchase_order=po, action=f"{what} while {was} - returned to Draft for re-approval.", user=user)
+    return was
 
 
 def so_return_for_reapproval(so, user, what):
+    """Returns the status the order had (truthy) when it was sent back to Draft, else False."""
     if so.status not in SO_REAPPROVE_ON_EDIT:
         return False
+    was = so.status
     so.status = 'Draft'
     so.assigned_to = None
     so.approved_by = None
     so.revision_count += 1
     so.save()
     clear_approval_notifications(so.so_number)
-    OrderTimeline.objects.create(sales_order=so, action=f"{what} after approval - returned to Draft for re-approval.", user=user)
-    return True
+    OrderTimeline.objects.create(sales_order=so, action=f"{what} while {was} - returned to Draft for re-approval.", user=user)
+    return was
+
+
+def reapproval_message(number, was):
+    """Warning after an edit sent an order back to Draft; an order still waiting for approval was never approved."""
+    why = "was waiting for approval" if was == 'Pending Approval' else "was already approved"
+    return f"{number} {why}, so it's back in Draft. Request approval again."
 
 
 # Outbound/Transfer cargo is locked once the truck leaves; edits while pending or approved return the shipment to Logistics Review.
@@ -1804,7 +1814,7 @@ def import_materials(request):
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku, 'status': 'error', 'msg': err})
                 continue
 
-            if clean_name_key in seen_names_in_file and not sku:
+            if clean_name_key in seen_names_in_file:
                 err = f"Line {idx}: Duplicate material name '{name}' within CSV file."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
@@ -2312,24 +2322,29 @@ def material_list_view(request):
         reorder_point, err = read_decimal(request.POST, 'reorder_point', 'Reorder point', min_value=0, required=False)
         weight, weight_err = read_unit_weight(request.POST, uom)
         err = err or weight_err
-        if err:
-            messages.error(request, err)
-            return redirect('material_list')
-        if Material.objects.filter(sku=sku).exists():
-            messages.error(request, f"SKU '{sku}' is already assigned to another material.")
-            return redirect('material_list')
-        try:
-            safe_days = int(request.POST.get('safe_storage_days', 90))
-            cost = float(request.POST.get('cost_per_unit', 0.0))
-            Material.objects.create(
-                name=name, sku=sku, category=category, unit_of_measure=uom,
-                safe_storage_days=safe_days, weight_mt_per_unit=weight, cost_per_unit=cost,
-                reorder_point=reorder_point, inspect_on_receipt=request.POST.get('inspect_on_receipt') == '1',
-            )
-            messages.success(request, f"Material '{name}' (SKU: {sku}) registered.")
-        except Exception as e:
-            messages.error(request, f"Error registering material: {e}")
-        return redirect('material_list')
+        name = (name or '').strip()
+        same_name = Material.objects.filter(name__iexact=name).first()
+        if not err and Material.objects.filter(sku=sku).exists():
+            err = f"SKU '{sku}' is already assigned to another material."
+        if not err and same_name:
+            err = f"A material called '{same_name.name}' already exists ({same_name.sku}{', archived' if not same_name.is_active else ''}). Use a different name."
+        if not err:
+            try:
+                safe_days = int(request.POST.get('safe_storage_days', 90))
+                cost = float(request.POST.get('cost_per_unit', 0.0))
+                Material.objects.create(
+                    name=name, sku=sku, category=category, unit_of_measure=uom,
+                    safe_storage_days=safe_days, weight_mt_per_unit=weight, cost_per_unit=cost,
+                    reorder_point=reorder_point, inspect_on_receipt=request.POST.get('inspect_on_receipt') == '1',
+                )
+                messages.success(request, f"Material '{name}' (SKU: {sku}) registered.")
+                return redirect('material_list')
+            except Exception as e:
+                err = f"Error registering material: {e}"
+        # Refused: fall through and re-render with the form reopened, the typed values kept and the error inside it.
+        form_error, form_values = err, request.POST
+    else:
+        form_error, form_values = None, {}
 
     # One aggregate query for all materials' active stock.
     materials = Material.objects.annotate(
@@ -2349,6 +2364,8 @@ def material_list_view(request):
     context = {
         'material_data': material_data,
         'next_material_sku': generate_next_code(Material, 'sku', 'MAT', 1001, pad=4),
+        'form_error': form_error,
+        'form_values': form_values,
     }
     return render(request, 'material_list.html', context)
 
@@ -2383,6 +2400,10 @@ def _apply_material_update(request, material):
         # Check SKU uniqueness against other materials
         if Material.objects.filter(sku=sku).exclude(pk=material.pk).exists():
             messages.error(request, f"SKU '{sku}' is already assigned to another material.")
+            return False
+        same_name = Material.objects.filter(name__iexact=name.strip()).exclude(pk=material.pk).first()
+        if same_name:
+            messages.error(request, f"A material called '{same_name.name}' already exists ({same_name.sku}). Use a different name.")
             return False
 
         material.name = name
@@ -2896,6 +2917,7 @@ def sales_order_list_view(request):
                 )
                 OrderTimeline.objects.create(sales_order=so, action="Sales Order Created (Draft)", user=request.user)
                 messages.success(request, f"Sales Order {so_number} created.")
+                return redirect('so_detail', pk=so.pk)  # straight to the new order, so it isn't created twice
             except Exception as e:
                 messages.error(request, f"Error creating Sales Order: {e}")
 
@@ -3010,11 +3032,10 @@ def purchase_order_list_view(request):
                     )
                     OrderTimeline.objects.create(purchase_order=po, action="Purchase Order Created (Draft)", user=request.user)
                     if line_mat:
-                        PurchaseOrderDetail.objects.create(purchase_order=po, material=line_mat, quantity_ordered=line_qty)
+                        PurchaseOrderDetail.objects.create(purchase_order=po, material=line_mat, quantity_ordered=line_qty, unit_price=line_mat.cost_per_unit)
                         OrderTimeline.objects.create(purchase_order=po, action=f"Line item added: {line_mat.name} x{line_qty}", user=request.user)
                 messages.success(request, f"Purchase Order {po_number} created.")
-                if line_mat:
-                    return redirect('po_detail', pk=po.pk)
+                return redirect('po_detail', pk=po.pk)
             except Exception as e:
                 messages.error(request, f"Error creating Purchase Order: {e}")
 
@@ -3031,6 +3052,8 @@ def purchase_order_list_view(request):
                 po.approved_by = request.user
             if reopening:
                 po.completed_date = None
+            elif new_status == 'Completed':
+                po.completed_date = timezone.localdate()
             po.save()
             OrderTimeline.objects.create(purchase_order=po, action="PO reopened to receive more" if reopening else f"Status changed to '{new_status}'", user=request.user)
             if new_status == 'Completed':
@@ -3474,6 +3497,8 @@ def so_detail_view(request, pk):
                     return redirect('so_detail', pk=so.pk)
                 # One line per product: adding a product already on the order raises that line instead.
                 existing = so.items.filter(product=prod).first()
+                if unit_price is None and not existing:
+                    unit_price = prod.price_per_unit  # blank price = catalogue price, so the order value isn't RM 0
                 if existing:
                     old_qty = existing.quantity_ordered
                     existing.quantity_ordered += qty
@@ -3494,8 +3519,8 @@ def so_detail_view(request, pk):
                 archived = archived_recipe_materials(prod)
                 if archived:
                     messages.warning(request, f"Heads up: {prod.name}'s recipe uses archived material(s): {', '.join(m.name for m in archived)}.")
-                if so_return_for_reapproval(so, request.user, "Line item added"):
-                    messages.warning(request, f"{so.so_number} was already approved, so it's back in Draft. Request approval again.")
+                if was := so_return_for_reapproval(so, request.user, "Line item added"):
+                    messages.warning(request, reapproval_message(so.so_number, was))
             except Exception as e:
                 messages.error(request, f"Error adding item: {e}")
 
@@ -3513,8 +3538,8 @@ def so_detail_view(request, pk):
 
                 OrderTimeline.objects.create(sales_order=so, action=f"Line item removed: {name}", user=request.user)
                 messages.success(request, f"Removed {name} from {so.so_number}.")
-                if so_return_for_reapproval(so, request.user, "Line item removed"):
-                    messages.warning(request, f"{so.so_number} was already approved, so it's back in Draft. Request approval again.")
+                if was := so_return_for_reapproval(so, request.user, "Line item removed"):
+                    messages.warning(request, reapproval_message(so.so_number, was))
             except Exception as e:
                 messages.error(request, f"Error removing item: {e}")
 
@@ -3558,8 +3583,8 @@ def so_detail_view(request, pk):
             so.save()
             messages.success(request, f"{so.so_number} details updated.")
             if (so.client_name, so.origin_warehouse_id, str(so.fulfillment_deadline or '')) != before:
-                if so_return_for_reapproval(so, request.user, "Order details changed"):
-                    messages.warning(request, f"{so.so_number} was already approved, so it's back in Draft. Request approval again.")
+                if was := so_return_for_reapproval(so, request.user, "Order details changed"):
+                    messages.warning(request, reapproval_message(so.so_number, was))
 
         elif action == 'request_approval':
             manager_id = request.POST.get('manager_id')
@@ -3569,6 +3594,7 @@ def so_detail_view(request, pk):
             # Approval is only for unapproved orders (or resending one still pending); an approved or shipped order can't be sent back through it.
             problem = (None if so.status in UNAPPROVED_STATUSES
                        else f"{so.so_number} is {so.status}, so it can't be sent for approval again.")
+            problem = problem or (None if so.items.exists() else f"{so.so_number} has no line items yet. Add at least one before requesting approval.")
             problem = problem or approver_problem(mgr, APPROVE_SALES_ORDERS)
             if problem:
                 messages.error(request, problem)
@@ -3949,13 +3975,13 @@ def po_detail_view(request, pk):
                     purchase_order=po,
                     material=mat,
                     quantity_ordered=qty,
-                    unit_price=unit_price,
+                    unit_price=mat.cost_per_unit if unit_price is None else unit_price,
                     negotiated_rental_rate_per_mt=rental_rate
                 )
                 OrderTimeline.objects.create(purchase_order=po, action=f"Line item added: {mat.name} x{qty}", user=request.user)
                 messages.success(request, f"Added {mat.name} to {po.po_number}.")
-                if po_return_for_reapproval(po, request.user, "Line item added"):
-                    messages.warning(request, f"{po.po_number} was already approved, so it's back in Draft. Request approval again.")
+                if was := po_return_for_reapproval(po, request.user, "Line item added"):
+                    messages.warning(request, reapproval_message(po.po_number, was))
             except Exception as e:
                 messages.error(request, f"Error adding item: {e}")
 
@@ -3977,8 +4003,8 @@ def po_detail_view(request, pk):
                 item.delete()
                 OrderTimeline.objects.create(purchase_order=po, action=f"Line item removed: {name}", user=request.user)
                 messages.success(request, f"Removed {name} from {po.po_number}.")
-                if po_return_for_reapproval(po, request.user, "Line item removed"):
-                    messages.warning(request, f"{po.po_number} was already approved, so it's back in Draft. Request approval again.")
+                if was := po_return_for_reapproval(po, request.user, "Line item removed"):
+                    messages.warning(request, reapproval_message(po.po_number, was))
             except Exception as e:
                 messages.error(request, f"Error removing item: {e}")
 
@@ -4063,6 +4089,8 @@ def po_detail_view(request, pk):
                 po.approved_by = request.user
             if reopening:
                 po.completed_date = None
+            elif new_status == 'Completed':
+                po.completed_date = timezone.localdate()
             po.save()
             OrderTimeline.objects.create(purchase_order=po, action="PO reopened to receive more" if reopening else f"Status updated to '{new_status}'", user=request.user)
             if new_status == 'Completed':
@@ -4111,6 +4139,7 @@ def po_detail_view(request, pk):
             # Same rule as sales orders: only unapproved POs (or resending one still pending) go for approval
             problem = (None if po.status in UNAPPROVED_STATUSES
                        else f"{po.po_number} is {po.status}, so it can't be sent for approval again.")
+            problem = problem or (None if po.items.exists() else f"{po.po_number} has no line items yet. Add at least one before requesting approval.")
             problem = problem or approver_problem(mgr, APPROVE_PURCHASE_ORDERS)
             if problem:
                 messages.error(request, problem)
@@ -4386,7 +4415,8 @@ def manufacturing_view(request):
                     PurchaseOrderDetail.objects.create(
                         purchase_order=po,
                         material=short['material'],
-                        quantity_ordered=short['qty']
+                        quantity_ordered=short['qty'],
+                        unit_price=short['material'].cost_per_unit
                     )
                     
                 # Link PO to run for UI display
@@ -4463,6 +4493,13 @@ def manufacturing_view(request):
     runs = ProductionRun.objects.select_related('target_product', 'supervisor', 'manufacturing_plant', 'sales_order').order_by('-id')
     if loc_filter:
         runs = runs.filter(manufacturing_plant_id=loc_filter)
+    search_query = request.GET.get('q', '').strip()
+    if search_query:
+        runs = runs.filter(
+            Q(run_number__icontains=search_query) | Q(target_product__name__icontains=search_query)
+            | Q(target_product__sku__icontains=search_query) | Q(sales_order__so_number__icontains=search_query)
+            | Q(manufacturing_plant__name__icontains=search_query) | Q(supervisor__username__icontains=search_query)
+        )
 
     sort_by = request.GET.get('sort', '-id')
     if sort_by in ['run_number', '-run_number', 'target_product__name', '-target_product__name', 'status', '-status', 'start_time', '-start_time']:
@@ -4587,6 +4624,7 @@ def manufacturing_view(request):
 
     context = {
         'runs': runs_page,
+        'search_query': search_query,
         'products': products,
         'plants': plants,
         'loc_filter': loc_filter,
@@ -5556,10 +5594,10 @@ def shipment_detail_view(request, pk):
                         messages.error(request, "The received date can't be in the future.")
                     elif shipment.dispatch_date and received_date < shipment.dispatch_date:
                         messages.error(request, f"The received date can't be before the dispatch date ({shipment.dispatch_date:%d %b %Y}).")
-                    elif shipment.direction == 'Transfer' and (item.received_quantity or 0) + qty > item.quantity:
-                        # A transfer receipt creates the destination batch, so it can't exceed what left the origin
+                    elif shipment.direction in ('Transfer', 'Outbound') and (item.received_quantity or 0) + qty > item.quantity:
+                        # Can't receive more than left the origin: a transfer would create stock, a client can't get more than was shipped
                         messages.error(request, f"That would receive {(item.received_quantity or 0) + qty} of the {item.quantity} "
-                                                "sent on this transfer.")
+                                                f"sent on this {'transfer' if shipment.direction == 'Transfer' else 'shipment'}.")
                     elif po_line and po_line.quantity_received + qty > po_line.quantity_ordered:
                         messages.error(request, f"That would receive {po_line.quantity_received + qty} of the {po_line.quantity_ordered} "
                                                 f"ordered on {shipment.purchase_order.po_number}. If the supplier sent more, "
@@ -5570,6 +5608,25 @@ def shipment_detail_view(request, pk):
                         messages.success(request, f"Logged {qty} received for {item_name}. Running total: {item.received_quantity}.")
             except Exception as e:
                 messages.error(request, f"Error logging receipt: {e}")
+
+        elif action == 'undo_item_receipt':
+            # Only a record until Finalize moves the stock; a PO delivery has already made stock, so it's corrected on the PO
+            if shipment.status not in RECEIVABLE_STATUSES or (shipment.direction == 'Inbound' and shipment.purchase_order_id):
+                messages.error(request, "This receipt can't be undone here.")
+                return redirect('shipment_detail', pk=shipment.pk)
+            with transaction.atomic():
+                item = get_object_or_404(ShipmentItem.objects.select_for_update(), id=request.POST.get('item_id'), shipment=shipment)
+                last = item.receipts.order_by('-id').first()
+                if not last:
+                    messages.error(request, "There is no receipt to undo.")
+                    return redirect('shipment_detail', pk=shipment.pk)
+                last.delete()
+                item.received_quantity = (item.received_quantity or Decimal('0')) - last.quantity
+                item.save(update_fields=['received_quantity'])
+                item_name = item.material.name if item.material else (item.product.name if item.product else 'item')
+                OrderTimeline.objects.create(shipment=shipment, user=request.user,
+                                             action=f"Undid receipt of {last.quantity} for {item_name} (logged {last.received_date}).")
+            messages.success(request, f"Undid the receipt of {last.quantity} for {item_name}. Running total: {item.received_quantity}.")
 
         elif action == 'finalize_shipment_receiving':
             if shipment.status not in RECEIVABLE_STATUSES:
@@ -5822,6 +5879,9 @@ def shipment_detail_view(request, pk):
         'route_error': route_error,
         'requested_by': requested_by,
         'coordinator': coordinator,
+        # Everything logged but not yet finalized: show the nudge to press Finalize Receiving
+        'all_received': shipment.status in RECEIVABLE_STATUSES and shipment.items.exists()
+                        and all(i.received_quantity == i.quantity for i in shipment.items.all()),
     }
     return render(request, 'shipment_detail.html', context)
 
@@ -7292,7 +7352,13 @@ def batch_public_info_view(request, batch_number):
     batch = get_object_or_404(Batch.objects.select_related(
         'material', 'product', 'purchase_order', 'produced_in', 'produced_in__manufacturing_plant'
     ), batch_number=batch_number)
-    return render(request, 'batch_public_info.html', {'batch': batch})
+    from .settings_store import get_setting
+    days_left =(batch.expiry_date - timezone.localdate()).days if batch.expiry_date else None
+    return render(request, 'batch_public_info.html', {
+        'batch': batch,
+        'days_left': days_left,
+        'near_expiry': days_left is not None and 0 <= days_left <= get_setting('qa_near_expiry_days'),
+    })
 
 @login_required
 def batch_print_label_view(request, batch_number):

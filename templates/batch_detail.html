@@ -88,10 +88,10 @@
                 <div style="padding: 1rem; background: var(--surface-sunken); border-radius: 8px;">
                     <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Expiry Date</span>
                     <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-main); margin-top: 0.25rem;">
-                        {{ batch.expiry_date|date:"Y-m-d"|default:"-" }}
+                        {{ batch.expiry_date|date:"d M Y"|default:"-" }}
                     </div>
                     {% if batch.extension_days_total %}
-                    <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.15rem;">Extended {{ batch.extension_days_total }} days (was {{ batch.original_expiry_date|date:"Y-m-d" }})</div>
+                    <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.15rem;">Extended {{ batch.extension_days_total }} days (was {{ batch.original_expiry_date|date:"d M Y" }})</div>
                     {% endif %}
                 </div>
                 <div style="padding: 1rem; background: var(--surface-sunken); border-radius: 8px;">
@@ -137,7 +137,7 @@
                         <input type="hidden" name="action" value="undo_write_off">
                         <input type="hidden" name="batch_id" value="{{ batch.id }}">
                         <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                        <button type="submit" class="btn btn-secondary" style="padding:0.35rem 0.7rem; font-size:0.8rem;" title="Possible until {{ qa_undo_until|date:'Y-m-d' }}">Undo write-off</button>
+                        <button type="submit" class="btn btn-secondary" style="padding:0.35rem 0.7rem; font-size:0.8rem;" title="Possible until {{ qa_undo_until|date:'d M Y' }}">Undo write-off</button>
                     </form>
                     {% endif %}
                 </div>
@@ -145,7 +145,7 @@
 
             {% if qa_expired and batch.status in 'Active,Quarantined' %}
             <div style="padding:0.75rem 1rem; border-radius:8px; background:var(--danger-soft); color:var(--danger-strong); font-size:0.85rem; margin-bottom:0.75rem;">
-                This batch expired on {{ batch.expiry_date|date:"Y-m-d" }}. It can't be used or released until QA extends its shelf life or writes it off.
+                This batch expired on {{ batch.expiry_date|date:"d M Y" }}. It can't be used or released until QA extends its shelf life or writes it off.
             </div>
             {% endif %}
             {% if qa_open_request %}
@@ -170,7 +170,7 @@
                 <div style="display:flex; justify-content:space-between; gap:0.5rem;">
                     <span>{% if insp.result == 'pass' %}<span class="badge badge-emerald">Passed</span>{% else %}<span class="badge badge-rose">Failed</span>{% endif %}
                         {{ insp.inspector|who }}</span>
-                    <span style="color:var(--text-muted); font-size:0.78rem;">{{ insp.created_at|date:"Y-m-d H:i" }}</span>
+                    <span style="color:var(--text-muted); font-size:0.78rem;">{{ insp.created_at|date:"d M Y, H:i" }}</span>
                 </div>
                 {% if insp.checks %}<div style="margin-top:0.35rem; font-size:0.78rem; color:var(--text-muted);">{% for c in insp.checks %}{% if c.ok %}✓{% else %}<span style="color:var(--danger);">✗</span>{% endif %} {{ c.check }}{% if not forloop.last %} &middot; {% endif %}{% endfor %}</div>{% endif %}
                 {% if insp.moisture_pct is not None %}<div style="font-size:0.78rem; color:var(--text-muted);">Moisture {{ insp.moisture_pct }}%</div>{% endif %}
@@ -187,7 +187,7 @@
                     <tbody>
                         {% for ev in qa_events %}
                         <tr>
-                            <td style="font-size:0.8rem; color:var(--text-muted); white-space:nowrap;">{{ ev.created_at|date:"Y-m-d H:i" }}</td>
+                            <td style="font-size:0.8rem; color:var(--text-muted); white-space:nowrap;">{{ ev.created_at|date:"d M Y, H:i" }}</td>
                             <td style="font-size:0.85rem;">{{ ev.get_action_display }}{% if ev.note %}<div style="font-size:0.75rem; color:var(--text-muted);">{{ ev.note }}</div>{% endif %}</td>
                             <td style="font-size:0.85rem;">{{ ev.get_reason_display|default:"-" }}</td>
                             <td style="text-align:right; font-family:monospace;">{% if ev.quantity is not None %}{{ ev.quantity|floatformat:2 }}{% else %}-{% endif %}</td>
@@ -260,7 +260,7 @@
                     <tbody>
                         {% for log in logs %}
                         <tr>
-                            <td style="font-size: 0.85rem; color: var(--text-muted);">{{ log.timestamp|date:"Y-m-d H:i" }}</td>
+                            <td style="font-size: 0.85rem; color: var(--text-muted);">{{ log.timestamp|date:"d M Y, H:i" }}</td>
                             <td>
                                 {% if log.action_type == 'Inbound' or log.action_type == 'Produced' %}
                                     <span class="badge badge-emerald">{{ log.get_action_type_display }}</span>
@@ -402,7 +402,7 @@
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-top: 0.35rem; font-size: 0.75rem; color: var(--text-muted);">
                         <span>Received: {{ sh.received_quantity|default:"0" }}</span>
-                        <span>{{ sh.date_confirmed|date:"Y-m-d"|default:"Pending" }}</span>
+                        <span>{{ sh.date_confirmed|date:"d M Y"|default:"Pending" }}</span>
                     </div>
                 </div>
                 {% endfor %}

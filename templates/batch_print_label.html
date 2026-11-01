@@ -29,6 +29,8 @@
         #qrcode {
             width: 40mm;
             height: 40mm;
+            padding: 2.5mm; /* white quiet zone so scanners find the code's edges */
+            box-sizing: border-box;
             flex-shrink: 0;
             background: #fff;
         }
@@ -51,14 +53,15 @@
             text-transform: uppercase;
         }
         .label-batch {
-            font-size: 18px;
+            font-size: 20px;
+            line-height: 1.2;
             font-weight: 900;
             color: #000;
-            margin: 0 0 6px 0;
-            word-break: break-all;
+            margin: 0 0 8px 0;
+            white-space: nowrap; /* shrunk to fit on one line by the script below */
         }
         .label-detail {
-            font-size: 11px;
+            font-size: 12px;
             color: #374151;
             margin: 0 0 2px 0;
             white-space: nowrap;
@@ -90,33 +93,28 @@
             <h2 class="label-batch">{{ batch.batch_number }}</h2>
             <p class="label-detail"><strong>Item:</strong> {% if batch.material %}{{ batch.material.name }}{% else %}{{ batch.product.name }}{% endif %}</p>
             <p class="label-detail"><strong>SKU:</strong> {% if batch.material %}{{ batch.material.sku }}{% else %}{{ batch.product.sku }}{% endif %}</p>
-            <p class="label-detail"><strong>Mfg:</strong> {{ batch.manufacturing_date|date:"Y-m-d" }}</p>
-            <p class="label-detail"><strong>Exp:</strong> {{ batch.expiry_date|date:"Y-m-d" }}</p>
+            <p class="label-detail"><strong>Mfg:</strong> {{ batch.manufacturing_date|date:"d M Y" }}</p>
+            <p class="label-detail"><strong>Exp:</strong> {{ batch.expiry_date|date:"d M Y" }}</p>
         </div>
     </div>
 
     <script>
-        var publicUrl = window.location.origin + "{% url 'batch_public_info' batch.batch_number %}";
-        
-        // Build the raw offline text payload
-        var itemName = "{% if batch.material %}{{ batch.material.name|escapejs }}{% else %}{{ batch.product.name|escapejs }}{% endif %}";
-        var sku = "{% if batch.material %}{{ batch.material.sku|escapejs }}{% else %}{{ batch.product.sku|escapejs }}{% endif %}";
-        
-        var offlineText = "Batch: {{ batch.batch_number }}\\n" +
-                          "Item: " + itemName + "\\n" +
-                          "SKU: " + sku + "\\n" +
-                          "Mfg Date: {{ batch.manufacturing_date|date:'Y-m-d' }}\\n" +
-                          "Exp Date: {{ batch.expiry_date|date:'Y-m-d' }}\\n\\n" +
-                          "Live Tracker:\\n" + publicUrl;
-
+        // Link only, so phone cameras offer to open it; the item details are printed beside the code
         new QRCode(document.getElementById("qrcode"), {
-            text: offlineText,
+            text: window.location.origin + "{% url 'batch_public_info' batch.batch_number %}",
             width: 256,
             height: 256,
             colorDark : "#000000",
             colorLight : "#ffffff",
-            correctLevel : QRCode.CorrectLevel.M
+            correctLevel : QRCode.CorrectLevel.Q
         });
+
+        // Shrink the batch number until it fits on one line (floor 11px)
+        var batchEl = document.querySelector('.label-batch');
+        var size = 20;
+        while (batchEl.scrollWidth > batchEl.clientWidth && size > 11) {
+            batchEl.style.fontSize = (--size) + 'px';
+        }
 
         window.onload = function() {
             setTimeout(function() {

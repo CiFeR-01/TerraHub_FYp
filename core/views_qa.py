@@ -116,14 +116,14 @@ def _handle_post(request):
                 messages.warning(request, f"Batch {batch.batch_number} failed inspection and is on hold. "
                                           "Write it off if it can't be used.")
         elif action == 'spoil_dispose':
-            qty = qa.read_quantity(request.POST.get('quantity'), batch)
+            qty = qa.read_quantity(request.POST.get('quantity'), batch, required=True)
             state, obj = qa.dispose_batch(batch, user, reason, note, quantity=qty, request=req)
             if state == 'pending':
                 messages.warning(request, f"Writing off batch {obj.batch.batch_number} (RM {obj.value_rm:,.2f}) needs approval. "
                                           "It's on hold and waiting in the Action Center.")
             else:
                 _resolve(req, user, 'disposed', note)
-                messages.error(request, f"Batch {obj.batch_number} written off ({obj.quantity}).")
+                messages.error(request, f"Batch {obj.batch_number} written off: {qa.qty_with_unit(obj)} of {qa.item_name(obj)}.")
         elif action == 'undo_write_off':
             qa.undo_write_off(batch, user, note)
             messages.success(request, f"Write-off of batch {batch.batch_number} undone. "

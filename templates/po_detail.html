@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load humanize %}
 
 {% block title %}{{ po.po_number }} — Purchase Order Detail - TerraHub{% endblock %}
 
@@ -71,8 +72,9 @@
         <div>
             <div style="display:flex; align-items:center; gap:1rem; margin-bottom:1.25rem;">
                 <h2 style="font-family:'Outfit',sans-serif; font-size:1.6rem; font-weight:800; color:var(--primary); letter-spacing:-0.5px;">{{ po.po_number }}</h2>
-                {% if po.status == 'Draft' %}<span class="badge badge-sky">Draft</span>
-                {% elif po.status == 'Pending' or po.status == 'Pending Approval' %}<span class="badge badge-amber">Pending</span>
+                {% if po.status == 'Draft' %}<span class="badge badge-slate">Draft</span>
+                {% elif po.status == 'Pending Approval' %}<span class="badge badge-amber">Pending Approval</span>
+                {% elif po.status == 'Pending' %}<span class="badge badge-sky">Approved</span>
                 {% elif po.status == 'Partially Received' %}<span class="badge badge-amber">Partially Received</span>
                 {% elif po.status == 'Completed' %}<span class="badge badge-emerald">Completed</span>
                 {% elif po.status == 'Rejected' or po.status == 'Cancelled' %}<span class="badge badge-rose">{{ po.status }}</span>
@@ -114,7 +116,7 @@
                 </div>
                 <div>
                     <div style="font-size:0.73rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Total Value</div>
-                    <div style="font-size:0.95rem; font-weight:700; color:var(--primary);">RM {{ po_total|floatformat:2 }}</div>
+                    <div style="font-size:0.95rem; font-weight:700; color:var(--primary);">RM {{ po_total|floatformat:2|intcomma }}</div>
                 </div>
                 {% if po.assigned_to and po.status == 'Pending Approval' %}
                 <div>
@@ -186,10 +188,10 @@
             <div style="display:grid; grid-template-columns:2fr 1fr 1fr 1fr auto; gap:0.75rem; align-items:end;">
                 <div>
                     <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Material</label>
-                    <select name="material_id" required class="form-select" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
+                    <select name="material_id" required onchange="this.form.unit_price.value = this.selectedOptions[0].dataset.price || ''" class="form-select" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
                         <option value="">— Select Material —</option>
                         {% for m in materials %}{% if m.is_active %}
-                        <option value="{{ m.id }}">{{ m.sku }} — {{ m.name }}</option>
+                        <option value="{{ m.id }}" data-price="{{ m.cost_per_unit }}">{{ m.sku }} — {{ m.name }}</option>
                         {% endif %}{% endfor %}
                     </select>
                 </div>
@@ -199,7 +201,7 @@
                 </div>
                 <div>
                     <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Unit Price (RM)</label>
-                    <input type="number" step="0.01" name="unit_price" placeholder="Optional" class="form-input" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
+                    <input type="number" step="0.01" min="0" name="unit_price" placeholder="Catalogue price" class="form-input" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
                 </div>
                 <div>
                     <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Rental Rate (RM/MT {{ po.target_warehouse.term_label|default:'per term' }})</label>
@@ -250,9 +252,9 @@
                             <span style="font-weight:600; color:{% if rb.tag == 'Released' %}var(--success-strong){% elif rb.tag == 'Used up' or rb.tag == 'Written off' %}var(--text-muted){% else %}var(--warning-strong){% endif %};">{{ rb.tag }}</span></div>
                         {% empty %}<span style="color:var(--text-muted);">—</span>{% endfor %}
                     </td>
-                    <td style="padding:0.85rem 1rem;">{% if row.item.unit_price %}RM {{ row.item.unit_price|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
-                    <td style="padding:0.85rem 1rem;">{% if row.item.negotiated_rental_rate_per_mt %}RM {{ row.item.negotiated_rental_rate_per_mt|floatformat:2 }}{% else %}<span style="color:var(--text-muted); font-size:0.78rem;">warehouse rate</span>{% endif %}</td>
-                    <td style="padding:0.85rem 1rem; font-weight:600; white-space:nowrap;">{% if row.subtotal > 0 %}RM {{ row.subtotal|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
+                    <td style="padding:0.85rem 1rem;">{% if row.item.unit_price %}RM {{ row.item.unit_price|floatformat:2|intcomma }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
+                    <td style="padding:0.85rem 1rem;">{% if row.item.negotiated_rental_rate_per_mt %}RM {{ row.item.negotiated_rental_rate_per_mt|floatformat:2|intcomma }}{% else %}<span style="color:var(--text-muted); font-size:0.78rem;">warehouse rate</span>{% endif %}</td>
+                    <td style="padding:0.85rem 1rem; font-weight:600; white-space:nowrap;">{% if row.subtotal > 0 %}RM {{ row.subtotal|floatformat:2|intcomma }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem; text-align:right; white-space:nowrap;">
                         <!-- Receive form -->
                         {% if po.status not in unapproved_statuses and po.status != 'Cancelled' %}
@@ -275,9 +277,9 @@
                             {% csrf_token %}
                             <input type="hidden" name="action" value="mark_received">
                             <input type="hidden" name="item_id" value="{{ row.item.id }}">
-                            <label style="font-size:0.82rem; font-weight:600;">Update Received Qty:</label>
-                            <input type="number" step="0.01" name="qty_received" value="{{ row.item.quantity_received|floatformat:2 }}" class="form-input" style="width:120px; padding:0.35rem 0.5rem; border-radius:5px; border:1px solid var(--border-light); font-size:0.85rem;" max="{{ row.item.quantity_ordered }}">
-                            <span style="font-size:0.82rem; color:var(--text-muted);">/ {{ row.item.quantity_ordered|floatformat:1 }} {{ row.item.material.unit_of_measure }}</span>
+                            <label for="qty-recv-{{ row.item.id }}" style="font-size:0.82rem; font-weight:600;">Total received to date, including this delivery:</label>
+                            <input type="number" step="0.01" min="0" required name="qty_received" id="qty-recv-{{ row.item.id }}" {% if row.item.quantity_received %}value="{{ row.item.quantity_received|floatformat:2 }}"{% else %}placeholder="0"{% endif %} onfocus="this.select()" title="Total received so far, up to {{ row.item.quantity_ordered|floatformat:2 }}" class="form-input" style="width:120px; padding:0.35rem 0.5rem; border-radius:5px; border:1px solid var(--border-light); font-size:0.85rem;" max="{{ row.item.quantity_ordered }}">
+                            <span style="font-size:0.82rem; color:var(--text-muted);">of {{ row.item.quantity_ordered|floatformat:1 }} {{ row.item.material.unit_of_measure }} ordered{% if row.item.quantity_received %} &middot; {{ row.item.quantity_received|floatformat:1 }} already received{% endif %}</span>
                             <label style="font-size:0.78rem; color:var(--text-muted);" title="From the supplier's label. Blank = worked out from the material's safe storage days.">Expiry <input type="date" name="expiry_date" class="form-input" style="padding:0.3rem 0.4rem; font-size:0.8rem;"></label>
                             <label style="font-size:0.78rem; color:var(--text-muted);">Made <input type="date" name="manufacturing_date" class="form-input" style="padding:0.3rem 0.4rem; font-size:0.8rem;"></label>
                             {% if row.item.material.inspect_on_receipt %}<span class="badge badge-amber" title="This material goes on QA hold when it arrives">QA check on arrival</span>{% endif %}
@@ -290,7 +292,7 @@
             <tfoot>
                 <tr style="border-top:2px solid var(--border-light);">
                     <td colspan="9" style="padding:0.85rem 1rem; text-align:right; font-size:0.78rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Order Total</td>
-                    <td style="padding:0.85rem 1rem; font-size:1.05rem; font-weight:700; color:var(--primary); white-space:nowrap;">RM {{ po_total|floatformat:2 }}</td>
+                    <td style="padding:0.85rem 1rem; font-size:1.05rem; font-weight:700; color:var(--primary); white-space:nowrap;">RM {{ po_total|floatformat:2|intcomma }}</td>
                     <td></td>
                 </tr>
             </tfoot>

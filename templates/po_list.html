@@ -95,9 +95,9 @@
                         <span style="font-size:0.75rem; color:var(--text-muted);"> material(s)</span>
                     </td>
                     <td style="padding:0.85rem 1rem;">
-                        {% if po.status == 'Draft' %}<span class="badge badge-sky">Draft</span>
-                        {% elif po.status == 'Pending' or po.status == 'Pending Approval' %}<span
-                            class="badge badge-amber">Pending</span>
+                        {% if po.status == 'Draft' %}<span class="badge badge-slate">Draft</span>
+                        {% elif po.status == 'Pending Approval' %}<span class="badge badge-amber">Pending Approval</span>
+                        {% elif po.status == 'Pending' %}<span class="badge badge-sky">Approved</span>
                         {% elif po.status == 'Partially Received' %}<span class="badge badge-amber">Partially
                             Received</span>
                         {% elif po.status == 'Completed' %}<span class="badge badge-emerald">Completed</span>
