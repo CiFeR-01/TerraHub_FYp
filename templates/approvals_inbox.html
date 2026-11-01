@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load quantity_extras %}
+{% load humanize quantity_extras %}
 
 {% block title %}Action Center - TerraHub{% endblock %}
 
@@ -62,7 +62,7 @@
                     <div>
                         <div style="font-size:0.75rem; font-weight:700; color:var(--primary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Sales Order Approval</div>
                         <a href="{% url 'so_detail' so.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ so.so_number }}</a>
-                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Client: {{ so.client_name }} &middot; Order value: RM {{ so.total_value|floatformat:2 }}</div>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Client: {{ so.client_name }} &middot; Order value: RM {{ so.total_value|floatformat:2|intcomma }}</div>
                     </div>
                     <span class="badge badge-amber">Pending Approval</span>
                 </div>
@@ -188,7 +188,7 @@
                     <div>
                         <div style="font-size:0.75rem; font-weight:700; color:var(--success-strong); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.25rem;">Purchase Order Approval</div>
                         <a href="{% url 'po_detail' po.pk %}" style="font-size:1.1rem; font-weight:700; color:var(--text-main); text-decoration:none;">{{ po.po_number }}</a>
-                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Supplier: {{ po.supplier_name|default:po.supplier|default:"-" }} &middot; Order value: RM {{ po.total_value|floatformat:2 }}</div>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Supplier: {{ po.supplier_name|default:po.supplier|default:"-" }} &middot; Order value: RM {{ po.total_value|floatformat:2|intcomma }}</div>
                         {% if po.linked_production_run %}
                         <div style="font-size:0.75rem; color:var(--primary); margin-top:0.25rem; font-weight:600;">Drafted for Run: {{ po.linked_production_run.run_number }}</div>
                         {% endif %}
@@ -278,7 +278,7 @@
                         <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">Product: {{ run.target_product.name }}</div>
                     </div>
                     <div style="text-align:right;">
-                        <span class="badge badge-sky">{{ run.status }}</span>
+                        <span class="badge badge-sky">{{ run.get_status_display }}</span>
                     </div>
                 </div>
                 {% endfor %}

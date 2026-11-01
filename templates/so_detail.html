@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load quantity_extras %}
+{% load humanize quantity_extras %}
 
 {% block title %}{{ so.so_number }} — Sales Order Detail - TerraHub{% endblock %}
 
@@ -69,8 +69,9 @@
         <div>
             <div style="display:flex; align-items:center; gap:1rem; margin-bottom:1.25rem;">
                 <h2 style="font-family:'Outfit',sans-serif; font-size:1.6rem; font-weight:800; color:var(--primary); letter-spacing:-0.5px;">{{ so.so_number }}</h2>
-                {% if so.status == 'Draft' %}<span class="badge badge-sky">Draft</span>
-                {% elif so.status == 'Pending' or so.status == 'Pending Approval' %}<span class="badge badge-amber">Pending</span>
+                {% if so.status == 'Draft' %}<span class="badge badge-slate">Draft</span>
+                {% elif so.status == 'Pending Approval' %}<span class="badge badge-amber">Pending Approval</span>
+                {% elif so.status == 'Pending' %}<span class="badge badge-sky">Approved</span>
                 {% elif so.status == 'Awaiting Acknowledgement' %}<span class="badge badge-amber">Awaiting Ack.</span>
                 {% elif so.status == 'In Production' %}<span class="badge badge-indigo">In Production</span>
                 {% elif so.status == 'Ready to Ship' %}<span class="badge badge-emerald">Ready to Ship</span>
@@ -123,7 +124,7 @@
                         {% for run in so_runs %}
                         <a href="{% url 'production_run_detail' run.pk %}" style="color:var(--primary); text-decoration:none; display:flex; align-items:center; gap:0.4rem;">
                             {{ run.run_number }}
-                            <span class="badge {% if run.in_qa %}badge-amber{% elif run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.65rem;">{{ run.status }}</span>
+                            <span class="badge {% if run.in_qa %}badge-amber{% elif run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.65rem;">{{ run.get_status_display }}</span>
                         </a>
                         {% empty %}
                         <span style="color:var(--text-muted); font-weight:400; font-size:0.85rem;">No production run linked yet</span>
@@ -201,10 +202,10 @@
             <div style="display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:0.75rem; align-items:end;">
                 <div>
                     <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Product</label>
-                    <select name="product_id" required class="form-select" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
+                    <select name="product_id" required onchange="this.form.unit_price.value = this.selectedOptions[0].dataset.price || ''" class="form-select" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
                         <option value="">— Select Product —</option>
                         {% for p in products %}{% if p.is_active %}
-                        <option value="{{ p.id }}">{{ p.sku }} — {{ p.name }}</option>
+                        <option value="{{ p.id }}" data-price="{{ p.price_per_unit }}">{{ p.sku }} — {{ p.name }}</option>
                         {% endif %}{% endfor %}
                     </select>
                 </div>
@@ -214,7 +215,7 @@
                 </div>
                 <div>
                     <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.3rem;">Unit Price (RM)</label>
-                    <input type="number" step="0.01" name="unit_price" placeholder="Optional" class="form-input" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
+                    <input type="number" step="0.01" min="0" name="unit_price" placeholder="Catalogue price" class="form-input" style="width:100%; padding:0.5rem; border-radius:6px; border:1px solid var(--border-light); font-size:0.85rem;">
                 </div>
                 <button type="submit" class="btn btn-primary" style="padding:0.5rem 1rem; font-size:0.85rem; white-space:nowrap;">Add Item</button>
             </div>
@@ -252,10 +253,10 @@
                     <td style="padding:0.85rem 1rem; font-weight:600; color:{% if row.in_logistics > 0 %}var(--primary){% else %}var(--text-muted){% endif %};">{{ row.in_logistics|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600; color:{% if row.deficit > 0 %}var(--danger){% else %}var(--text-muted){% endif %};">{{ row.deficit|floatformat:1 }}</td>
                     <td style="padding:0.85rem 1rem;">{{ row.item.quantity_shipped|floatformat:1 }}</td>
-                    <td style="padding:0.85rem 1rem;">{% if row.item.unit_price %}RM {{ row.item.unit_price|floatformat:2 }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
+                    <td style="padding:0.85rem 1rem;">{% if row.item.unit_price %}RM {{ row.item.unit_price|floatformat:2|intcomma }}{% else %}<span style="color:var(--text-muted);">—</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem; font-weight:600; white-space:nowrap;">
                         {% if row.subtotal is not None %}
-                        RM {{ row.subtotal|floatformat:2 }}
+                        RM {{ row.subtotal|floatformat:2|intcomma }}
                         {% else %}<span style="color:var(--text-muted);">—</span>{% endif %}
                     </td>
                     <td style="padding:0.85rem 1rem;"{% if row.free_stock is not None %} title="{{ row.free_stock|floatformat:1 }} units free across all warehouses"{% endif %}>
@@ -377,7 +378,7 @@
                     <td colspan="8" style="padding:0.85rem 1rem; text-align:right; font-size:0.78rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">
                         {% if unpriced_lines %}<span style="font-weight:400; text-transform:none; letter-spacing:0; margin-right:0.75rem;">{{ unpriced_lines }} line{{ unpriced_lines|pluralize }} without a unit price not included</span>{% endif %}Order Total
                     </td>
-                    <td style="padding:0.85rem 1rem; font-size:1.05rem; font-weight:700; color:var(--primary); white-space:nowrap;">RM {{ order_total|floatformat:2 }}</td>
+                    <td style="padding:0.85rem 1rem; font-size:1.05rem; font-weight:700; color:var(--primary); white-space:nowrap;">RM {{ order_total|floatformat:2|intcomma }}</td>
                     <td colspan="2"></td>
                 </tr>
             </tfoot>
@@ -438,7 +439,7 @@
             {% for run in so_runs %}
             <a href="{% url 'production_run_detail' run.pk %}" style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; padding:0.6rem 0.85rem; background:var(--surface-sunken); border:1px solid var(--border-light); border-radius:8px; text-decoration:none; color:var(--text-main); font-size:0.85rem;">
                 <span><strong style="color:var(--primary);">{{ run.run_number }}</strong> — {{ run.target_product.name }} ({{ run.expected_yield|floatformat:0 }} units ≈ {{ run.expected_yield|weight_display:run.target_product }})</span>
-                <span class="badge {% if run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.7rem;">{% if run.in_qa %}Quality Check{% else %}{{ run.status }}{% endif %}</span>
+                <span class="badge {% if run.status == 'Completed' %}badge-emerald{% elif run.status == 'Cancelled' %}badge-rose{% elif run.status == 'Awaiting Materials' %}badge-rose{% elif run.status in 'Pending Approval,Pending Allocation' %}badge-amber{% elif run.status in 'Planned,InProgress' %}badge-sky{% else %}badge-slate{% endif %}" style="font-size:0.7rem;">{% if run.in_qa %}Quality Check{% else %}{{ run.get_status_display }}{% endif %}</span>
             </a>
             {% endfor %}
         </div>

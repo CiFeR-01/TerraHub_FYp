@@ -97,7 +97,11 @@
             var qty = document.getElementById('qa-action-qty');
             qty.value = '';
             qty.max = quantity || '';
-            document.getElementById('qa-action-qty-hint').innerText = 'Blank = the whole batch' + (quantity ? ' (' + quantity + (unit ? ' ' + unit : '') + ')' : '');
+            // A write-off must name its quantity: a blank box used to write off the whole batch by accident
+            var whole = quantity ? ' (' + quantity + (unit ? ' ' + unit : '') + ')' : '';
+            qty.required = action === 'spoil_dispose';
+            qty.placeholder = qty.required ? '' : 'All';
+            document.getElementById('qa-action-qty-hint').innerText = qty.required ? 'Enter how much to write off' + (quantity ? ' (whole batch: ' + quantity + (unit ? ' ' + unit : '') + ')' : '') + '.' : 'Blank = the whole batch' + whole;
             document.getElementById('qa-action-days-hint').innerText = capDays ? ('Up to ' + capDays + ' more days without approval.') : '';
             document.querySelectorAll('#qa-action-modal .qa-check').forEach(function (c) { c.checked = false; });
             document.getElementById('qa-action-pass').checked = false;
@@ -115,7 +119,7 @@
                 var unticked = Array.prototype.filter.call(document.querySelectorAll('#qa-action-modal .qa-check'), function (c) { return !c.checked; });
                 if (unticked.length && !confirm('Some checklist items are not ticked. Pass the batch anyway?')) { e.preventDefault(); }
             }
-            if (action === 'spoil_dispose' && !confirm('Write this stock off? This cannot be undone.')) { e.preventDefault(); }
+            if (action === 'spoil_dispose' && !confirm('Write off ' + document.getElementById('qa-action-qty').value + ' of this batch? This cannot be undone.')) { e.preventDefault(); }
         });
         document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { window.closeQAAction(); } });
     })();

@@ -72,7 +72,8 @@
                         <div style="font-size:0.8rem; color:var(--text-muted);">{{ entry.so.client_name }} &middot; {{ entry.items|length }} product(s) &middot; {{ entry.so.order_date }}</div>
                     </div>
                     {% if entry.so.status == 'In Production' %}<span class="badge badge-indigo">In Production</span>
-                    {% elif entry.so.status == 'Pending' or entry.so.status == 'Pending Approval' %}<span class="badge badge-amber">Pending</span>
+                    {% elif entry.so.status == 'Pending Approval' %}<span class="badge badge-amber">Pending Approval</span>
+                    {% elif entry.so.status == 'Pending' %}<span class="badge badge-sky">Approved</span>
                     {% elif entry.so.status == 'Awaiting Acknowledgement' %}<span class="badge badge-amber">Awaiting Ack.</span>
                     {% else %}<span class="badge badge-sky">{{ entry.so.status }}</span>{% endif %}
                 </div>
@@ -190,22 +191,34 @@
 </section>
 
 <!-- SECTION 3: Production Runs Ledger -->
-<div class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:2rem;">
+<div id="runs-ledger" class="table-card-wrapper animate-fade-in-up" style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.5rem; margin-bottom:2rem;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
         <h3 style="font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:700;">Production Runs Ledger</h3>
+        <form method="get" action="#runs-ledger" style="display:flex; gap:0.5rem; align-items:center; margin-left:auto; margin-right:0.75rem;">
+            <input type="hidden" name="sort" value="{{ sort_by }}">
+            <input type="hidden" name="page_size" value="{{ page_size }}">
+            <input type="text" name="q" value="{{ search_query }}" placeholder="Search run #, product, SO, plant..." aria-label="Search production runs"
+                style="padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-light); font-size: 0.85rem; min-width:250px;">
+            <button type="submit" class="btn btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.85rem;">Search</button>
+            {% if search_query %}
+            <a href="?sort={{ sort_by }}&page_size={{ page_size }}" class="btn btn-secondary"
+                style="padding: 0.5rem; font-size: 1rem; text-decoration:none; display:flex; align-items:center; justify-content:center; line-height:1;"
+                title="Clear Search">&times;</a>
+            {% endif %}
+        </form>
         <button type="button" class="btn btn-primary js-open-run-modal" style="padding:0.4rem 1rem; font-size:0.85rem;">+ New Production Run</button>
     </div>
     <div class="table-responsive">
         <table class="data-table" style="width:100%; border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid var(--border-light); text-align:left; font-size:0.825rem; color:var(--text-muted);">
-                    <th style="padding:0.75rem 1rem;"><a href="?sort={% if sort_by == 'run_number' %}-run_number{% else %}run_number{% endif %}&page_size={{ page_size }}" style="color:inherit; text-decoration:none;">Run # {% if sort_by == 'run_number' %}▲{% elif sort_by == '-run_number' %}▼{% endif %}</a></th>
-                    <th style="padding:0.75rem 1rem;"><a href="?sort={% if sort_by == 'target_product__name' %}-target_product__name{% else %}target_product__name{% endif %}&page_size={{ page_size }}" style="color:inherit; text-decoration:none;">Product {% if sort_by == 'target_product__name' %}▲{% elif sort_by == '-target_product__name' %}▼{% endif %}</a></th>
+                    <th style="padding:0.75rem 1rem;"><a href="?sort={% if sort_by == 'run_number' %}-run_number{% else %}run_number{% endif %}&page_size={{ page_size }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" style="color:inherit; text-decoration:none;">Run # {% if sort_by == 'run_number' %}▲{% elif sort_by == '-run_number' %}▼{% endif %}</a></th>
+                    <th style="padding:0.75rem 1rem;"><a href="?sort={% if sort_by == 'target_product__name' %}-target_product__name{% else %}target_product__name{% endif %}&page_size={{ page_size }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" style="color:inherit; text-decoration:none;">Product {% if sort_by == 'target_product__name' %}▲{% elif sort_by == '-target_product__name' %}▼{% endif %}</a></th>
                     <th style="padding:0.75rem 1rem;">Expected Yield</th>
                     <th style="padding:0.75rem 1rem;">Sales Order</th>
                     <th style="padding:0.75rem 1rem;">Plant</th>
                     <th style="padding:0.75rem 1rem;">Supervisor</th>
-                    <th style="padding:0.75rem 1rem;"><a href="?sort={% if sort_by == 'status' %}-status{% else %}status{% endif %}&page_size={{ page_size }}" style="color:inherit; text-decoration:none;">Status {% if sort_by == 'status' %}▲{% elif sort_by == '-status' %}▼{% endif %}</a></th>
+                    <th style="padding:0.75rem 1rem;"><a href="?sort={% if sort_by == 'status' %}-status{% else %}status{% endif %}&page_size={{ page_size }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" style="color:inherit; text-decoration:none;">Status {% if sort_by == 'status' %}▲{% elif sort_by == '-status' %}▼{% endif %}</a></th>
                     <th style="padding:0.75rem 1rem; text-align:right;">Actions</th>
                 </tr>
             </thead>
@@ -231,7 +244,7 @@
                             {% elif run.status == 'InProgress' %}background:var(--info-soft);color:var(--info-strong);
                             {% elif run.status == 'Completed' %}background:var(--success-soft);color:var(--success-strong);
                             {% else %}background:var(--surface-muted);color:var(--text-secondary);{% endif %}
-                        ">{{ run.status }}</span>
+                        ">{{ run.get_status_display }}</span>
                     </td>
                     <td style="padding:0.85rem 1rem; text-align:right;">
                         {% if run.status == 'Pending Approval' %}
@@ -256,7 +269,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="8" style="padding:2rem; text-align:center; color:var(--text-muted);">No production runs scheduled.</td>
+                    <td colspan="8" style="padding:2rem; text-align:center; color:var(--text-muted);">{% if search_query %}No production runs match &ldquo;{{ search_query }}&rdquo;.{% else %}No production runs scheduled.{% endif %}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -269,6 +282,7 @@
         <div style="display:flex; align-items:center; gap:1rem;">
             <form method="get" style="display:inline-block;">
                 <input type="hidden" name="sort" value="{{ sort_by }}">
+                {% if search_query %}<input type="hidden" name="q" value="{{ search_query }}">{% endif %}
                 <label>Rows per page:</label>
                 <select name="page_size" onchange="this.form.submit()" class="form-select" style="padding:0.2rem 0.5rem; border-radius:4px; border:1px solid var(--border-light); font-size:0.85rem;">
                     <option value="15" {% if page_size == 15 %}selected{% endif %}>15</option>
@@ -279,13 +293,13 @@
             </form>
             <div style="display:flex; gap:0.5rem;">
                 {% if runs.has_previous %}
-                    <a href="?page={{ runs.previous_page_number }}&sort={{ sort_by }}&page_size={{ page_size }}" class="btn btn-secondary" style="padding:0.2rem 0.5rem;">Prev</a>
+                    <a href="?page={{ runs.previous_page_number }}&sort={{ sort_by }}&page_size={{ page_size }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="btn btn-secondary" style="padding:0.2rem 0.5rem;">Prev</a>
                 {% else %}
                     <span class="btn btn-secondary" style="padding:0.2rem 0.5rem; opacity:0.5; cursor:not-allowed;">Prev</span>
                 {% endif %}
                 
                 {% if runs.has_next %}
-                    <a href="?page={{ runs.next_page_number }}&sort={{ sort_by }}&page_size={{ page_size }}" class="btn btn-secondary" style="padding:0.2rem 0.5rem;">Next</a>
+                    <a href="?page={{ runs.next_page_number }}&sort={{ sort_by }}&page_size={{ page_size }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}" class="btn btn-secondary" style="padding:0.2rem 0.5rem;">Next</a>
                 {% else %}
                     <span class="btn btn-secondary" style="padding:0.2rem 0.5rem; opacity:0.5; cursor:not-allowed;">Next</span>
                 {% endif %}

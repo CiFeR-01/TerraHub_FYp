@@ -92,9 +92,9 @@
                         <span style="font-size:0.75rem; color:var(--text-muted);"> product(s)</span>
                     </td>
                     <td style="padding:0.85rem 1rem;">
-                        {% if so.status == 'Draft' %}<span class="badge badge-sky">Draft</span>
-                        {% elif so.status == 'Pending' or so.status == 'Pending Approval' %}<span
-                            class="badge badge-amber">Pending</span>
+                        {% if so.status == 'Draft' %}<span class="badge badge-slate">Draft</span>
+                        {% elif so.status == 'Pending Approval' %}<span class="badge badge-amber">Pending Approval</span>
+                        {% elif so.status == 'Pending' %}<span class="badge badge-sky">Approved</span>
                         {% elif so.status == 'In Production' %}<span class="badge badge-indigo">In Production</span>
                         {% elif so.status == 'Ready to Ship' %}<span class="badge badge-emerald">Ready to Ship</span>
                         {% elif so.status == 'Shipped' or so.status == 'Delivered' %}<span

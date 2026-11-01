@@ -239,6 +239,15 @@
         itemSel.addEventListener('change', filterBatches);
         searchEl.addEventListener('input', filterBatches);
         batchSel.addEventListener('change', showQty);
+        // A count far from the system quantity is often a typo or the wrong batch, so ask before logging it
+        batchSel.form.addEventListener('submit', function (e) {
+            var o = batchSel.selectedOptions[0], actual = parseFloat(batchSel.form.actual_quantity.value);
+            if (!o || !o.value || isNaN(actual)) return;
+            var sys = parseFloat(o.getAttribute('data-qty')), unit = o.getAttribute('data-unit');
+            if (Math.abs(actual - sys) > Math.max(sys * 0.2, 0.01) &&
+                !confirm('You counted ' + actual + ' ' + unit + ', but the system has ' + sys + ' ' + unit + ' in batch ' +
+                         o.getAttribute('data-batch-number') + '. Is this the right batch and count?')) { e.preventDefault(); }
+        });
 
         const urlParams = new URLSearchParams(window.location.search);
         const batchNum = urlParams.get('batch');

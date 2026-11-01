@@ -46,7 +46,7 @@
             {% elif run.status == 'Completed' %}background:var(--success-soft); color:var(--success-strong); border:1px solid var(--success-border);
             {% elif run.status == 'Cancelled' %}background:var(--danger-soft); color:var(--danger-strong); border:1px solid var(--danger-border);
             {% else %}background:var(--surface-muted); color:var(--text-secondary); border:1px solid var(--border-light);{% endif %}">
-            {{ run.status }}
+            {{ run.get_status_display }}
         </span>
     </div>
 </header>

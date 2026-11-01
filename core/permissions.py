@@ -229,7 +229,7 @@ ACTION_PERMS = {
                                           'return_to_manufacturing', 'cancel_escalation')}
     | {'request_force_close': (SHIP, RECEIVE)}
     | {'add_item': 'core.change_shipmentitem', 'remove_item': 'core.change_shipmentitem'}
-    | {a: RECEIVE for a in ('log_item_receipt', 'receive_all', 'finalize_shipment_receiving')}
+    | {a: RECEIVE for a in ('log_item_receipt', 'undo_item_receipt', 'receive_all', 'finalize_shipment_receiving')}
     | {a: OWN_CHECK for a in ('approve', 'reject', 'force_close_shipment', 'add_follower', 'remove_follower', 'toggle_follow')},
     'user_management': {'update_user': OWN_CHECK, 'reset_password': OWN_CHECK,
                         'create_user': OWN_CHECK, 'unlock_user': OWN_CHECK, 'sign_out_everywhere': OWN_CHECK},

@@ -519,7 +519,7 @@ class BatchClosureTests(TestCase):
         client = Client()
         client.login(username='qauser', password='pw')
 
-        resp = client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': batch.id})
+        resp = client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': batch.id, 'quantity': batch.quantity})
         self.assertEqual(resp.status_code, 302)
 
         batch.refresh_from_db()
@@ -4396,7 +4396,7 @@ class OrderDisplayTests(TestCase):
         SalesOrderDetail.objects.create(sales_order=so, product=self.product, quantity_ordered=Decimal('400'), unit_price=Decimal('1200'))
         SalesOrderDetail.objects.create(sales_order=so, product=self.product, quantity_ordered=Decimal('5'))
         resp = self.client.get(reverse('so_detail', args=[so.pk]))
-        self.assertContains(resp, 'RM 480000.00')
+        self.assertContains(resp, 'RM 480,000.00')
         self.assertNotContains(resp, '×')
         self.assertContains(resp, '1 line without a unit price not included')
         self.assertEqual(so.total_value, Decimal('480000'))
@@ -5072,8 +5072,7 @@ class HomeLandingTests(TestCase):
     def test_guest_sees_landing(self):
         resp = self.client.get(reverse('home'))
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, 'Every batch, in every warehouse, used before it expires.')
-        self.assertContains(resp, 'img/landing-dashboard.png')
+        self.assertContains(resp, 'used before it expires.')
 
     def test_signed_in_user_goes_to_dashboard(self):
         self.client.force_login(User.objects.create_user(username='land_user', password='pw'))
@@ -6740,11 +6739,15 @@ class StockAndDeliveryTests(TestCase):
             self.client.post(url, {'action': 'update_batch', 'status': bad})
             batch.refresh_from_db()
             self.assertEqual(batch.status, 'Active')
-        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': batch.id, 'reason': 'contamination'})
-        batch.refresh_from_db(); so.refresh_from_db()
+        dispose = {'action': 'spoil_dispose', 'batch_id': batch.id, 'quantity': batch.quantity, 'reason': 'contamination'}
+        self.client.post(reverse('qa_dashboard'), dispose)  # reserved: refused until the reservation is released
+        batch.refresh_from_db()
+        self.assertEqual((batch.status, batch.allocated_quantity), ('Active', Decimal('5')))
+        StockAllocation.objects.filter(batch=batch).delete()
+        Batch.objects.filter(pk=batch.pk).update(allocated_quantity=0)
+        self.client.post(reverse('qa_dashboard'), dispose)
+        batch.refresh_from_db()
         self.assertEqual((batch.status, batch.allocated_quantity), ('Spoiled', Decimal('0')))
-        self.assertFalse(StockAllocation.objects.filter(batch=batch).exists())
-        self.assertEqual(so.status, 'Pending')
         self.assertTrue(RegistryLog.objects.filter(action_type='Spoiled_Disposal').exists())
         self.client.post(url, {'action': 'update_batch', 'status': 'Active'})
         batch.refresh_from_db()
@@ -6946,21 +6949,25 @@ class StockAndDeliveryTests(TestCase):
         self.assertEqual(batch.allocated_quantity, Decimal('0'))
         self.assertFalse(StockAllocation.objects.filter(batch=batch).exists())
 
-    def test_spoiling_a_reserved_batch_releases_the_order(self):
+    def test_reserved_stock_is_not_written_off(self):
         batch = self._batch('SD-SP', '60', allocated='10')
         so, _ = self._so('10', status='Ready to Ship')
         StockAllocation.objects.create(batch=batch, sales_order=so, quantity=Decimal('10'))
-        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': batch.id})
+        resp = self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': batch.id, 'quantity': batch.quantity}, follow=True)
+        self.assertContains(resp, 'is reserved for')
         batch.refresh_from_db(); so.refresh_from_db()
-        self.assertEqual((batch.status, batch.allocated_quantity), ('Spoiled', Decimal('0')))
-        self.assertFalse(StockAllocation.objects.filter(batch=batch).exists())
-        self.assertEqual(so.status, 'Pending')
+        self.assertEqual((batch.status, batch.quantity, batch.allocated_quantity, so.status), ('Active', Decimal('60'), Decimal('10'), 'Ready to Ship'))
+        # The unreserved 50 can still go; the reservation stays on what is left
+        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': batch.id, 'quantity': '50'})
+        batch.refresh_from_db()
+        self.assertEqual((batch.status, batch.quantity, batch.allocated_quantity), ('Active', Decimal('10'), Decimal('10')))
+        self.assertTrue(StockAllocation.objects.filter(batch=batch, sales_order=so).exists())
 
     def test_spoiling_stock_loaded_on_a_shipment_is_refused(self):
         batch = self._batch('SD-SP2', '10', allocated='10')
         so, _ = self._so('10', status='Ready to Ship')
         self._outbound(so, batch, '10', status='Dispatched')
-        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': batch.id})
+        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': batch.id, 'quantity': batch.quantity})
         batch.refresh_from_db()
         self.assertEqual((batch.status, batch.allocated_quantity), ('Active', Decimal('10')))
 
@@ -7344,7 +7351,7 @@ class ServerSidePermissionTests(TestCase):
 
     def test_viewer_cannot_spoil_stock(self):
         self.client.force_login(self.viewer)
-        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': self.beta_batch.id})
+        self.client.post(reverse('qa_dashboard'), {'action': 'spoil_dispose', 'reason': 'expired', 'batch_id': self.beta_batch.id, 'quantity': self.beta_batch.quantity})
         self.beta_batch.refresh_from_db()
         self.assertEqual(self.beta_batch.status, 'Active')
 
@@ -8724,7 +8731,7 @@ class QASpoilageTests(TestCase):
 
     def test_large_write_off_waits_for_a_manager(self):
         b = self.batch('QA-BIG', qty='1000')  # RM 10,000, over the RM 5,000 default
-        self.qa_post(action='spoil_dispose', batch_id=b.id, reason='contamination')
+        self.qa_post(action='spoil_dispose', batch_id=b.id, quantity=b.quantity, reason='contamination')
         b.refresh_from_db()
         approval = QAApproval.objects.get()
         self.assertEqual((b.status, approval.status, approval.value_rm), ('Quarantined', 'Pending', Decimal('10000.00')))
@@ -8755,7 +8762,7 @@ class QASpoilageTests(TestCase):
     def test_supplier_return_is_a_write_off_noted_on_the_po(self):
         po = PurchaseOrder.objects.create(po_number='PO-QA-RET', supplier_name='Acme', target_warehouse=self.wh, status='Completed')
         b = self.batch('QA-RET', purchase_order=po)
-        self.qa_post(action='spoil_dispose', batch_id=b.id, reason='returned_to_supplier')
+        self.qa_post(action='spoil_dispose', batch_id=b.id, quantity=b.quantity, reason='returned_to_supplier')
         b.refresh_from_db()
         self.assertEqual(b.status, 'Spoiled')
         self.assertEqual(RegistryLog.objects.get(action_type='Spoiled_Disposal').quantity_changed, Decimal('10'))

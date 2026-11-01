@@ -135,7 +135,7 @@ body::after {
     width: 700px;
     height: 700px;
     background: radial-gradient(circle, rgba(var(--secondary-rgb), 0.04) 0%, transparent 70%);
-    bottom: -200px;
+    bottom: 0; /* a negative offset here added blank scroll space below the footer */
     left: -200px;
     z-index: -1;
     pointer-events: none;
@@ -1035,54 +1035,102 @@ button.sidebar-toggle-btn {
 }
 
 /* --- Hero ------------------------------------------------------------ */
+/* Full-bleed basalt band drawn as a racking elevation (uprights + copper beams), no image file */
 .lp-hero {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 3rem;
     align-items: center;
-    padding: 1.5rem 0 4.5rem;
+    min-height: min(78vh, 46rem);
+    padding: 5rem 2rem 5.5rem;
+    /* pull out of guest-main's centred column and top padding */
+    margin: -3rem calc(50% - 50vw) 0;
+    background: #1b1f22;
+    color: #fff;
 }
 
-@media (min-width: 1024px) {
-    .lp-hero {
-        grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
-        gap: 3.5rem;
-    }
+.lp-hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background:
+        /* clear the middle so the copy sits on plain basalt */
+        radial-gradient(ellipse 58% 62% at 50% 46%, #1b1f22 35%, rgba(27, 31, 34, 0) 78%),
+        /* copper glow rising from the floor */
+        radial-gradient(ellipse 80% 45% at 50% 115%, rgba(154, 79, 36, 0.45), rgba(154, 79, 36, 0) 70%),
+        /* rack uprights and beams */
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.07) 0 2px, transparent 2px 168px),
+        repeating-linear-gradient(0deg, rgba(227, 165, 111, 0.16) 0 2px, transparent 2px 104px);
+    background-position: center, center, center top, center bottom;
+    animation: lp-hero-settle 2.4s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.lp-eyebrow {
-    display: inline-block;
-    font-family: 'Outfit', sans-serif;
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 1.2px;
-    text-transform: uppercase;
-    color: var(--primary);
-    margin-bottom: 1rem;
+@keyframes lp-hero-settle {
+    from { transform: scale(1.06); }
+    to { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lp-hero::before { animation: none; }
+}
+
+.lp-hero-copy {
+    max-width: 48rem;
+    margin: 0 auto;
+    text-align: center;
 }
 
 .lp-title {
     font-family: 'Outfit', sans-serif;
-    font-size: clamp(2.2rem, 4.4vw, 3.4rem);
+    font-size: clamp(2.4rem, 5.6vw, 4.4rem);
     font-weight: 800;
-    line-height: 1.08;
-    letter-spacing: -1.2px;
-    color: var(--text-main);
-    margin-bottom: 1.25rem;
+    line-height: 1.04;
+    letter-spacing: -0.035em;
+    color: #fff;
+    margin-bottom: 1.4rem;
     text-wrap: balance;
+    text-shadow: 0 2px 24px rgba(0, 0, 0, 0.35);
 }
 
 .lp-lede {
-    font-size: 1.12rem;
+    font-size: 1.15rem;
     line-height: 1.65;
-    color: var(--text-muted);
-    max-width: 34rem;
-    margin-bottom: 2rem;
+    color: rgba(255, 255, 255, 0.86);
+    max-width: 36rem;
+    margin: 0 auto 2.25rem;
+    text-wrap: pretty;
+}
+
+/* Secondary action on the dark photo */
+.lp-hero .btn-secondary {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.55);
+}
+
+.lp-hero .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: #fff;
+}
+
+.lp-hero .lp-trace .btn-secondary {
+    background: var(--bg-surface);
+    color: var(--text-main);
+    border-color: var(--border-light);
+}
+
+.lp-hero .lp-trace .btn-secondary:hover {
+    background: var(--surface-muted);
+    border-color: var(--border-strong);
 }
 
 .lp-actions {
     display: flex;
     flex-wrap: wrap;
+    justify-content: center;
     gap: 0.75rem;
     margin-bottom: 2rem;
 }
@@ -1106,6 +1154,8 @@ button.sidebar-toggle-btn {
     border-radius: var(--radius-md);
     padding: 1rem 1.1rem 0.9rem;
     max-width: 30rem;
+    margin: 0 auto;
+    text-align: left;
     box-shadow: var(--shadow-sm);
 }
 
@@ -1166,40 +1216,6 @@ button.sidebar-toggle-btn {
     border-color: var(--danger-border);
 }
 
-/* Product shot in a light browser frame */
-.lp-shot {
-    margin: 0;
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--border-light);
-    background: var(--bg-surface);
-    box-shadow: 0 30px 60px -20px rgba(15, 23, 42, 0.25), var(--shadow-sm);
-    overflow: hidden;
-}
-
-.lp-shot-bar {
-    display: flex;
-    gap: 6px;
-    padding: 0.65rem 0.9rem;
-    border-bottom: 1px solid var(--border-light);
-    background: var(--surface-sunken);
-}
-
-.lp-shot-bar span {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: var(--border-light);
-}
-
-.lp-shot img {
-    display: block;
-    width: 100%;
-    height: auto;
-    aspect-ratio: 16 / 10;
-    object-fit: cover;
-    object-position: left top;
-}
-
 /* --- Sections -------------------------------------------------------- */
 .lp-section {
     padding: 4rem 0;
@@ -1215,17 +1231,6 @@ button.sidebar-toggle-btn {
 .lp-head {
     max-width: 40rem;
     margin-bottom: 2.25rem;
-}
-
-.lp-kicker {
-    display: block;
-    font-family: 'Outfit', sans-serif;
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 1.2px;
-    text-transform: uppercase;
-    color: var(--primary);
-    margin-bottom: 0.5rem;
 }
 
 .lp-head h2,
@@ -1283,10 +1288,81 @@ button.sidebar-toggle-btn {
 }
 
 .lp-pillar {
+    padding-top: 1.25rem;
+    border-top: 2px solid var(--text-main);
+}
+
+/* Small product specimen at the top of each pillar */
+.lp-viz {
     background: var(--bg-surface);
     border: 1px solid var(--border-light);
-    border-radius: var(--radius-lg);
-    padding: 1.75rem;
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 20px -12px rgba(15, 23, 42, 0.18);
+    padding: 0.4rem 0.9rem;
+    margin-bottom: 1.4rem;
+    /* equal height across the three pillars */
+    min-height: 7.6rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.lp-viz-row {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+    gap: 0.6rem;
+    align-items: center;
+    padding: 0.55rem 0;
+    color: var(--text-muted);
+}
+
+.lp-viz-row + .lp-viz-row {
+    border-top: 1px solid var(--border-light);
+}
+
+.lp-viz-row span:first-child {
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+.lp-viz-row b {
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+.lp-viz-row.is-pick b {
+    color: var(--success-strong);
+}
+
+.lp-viz-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.35rem 0.6rem;
+    padding: 0.6rem 0;
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+.lp-viz-bar b {
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.lp-viz-bar i {
+    grid-column: 1 / -1;
+    height: 6px;
+    border-radius: 999px;
+    background: linear-gradient(var(--primary), var(--primary)) left / var(--fill) 100% no-repeat, var(--surface-muted);
+}
+
+.lp-viz-bar.is-full b {
+    color: var(--danger-strong);
+}
+
+.lp-viz-bar.is-full i {
+    background: linear-gradient(var(--danger-strong), var(--danger-strong)) left / var(--fill) 100% no-repeat, var(--surface-muted);
 }
 
 .lp-pillar h3 {
@@ -1334,6 +1410,26 @@ button.sidebar-toggle-btn {
 }
 
 /* --- Flow --------------------------------------------------------------- */
+/* Faint echo of the hero's racking grid behind the trail */
+.lp-racked {
+    position: relative;
+    isolation: isolate;
+}
+
+.lp-racked::before {
+    content: '';
+    position: absolute;
+    inset: 0 calc(50% - 50vw);
+    z-index: -1;
+    background:
+        repeating-linear-gradient(90deg, rgba(27, 31, 34, 0.05) 0 2px, transparent 2px 168px),
+        repeating-linear-gradient(0deg, rgba(154, 79, 36, 0.09) 0 2px, transparent 2px 104px);
+    background-position: center top, center bottom;
+    -webkit-mask-image: radial-gradient(ellipse 70% 90% at 50% 50%, #000 20%, transparent 80%);
+    mask-image: radial-gradient(ellipse 70% 90% at 50% 50%, #000 20%, transparent 80%);
+    pointer-events: none;
+}
+
 .lp-flow {
     list-style: none;
     padding: 0;
@@ -1440,6 +1536,27 @@ button.sidebar-toggle-btn {
     color: var(--text-main);
 }
 
+.lp-q .lp-a {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-top: -0.35rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--primary-strong);
+    font-variant-numeric: tabular-nums;
+}
+
+.lp-q .lp-a::before {
+    content: '';
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--primary);
+    transform: translateY(-2px);
+}
+
 .lp-q span {
     align-self: flex-start;
     font-size: 0.75rem;
@@ -1499,11 +1616,32 @@ button.sidebar-toggle-btn {
     margin-bottom: 0.6rem;
 }
 
+.lp-trace--inline {
+    width: 100%;
+    max-width: 30rem;
+    padding: 0.6rem;
+}
+
+.lp-trace--inline .btn {
+    gap: 0.4rem;
+}
+
+.lp-trace--inline .btn svg {
+    width: 15px;
+    height: 15px;
+}
+
 /* --- Small screens --------------------------------------------------- */
 @media (max-width: 640px) {
     .lp-hero {
-        padding-top: 0.5rem;
-        gap: 2.25rem;
+        min-height: 0;
+        padding: 3.5rem 1rem 4rem;
+        margin-top: -1.5rem;
+    }
+
+    /* the headline's manual <br>s are for wide screens; on phones let balance wrap it */
+    .lp-title br {
+        display: none;
     }
 
     .lp-section {

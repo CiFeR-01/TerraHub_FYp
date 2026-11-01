@@ -465,7 +465,17 @@
                     </div>
 
                     <div style="margin-top:0.85rem; padding-top:0.75rem; border-top:1px dashed var(--success-border);">
-                        <div style="font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--success-strong); opacity:0.65; margin-bottom:0.5rem;">History</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+                            <div style="font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--success-strong); opacity:0.65;">History</div>
+                            {% if item.receipts.all and shipment.status in 'Arrived,Discrepant' and not shipment.purchase_order_id %}
+                            <form method="POST" onsubmit="return confirm('Undo the last receipt logged for this line?');">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="undo_item_receipt">
+                                <input type="hidden" name="item_id" value="{{ item.id }}">
+                                <button type="submit" style="background:none; border:1px solid var(--success-border); border-radius:4px; padding:0.15rem 0.5rem; font-size:0.72rem; color:var(--success-strong); cursor:pointer;">↶ Undo last receipt</button>
+                            </form>
+                            {% endif %}
+                        </div>
                         {% if item.receipts.all %}
                         <div style="display:flex; flex-wrap:wrap; gap:0.5rem;">
                             {% for r in item.receipts.all reversed %}
@@ -494,7 +504,13 @@
                 {% endfor %}
             </div>
             {% if shipment.status != 'Completed' %}
+            {% if all_received %}
+            <div style="margin-bottom:0.85rem; padding:0.7rem 1rem; border-radius:8px; background:var(--success-soft); border:1px solid var(--success-border); color:var(--success-strong); font-size:0.88rem; font-weight:600;">
+                Everything received. Press Finalize Receiving to close this shipment.
+            </div>
+            {% endif %}
             <div style="display:flex; justify-content:flex-end; gap:0.5rem; flex-wrap:wrap;">
+{% if not all_received %}
                 <form method="POST" onsubmit="return confirm('Log the remaining quantity on every line as received today, then finalize?');">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="receive_all">
@@ -502,6 +518,7 @@
                         Receive All as Expected
                     </button>
                 </form>
+                {% endif %}
                 <form method="POST">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="finalize_shipment_receiving">

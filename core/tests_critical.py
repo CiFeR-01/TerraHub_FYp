@@ -189,7 +189,7 @@ class PermissionTests(CriticalBase):
         stock = self.batch('CR-VW', '10')
         self.as_user(make_user(username='cr_viewer', password='pw', role='Staff (Viewer)'))
         self.post('so_list', action='create_so', so_number_auto='1', client_name='C', origin_warehouse_id=self.store.id)
-        self.post('qa_dashboard', action='spoil_dispose', reason='expired', batch_id=stock.id)
+        self.post('qa_dashboard', action='spoil_dispose', reason='expired', batch_id=stock.id, quantity=stock.quantity)
         self.refresh(stock)
         self.assertFalse(SalesOrder.objects.exists())
         self.assertEqual(stock.status, 'Active')
@@ -286,14 +286,14 @@ class StockAccuracyTests(CriticalBase):
         self.assertEqual((stock.quantity, stock.allocated_quantity), (D('20'), D('20')))
         self.assertEqual(so.status, 'Pending')
 
-    def test_spoiling_a_reserved_batch_releases_the_order(self):
+    def test_reserved_stock_cannot_be_written_off(self):
         stock = self.batch('CR-SPOIL', '10', allocated='10')
         so, _ = self.so('10', status='Ready to Ship')
         StockAllocation.objects.create(batch=stock, sales_order=so, quantity=D('10'))
-        self.post('qa_dashboard', action='spoil_dispose', reason='expired', batch_id=stock.id)
+        self.post('qa_dashboard', action='spoil_dispose', reason='expired', batch_id=stock.id, quantity=stock.quantity)
         self.refresh(stock, so)
-        self.assertEqual((stock.status, stock.allocated_quantity, so.status), ('Spoiled', D('0'), 'Pending'))
-        self.assertTrue(RegistryLog.objects.filter(action_type='Spoiled_Disposal').exists())
+        self.assertEqual((stock.status, stock.allocated_quantity, so.status), ('Active', D('10'), 'Ready to Ship'))
+        self.assertFalse(RegistryLog.objects.filter(action_type='Spoiled_Disposal').exists())
 
 
 class DeliveryTests(CriticalBase):
@@ -532,7 +532,7 @@ class QAWriteOffTests(TestCase):
 
     def test_large_write_off_waits_for_a_manager(self):
         b = self.batch('QA-BIG', qty='1000')  # RM 10,000, over the RM 5,000 default
-        self.qa_post(action='spoil_dispose', batch_id=b.id, reason='contamination')
+        self.qa_post(action='spoil_dispose', batch_id=b.id, quantity=b.quantity, reason='contamination')
         b.refresh_from_db()
         approval = QAApproval.objects.get()
         self.assertEqual((b.status, approval.status, approval.value_rm), ('Quarantined', 'Pending', Decimal('10000.00')))
