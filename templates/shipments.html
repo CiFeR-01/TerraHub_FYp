@@ -11,7 +11,7 @@
             <span class="current-page">Logistics Tracker</span>
         </nav>
         <h1 style="font-family: 'Outfit', sans-serif; font-size: 1.85rem; font-weight: 700; margin-top: 0.25rem; color: var(--text-main);">
-            Fleet &amp; Freight Logistics Control Center
+             Logistics Control Center
         </h1>
     </div>
     <div class="header-action-tray">
@@ -106,7 +106,7 @@
                 {% for s in shipments %}
                 <tr style="border-bottom:1px solid var(--border-light); font-size:0.875rem; cursor:pointer; transition:background-color 0.2s;" onmouseover="this.style.backgroundColor='var(--surface-sunken)';" onmouseout="this.style.backgroundColor='transparent';" onclick="if (!event.target.closest('a, button')) window.location.href='{% url 'shipment_detail' s.pk %}'">
                     <td style="padding:0.85rem 1rem; font-weight:700; color:var(--primary);">{{ s.tracking_number }}</td>
-                    <td style="padding:0.85rem 1rem;"><span class="badge badge-sky">{{ s.get_direction_display }}</span></td>
+                    <td style="padding:0.85rem 1rem;"><span class="badge badge-dir-{{ s.direction|lower }}">{{ s.get_direction_display }}</span></td>
                     <td style="padding:0.85rem 1rem;"><span class="badge {% if s.status in 'Draft,Logistics Review' %}badge-slate{% elif s.status in 'Pending Approval,Delayed' %}badge-amber{% elif s.status in 'Preparing,Dispatched' %}badge-sky{% elif s.status in 'Arrived,Completed' %}badge-emerald{% elif s.status in 'Cancelled,Discrepant,Rejected' %}badge-rose{% else %}badge-slate{% endif %}">{{ s.status|upper }}</span>{% if s.has_discrepancy and s.status != 'Discrepant' %} <span class="badge badge-rose" title="{{ s.discrepancy_remarks|default:'' }}">DISCREPANCY</span>{% endif %}</td>
                     <td style="padding:0.85rem 1rem; font-size:0.825rem;">
                         {% firstof s.origin_warehouse.name s.external_origin s.purchase_order.supplier_name "—" %}
