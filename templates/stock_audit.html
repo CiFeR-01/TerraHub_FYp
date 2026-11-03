@@ -252,20 +252,19 @@
         const urlParams = new URLSearchParams(window.location.search);
         const batchNum = urlParams.get('batch');
         if (batchNum) {
-            // Open the modal
-            document.getElementById('audit-modal').style.display = 'flex';
-            
-            // Find and select the correct option
-            const selectEl = document.querySelector('select[name="batch_id"]');
-            if (selectEl) {
-                const options = selectEl.options;
-                for (let i = 0; i < options.length; i++) {
-                    if (options[i].getAttribute('data-batch-number') === batchNum && !options[i].disabled) {
-                        selectEl.selectedIndex = i;
-                        showQty();
-                        break;
-                    }
-                }
+            var opt = Array.prototype.find.call(batchSel.options, function (o) {
+                return o.getAttribute('data-batch-number') === batchNum && !o.disabled;
+            });
+            if (opt) {
+                batchSel.value = opt.value;
+                showQty();
+                document.getElementById('audit-modal').style.display = 'flex';
+            } else {
+                // Batch already has a pending count (or can't be counted), so show its audits instead of an empty form
+                var tableSearch = document.querySelector('[data-filter-target="#auditsTable"]');
+                tableSearch.value = batchNum;
+                // After the shared table filter has wired up its listener
+                setTimeout(function () { tableSearch.dispatchEvent(new Event('input', { bubbles: true })); });
             }
         }
     });

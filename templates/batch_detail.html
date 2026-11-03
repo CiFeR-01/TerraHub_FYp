@@ -23,9 +23,11 @@
         <a href="{% url 'batch_print_label' batch.batch_number %}" target="_blank" class="btn" style="background:var(--bg-surface); color:var(--text-main); border:1px solid var(--border-main);">
             🖨️ Print QR Label
         </a>
-        <a href="{% url 'stock_audit' %}?batch={{ batch.batch_number }}" class="btn btn-secondary">
+        {% if perms.core.add_stockaudit and batch.status == 'Active' %}
+        <a href="{% url 'stock_audit' %}?batch={{ batch.batch_number|urlencode }}" class="btn btn-secondary">
             Adjust Stock
         </a>
+        {% endif %}
         {% if can_request_qa and not qa_open_request %}
         <button type="button" class="btn btn-secondary" onclick="openSendToQA('{{ batch.id }}', '{{ batch.batch_number|escapejs }}', '{{ batch.quantity }}', '{% if batch.material %}{{ batch.material.unit_of_measure|escapejs }}{% else %}units{% endif %}')">
             Send to QA
