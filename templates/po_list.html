@@ -162,7 +162,7 @@
                     style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
                     <option value="">-- Select a supplier to autofill, or type below --</option>
                     {% for s in suppliers %}
-                    <option value="{{ s.id }}" data-name="{{ s.name|escapejs }}"{% if prefill_supplier and s.id == prefill_supplier.id %} selected{% endif %}>{{ s.name }}</option>
+                    <option value="{{ s.id }}" data-name="{{ s.name }}"{% if prefill_supplier and s.id == prefill_supplier.id %} selected{% endif %}>{{ s.name }}</option>
                     {% endfor %}
                 </select>
             </div>

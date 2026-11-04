@@ -58,7 +58,7 @@
             </div>
             <div>
                 <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:0.35rem;">Safe Storage Days</label>
-                <input type="number" name="safe_storage_days" value="{{ material.safe_storage_days }}" class="form-input" style="width:100%; padding:0.6rem; border-radius:8px; border:1px solid var(--border-light);">
+                <input type="number" min="1" step="1" name="safe_storage_days" value="{{ material.safe_storage_days }}" class="form-input" style="width:100%; padding:0.6rem; border-radius:8px; border:1px solid var(--border-light);">
             </div>
             <div style="grid-column:1 / -1;">
                 <label style="display:flex; gap:0.5rem; align-items:flex-start; font-size:0.85rem; cursor:pointer;">

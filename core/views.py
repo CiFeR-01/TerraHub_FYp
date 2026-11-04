@@ -1784,9 +1784,9 @@ def import_materials(request):
 
             try:
                 days = int(days_str) if days_str else 90
-                if days < 0: raise ValueError()
+                if days < 1: raise ValueError()
             except ValueError:
-                err = f"Line {idx}: Safe storage days must be a non-negative integer."
+                err = f"Line {idx}: Safe storage days must be a whole number of at least 1."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
@@ -2334,6 +2334,8 @@ def material_list_view(request):
         if not err and same_name:
             err = f"A material called '{same_name.name}' already exists ({same_name.sku}{', archived' if not same_name.is_active else ''}). Use a different name."
         if not err:
+            err = safe_storage_days_problem(request.POST.get('safe_storage_days', 90))
+        if not err:
             try:
                 safe_days = int(request.POST.get('safe_storage_days', 90))
                 cost = float(request.POST.get('cost_per_unit', 0.0))
@@ -2375,6 +2377,17 @@ def material_list_view(request):
     return render(request, 'material_list.html', context)
 
 
+def safe_storage_days_problem(raw):
+    """Why a Safe Storage Days value is refused, or None. Under 1 day would give received stock an expiry on or before its receipt date."""
+    try:
+        days = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return "Safe storage days must be a whole number."
+    if days < 1:
+        return "Safe storage days must be at least 1."
+    return None
+
+
 def _apply_material_update(request, material):
     """Validates and saves the material edit form from request.POST, queuing a message. The "Updated Material '<name>'" log text is parsed by analytics.resolve_material_from_label."""
     name = request.POST.get('name', '').strip()
@@ -2392,6 +2405,10 @@ def _apply_material_update(request, material):
 
         if not name:
             messages.error(request, "Material name is required.")
+            return False
+        days_err = safe_storage_days_problem(safe_days)
+        if days_err:
+            messages.error(request, days_err)
             return False
 
         reorder_point, err = read_decimal(request.POST, 'reorder_point', 'Reorder point', min_value=0, required=False)
@@ -4129,12 +4146,16 @@ def po_detail_view(request, pk):
             if err:
                 messages.error(request, err)
                 return redirect('po_detail', pk=po.pk)
+            # Supplier and facility are what the approver signed off, so changing either needs approval again (the date doesn't)
+            changed = [label for label, differs in (("Supplier", supplier != po.supplier_name), ("Target facility", target != po.target_warehouse)) if differs]
             po.supplier_name = supplier
             po.target_warehouse = target
             po.expected_delivery_date = deadline or po.expected_delivery_date
             po.updated_by = request.user
             po.save()
             messages.success(request, f"{po.po_number} details updated.")
+            if changed and (was := po_return_for_reapproval(po, request.user, f"{' and '.join(changed)} changed")):
+                messages.warning(request, reapproval_message(po.po_number, was))
 
         elif action == 'request_approval':
             manager_id = request.POST.get('manager_id')
@@ -4502,6 +4523,12 @@ def manufacturing_view(request):
             | Q(target_product__sku__icontains=search_query) | Q(sales_order__so_number__icontains=search_query)
             | Q(manufacturing_plant__name__icontains=search_query) | Q(supervisor__username__icontains=search_query)
         )
+    # Only accept real status codes so a hand-edited URL can't filter on junk.
+    status_filter = request.GET.get('status', '')
+    if status_filter in dict(ProductionRun.STATUS_CHOICES):
+        runs = runs.filter(status=status_filter)
+    else:
+        status_filter = ''
 
     sort_by = request.GET.get('sort', '-id')
     if sort_by in ['run_number', '-run_number', 'target_product__name', '-target_product__name', 'status', '-status', 'start_time', '-start_time']:
@@ -4627,6 +4654,8 @@ def manufacturing_view(request):
     context = {
         'runs': runs_page,
         'search_query': search_query,
+        'status_filter': status_filter,
+        'run_status_choices': ProductionRun.STATUS_CHOICES,
         'products': products,
         'plants': plants,
         'loc_filter': loc_filter,
@@ -6745,6 +6774,9 @@ def parse_extra_material_sources(request, bom_materials, allocated_by_material):
             actual = Decimal(raw)
         except InvalidOperation:
             return [], f"Enter a valid quantity for {mat.name}."
+        # A negative or NaN amount would complete the run without taking any material out of stock
+        if not actual.is_finite() or actual < 0:
+            return [], f"{mat.name}: the amount used can't be less than 0."
         allocated = Decimal(str(allocated_by_material.get(mat.id, 0)))
         excess = (actual - allocated).quantize(cent)
         if excess <= 0:
