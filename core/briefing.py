@@ -1,4 +1,4 @@
-"""Tier 3 "AI Copilot": category briefings and the personal checklist, each one Claude call saved as an OpsBriefing row.
+"""AI Copilot: category briefings and the personal checklist, each one Claude call saved as an OpsBriefing row.
 Settings: ops_briefing_enabled, ops_briefing_model; the API key is the ANTHROPIC_API_KEY env var."""
 from __future__ import annotations
 

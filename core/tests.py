@@ -584,7 +584,7 @@ from core.analytics import consumption_rate, daily_consumption, resolve_material
 
 
 class RegistryLogMaterialSpineTests(TestCase):
-    """Phase 0: RegistryLog.material FK + consumption-rate analytics."""
+    """RegistryLog.material FK + consumption-rate analytics."""
 
     def setUp(self):
         self.warehouse = Warehouse.objects.create(name='Plant 1', location_type='Manufacturing')
@@ -697,7 +697,7 @@ from core.utils import apply_po_material_receipt
 
 
 class SupplierScorecardTests(TestCase):
-    """Phase 1: supplier_reliability() roll-up and the scorecard view."""
+    """supplier_reliability() roll-up and the scorecard view."""
 
     def setUp(self):
         self.client = Client()
@@ -832,7 +832,7 @@ class SystemSettingTests(TestCase):
 
 
 class SupplierScorecardExpectedDateTests(TestCase):
-    """Phase 1: lead-time-derived expected date + completed_date arrival."""
+    """lead-time-derived expected date + completed_date arrival."""
 
     def setUp(self):
         self.wh = Warehouse.objects.create(name='RM2', location_type='Storage')
@@ -951,7 +951,7 @@ class SystemSettingsViewTests(TestCase):
 
 
 class SalesOrderDeliveryRiskTests(TestCase):
-    """Phase 1: sales_order_delivery_risk() classification and board."""
+    """sales_order_delivery_risk() classification and board."""
 
     def setUp(self):
         self.client = Client()
@@ -1092,7 +1092,7 @@ class SalesOrderDeliveryRiskTests(TestCase):
 
 
 class AuditAccuracyTests(TestCase):
-    """Phase 1: audit_accuracy() roll-up and board."""
+    """audit_accuracy() roll-up and board."""
 
     def setUp(self):
         self.client = Client()
@@ -1185,7 +1185,7 @@ class AuditAccuracyTests(TestCase):
 
 
 class ProductionYieldVarianceTests(TestCase):
-    """Phase 1: production_yield_variance() roll-up and board."""
+    """production_yield_variance() roll-up and board."""
 
     def setUp(self):
         self.client = Client()
@@ -1964,7 +1964,7 @@ class ProductionRunDetailTests(TestCase):
 
 
 class StockoutForecastTests(TestCase):
-    """Phase 2a: stockout_forecast() days-of-cover + reorder-by."""
+    """stockout_forecast() days-of-cover + reorder-by."""
 
     def setUp(self):
         self.client = Client()
@@ -2261,7 +2261,7 @@ class BatchDetailEditTests(TestCase):
 
 
 class CapacityForecastTests(TestCase):
-    """Phase 2b: warehouse_utilization(), snapshot_utilization command, capacity_forecast()."""
+    """warehouse_utilization(), snapshot_utilization command, capacity_forecast()."""
 
     def setUp(self):
         self.client = Client()
@@ -2798,7 +2798,7 @@ class _FakeAnthropicModule:
 
 
 class ProductSalesTrendAnalyticsTests(TestCase):
-    """Phase 5: product_sales_trend() - monthly volume trend per product, declining first."""
+    """product_sales_trend() - monthly volume trend per product, declining first."""
 
     def setUp(self):
         self.client = Client()
@@ -2911,7 +2911,7 @@ class ProductSalesTrendAnalyticsTests(TestCase):
 
 
 class ShipmentLogisticsAnalyticsTests(TestCase):
-    """Phase 4: shipment_logistics() - in-flight shipment risk, any direction."""
+    """shipment_logistics() - in-flight shipment risk, any direction."""
 
     def setUp(self):
         self.wh1 = Warehouse.objects.create(name='Alpha', location_type='Storage')
@@ -3169,7 +3169,7 @@ class SOCreateShipmentAllocationTests(TestCase):
 
 
 class OpsBriefingCategoryTests(TestCase):
-    """Phase 4: collect_signals(category), generate_briefing(category=...), the command."""
+    """collect_signals(category), generate_briefing(category=...), the command."""
 
     def setUp(self):
         self.client = Client()
@@ -3399,7 +3399,7 @@ class OpsBriefingCategoryTests(TestCase):
 
 
 class CategoryBriefingViewTests(TestCase):
-    """Phase 4: category_briefing_view - the six domain briefing tabs."""
+    """category_briefing_view - the six domain briefing tabs."""
 
     def setUp(self):
         self.client = Client()
@@ -3476,7 +3476,7 @@ class CategoryBriefingViewTests(TestCase):
 
 
 class MyChecklistTests(TestCase):
-    """Phase 4: analytics.my_open_jobs(), generate_my_checklist(), the checklist view."""
+    """analytics.my_open_jobs(), generate_my_checklist(), the checklist view."""
 
     def setUp(self):
         self.client = Client()
@@ -3645,7 +3645,7 @@ class BriefingTickTests(TestCase):
 
 
 class AICopilotNavTests(TestCase):
-    """Phase 4: the sidebar link is renamed and stays wired."""
+    """the sidebar link is renamed and stays wired."""
 
     def test_nav_link_wired_and_renamed(self):
         user = User.objects.create_user(username='navcheck', password='pw')

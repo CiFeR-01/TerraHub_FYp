@@ -29,6 +29,7 @@ from .models import (
 from .utils import generate_next_code, format_stock_display, unexpired, read_decimal, read_date, read_unit_weight, UNIT_WEIGHT_MT
 from .validators import normalise_phone, normalise_phone_or_email, validate_email_address, validation_messages
 from .decorators import permission_or_redirect
+from .settings_store import get_setting
 from .account import log_archive_change, log_user_change
 from .permissions import (
     is_admin_user, can_approve, has_any_perm, can_grant_group, action_denied,
@@ -364,7 +365,6 @@ def dashboard_view(request):
         'finished_goods': float(finished_goods_sum),
     }
 
-    # Global utilization percent
     if total_capacity > 0:
         global_utilization = (total_used / total_capacity) * 100
     else:
@@ -626,7 +626,6 @@ def dashboard_view(request):
         'so_closed_total': so_closed_total,
         'current_timestamp': date.today().strftime('%Y-%m-%d'),
         'today': today,
-        # analytics upgrade
         'attention': attention,
         'attention_total': attention_total,
         'run_progress': run_progress,
@@ -682,6 +681,12 @@ def system_settings_view(request):
                 messages.error(request, f"'{raw}' is not a valid {value_type} value for {label}.")
                 failed = True
                 continue
+            if key.startswith('prefix_'):
+                cast = cast.upper()
+                if not (cast.isascii() and cast.isalnum() and len(cast) <= 10):
+                    messages.error(request, f"{label} must be 1 to 10 letters or digits (no spaces or dashes).")
+                    failed = True
+                    continue
             low, high = limits(key)
             if (low is not None and cast < low) or (high is not None and cast > high):
                 messages.error(request, f"{label} must be between {low} and {high}.")
@@ -1527,7 +1532,7 @@ def import_products(request):
             price_str = row.get('price_per_unit', '0.0')
             shelf_str = row.get('shelf_life_days', '')
 
-            # 1. Validation
+            # Per-row checks (name, unit, numbers): a failing row is listed as an error and skipped.
             if not name:
                 err = f"Line {idx}: Missing product name."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
@@ -1569,7 +1574,7 @@ def import_products(request):
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
 
-            # Intra-file duplicate check
+            # Reject a SKU that already appeared earlier in this same file.
             clean_name_key = name.strip().upper()
             if sku and sku in seen_skus_in_file:
                 err = f"Line {idx}: Duplicate SKU '{sku}' within CSV file."
@@ -1583,7 +1588,7 @@ def import_products(request):
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
 
-            # DB Duplicate check
+            # Match an existing record by SKU, else by name; the chosen duplicate mode then skips the row or updates that record.
             db_match = None
             if sku and sku in existing_skus:
                 db_match = existing_skus[sku]
@@ -1610,12 +1615,12 @@ def import_products(request):
                     dry_run_results.append({'line': idx, 'name': name, 'sku': db_match.sku, 'status': 'updated', 'msg': msg})
                     continue
 
-            # Create New Product
             if not sku:
-                sku = generate_next_code(Product, 'sku', 'PROD', 1001, pad=4)
+                prefix = get_setting('prefix_product_sku')
+                sku = generate_next_code(Product, 'sku', prefix, 1001, pad=4)
                 while sku in existing_skus or sku in seen_skus_in_file:
-                    seq = int(sku.replace('PROD', '')) + 1
-                    sku = f"PROD{seq:04d}"
+                    seq = int(sku.rsplit('-', 1)[1]) + 1
+                    sku = f"{prefix}-{seq:04d}"
 
             if not is_dry_run:
                 p = Product.objects.create(
@@ -1764,7 +1769,7 @@ def import_materials(request):
             weight_str = row.get('weight_mt_per_unit', '1.0')
             cost_str = row.get('cost_per_unit', '0.0')
 
-            # 1. Validation
+            # Per-row checks (name, unit, numbers): a failing row is listed as an error and skipped.
             if not name:
                 err = f"Line {idx}: Missing material name."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
@@ -1806,7 +1811,7 @@ def import_materials(request):
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
 
-            # Intra-file duplicate check
+            # Reject a SKU that already appeared earlier in this same file.
             clean_name_key = name.strip().upper()
             if sku and sku in seen_skus_in_file:
                 err = f"Line {idx}: Duplicate SKU '{sku}' within CSV file."
@@ -1820,7 +1825,7 @@ def import_materials(request):
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
 
-            # DB Duplicate check
+            # Match an existing record by SKU, else by name; the chosen duplicate mode then skips the row or updates that record.
             db_match = None
             if sku and sku in existing_skus:
                 db_match = existing_skus[sku]
@@ -1847,12 +1852,12 @@ def import_materials(request):
                     dry_run_results.append({'line': idx, 'name': name, 'sku': db_match.sku, 'status': 'updated', 'msg': msg})
                     continue
 
-            # Create New Material
             if not sku:
-                sku = generate_next_code(Material, 'sku', 'MAT', 1001, pad=4)
+                prefix = get_setting('prefix_material_sku')
+                sku = generate_next_code(Material, 'sku', prefix, 1001, pad=4)
                 while sku in existing_skus or sku in seen_skus_in_file:
-                    seq = int(sku.replace('MAT', '')) + 1
-                    sku = f"MAT{seq:04d}"
+                    seq = int(sku.rsplit('-', 1)[1]) + 1
+                    sku = f"{prefix}-{seq:04d}"
 
             if not is_dry_run:
                 m = Material.objects.create(
@@ -2096,7 +2101,7 @@ def product_list_view(request):
             sku_auto = request.POST.get('sku_auto') == '1'
             sku = request.POST.get('sku')
             if sku_auto or not sku:
-                sku = generate_next_code(Product, 'sku', 'PROD', 1001, pad=4)
+                sku = generate_next_code(Product, 'sku', get_setting('prefix_product_sku'), 1001, pad=4)
             description = request.POST.get('description', '')
             uom = request.POST.get('unit_of_measure', 'pcs')
             name = (name or '').strip()
@@ -2170,7 +2175,7 @@ def product_list_view(request):
         'products': products,
         'product_data': product_data,
         'materials': materials,
-        'next_product_sku': generate_next_code(Product, 'sku', 'PROD', 1001, pad=4),
+        'next_product_sku': generate_next_code(Product, 'sku', get_setting('prefix_product_sku'), 1001, pad=4),
     }
     return render(request, 'product_list.html', context)
 
@@ -2210,7 +2215,7 @@ def product_detail_view(request, pk):
                 messages.error(request, f"Error updating product: {e}")
         return redirect('product_detail', pk=pk)
 
-    # Inventory Overview
+    # This product's active batches (earliest expiry first) with their total stock and reservations.
     active_batches = Batch.objects.filter(product=product, status='Active').select_related('warehouse', 'produced_in').order_by('expiry_date')
     total_stock = sum(b.quantity for b in active_batches)
     stock_weight_display = format_stock_display(total_stock, product)
@@ -2316,7 +2321,7 @@ def material_list_view(request):
         sku_auto = request.POST.get('sku_auto') == '1'
         sku = request.POST.get('sku')
         if sku_auto or not sku:
-            sku = generate_next_code(Material, 'sku', 'MAT', 1001, pad=4)
+            sku = generate_next_code(Material, 'sku', get_setting('prefix_material_sku'), 1001, pad=4)
         category = request.POST.get('category')
         uom = request.POST.get('unit_of_measure', 'MT')
         reorder_point, err = read_decimal(request.POST, 'reorder_point', 'Reorder point', min_value=0, required=False)
@@ -2363,7 +2368,7 @@ def material_list_view(request):
 
     context = {
         'material_data': material_data,
-        'next_material_sku': generate_next_code(Material, 'sku', 'MAT', 1001, pad=4),
+        'next_material_sku': generate_next_code(Material, 'sku', get_setting('prefix_material_sku'), 1001, pad=4),
         'form_error': form_error,
         'form_values': form_values,
     }
@@ -2904,7 +2909,7 @@ def sales_order_list_view(request):
             so_number_auto = request.POST.get('so_number_auto') == '1'
             so_number = request.POST.get('so_number')
             if so_number_auto or not so_number:
-                so_number = generate_next_code(SalesOrder, 'so_number', 'SO', 1001)
+                so_number = generate_next_code(SalesOrder, 'so_number', get_setting('prefix_sales_order'), 1001)
             client_name = request.POST.get('client_name')
             client_id = request.POST.get('client_id')
             warehouse_id = request.POST.get('origin_warehouse_id')
@@ -2986,7 +2991,7 @@ def sales_order_list_view(request):
         'warehouses': warehouses,
         'clients': clients,
         'so_status_choices': SalesOrder.STATUS_CHOICES,
-        'next_so_number': generate_next_code(SalesOrder, 'so_number', 'SO', 1001),
+        'next_so_number': generate_next_code(SalesOrder, 'so_number', get_setting('prefix_sales_order'), 1001),
         'page_size': page_size,
         **sort_ctx,
     }
@@ -3007,7 +3012,7 @@ def purchase_order_list_view(request):
             po_number_auto = request.POST.get('po_number_auto') == '1'
             po_number = request.POST.get('po_number')
             if po_number_auto or not po_number:
-                po_number = generate_next_code(PurchaseOrder, 'po_number', 'PO', 5001)
+                po_number = generate_next_code(PurchaseOrder, 'po_number', get_setting('prefix_purchase_order'), 5001)
             supplier_name = request.POST.get('supplier_name')
             supplier_id = request.POST.get('supplier_id')
             warehouse_id = request.POST.get('target_warehouse_id')
@@ -3116,7 +3121,7 @@ def purchase_order_list_view(request):
         'prefill_material': prefill_material,
         'prefill_supplier': prefill_supplier,
         'po_status_choices': PurchaseOrder.STATUS_CHOICES,
-        'next_po_number': generate_next_code(PurchaseOrder, 'po_number', 'PO', 5001),
+        'next_po_number': generate_next_code(PurchaseOrder, 'po_number', get_setting('prefix_purchase_order'), 5001),
         'page_size': page_size,
         **sort_ctx,
     }
@@ -3134,7 +3139,7 @@ ORDER_IO = {
     'so': {
         'model': SalesOrder, 'line_model': SalesOrderDetail, 'label': 'Sales Order', 'list_url': 'so_list',
         'perm': 'core.add_salesorder', 'request_perm': 'core.change_salesorder', 'approve_perm': APPROVE_SALES_ORDERS,
-        'number': 'so_number', 'prefix': 'SO', 'start': 1001,
+        'number': 'so_number', 'prefix': 'prefix_sales_order', 'start': 1001,
         'party': 'client_name', 'party_model': Client, 'party_fk': 'client',
         'warehouse': 'origin_warehouse', 'date': 'fulfillment_deadline', 'date_label': 'Fulfilment deadline',
         'item': 'product', 'item_model': Product, 'order_fk': 'sales_order', 'extra': [],
@@ -3147,7 +3152,7 @@ ORDER_IO = {
     'po': {
         'model': PurchaseOrder, 'line_model': PurchaseOrderDetail, 'label': 'Purchase Order', 'list_url': 'po_list',
         'perm': 'core.add_purchaseorder', 'request_perm': 'core.change_purchaseorder', 'approve_perm': APPROVE_PURCHASE_ORDERS,
-        'number': 'po_number', 'prefix': 'PO', 'start': 5001,
+        'number': 'po_number', 'prefix': 'prefix_purchase_order', 'start': 5001,
         'party': 'supplier_name', 'party_model': Supplier, 'party_fk': 'supplier',
         'warehouse': 'target_warehouse', 'date': 'expected_delivery_date', 'date_label': 'Expected delivery date',
         'item': 'material', 'item_model': Material, 'order_fk': 'purchase_order',
@@ -3411,7 +3416,7 @@ def import_orders(request, kind):
 
         if not is_dry_run:
             with transaction.atomic():
-                number = number or generate_next_code(cfg['model'], cfg['number'], cfg['prefix'], cfg['start'])
+                number = number or generate_next_code(cfg['model'], cfg['number'], get_setting(cfg['prefix']), cfg['start'])
                 party_obj = cfg['party_model'].objects.filter(name__iexact=party).first()
                 order = cfg['model'].objects.create(**{
                     cfg['number']: number, cfg['party']: party_obj.name if party_obj else party,
@@ -3718,7 +3723,7 @@ def so_detail_view(request, pk):
                     created = []
                     with transaction.atomic():
                         for g in groups:
-                            tracking = generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4)
+                            tracking = generate_next_code(Shipment, 'tracking_number', get_setting('prefix_shipment'), 1001, pad=4)
                             sh = Shipment.objects.create(
                                 tracking_number=tracking, direction='Transfer', status='Draft',
                                 sales_order=so, origin_warehouse=g['warehouse'],
@@ -4239,7 +4244,7 @@ def manufacturing_view(request):
             run_number_auto = request.POST.get('run_number_auto') == '1'
             run_number = request.POST.get('run_number')
             if run_number_auto or not run_number:
-                run_number = generate_next_code(ProductionRun, 'run_number', 'RUN', 801, pad=3)
+                run_number = generate_next_code(ProductionRun, 'run_number', get_setting('prefix_production_run'), 801, pad=3)
             prod_id = request.POST.get('target_product_id')
             plant_id = request.POST.get('manufacturing_plant_id')
             so_id = request.POST.get('sales_order_id')
@@ -4310,7 +4315,7 @@ def manufacturing_view(request):
                 messages.error(request, "No manufacturing plant assigned to this run.")
                 return redirect('readiness')
                 
-            # Shortfall per material
+            # Recipe need for the expected yield minus what is already allocated, per material (rounded up to 2dp).
             shortages = {}
             for req in run.target_product.recipe_items.select_related('material'):
                 needed = Decimal(str(req.quantity_required)) * Decimal(str(run.expected_yield))
@@ -4338,7 +4343,7 @@ def manufacturing_view(request):
 
             with transaction.atomic():
                 shipment = Shipment.objects.create(
-                    tracking_number=generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4),
+                    tracking_number=generate_next_code(Shipment, 'tracking_number', get_setting('prefix_shipment'), 1001, pad=4),
                     direction='Transfer', status='Draft', linked_production_run=run,
                     origin_warehouse=origin, destination_warehouse=target_warehouse,
                     is_auto_generated=True, last_edited_by=request.user,
@@ -4371,7 +4376,6 @@ def manufacturing_view(request):
                 messages.error(request, "Run is not awaiting materials.")
                 return redirect('readiness')
                 
-            # Find shortages
             shortages, archived_short = [], []
             for req in run.target_product.recipe_items.all():
                 needed = float(req.quantity_required) * float(run.expected_yield)
@@ -4394,8 +4398,7 @@ def manufacturing_view(request):
                 messages.info(request, "No shortages found." if not archived_short else "Nothing else to order.")
                 return redirect('readiness')
                 
-            # Create Draft PO
-            po_number = generate_next_code(PurchaseOrder, 'po_number', 'PO', 601, pad=3)
+            po_number = generate_next_code(PurchaseOrder, 'po_number', get_setting('prefix_purchase_order'), 601, pad=3)
             
             # Try to auto-assign a purchaser
             purchaser = users_with_perm(HANDLE_PURCHASING, include_superusers=False).order_by('id').first()
@@ -4422,7 +4425,6 @@ def manufacturing_view(request):
                 # Link PO to run for UI display
                 run.linked_pos.add(po)
                 
-                # Notify purchaser
                 if purchaser:
                     Notification.objects.create(
                         user=purchaser,
@@ -4633,7 +4635,7 @@ def manufacturing_view(request):
         'recipe_readiness': recipe_readiness,
         'so_queue': so_queue,
         'so_status_choices': SalesOrder.STATUS_CHOICES,
-        'next_run_number': generate_next_code(ProductionRun, 'run_number', 'RUN', 801, pad=3),
+        'next_run_number': generate_next_code(ProductionRun, 'run_number', get_setting('prefix_production_run'), 801, pad=3),
     }
     return render(request, 'manufacturing.html', context)
 
@@ -4649,7 +4651,7 @@ def shipments_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'create_shipment':
-            tracking_mode = request.POST.get('tracking_mode', 'auto')
+            tracking_mode = request.POST.get('tracking_mode')  # unticked checkbox isn't posted
             tracking_number = request.POST.get('tracking_number')
             direction = request.POST.get('direction', 'Inbound')
             status = request.POST.get('status', 'Preparing')
@@ -4677,7 +4679,7 @@ def shipments_view(request):
 
             try:
                 if tracking_mode == 'auto' or not tracking_number:
-                    tracking_number = generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4)
+                    tracking_number = generate_next_code(Shipment, 'tracking_number', get_setting('prefix_shipment'), 1001, pad=4)
 
                 origin_wh = Warehouse.objects.filter(id=origin_id).first() if origin_id else None
                 dest_wh = Warehouse.objects.filter(id=dest_id).first() if dest_id else None
@@ -4810,7 +4812,7 @@ def shipments_view(request):
         'status_choices': Shipment.STATUS_CHOICES,
         'initial_status_choices': initial_status_choices,
         'direction_choices': Shipment.DIRECTION_CHOICES,
-        'next_tracking_number': generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4),
+        'next_tracking_number': generate_next_code(Shipment, 'tracking_number', get_setting('prefix_shipment'), 1001, pad=4),
         'search_query': search_query,
         'page_size': page_size,
         **sort_ctx,
@@ -5228,7 +5230,8 @@ def shipment_detail_view(request, pk):
                         )
                         OrderTimeline.objects.create(shipment=shipment, action=f"Added item {mat.sku if mat else prod.sku} (Qty: {qty_val}).", user=request.user)
                         messages.success(request, "Item added to shipment.")
-                        # Allocation Logic (Lock Stock)
+                        # Reserve the stock for this shipment: take over the sales order's reservation on this batch first,
+                        # then lock any remainder from the batch's free stock.
                         qty_dec = Decimal(str(qty_val))
                         if shipment.sales_order:
                             so_alloc = StockAllocation.objects.filter(sales_order=shipment.sales_order, batch=batch).first()
@@ -5289,7 +5292,6 @@ def shipment_detail_view(request, pk):
             origin_id = request.POST.get('origin_warehouse_id')
             dest_id = request.POST.get('destination_warehouse_id')
             
-            # New Logistics Fields
             client_address = request.POST.get('client_address')
             client_contact_name = request.POST.get('client_contact_name')
             client_contact_phone = request.POST.get('client_contact_phone')
@@ -5305,17 +5307,14 @@ def shipment_detail_view(request, pk):
 
             core_changed = False
 
-            # Check string fields
             if client_address is not None and (shipment.client_address or "") != client_address.strip(): core_changed = True
             if client_contact_name is not None and (shipment.client_contact_name or "") != client_contact_name.strip(): core_changed = True
             if client_contact_phone is not None and (shipment.client_contact_phone or "") != client_contact_phone.strip(): core_changed = True
             if external_tracking_id is not None and (shipment.external_tracking_id or "") != external_tracking_id.strip(): core_changed = True
 
-            # Check FK fields
             if origin_id is not None and str(shipment.origin_warehouse_id or "") != origin_id: core_changed = True
             if dest_id is not None and str(shipment.destination_warehouse_id or "") != dest_id: core_changed = True
 
-            # Check departure_datetime
             if departure_datetime:
                 current_dep = shipment.departure_datetime.strftime('%Y-%m-%dT%H:%M') if shipment.departure_datetime else ""
                 if current_dep != departure_datetime: core_changed = True
@@ -6353,7 +6352,6 @@ def so_allocate_view(request, pk):
                                  + (f" {total_unfulfilled_across_so.normalize():f} still short." if total_unfulfilled_across_so > 0 else " Fully covered."))
                 return redirect('so_detail', pk=so.pk)
 
-    # Gather data for UI
     manufacturing_plants = Warehouse.objects.filter(location_type__in=Warehouse.MANUFACTURING_TYPES).order_by('name')
 
     allocation_data = []
@@ -6424,7 +6422,7 @@ def so_create_shipment_view(request, pk):
         with transaction.atomic():
             shipments = []
             for wh_id, wh_allocs in by_warehouse.items():
-                tracking_number = generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4)
+                tracking_number = generate_next_code(Shipment, 'tracking_number', get_setting('prefix_shipment'), 1001, pad=4)
                 shipment = Shipment.objects.create(
                     tracking_number=tracking_number,
                     sales_order=so,
@@ -6495,7 +6493,7 @@ def production_run_allocate_view(request, pk):
         existing_by_material[a.batch.material_id] = existing_by_material.get(a.batch.material_id, Decimal('0')) + a.quantity
     existing_shipments = run.linked_shipments.all()
 
-    # Calculate FEFO recommendations
+    # For each recipe material, suggest batches First-Expiry-First-Out (earliest expiry first) to cover the need.
     recipe_reqs = []
     fefo_recommended_ids = []
 
@@ -6667,8 +6665,7 @@ def production_run_allocate_view(request, pk):
                         continue
                     transfer_count += 1
 
-                    # Generate unique tracking number
-                    tracking = generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4)
+                    tracking = generate_next_code(Shipment, 'tracking_number', get_setting('prefix_shipment'), 1001, pad=4)
 
                     shipment = Shipment.objects.create(
                         tracking_number=tracking,
