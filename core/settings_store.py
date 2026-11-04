@@ -27,7 +27,7 @@ REGISTRY: dict[str, tuple[object, str, str]] = {
     "ops_briefing_model": (
         "claude-opus-5",
         "str",
-        "Claude model id the AI Copilot (Tier 3) briefings and checklist are "
+        "Claude model id the AI Copilot briefings and checklist are "
         "generated with. claude-opus-5 is the default; claude-sonnet-5 or "
         "claude-haiku-4-5 are cheaper for this structured-summarisation job.",
     ),
@@ -191,6 +191,54 @@ REGISTRY: dict[str, tuple[object, str, str]] = {
         "bool",
         "When on, the person who put a batch on hold can't also release it (four-eyes rule).",
     ),
+    "prefix_sales_order": (
+        "SO",
+        "str",
+        "Sales order numbers start with this (e.g. SO-1001). Letters and digits only. Existing records keep "
+        "their old prefix; numbering restarts for a new prefix.",
+    ),
+    "prefix_purchase_order": (
+        "PO",
+        "str",
+        "Purchase order numbers start with this (e.g. PO-5001). Letters and digits only. Existing records keep "
+        "their old prefix; numbering restarts for a new prefix.",
+    ),
+    "prefix_production_run": (
+        "RUN",
+        "str",
+        "Production run numbers start with this (e.g. RUN-801). Letters and digits only. Existing records keep "
+        "their old prefix; numbering restarts for a new prefix.",
+    ),
+    "prefix_product_sku": (
+        "PROD",
+        "str",
+        "Auto-generated product SKUs start with this (e.g. PROD-1001). Letters and digits only. Existing records keep "
+        "their old prefix; numbering restarts for a new prefix.",
+    ),
+    "prefix_material_sku": (
+        "MAT",
+        "str",
+        "Auto-generated material SKUs start with this (e.g. MAT-1001). Letters and digits only. Existing records keep "
+        "their old prefix; numbering restarts for a new prefix.",
+    ),
+    "prefix_shipment": (
+        "SHP",
+        "str",
+        "Auto-generated shipment tracking numbers start with this (e.g. SHP-1001). Letters and digits only. Existing records keep "
+        "their old prefix; numbering restarts for a new prefix.",
+    ),
+    "prefix_batch": (
+        "B",
+        "str",
+        "Batches received against a purchase order start with this (e.g. B-5001-1001-A1B2C3). Letters and digits only. Existing records keep "
+        "their old prefix; numbering restarts for a new prefix.",
+    ),
+    "prefix_finished_goods_batch": (
+        "FG",
+        "str",
+        "Finished-goods batches from completed production runs start with this (e.g. FG-RUN-801-1a2b). Letters and digits only. Existing records keep "
+        "their old prefix; numbering restarts for a new prefix.",
+    ),
 }
 
 
@@ -249,6 +297,8 @@ SECTIONS = [
     ("Demand trends", ["trend_significant_pct"]),
     ("Rent opportunities", ["dss_min_total_saving_rm", "dss_dismiss_snooze_days", "dss_saving_horizon_days"]),
     ("AI Copilot", ["ops_briefing_enabled", "ops_briefing_model"]),
+    ("Document numbering", ["prefix_sales_order", "prefix_purchase_order", "prefix_production_run", "prefix_product_sku",
+                            "prefix_material_sku", "prefix_shipment", "prefix_batch", "prefix_finished_goods_batch"]),
 ]
 
 

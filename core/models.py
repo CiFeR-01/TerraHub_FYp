@@ -222,11 +222,13 @@ class ProductionRun(models.Model):
     end_time = models.DateTimeField(null=True, blank=True)
     
     # Workflow & Approval Fields
+    # Who the run is assigned to, who follows its updates, and who created it.
     assigned_to = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_runs')
     followers = models.ManyToManyField(CustomUser, related_name='following_runs', blank=True)
     created_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_runs')
     
-    # New MES Tracking Fields
+    # Shop-floor audit trail: why the FEFO stock order was overridden, the supervisor's sign-off when
+    # material usage variance is high, who approved the run to start, and the exact logged start/end times.
     fefo_override_reason = models.TextField(blank=True, null=True)
     supervisor_signoff = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='signed_off_runs')
     signoff_reason = models.TextField(blank=True, null=True)
@@ -545,7 +547,7 @@ class Shipment(models.Model):
     destination_warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='inbound_shipments')
     external_origin = models.CharField(max_length=255, null=True, blank=True, help_text="For inbound from supplier")
     
-    # Logistics Tracking Details
+    # Delivery details for the driver and client: where it goes, who to contact, the carrier's tracking ID and departure time.
     client_address = models.TextField(null=True, blank=True, help_text="Destination address for outbound shipments")
     client_contact_name = models.CharField(max_length=255, null=True, blank=True, help_text="Contact person's name")
     client_contact_phone = models.CharField(max_length=100, null=True, blank=True, validators=[validate_phone_or_email], help_text="Contact phone or email")
@@ -821,7 +823,7 @@ class RentSuggestion(models.Model):
 
 
 class OpsBriefing(models.Model):
-    """A stored run of the Tier 3 "AI Copilot" (core/briefing.py) - a company-wide
+    """A stored run of the AI Copilot (core/briefing.py) - a company-wide
     category briefing or one person's checklist. See SYSTEM_DOCUMENTATION.md §8.9-§8.11."""
     PERIOD_CHOICES = (('daily', 'Daily'), ('weekly', 'Weekly'))
     STATUS_CHOICES = (

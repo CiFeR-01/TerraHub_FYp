@@ -83,7 +83,7 @@ def consumption_rate(material, *, window_days: int = DEFAULT_WINDOW_DAYS, end=No
     return total / Decimal(window_days)
 
 
-# Tier 1 - Supplier reliability scorecard
+# Supplier reliability scorecard
 
 # Statuses with real fulfilment activity - Draft/Pending Approval/Rejected excluded.
 SCORECARD_PO_STATUSES = ("Pending", "Partially Received", "Completed")
@@ -250,7 +250,7 @@ def supplier_reliability(*, since=None, until=None):
     return rows
 
 
-# Tier 1 - Sales-order delivery risk
+# Sales-order delivery risk
 
 # Still "in flight" and worth risk-tracking; Delivered/Rejected/Draft excluded.
 _OPEN_SO_STATUSES = (
@@ -361,7 +361,7 @@ def sales_order_delivery_risk():
     return rows
 
 
-# Tier 1 - Stock-audit accuracy
+# Stock-audit accuracy
 
 
 def _audit_bucket_init(name):
@@ -445,7 +445,7 @@ def audit_accuracy(*, since=None):
     return {"by_warehouse": by_warehouse, "by_item": by_item, "trend": trend}
 
 
-# Tier 1 - Production yield variance
+# Production yield variance
 
 _YIELD_RATING_RANK = {"poor": 0, "watch": 1, "good": 2, "n/a": 3}
 
@@ -603,7 +603,7 @@ def unrecorded_material_usage(recent_days=7, window_days=28, now=None):
     }
 
 
-# Tier 2 - Consumption-rate stockout forecast
+# Consumption-rate stockout forecast
 
 _STOCKOUT_RANK = {"critical": 0, "reorder_now": 1, "watch": 2, "ok": 3, "no_usage": 4}
 
@@ -792,7 +792,7 @@ def stockout_forecast(*, window_days=DEFAULT_WINDOW_DAYS, end=None):
     return rows
 
 
-# Tier 2 - Warehouse capacity runway
+# Warehouse capacity runway
 
 _CAPACITY_RANK = {"critical": 0, "watch": 1, "ok": 2, "stable": 3, "no_data": 4}
 
@@ -1411,7 +1411,7 @@ def rent_reduction_opportunities():
     return opportunities
 
 
-# Phase 4 - Logistics: in-flight shipment risk (covers Inbound, Outbound and Transfer)
+# Logistics: in-flight shipment risk (covers Inbound, Outbound and Transfer)
 
 _LOGISTICS_RANK = {
     "discrepant": 0, "overdue": 1, "at_risk": 2, "stalled": 3, "pending": 4, "on_track": 5,
@@ -1489,7 +1489,7 @@ def shipment_logistics():
     return rows
 
 
-# Phase 4 - Personal checklist: "my open jobs"
+# Personal checklist: "my open jobs"
 # One user's own records; Shipment has no creator field, so last_edited_by is used as a proxy (ownership='touched').
 
 _SO_CLOSED_STATUSES = ("Delivered", "Rejected")
@@ -1583,7 +1583,7 @@ def my_open_jobs(user):
     return rows
 
 
-# Phase 5 - Product sales trend: monthly sales per product over a trailing window, classified rising/declining/flat.
+# Product sales trend: monthly sales per product over a trailing window, classified rising/declining/flat.
 
 _PRODUCT_TREND_RANK = {"declining": 0, "rising": 1, "flat": 2, "new": 3, "insufficient_data": 4}
 

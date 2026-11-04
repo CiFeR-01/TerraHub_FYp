@@ -3,6 +3,8 @@ from datetime import date
 from decimal import Decimal
 from django.db import transaction
 
+from .settings_store import get_setting
+
 
 def _close_batch_if_depleted(batch):
     """Marks a batch Depleted and stamps closed_date (stops rent) once its quantity reaches zero. No-op if already closed."""
@@ -745,7 +747,7 @@ def finalize_production_run(run, user, verb='completed'):
     fg_batch = None
     if run.actual_yield:
         fg_batch = Batch.objects.create(
-            batch_number=f"FG-{run.run_number}-{str(uuid.uuid4())[:4]}",
+            batch_number=f"{get_setting('prefix_finished_goods_batch')}-{run.run_number}-{str(uuid.uuid4())[:4]}",
             status='Quarantined' if qa_hold else 'Active',
             product=run.target_product,
             quantity=run.actual_yield,
@@ -1158,9 +1160,9 @@ def release_po_held_batches(po, user):
 def po_batch_number(po, material):
     """Short batch id for PO receipts: B-<PO ref>-<material ref>-<6 hex>, e.g. B-TS003-1005-A1B2C3."""
     import uuid
-    po_ref = re.sub(r'^PO-', '', po.po_number)
-    mat_ref = re.sub(r'^MAT-', '', material.sku)
-    return f"B-{po_ref}-{mat_ref}-{uuid.uuid4().hex[:6].upper()}"
+    po_ref = re.sub(rf"^{re.escape(get_setting('prefix_purchase_order'))}-", '', po.po_number, flags=re.IGNORECASE)
+    mat_ref = re.sub(rf"^{re.escape(get_setting('prefix_material_sku'))}-", '', material.sku, flags=re.IGNORECASE)
+    return f"{get_setting('prefix_batch')}-{po_ref}-{mat_ref}-{uuid.uuid4().hex[:6].upper()}"
 
 
 def receive_transfer_into_destination(shipment, user):
@@ -1255,7 +1257,7 @@ def create_rent_transfer(origin, destination, candidates, user):
             return None
 
         shipment = Shipment.objects.create(
-            tracking_number=generate_next_code(Shipment, 'tracking_number', 'SHP', 1001, pad=4),
+            tracking_number=generate_next_code(Shipment, 'tracking_number', get_setting('prefix_shipment'), 1001, pad=4),
             direction='Transfer', status='Draft',
             origin_warehouse=origin, destination_warehouse=destination, last_edited_by=user,
         )

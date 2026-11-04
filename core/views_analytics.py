@@ -495,7 +495,7 @@ def rent_suggestion_decide(request):
     return redirect("rent_opportunities")
 
 
-# Tier 3 - AI Copilot: six category briefings (need core.add_opsbriefing, each is a paid model call) plus the personal "My Open Jobs" checklist (any signed-in user).
+# AI Copilot: six category briefings (need core.add_opsbriefing, each is a paid model call) plus the personal "My Open Jobs" checklist (any signed-in user).
 
 CATEGORY_TABS = (
     ("materials", "Materials"),

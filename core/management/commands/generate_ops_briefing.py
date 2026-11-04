@@ -8,7 +8,7 @@ _ALL_CATEGORIES = ("materials", "products", "sales", "purchase", "logistics", "w
 
 
 class Command(BaseCommand):
-    help = "Generate the AI Copilot category briefings (Tier 3) from current analytics signals."
+    help = "Generate the AI Copilot category briefings from current analytics signals."
 
     def add_arguments(self, parser):
         parser.add_argument(
