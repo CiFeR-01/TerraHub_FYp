@@ -5,7 +5,8 @@
 {% block title %}Batch {{ batch.batch_number }} - TerraHub{% endblock %}
 
 {% block content %}
-<header class="dashboard-header-row animate-fade-in-up">
+{# Buttons always sit under the title: batch numbers can be long, so side-by-side made them jump around as the window or sidebar width changed. #}
+<header class="dashboard-header-row animate-fade-in-up" style="flex-direction: column; align-items: flex-start;">
     <div>
         <nav class="breadcrumb-nav">
             <span>Inventory &amp; Facilities</span>
@@ -79,13 +80,13 @@
             <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 1.5rem;">
                 <div style="padding: 1rem; background: var(--surface-sunken); border-radius: 8px;">
                     <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Current Quantity</span>
-                    <div style="font-size: 1.5rem; font-weight: 700; color: var(--text-main); margin-top: 0.25rem;">
-                        {% if batch.material %}
-                        {{ batch.quantity }} <span style="font-size: 0.85rem; color: var(--text-muted);">{{ batch.material.unit_of_measure }}</span>
-                        {% else %}
-                        {{ batch.quantity }} <span style="font-size: 0.85rem; color: var(--text-muted);">units (≈ {{ batch.quantity|weight_display:batch.product }})</span>
-                        {% endif %}
+                    <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-main); margin-top: 0.25rem; white-space: nowrap;">
+                        {{ batch.quantity }} <span style="font-size: 0.85rem; color: var(--text-muted);">{% if batch.material %}{{ batch.material.unit_of_measure }}{% else %}units{% endif %}</span>
                     </div>
+                    {% if not batch.material %}
+                    {# The weight equivalent goes on a small sub-line like the other cards' notes, so a long unit never wraps the main figure. #}
+                    <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.15rem;">≈ {{ batch.quantity|weight_display:batch.product }}</div>
+                    {% endif %}
                 </div>
                 <div style="padding: 1rem; background: var(--surface-sunken); border-radius: 8px;">
                     <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Expiry Date</span>

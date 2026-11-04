@@ -160,7 +160,7 @@
                     style="width:100%; padding:0.55rem; border-radius:6px; border:1px solid var(--border-light);">
                     <option value="">-- Select a client to autofill, or type below --</option>
                     {% for c in clients %}
-                    <option value="{{ c.id }}" data-name="{{ c.name|escapejs }}">{{ c.name }}</option>
+                    <option value="{{ c.id }}" data-name="{{ c.name }}">{{ c.name }}</option>
                     {% endfor %}
                 </select>
             </div>

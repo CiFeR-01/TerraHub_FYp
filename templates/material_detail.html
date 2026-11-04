@@ -222,7 +222,7 @@
             </div>
             <div class="form-group-inline">
                 <label>Safe Storage (days)</label>
-                <input type="number" name="safe_storage_days" value="{{ material.safe_storage_days }}" class="form-input" required style="width: 100%;">
+                <input type="number" min="1" step="1" name="safe_storage_days" value="{{ material.safe_storage_days }}" class="form-input" required style="width: 100%;">
             </div>
             <div class="form-group-inline">
                 <label style="display:flex; gap:0.5rem; align-items:flex-start; font-size:0.85rem; cursor:pointer;">
