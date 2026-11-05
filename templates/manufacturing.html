@@ -92,9 +92,10 @@
                             <span style="font-weight:700; font-size:0.9rem;">{{ si.item.product.name }}</span>
                             <span style="font-size:0.78rem; color:var(--text-muted); font-family:monospace;">{{ si.item.product.sku }}</span>
                             <span style="font-size:0.82rem; font-weight:600; color:var(--text-muted);">{{ si.deficit|floatformat:0 }} units still needed <span style="font-weight:400;">(of {{ si.item.quantity_ordered|floatformat:0 }} ordered{% if si.allocated > 0 %}, {{ si.allocated|floatformat:0 }} already allocated{% endif %})</span></span>
-                            {% if si.bom_ready %}<span class="badge badge-emerald" style="font-size:0.72rem;">BOM OK</span>
+                            {% if not si.bom_rows %}<span class="badge badge-amber" style="font-size:0.72rem;">No BOM</span>
+                            {% elif si.bom_ready %}<span class="badge badge-emerald" style="font-size:0.72rem;">BOM OK</span>
                             {% else %}<span class="badge badge-rose" style="font-size:0.72rem;">Shortage</span>{% endif %}
-                            <span style="font-size:0.78rem; color:{% if si.bom_ready %}var(--success-strong){% else %}var(--danger){% endif %}; font-weight:700;">Can make: {{ si.can_make }} units</span>
+                            {% if si.bom_rows %}<span style="font-size:0.78rem; color:{% if si.bom_ready %}var(--success-strong){% else %}var(--danger){% endif %}; font-weight:700;">Can make: {{ si.can_make }} units</span>{% endif %}
                         </div>
                         {% if si.bom_rows %}
                         <table style="font-size:0.78rem; border-collapse:collapse; width:100%; max-width:600px;">
@@ -323,14 +324,15 @@
         <div style="background:var(--bg-surface); border-radius:12px; border:1px solid var(--border-light); padding:1.25rem;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
                 <h4 style="font-family:'Outfit',sans-serif; font-size:1rem; font-weight:700;">{{ r.product.name }}</h4>
-                {% if r.is_ready %}<span class="badge badge-emerald">BOM Ready</span>
+                {% if not r.items %}<span class="badge badge-amber">No BOM</span>
+                {% elif r.is_ready %}<span class="badge badge-emerald">BOM Ready</span>
                 {% else %}<span class="badge badge-rose">Shortage</span>{% endif %}
             </div>
             <p style="font-size:0.78rem; color:var(--text-muted); margin-bottom:0.75rem;">SKU: {{ r.product.sku }}</p>
             <div style="background:{% if r.is_ready %}rgba(16,185,129,0.07){% else %}rgba(239,68,68,0.06){% endif %}; border-radius:8px; padding:0.6rem 0.85rem; margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem;">
                 <div>
                     <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em;">Max Producible</div>
-                    <div style="font-size:1.1rem; font-weight:800; color:{% if r.is_ready %}var(--success-strong){% else %}var(--danger){% endif %};">{{ r.max_producible }} units</div>
+                    <div style="font-size:1.1rem; font-weight:800; color:{% if r.is_ready %}var(--success-strong){% else %}var(--danger){% endif %};">{% if r.items %}{{ r.max_producible }} units{% else %}&mdash;{% endif %}</div>
                 </div>
             </div>
             <div style="background:var(--surface-sunken); border-radius:8px; padding:0.75rem;">

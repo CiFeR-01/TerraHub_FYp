@@ -2021,6 +2021,13 @@ def recipe_locked(product):
     return None
 
 
+def no_recipe_warning(product):
+    """Warning if the product has no recipe (BOM), else None. Runs are still allowed, but they allocate and consume nothing yet still create finished stock."""
+    if not product.recipe_items.exists():
+        return f"Heads up: {product.sku} has no recipe (BOM), so this run won't allocate or use any materials. Add its recipe in Recipe Studio if it should."
+    return None
+
+
 def archived_recipe_materials(product):
     """Archived materials still on the product's recipe (runs and SO lines only warn about these)."""
     return [r.material for r in ProductRecipe.objects.filter(product=product, material__is_active=False).select_related('material')]
@@ -3936,7 +3943,8 @@ def so_detail_view(request, pk):
             'item': item,
             'bom_rows': bom_rows,
             'can_make_units': can_make_units if can_make_units is not None else '∞',
-            'bom_ready': all(row['sufficient'] for row in bom_rows),
+            # An empty recipe isn't "ready": there is nothing to make it from
+            'bom_ready': bool(bom_rows) and all(row['sufficient'] for row in bom_rows),
             'allocated': allocated,
             'in_logistics': in_logistics,
             'deficit': deficit,
@@ -4344,6 +4352,10 @@ def manufacturing_view(request):
                     )
 
                 messages.success(request, f"Production Run {run_number} scheduled for {prod.name}.")
+                no_recipe = no_recipe_warning(prod)
+                if no_recipe:
+                    messages.warning(request, no_recipe)
+                    OrderTimeline.objects.create(production_run=run, action=no_recipe, user=request.user)
                 archived = archived_recipe_materials(prod)
                 if archived:
                     messages.warning(request, f"Heads up: {prod.name}'s recipe uses archived material(s): {', '.join(m.name for m in archived)}.")
@@ -4623,7 +4635,8 @@ def manufacturing_view(request):
         recipe_readiness.append({
             'product': p,
             'items': items,
-            'is_ready': is_ready,
+            # An empty recipe isn't "ready": there is nothing to make it from
+            'is_ready': is_ready and bool(items),
             'max_producible': max_producible if max_producible is not None else '∞',
         })
 
@@ -4677,7 +4690,8 @@ def manufacturing_view(request):
                 'item': item,
                 'bom_rows': bom_rows,
                 'can_make': can_make if can_make is not None else '∞',
-                'bom_ready': all(r['sufficient'] for r in bom_rows),
+                # An empty recipe isn't "ready": there is nothing to make it from
+                'bom_ready': bool(bom_rows) and all(r['sufficient'] for r in bom_rows),
                 'existing_run': existing_run,
                 'run_resolved': run_resolved,
                 'allocated': allocated,
@@ -6556,6 +6570,8 @@ def production_run_allocate_view(request, pk):
     if run.status not in ('Pending Allocation', 'Planned', 'Awaiting Materials', 'InProgress', 'Paused'):
         messages.error(request, f"Materials can't be allocated to a run that is {run.get_status_display()}.")
         return redirect('production_run_detail', pk=pk)
+    if request.method == 'GET' and no_recipe_warning(run.target_product):
+        messages.warning(request, no_recipe_warning(run.target_product))
     # More than the recipe needs can be reserved at any stage, but only with a reason.
     extra_allowed = True
     under_way = run.status in ('InProgress', 'Paused')
