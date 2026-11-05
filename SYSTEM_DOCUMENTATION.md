@@ -8,21 +8,24 @@ TerraHub is a Django-based manufacturing and warehouse operations platform. It t
 
 Core capabilities:
 - **Custom User Model** with per-location access restrictions. Roles are Django **Groups** (Django admin > Groups); code checks permissions only - per-model ones plus the app-wide ones on `Capability` - via `core/permissions.py`, so roles are added or reshaped without code changes.
-- **Catalog Management**: materials and products, with CSV import/export and per-product recipes (bills of materials).
+- **Catalog Management**: materials, products, suppliers and clients, with CSV import/export and per-product recipes (bills of materials).
 - **Warehouse & Inventory**: multi-warehouse, multi-location inventory with full batch/lot tracking, stock audits, and a public batch lookup/print-label flow.
-- **Manufacturing**: production runs consuming materials per recipe, with material allocation and yield tracking.
-- **Order Management**: purchase orders (inbound) and sales orders (outbound), each with line-item detail and an approvals inbox.
+- **Manufacturing**: production runs consuming materials per recipe, with material allocation, yield tracking and printable mixing / assembly sheets.
+- **Order Management**: purchase orders (inbound) and sales orders (outbound), each with line-item detail, CSV import/export and an approvals inbox.
 - **Shipments**: transfer and outbound shipments with pick lists, generated from sales-order allocation using FEFO (first-expired-first-out) batch selection.
 - **Stock Allocation**: a shared allocation engine (`StockAllocation`) used by both sales orders and production runs to reserve batch quantities.
-- **QA Dashboard** and **Registry Ledger** for traceability and audit history (`RegistryLog`, `OrderTimeline`).
+- **QA & Spoilage Control**: holds, inspections, releases, write-offs, supplier returns and shelf-life extensions, with approval limits and a daily expiry sweep (§8.1).
+- **Warehouse rental**: rent billed per day or per billing term (e.g. RM/MT per 30 days) for each rented facility, plus a rent-reduction decision-support page (§7.13).
+- **Registry Ledger** and **Audit Log** for traceability and history (`RegistryLog`, `OrderTimeline`, `QAEvent`, `UserAuditLog`).
 
 ---
 
 ## 2. Architecture & Technology Stack
 
-- **Backend Framework**: Django 6.0.4
+- **Backend Framework**: Django 6.0.8
 - **Language**: Python 3.14
-- **Database**: SQLite for local development; PostgreSQL in production via `psycopg2-binary` / `dj-database-url`
+- **Database**: PostgreSQL (`psycopg2-binary`). Local connection details come from `.env`; on Railway the injected `DATABASE_URL` overrides them via `dj-database-url`. SQLite is possible by setting `DB_ENGINE=django.db.backends.sqlite3`
+- **AI**: the `anthropic` SDK, used only by the AI Copilot briefings (§7.9)
 - **Deployment**: `gunicorn` + `whitenoise` (see `Procfile`, `runtime.txt`)
 - **Frontend / Styling**: Vanilla HTML5, CSS3, Google Fonts (Outfit, Plus Jakarta Sans), server-rendered Django templates
 
@@ -37,7 +40,7 @@ D:\TerraHub
 ├── manage.py                   # Django management tool
 ├── requirements.txt            # System dependencies
 ├── runtime.txt / Procfile      # Deployment configuration
-├── README.md                   # Project overview (mirrors this file)
+├── README.md                   # Project overview and quick start
 ├── SYSTEM_DOCUMENTATION.md     # System architecture & guides
 ├── TerraHub/                   # Django project configuration module
 │   ├── __init__.py
@@ -48,25 +51,41 @@ D:\TerraHub
 │   ├── migrations/             # Database migration history
 │   ├── models.py               # Domain models (see §5)
 │   ├── views.py                # Controller views for all modules
+│   ├── views_analytics.py      # Analytics, decision-support and AI Copilot views (see §7)
+│   ├── views_qa.py             # QA dashboard and "Send to QA" views (see §8.1)
+│   ├── views_roles.py          # Roles page: create roles and tick their permissions
 │   ├── analytics.py            # Analytics & forecasting computation layer (see §7)
+│   ├── analytics_cache.py      # Short-lived cache for heavy analytics, cleared on data changes
+│   ├── briefing.py             # AI Copilot signal collection and Claude calls (see §7.9)
+│   ├── qa.py                   # QA actions: holds, inspections, write-offs, extensions (see §8.1)
 │   ├── settings_store.py       # Typed access to admin-editable operational settings
-│   ├── management/commands/    # Scheduled jobs (daily snapshots, AI briefing)
+│   ├── signals.py              # Keeps capacity snapshots and the analytics cache current
+│   ├── account.py              # Temporary passwords and the forced password change
+│   ├── login_throttle.py       # Sign-in lockout after repeated failures (see §8.5)
+│   ├── errors.py               # Custom 400/403/404/500 pages (see §8.5)
+│   ├── validators.py           # Phone and email validators shared by forms
+│   ├── management/commands/    # snapshot_utilization, generate_ops_briefing, qa_sweep (see §6.6)
 │   ├── urls.py                 # Application URL routing (see §4)
 │   ├── utils.py                # Allocation engine (FEFO), stock helpers
 │   ├── decorators.py           # permission_or_redirect view decorator
 │   ├── permissions.py          # Central permission helpers (approvers, admin override, ...)
 │   ├── context_processors.py   # Template context (nav, notifications, etc.)
 │   ├── admin.py                # Django admin registrations
-│   └── tests.py                # Test suite
+│   ├── templatetags/           # Quantity formatting and QA template helpers
+│   ├── tests.py                # Test suite
+│   └── tests_critical.py       # Tests for the critical stock, order and QA paths
 ├── static/
 │   ├── css/style.css
+│   ├── js/                        # Session timeout, contact validation and other page scripts
 │   └── img/landing-dashboard.png  # Static Operations Overview screenshot used on the landing page
 └── templates/                  # Server-rendered HTML templates
     ├── base.html                    # Shared layout/theme
-    ├── home.html / login.html       # Public entry points
-    ├── dashboard.html / profile.html / system.html / user_management.html
+    ├── home.html / login.html / error.html   # Public entry points and error pages
+    ├── dashboard.html / profile.html / password_change.html
+    ├── system_settings.html / user_management.html / user_audit_log.html / roles.html
     ├── product_list.html / product_detail.html
     ├── material_list.html / material_detail.html / material_form.html
+    ├── supplier_list.html / supplier_detail.html / client_list.html / client_detail.html
     ├── warehouse_list.html / warehouse_form.html / warehouse_inventory.html
     ├── batch_detail.html / batch_public_info.html / batch_print_label.html
     ├── stock_audit.html / registry_ledger.html
@@ -74,8 +93,10 @@ D:\TerraHub
     ├── so_list.html / so_detail.html / so_allocate.html
     ├── shipments.html / shipment_detail.html / shipment_pick_list.html
     ├── manufacturing.html / production_run_detail.html / production_allocate.html
+    ├── production_run_mixing_sheet.html / production_run_assembly_sheet.html
     ├── qa_dashboard.html / approvals_inbox.html
-    └── partials/recipe_studio_modal.html
+    ├── analytics/                   # Analytics, decision-support and AI Copilot pages (see §7)
+    └── partials/                    # Shared pieces: recipe studio, order import, QA modals, pagination, sorting
 ```
 
 ---
@@ -87,10 +108,14 @@ D:\TerraHub
 | `/` | `home` | `home_view` | Public landing page (hero, the three project objectives, traceability flow, decision support). `?batch=<number>` is the "Trace a batch" box: redirects to that batch's public page, or shows a not-found note. Signed-in users are redirected to `/dashboard/` |
 | `/login/` | `login` | `LoginView` | Authentication |
 | `/logout/` | `logout` | `LogoutView` | Clears session, redirects home |
+| `/session/keepalive/` | `session_keepalive` | `session_keepalive_view` | Keepalive ping from the idle-timeout script; returns 401 once the session has expired |
 | `/dashboard/` | `dashboard` | `dashboard_view` | Main authenticated dashboard |
 | `/profile/` | `profile` | `profile_view` | User profile |
+| `/profile/password/` | `password_change` | `password_change_view` | Change own password (forced after an admin reset) |
 | `/system/settings/` | `system_settings` | `system_settings_view` | Operational settings editor (superuser; see §7) |
-| `/system/users/` | `user_management` | `user_management_view` | User/role administration |
+| `/system/users/` | `user_management` | `user_management_view` | User administration and temporary password resets |
+| `/system/users/audit/` | `user_audit_log` | `user_audit_log_view` | Audit Log of account, role and settings changes |
+| `/system/roles/` | `roles` | `views_roles.roles_view` | Create, rename and delete roles and tick their permissions |
 | `/warehouse/inventory/` | `warehouse_inventory` | `warehouse_inventory_view` | Inventory across warehouses |
 | `/warehouse/batch/<batch_number>/` | `batch_detail` | `batch_detail_view` | Batch/lot detail & traceability |
 | `/warehouse/batch/<batch_number>/print/` | `batch_print_label` | `batch_print_label_view` | Printable batch label |
@@ -114,20 +139,36 @@ D:\TerraHub
 | `/catalog/materials/export/` | `export_materials_csv` | `export_materials_csv` | Export materials (CSV) |
 | `/catalog/materials/template/` | `export_material_template` | `export_material_template` | Material import template |
 | `/catalog/materials/import/` | `import_materials` | `import_materials` | Bulk import materials |
+| `/catalog/suppliers/` | `supplier_list` | `supplier_list_view` | Supplier list |
+| `/catalog/suppliers/<pk>/` | `supplier_detail` | `supplier_detail_view` | Supplier detail, supplied materials and lead times |
+| `/catalog/suppliers/<pk>/edit/` | `supplier_edit` | `supplier_edit_view` | Edit supplier |
+| `/catalog/clients/` | `client_list` | `client_list_view` | Client list |
+| `/catalog/clients/<pk>/` | `client_detail` | `client_detail_view` | Client detail and orders |
+| `/catalog/clients/<pk>/edit/` | `client_edit` | `client_edit_view` | Edit client |
 | `/catalog/recipes/export/` | `export_recipes_csv` | `export_product_recipes_csv` | Export product recipes (CSV) |
 | `/operations/sales-orders/` | `so_list` | `sales_order_list_view` | Sales order list |
+| `/operations/sales-orders/export/` | `export_so_csv` | `export_orders_csv` | Export sales orders (CSV, one row per line item) |
+| `/operations/sales-orders/template/` | `export_so_template` | `export_order_template` | Sales order import template |
+| `/operations/sales-orders/import/` | `import_so` | `import_orders` | Bulk import sales orders (dry run first; see §8.3) |
 | `/operations/sales-orders/<pk>/` | `so_detail` | `so_detail_view` | Sales order detail |
 | `/operations/sales-orders/<pk>/allocate/` | `so_allocate` | `so_allocate_view` | FEFO batch allocation for SO |
 | `/operations/sales-orders/<pk>/create_shipment/` | `so_create_shipment` | `so_create_shipment_view` | Create shipment from SO |
 | `/operations/purchase-orders/` | `po_list` | `purchase_order_list_view` | Purchase order list |
+| `/operations/purchase-orders/export/` | `export_po_csv` | `export_orders_csv` | Export purchase orders (CSV, one row per line item) |
+| `/operations/purchase-orders/template/` | `export_po_template` | `export_order_template` | Purchase order import template |
+| `/operations/purchase-orders/import/` | `import_po` | `import_orders` | Bulk import purchase orders (dry run first; see §8.3) |
 | `/operations/purchase-orders/<pk>/` | `po_detail` | `po_detail_view` | Purchase order detail |
 | `/operations/shipments/` | `shipments` | `shipments_view` | Shipment list |
 | `/operations/shipments/<pk>/` | `shipment_detail` | `shipment_detail_view` | Shipment detail |
 | `/operations/shipments/<pk>/picklist/` | `shipment_pick_list` | `shipment_pick_list_view` | Shipment pick list |
 | `/operations/manufacture/` | `readiness` | `manufacturing_view` | Manufacturing readiness dashboard |
 | `/operations/manufacture/run/<pk>/` | `production_run_detail` | `production_run_detail_view` | Production run detail |
+| `/operations/manufacture/run/<pk>/mixing-sheet/` | `production_run_mixing_sheet` | `production_run_mixing_sheet_view` | Printable mixing sheet for the shop floor (§8.4) |
+| `/operations/manufacture/run/<pk>/assembly-sheet/` | `production_run_assembly_sheet` | `production_run_assembly_sheet_view` | Printable assembly record of a completed run (§8.4) |
 | `/operations/manufacture/run/<pk>/allocate/` | `production_run_allocate` | `production_run_allocate_view` | Material allocation for a run |
-| `/operations/qa/` | `qa_dashboard` | `qa_dashboard_view` | QA dashboard |
+| `/operations/qa/` | `qa_dashboard` | `views_qa.qa_dashboard_view` | QA dashboard: holds, requests, inspections, approvals (§8.1) |
+| `/operations/qa/request/` | `qa_request_create` | `views_qa.qa_request_create` | "Send to QA" from any page |
+| `/analytics/spoilage/` | `spoilage_report` | `views_analytics.spoilage_report_view` | Spoilage & write-offs report (§7.14) |
 | `/approvals/` | `approvals_inbox` | `approvals_inbox_view` | Pending approvals inbox |
 | `/operations/notifications/read/` | `mark_notifications_read` | `mark_notifications_read` | Mark notifications read |
 | `/analytics/supplier-performance/` | `supplier_scorecard` | `views_analytics.supplier_scorecard_view` | Supplier reliability scorecard — "Scorecard" tab of the Suppliers hub (see §7) |
@@ -136,7 +177,11 @@ D:\TerraHub
 | `/analytics/yield/` | `production_yield` | `views_analytics.production_yield_view` | Production yield variance — "Yield" tab of the Manufacturing hub (see §7) |
 | `/decision-support/stockout/` | `forecast` | `views_analytics.forecast_view` | Consumption-rate stockout & reorder forecast (see §7) |
 | `/decision-support/capacity/` | `capacity_forecast` | `views_analytics.capacity_forecast_view` | Warehouse capacity runway — daily-snapshot trend (see §7) |
+| `/decision-support/rent-reduction/` | `rent_opportunities` | `views_analytics.rent_opportunities_view` | Rent Opportunities — suggested moves out of rented storage (§7.13) |
+| `/decision-support/rent-reduction/decide/` | `rent_suggestion_decide` | `views_analytics.rent_suggestion_decide` | Accept (creates Draft transfers) or dismiss ticked suggestions |
 | `/assistant/briefing/` | `ops_briefing` | `views_analytics.ops_briefing_view` | My Open Jobs — the personal checklist; *Overview → AI Copilot* (see §7.11) |
+| `/assistant/briefing/hub/` | `briefing_hub` | `views_analytics.briefing_hub_view` | AI Copilot landing page: My Open Jobs plus the six briefing cards |
+| `/assistant/briefing/tick/<pk>/` | `briefing_tick` | `views_analytics.briefing_tick` | Tick or untick one checklist bullet (JSON) |
 | `/assistant/briefing/<category>/` | `category_briefing` | `views_analytics.category_briefing_view` | One of the six domain briefings (materials/products/sales/purchase/logistics/warehouse) — Claude narration of that category's Tier 1/2 signals (see §7.9) |
 | `/analytics/logistics-performance/` | `shipment_logistics` | `views_analytics.shipment_logistics_view` | In-flight shipment risk roll-up — "Analytics → Supply Chain" (see §7.10) |
 | `/admin/` | — | Django admin | Django admin site |
@@ -149,18 +194,20 @@ Defined in `core/models.py`:
 
 - **Access**: `CustomUser` (+ Django `Group`), `Capability` (table-less holder of app-wide permissions)
 - **Facilities**: `Warehouse`, `WarehouseLocation`
-- **Catalog**: `Material`, `Product`, `ProductRecipe`
-- **Manufacturing**: `ProductionRun`, `RunMaterialUsage`, `ProductionConsumption`
-- **Inventory**: `Batch` (lot-level tracking with expiry/manufacturing dates, quantity, allocated quantity)
+- **Catalog**: `Material`, `Product`, `ProductRecipe`, `Supplier`, `SupplierMaterial` (lead time per supplier and material), `Client`
+- **Manufacturing**: `ProductionRun`, `ProductionRunYieldLog`, `RunMaterialUsage`, `RunExtraMaterial`, `ProductionConsumption`
+- **Inventory**: `Batch` (lot-level tracking with expiry/manufacturing dates, quantity, allocated quantity, and an optional locked `rental_rate_per_mt`; NULL follows the warehouse rate live)
 - **Purchasing**: `PurchaseOrder`, `PurchaseOrderDetail`
 - **Sales**: `SalesOrder`, `SalesOrderDetail`
-- **Fulfillment**: `Shipment`, `ShipmentItem`
-- **Quality & Audit**: `StockAudit`, `RegistryLog` (movement ledger; `RegistryLog.material` FK is the machine-readable key behind the analytics engine — see §7), `OrderTimeline`
+- **Fulfillment**: `Shipment` (tracking numbers `SHP-1001` onwards), `ShipmentItem`, `ShipmentItemReceipt` (one dated receiving event, so a load can be received in parts)
+- **Quality**: `QARequest`, `QAInspection`, `QAApproval`, `QAEvent` (see §8.1)
+- **Audit**: `StockAudit`, `UserAuditLog`, `RegistryLog` (movement ledger; `RegistryLog.material` FK is the machine-readable key behind the analytics engine — see §7), `OrderTimeline`
 - **Allocation**: `StockAllocation` (shared reservation engine used by sales orders and production runs, resolved via FEFO in `core/utils.py`)
 - **Messaging**: `Notification`
 - **Configuration**: `SystemSetting` (key/value store for admin-editable operational tunables; read via `core/settings_store.py` — see §7)
 - **Analytics snapshots**: `WarehouseUtilizationSnapshot` (one row per warehouse per day, written by `manage.py snapshot_utilization`; see §7)
-- **AI Copilot**: `OpsBriefing` (one row per category-briefing run or per-user checklist run — stored Claude output plus its input `signals_json` and token counts, keyed by `category`; see §7.9/§7.11)
+- **Decision support**: `RentSuggestion` (an accepted or dismissed Rent Opportunities suggestion; see §7.13)
+- **AI Copilot**: `BriefingTick` (one user's tick on one checklist bullet), `OpsBriefing` (one row per category-briefing run or per-user checklist run — stored Claude output plus its input `signals_json` and token counts, keyed by `category`; see §7.9/§7.11)
 
 ---
 
@@ -175,11 +222,10 @@ pip install -r requirements.txt
 ```
 
 ### 6.2. Environment Configuration
-Copy `.env.example` to `.env` and fill in local values (database URL, secret key, etc.).
+Copy `.env.example` to `.env` and fill in the PostgreSQL connection (`DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`) and `ANTHROPIC_API_KEY` (only needed for the AI Copilot).
 
 ### 6.3. Database Migrations
 ```powershell
-python manage.py makemigrations core
 python manage.py migrate
 ```
 
@@ -195,10 +241,16 @@ python manage.py runserver
 ```
 The application will be accessible at `http://127.0.0.1:8000/`.
 
-### 6.6. Tests
+### 6.6. Scheduled jobs
+- `python manage.py qa_sweep`: holds expired batches and sends QA expiry and long-hold alerts. Run it daily; it is safe to run repeatedly.
+- `python manage.py generate_ops_briefing --category all`: the AI Copilot briefings (§7.9).
+- `python manage.py snapshot_utilization`: a manual capacity snapshot, normally not needed (§7.8).
+
+### 6.7. Tests
 ```powershell
 python manage.py test
 ```
+`core/tests.py` covers the modules broadly; `core/tests_critical.py` covers the stock, order and QA paths where a bug would lose or misstate stock.
 
 ---
 
@@ -208,15 +260,16 @@ A layered analytics capability built on data the platform already records. All
 computation lives in **`core/analytics.py`** as pure functions (no request /
 response, no side effects) so it can be called identically from web views,
 management commands, the shell, and tests. Scheduled jobs live in
-`core/management/commands/`. A phase-by-phase build log is kept in
-`ANALYTICS_CHANGELOG.md`.
+`core/management/commands/`. Heavy results are cached for 60 seconds by
+`core/analytics_cache.py`, and `core/signals.py` clears that cache whenever the
+underlying records change.
 
 Three tiers:
 
 | Tier | Nature | Examples |
 | :--- | :--- | :--- |
 | **1** | Roll-ups of stored data (ORM aggregation, no new math) | supplier reliability, sales-order delivery risk, audit-accuracy trend, production yield variance |
-| **2** | Statistical forecasting by plain arithmetic (no ML library) | consumption-rate stockout ETA, reorder-by date, warehouse capacity runway |
+| **2** | Statistical forecasting by plain arithmetic (no ML library) | consumption-rate stockout ETA, reorder-by date, warehouse capacity runway, rent-reduction suggestions |
 | **3** | LLM reasoning over the Tier 1/2 signals, organised by domain | six category briefings + a personal "My Open Jobs" checklist — the **AI Copilot** |
 
 **Navigation.** The eight Tier 1/2 views live in the **Analytics** sidebar section
@@ -254,7 +307,7 @@ adds a machine-readable key. It is stamped at write time wherever a specific raw
 material moves; it is left **null** for movements that are not material-specific
 (finished-goods `Produced`, bulk-import summaries, outbound shipments of finished
 products). Migration `0035` adds the column (guarded with `ADD COLUMN IF NOT
-EXISTS` — see the changelog for why); migration `0036` backfills history.
+EXISTS`, so it is safe on a database that already has the column); migration `0036` backfills history.
 
 **Backfill algorithm** (`resolve_material_from_label(item_name, by_name)`):
 build `{material.name.lower(): Material}`, then for each null-material ledger row
@@ -655,3 +708,100 @@ partial total.
 rows (with their full `monthly_qty_trend` series) into the Sales briefing —
 the same real history a manager would want to know is behind the Outlook
 (estimate) section described in §7.9.
+
+### 7.13. Warehouse rent and Rent Opportunities
+
+**How rent is billed.** Each `Warehouse` has an `ownership_type` (`Internal`, `ExternalProvider`, `SupplierStorage`),
+a `rental_billing_method` and a `rental_cost_per_mt` charged per billing term of `rental_term_days` days
+(1 = a daily rate; 30 = RM per MT for every 30 days or part of 30 days a lot stays, matching the real rental invoices).
+`warehouse_rent_burn()` is the single source of truth for rent:
+
+```
+Internal  -> 0
+Overall   -> total_capacity_mt x rate / term_days                      (fixed, whatever is stored)
+Usage     -> sum over open batches of weight_mt x effective rate / term_days
+effective rate = Batch.rental_rate_per_mt   if set (locked, e.g. a negotiated PO rate)
+                 Warehouse.rental_cost_per_mt otherwise (follows rate changes live)
+```
+
+`Batch.rent_term()` gives one lot's position in its billing terms: a term is charged in full once it starts,
+so 31 days at 30-day terms is 2 terms. There is no minimum-billing floor.
+
+**Rent Opportunities.** `rent_reduction_opportunities()` → `views_analytics.rent_opportunities_view` →
+`/decision-support/rent-reduction/`. For each Usage-billed rented warehouse it suggests batches to move into the
+company's own storage warehouses, checking the destination has room (capacity, plus transfers already on the way),
+and estimates the rent each move saves until the batch is expected to be used up or expire, capped at
+`dss_saving_horizon_days` (365). Moves saving less than `dss_min_total_saving_rm` (RM 100) are left out.
+Accepting ticked suggestions creates Draft internal transfers; dismissing one records a reason and keeps that batch out
+for `dss_dismiss_snooze_days` (30). Each decision is stored as a `RentSuggestion` with the estimate at the time,
+and `rent_results()` later compares the origin warehouse's rent the week before and after each completed move with that estimate. The page also shows the Rent History chart
+(`rent_history()`, §7.8).
+
+### 7.14. Spoilage & write-offs
+
+`spoilage_report(since, until)` → `views_analytics.spoilage_report_view` → `/analytics/spoilage/`.
+Totals every QA write-off (`QAEvent` with action `disposed`; supplier returns are write-offs with that reason)
+and stock lost in transit (`RegistryLog` `Lost_In_Transit`), broken down by reason, material or product,
+warehouse and supplier, and shown against inbound quantity so the loss can be read as a share of what came in.
+
+---
+
+## 8. Operations & Controls
+
+### 8.1. QA & spoilage control
+
+All QA actions live in `core/qa.py`; the views only call them, and every action records a `QAEvent` with a reason,
+which forms the batch's QA history and the data behind the spoilage report.
+
+- **Holds and releases.** A batch is put on hold (`Quarantined`, its reservations released) by QA or automatically.
+  `qa_release_needs_second_person` turns on a four-eyes rule so the person who held a batch can't also release it.
+  `qa_hold_new_finished_goods` makes finished goods from completed runs start on hold.
+- **Send to QA.** Any page with a batch can raise a `QARequest`, optionally holding the stock at once. QA works the
+  request from the Requests tab and records an outcome.
+- **Inspections.** `QAInspection` stores the checklist the inspector ticked and the result, including moisture checks.
+- **Write-offs and returns.** A write-off worth at least `qa_writeoff_approval_rm` (RM 5,000) waits in the
+  Action Center as a `QAApproval` before stock is removed. A manager can undo a write-off for `qa_writeoff_undo_days` (7).
+  Reserved stock can't be written off, and the quantity is required.
+- **Shelf-life extensions.** Up to `qa_extension_cap_pct` (25%) of the original shelf life can be added without
+  approval; more goes to the Action Center. One extension is at most `qa_extension_max_days` (730).
+- **Expiry sweep.** `manage.py qa_sweep` (daily) holds expired batches when `qa_auto_hold_expired` is on, warns QA
+  `qa_expiry_warning_days` (7) before expiry, and reminds QA about batches on hold for `qa_quarantine_alert_days` (14).
+  Batches within `qa_near_expiry_days` (30) are listed as near expiry.
+
+### 8.2. Document numbering
+
+Order, run, SKU, shipment and batch numbers are generated by `core/utils.py::generate_next_code()`: the highest number
+among codes of exactly that form, plus one (e.g. `SO-1004`, `SHP-1188`). The prefixes are settings
+(`prefix_sales_order`, `prefix_purchase_order`, `prefix_production_run`, `prefix_product_sku`,
+`prefix_material_sku`, `prefix_shipment`, `prefix_batch`, `prefix_finished_goods_batch`), editable at
+`/system/settings/`. Existing records keep their old prefix; numbering restarts for a new prefix.
+
+### 8.3. CSV import and export
+
+Products, materials, sales orders and purchase orders export to CSV and import from a matching template; recipes export only.
+The order export puts the import columns first, so an export can be re-imported. Imports run as a **dry run** first
+and report errors per order before anything is saved. Imported orders are records of past activity: they do not
+move stock, which is entered as batches.
+
+### 8.4. Printed documents
+
+- **Pick list** (`/operations/shipments/<pk>/picklist/`): batches and locations to pick for a shipment.
+- **Mixing sheet**: a production run's materials and quantities for the shop floor; bag counts and signatures are
+  filled in by hand.
+- **Assembly sheet**: the stock record of a completed run, materials used in and finished goods out.
+- **Batch label** (`/warehouse/batch/<batch_number>/print/`) with a QR code to the public batch page.
+
+### 8.5. Access and security
+
+- **Roles** are Django Groups edited on the Roles page (`/system/roles/`). Code checks permissions only, never role
+  names (`core/permissions.py`). A POST with no recognised action is refused by default (`action_denied`), and
+  buttons a user can't use are hidden. Users can also be limited to certain warehouses.
+- **Sign-in throttling** (`core/login_throttle.py`) locks a username after `login_fail_limit` failures from one
+  computer (four times that across computers) for `login_lockout_minutes`; admins can unlock sooner.
+- **Idle timeout.** Users are signed out after `session_idle_timeout_minutes` without activity
+  (`static/js/session-timeout.js` with `/session/keepalive/`).
+- **Password resets.** An admin issues a temporary password (`core/account.py`) which the user must change at
+  first sign-in; an unused one expires after 24 hours.
+- **Audit Log.** `UserAuditLog` records account, role and System Settings changes: who did what, to whom and when.
+- **Error pages.** `core/errors.py` serves custom 400/403/404/500 pages from a standalone `error.html`, so a 500
+  caused by a database outage still renders.

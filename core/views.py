@@ -136,6 +136,41 @@ SO_MANUAL_TRANSITIONS = {
 }
 
 
+FORMULA_START = ('=', '+', '-', '@', '\t', '\r')
+
+
+def _csv_safe(value):
+    """Text that Excel would run as a formula gets a leading ' so it shows as plain text. Numbers are left alone."""
+    if isinstance(value, str) and value.startswith(FORMULA_START):
+        try:
+            Decimal(value)
+            return value
+        except InvalidOperation:
+            return "'" + value
+    return value
+
+
+class SafeCSVWriter:
+    """csv.writer that escapes formula-like text cells (CSV injection)."""
+    def __init__(self, f):
+        self._w = csv.writer(f)
+
+    def writerow(self, row):
+        return self._w.writerow([_csv_safe(v) for v in row])
+
+    def writerows(self, rows):
+        for row in rows:
+            self.writerow(row)
+
+
+def decode_csv_upload(raw):
+    """Uploaded CSV bytes as text: UTF-8 (with or without BOM), else Windows-1252 as saved by Excel 'CSV (Comma delimited)'."""
+    try:
+        return raw.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return raw.decode('cp1252', errors='replace')
+
+
 SO_UNCANCELLABLE = ('Shipped', 'Delivered', 'Cancelled')
 SHIPMENT_OUT = ('Dispatched', 'Delayed', 'Arrived', 'Discrepant')   # goods physically left; can't be undone by a cancel
 
@@ -148,6 +183,10 @@ def so_cancel_problem(so):
     if out.exists():
         return (f"{', '.join(out.values_list('tracking_number', flat=True))} has already left. "
                 "Receive or force close it before cancelling the order.")
+    run_moves = Shipment.objects.filter(linked_production_run__sales_order=so).exclude(status__in=['Draft', 'Cancelled', 'Completed'])
+    if run_moves.exists():
+        return (f"Material transfer {', '.join(run_moves.values_list('tracking_number', flat=True))} for this order's run is already under way. "
+                "Cancel or receive it in Logistics before cancelling the order.")
     running = so.production_runs.filter(status__in=['InProgress', 'Paused'])
     if running.exists():
         return (f"Run {', '.join(running.values_list('run_number', flat=True))} is already in production. "
@@ -1438,7 +1477,7 @@ def export_product_template(request):
     """Download reference CSV template for Products."""
     response = HttpResponse(content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = 'attachment; filename="product_import_template.csv"'
-    writer = csv.writer(response)
+    writer = SafeCSVWriter(response)
     writer.writerow(['name', 'sku', 'description', 'unit_of_measure', 'weight_mt_per_unit', 'price_per_unit', 'shelf_life_days'])
     writer.writerow(['Polymer Compound Alpha', 'PROD1001', 'High density industrial resin', 'pcs', '0.5000', '150.00', '365'])
     writer.writerow(['Bio-Solvent Solution', 'PROD1002', 'Organic chemical solvent', 'L', '1.0000', '85.50', '180'])
@@ -1452,7 +1491,7 @@ def export_products_csv(request):
     """Export all registered Products as CSV."""
     response = HttpResponse(content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = 'attachment; filename="products_export.csv"'
-    writer = csv.writer(response)
+    writer = SafeCSVWriter(response)
     writer.writerow(['name', 'sku', 'description', 'unit_of_measure', 'weight_mt_per_unit', 'price_per_unit', 'shelf_life_days'])
     for prod in Product.objects.all().order_by('sku'):
         writer.writerow([
@@ -1489,7 +1528,7 @@ def import_products(request):
     is_dry_run = request.POST.get('dry_run') == '1'
 
     try:
-        file_data = csv_file.read().decode('utf-8-sig')
+        file_data = decode_csv_upload(csv_file.read())
         io_string = io.StringIO(file_data)
         reader = csv.DictReader(io_string)
     except Exception as e:
@@ -1675,7 +1714,7 @@ def export_material_template(request):
     """Download reference CSV template for Materials."""
     response = HttpResponse(content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = 'attachment; filename="material_import_template.csv"'
-    writer = csv.writer(response)
+    writer = SafeCSVWriter(response)
     writer.writerow(['name', 'sku', 'category', 'unit_of_measure', 'safe_storage_days', 'weight_mt_per_unit', 'cost_per_unit'])
     writer.writerow(['Titanium Dioxide Pigment', 'MAT1001', 'Chemicals', 'MT', '90', '1.0000', '450.00'])
     writer.writerow(['Recycled Polyethylene Pellets', 'MAT1002', 'Polymers', 'kg', '180', '0.0010', '2.50'])
@@ -1689,7 +1728,7 @@ def export_materials_csv(request):
     """Export all registered Materials as CSV."""
     response = HttpResponse(content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = 'attachment; filename="materials_export.csv"'
-    writer = csv.writer(response)
+    writer = SafeCSVWriter(response)
     writer.writerow(['name', 'sku', 'category', 'unit_of_measure', 'safe_storage_days', 'weight_mt_per_unit', 'cost_per_unit'])
     for mat in Material.objects.all().order_by('sku'):
         writer.writerow([
@@ -1726,7 +1765,7 @@ def import_materials(request):
     is_dry_run = request.POST.get('dry_run') == '1'
 
     try:
-        file_data = csv_file.read().decode('utf-8-sig')
+        file_data = decode_csv_upload(csv_file.read())
         io_string = io.StringIO(file_data)
         reader = csv.DictReader(io_string)
     except Exception as e:
@@ -1913,7 +1952,7 @@ def export_product_recipes_csv(request):
     """Export all Product Recipes as CSV."""
     response = HttpResponse(content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = 'attachment; filename="product_recipes_export.csv"'
-    writer = csv.writer(response)
+    writer = SafeCSVWriter(response)
     writer.writerow(['product_sku', 'product_name', 'material_sku', 'material_name', 'quantity_required', 'material_uom'])
     for r in ProductRecipe.objects.select_related('product', 'material').order_by('product__sku'):
         writer.writerow([
@@ -1979,6 +2018,13 @@ def recipe_locked(product):
     ).values_list('run_number', flat=True))
     if runs:
         return f"{product.sku}'s recipe can't change while run(s) {', '.join(runs)} hold materials or are in progress. Finish, abort or scrap them first."
+    return None
+
+
+def no_recipe_warning(product):
+    """Warning if the product has no recipe (BOM), else None. Runs are still allowed, but they allocate and consume nothing yet still create finished stock."""
+    if not product.recipe_items.exists():
+        return f"Heads up: {product.sku} has no recipe (BOM), so this run won't allocate or use any materials. Add its recipe in Recipe Studio if it should."
     return None
 
 
@@ -3207,7 +3253,7 @@ def _csv_date(row, col, label):
 def _csv_download(filename):
     response = HttpResponse(content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
-    return response, csv.writer(response)
+    return response, SafeCSVWriter(response)
 
 
 @login_required
@@ -3292,7 +3338,7 @@ def import_orders(request, kind):
     if not csv_file or not csv_file.name.lower().endswith('.csv'):
         return fail("Please select a .csv file to upload.")
     try:
-        reader = csv.DictReader(io.StringIO(csv_file.read().decode('utf-8-sig')))
+        reader = csv.DictReader(io.StringIO(decode_csv_upload(csv_file.read())))
         headers = [h.strip().lower() for h in (reader.fieldnames or []) if h]
         rows = [{k.strip().lower(): (v or '').strip() for k, v in r.items() if k}
                 for r in reader]
@@ -3897,7 +3943,8 @@ def so_detail_view(request, pk):
             'item': item,
             'bom_rows': bom_rows,
             'can_make_units': can_make_units if can_make_units is not None else '∞',
-            'bom_ready': all(row['sufficient'] for row in bom_rows),
+            # An empty recipe isn't "ready": there is nothing to make it from
+            'bom_ready': bool(bom_rows) and all(row['sufficient'] for row in bom_rows),
             'allocated': allocated,
             'in_logistics': in_logistics,
             'deficit': deficit,
@@ -4305,6 +4352,10 @@ def manufacturing_view(request):
                     )
 
                 messages.success(request, f"Production Run {run_number} scheduled for {prod.name}.")
+                no_recipe = no_recipe_warning(prod)
+                if no_recipe:
+                    messages.warning(request, no_recipe)
+                    OrderTimeline.objects.create(production_run=run, action=no_recipe, user=request.user)
                 archived = archived_recipe_materials(prod)
                 if archived:
                     messages.warning(request, f"Heads up: {prod.name}'s recipe uses archived material(s): {', '.join(m.name for m in archived)}.")
@@ -4584,7 +4635,8 @@ def manufacturing_view(request):
         recipe_readiness.append({
             'product': p,
             'items': items,
-            'is_ready': is_ready,
+            # An empty recipe isn't "ready": there is nothing to make it from
+            'is_ready': is_ready and bool(items),
             'max_producible': max_producible if max_producible is not None else '∞',
         })
 
@@ -4638,7 +4690,8 @@ def manufacturing_view(request):
                 'item': item,
                 'bom_rows': bom_rows,
                 'can_make': can_make if can_make is not None else '∞',
-                'bom_ready': all(r['sufficient'] for r in bom_rows),
+                # An empty recipe isn't "ready": there is nothing to make it from
+                'bom_ready': bool(bom_rows) and all(r['sufficient'] for r in bom_rows),
                 'existing_run': existing_run,
                 'run_resolved': run_resolved,
                 'allocated': allocated,
@@ -5584,6 +5637,12 @@ def shipment_detail_view(request, pk):
                     messages.error(request, "Tracking ID and Departure Date/Time MUST be provided before marking this shipment as Dispatched.")
                     return redirect('shipment_detail', pk=shipment.pk)
             if new_st in in_progress:
+                if old_status == 'Preparing' and new_st != 'Preparing':
+                    # Leaving now: record the real dispatch day so receipts can't be dated before it
+                    left = timezone.localtime(shipment.departure_datetime).date() if shipment.departure_datetime else date.today()
+                    left = min(left, date.today())
+                    if not shipment.dispatch_date or shipment.dispatch_date > left:
+                        shipment.dispatch_date = left
                 shipment.status = new_st
                 shipment.save()
                 if new_st != old_status:
@@ -6511,6 +6570,8 @@ def production_run_allocate_view(request, pk):
     if run.status not in ('Pending Allocation', 'Planned', 'Awaiting Materials', 'InProgress', 'Paused'):
         messages.error(request, f"Materials can't be allocated to a run that is {run.get_status_display()}.")
         return redirect('production_run_detail', pk=pk)
+    if request.method == 'GET' and no_recipe_warning(run.target_product):
+        messages.warning(request, no_recipe_warning(run.target_product))
     # More than the recipe needs can be reserved at any stage, but only with a reason.
     extra_allowed = True
     under_way = run.status in ('InProgress', 'Paused')

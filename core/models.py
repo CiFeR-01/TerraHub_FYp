@@ -824,7 +824,7 @@ class RentSuggestion(models.Model):
 
 class OpsBriefing(models.Model):
     """A stored run of the AI Copilot (core/briefing.py) - a company-wide
-    category briefing or one person's checklist. See SYSTEM_DOCUMENTATION.md §8.9-§8.11."""
+    category briefing or one person's checklist."""
     PERIOD_CHOICES = (('daily', 'Daily'), ('weekly', 'Weekly'))
     STATUS_CHOICES = (
         ('ok', 'Generated'),

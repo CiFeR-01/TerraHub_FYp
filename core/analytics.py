@@ -1,4 +1,4 @@
-"""Analytics and forecasting computations: pure ORM functions (see SYSTEM_DOCUMENTATION.md section 8)."""
+"""Analytics and forecasting computations: pure ORM functions."""
 from __future__ import annotations
 
 import datetime as _dt
@@ -162,7 +162,7 @@ def _rate_supplier(on_time_rate, fill_rate, th):
 
 
 def supplier_reliability(*, since=None, until=None):
-    """Per-supplier fulfilment scorecard, worst first. `since`/`until` bound POs by order_date (row shape: SYSTEM_DOCUMENTATION.md section 8.3)."""
+    """Per-supplier fulfilment scorecard, worst first. `since`/`until` bound POs by order_date."""
     from .models import PurchaseOrder
     from .settings_store import get_setting
 
@@ -300,7 +300,7 @@ def _classify_so_risk(deadline, arrival, arrival_is_actual, shipped_fraction,
 
 
 def sales_order_delivery_risk():
-    """Delivery-risk row per open sales order, worst first. See §8.4 for the row shape."""
+    """Delivery-risk row per open sales order, worst first."""
     from .models import SalesOrder
     from .settings_store import get_setting
 
@@ -382,7 +382,7 @@ def _audit_finalize(b):
 
 def audit_accuracy(*, since=None):
     """Stock-count accuracy from StockAudit, grouped by warehouse/item plus a
-    monthly trend, worst first. See §8.5 for the row shape."""
+    monthly trend, worst first."""
     from .models import StockAudit
 
     audits = StockAudit.objects.select_related(
@@ -471,7 +471,7 @@ def _yield_bucket_init(name):
 
 def production_yield_variance():
     """Yield performance of completed runs, grouped by product and supervisor,
-    worst first. See §8.6 for the row shape."""
+    worst first."""
     from .models import ProductionRun
 
     runs = (
@@ -1424,8 +1424,7 @@ _OPEN_SHIPMENT_STATUSES = (
 
 
 def shipment_logistics():
-    """Per in-flight Shipment (any direction), worst first. See §8.10 for the
-    row shape and risk bands."""
+    """Per in-flight Shipment (any direction), worst first."""
     from .models import Shipment
     from .settings_store import get_setting
 
@@ -1500,7 +1499,7 @@ _SHIPMENT_CLOSED_STATUSES = ("Completed", "Cancelled")
 
 def my_open_jobs(user):
     """One user's own open/in-process records across every domain, oldest
-    first. See §8.11 for the row shape and how `context` is populated."""
+    first."""
     from .models import SalesOrder, PurchaseOrder, ProductionRun, StockAudit, Shipment
 
     today = timezone.localdate()
