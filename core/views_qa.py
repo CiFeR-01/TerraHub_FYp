@@ -106,6 +106,8 @@ def _handle_post(request):
                     moisture = Decimal(request.POST['moisture_pct'].strip())
                 except InvalidOperation:
                     raise qa.QAError("Moisture must be a number.")
+                if not moisture.is_finite() or not (0 <= moisture <= 100):
+                    raise qa.QAError("Moisture must be a percentage from 0 to 100.")
             qa.inspect_batch(batch, user, result, request.POST.getlist('checks'), moisture, note, request=req)
             batch.refresh_from_db()
             if result == 'pass':

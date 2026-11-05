@@ -2,75 +2,105 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Pick List - {{ shipment.tracking_number }}</title>
     <style>
-        body { font-family: 'Inter', sans-serif; margin: 0; padding: 20px; color: #333; }
-        .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
-        .title { margin: 0; font-size: 24px; font-weight: bold; }
-        .meta { font-size: 14px; color: #666; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-        th, td { padding: 10px; border-bottom: 1px solid #ddd; text-align: left; }
-        th { background-color: #f8f9fa; font-weight: bold; }
-        .checkbox { width: 20px; height: 20px; border: 1px solid #000; display: inline-block; }
+        /* Same sheet look as the production run print sheets: A4-width column, black rules, no web styling. */
+        *, *::before, *::after { box-sizing: border-box; }
+        body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 20px; color: #000; font-size: 12px; background: #fff; }
+        .sheet { max-width: 760px; margin: 0 auto; }
+        .brand { text-align: center; border-bottom: 1px solid #000; padding-bottom: 10px; }
+        .brand-name { font-size: 20px; font-weight: bold; }
+        .brand-sub { font-size: 12px; }
+        .title { text-align: center; font-size: 18px; letter-spacing: 3px; margin: 16px 0; }
+        .top { display: flex; gap: 16px; align-items: stretch; }
+        fieldset { flex: 1.4; min-width: 0; border: 1px solid #000; margin: 0; padding: 6px 10px 10px; }
+        legend { font-weight: bold; font-size: 11px; padding: 0 6px; }
+        .field { margin-bottom: 4px; overflow-wrap: anywhere; }
+        .doc { flex: 1; min-width: 0; border-collapse: collapse; }
+        .doc td { padding: 3px 4px; vertical-align: top; overflow-wrap: anywhere; }
+        .doc td.label { width: 42%; white-space: nowrap; }
+        .lines { margin-top: 16px; border-collapse: collapse; width: 100%; table-layout: fixed; }
+        .lines th { border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 6px 4px; font-weight: normal; text-align: left; }
+        .lines td { padding: 6px 4px; vertical-align: top; border-bottom: 1px solid #ccc; overflow-wrap: anywhere; }
+        .lines tr { page-break-inside: avoid; }
+        .lines .num { text-align: right; white-space: nowrap; }
+        .lines .tick { text-align: center; }
+        .box { width: 16px; height: 16px; border: 1px solid #000; display: inline-block; }
+        .muted { color: #555; font-size: 11px; }
+        .signs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 48px; page-break-inside: avoid; }
+        .sign { border-top: 1px solid #000; padding-top: 4px; font-size: 11px; }
         .print-btn { padding: 10px 20px; background: #2563eb; color: #fff; border: none; cursor: pointer; border-radius: 4px; }
-        
+
         @media print {
             .no-print { display: none !important; }
             body { padding: 0; }
-            @page { margin: 0.5cm; }
+            .lines thead { display: table-header-group; }
+            @page { size: A4; margin: 1cm; }
         }
     </style>
 </head>
 <body>
 
-<div class="no-print" style="margin-bottom: 20px; text-align: right;">
+<div class="no-print" style="max-width: 760px; margin: 0 auto 20px; text-align: right;">
     <button class="print-btn" onclick="window.print()">Print Pick List</button>
 </div>
 
-<div class="header">
-    <div>
-        <h1 class="title">Warehouse Pick List</h1>
-        <p class="meta">Shipment: {{ shipment.tracking_number }} | Production Run: {{ shipment.linked_production_run.run_number }}</p>
+<div class="sheet">
+    <div class="brand">
+        <div class="brand-name">TerraHub</div>
+        <div class="brand-sub">{{ shipment.origin_warehouse.name|default:"" }}</div>
     </div>
-    <div style="text-align: right;">
-        <p class="meta"><strong>Date:</strong> {% now "jS F Y" %}</p>
-        <p class="meta"><strong>Origin:</strong> {{ shipment.origin_warehouse.name|default:"Not specified" }}</p>
-    </div>
-</div>
 
-<table class="sortable">
-    <thead>
-        <tr>
-            <th style="width:50px;">Picked</th>
-            <th>Location</th>
-            <th>Material</th>
-            <th>Batch No.</th>
-            <th style="text-align:right;">Quantity</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for item in items %}
-        <tr>
-            <td style="text-align:center;"><div class="checkbox"></div></td>
-            <td>{{ item.batch.location|default:"-" }}</td>
-            <td>{{ item.material.name }}<br><small>{{ item.material.sku }}</small></td>
-            <td><strong>{{ item.batch.batch_number }}</strong><br><small>Exp: {{ item.batch.expiry_date }}</small></td>
-            <td style="text-align:right; font-weight:bold;">{{ item.quantity|floatformat:2 }} {{ item.material.unit_of_measure }}</td>
-        </tr>
-        {% empty %}
-        <tr>
-            <td colspan="5" style="text-align:center; padding: 20px;">No items in this shipment.</td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+    <div class="title">PICK LIST</div>
 
-<div style="margin-top: 40px; display: flex; justify-content: space-between;">
-    <div style="width: 45%; border-top: 1px solid #000; padding-top: 5px;">
-        Picked By (Signature)
+    <div class="top">
+        <fieldset>
+            <legend>Shipment</legend>
+            <div class="field">From: {{ shipment.origin_warehouse.name|default:shipment.external_origin|default:"-" }}</div>
+            <div class="field">To: {% if shipment.destination_warehouse %}{{ shipment.destination_warehouse.name }}{% elif shipment.client_address %}{{ shipment.client_address|linebreaksbr }}{% else %}-{% endif %}</div>
+            {% if shipment.sales_order %}<div class="field">Sales Order: {{ shipment.sales_order.so_number }}</div>{% endif %}
+            {% if shipment.linked_production_run %}<div class="field">Production Run: {{ shipment.linked_production_run.run_number }}</div>{% endif %}
+        </fieldset>
+        <table class="doc">
+            <tr><td class="label"><strong>No.</strong></td><td>: <strong>{{ shipment.tracking_number }}</strong></td></tr>
+            <tr><td class="label">Date</td><td>: {% now "d/m/Y" %}</td></tr>
+            <tr><td class="label">Type</td><td>: {{ shipment.direction }}</td></tr>
+            <tr><td class="label">Lines</td><td>: {{ items|length }}</td></tr>
+        </table>
     </div>
-    <div style="width: 45%; border-top: 1px solid #000; padding-top: 5px; text-align: right;">
-        Date Completed
+
+    <table class="lines">
+        <thead>
+            <tr>
+                <th class="tick" style="width:8%;">Picked</th>
+                <th style="width:16%;">Location</th>
+                <th>Item</th>
+                <th style="width:24%;">Batch</th>
+                <th class="num" style="width:16%;">Qty</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            {% with thing=item.material|default:item.product %}
+            <tr>
+                <td class="tick"><span class="box"></span></td>
+                <td>{{ item.batch.location|default:"-" }}</td>
+                <td>{{ thing.name|default:"-" }}<br><span class="muted">{{ thing.sku }}</span></td>
+                <td>{% if item.batch %}<strong>{{ item.batch.batch_number }}</strong>{% if item.batch.expiry_date %}<br><span class="muted">Exp: {{ item.batch.expiry_date|date:"d/m/Y" }}</span>{% endif %}{% else %}-{% endif %}</td>
+                <td class="num"><strong>{{ item.quantity|floatformat:2 }}</strong> {{ thing.unit_of_measure }}</td>
+            </tr>
+            {% endwith %}
+            {% empty %}
+            <tr><td colspan="5" style="text-align:center; padding: 20px;">No items in this shipment.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="signs">
+        <div class="sign">Picked By</div>
+        <div class="sign">Checked By</div>
+        <div class="sign">Date Completed</div>
     </div>
 </div>
 
