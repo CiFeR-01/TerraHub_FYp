@@ -35,7 +35,7 @@ Full technical documentation: [SYSTEM_DOCUMENTATION.md](SYSTEM_DOCUMENTATION.md)
    ```powershell
    Copy-Item .env.example .env
    ```
-   `ANTHROPIC_API_KEY` is optional. Without it, everything works except the AI Copilot briefings.
+   `ANTHROPIC_API_KEY` is optional and only used by the AI Copilot briefings.
 5. **Build the tables** (also creates the default roles and settings)
    ```powershell
    python manage.py migrate
@@ -87,4 +87,4 @@ During development the system was deployed on [Railway](https://railway.app). `P
 | `could not connect to server` | PostgreSQL is not running, or `DB_PORT` / `DB_PASSWORD` in `.env` are wrong |
 | `database "TerraHub" does not exist` | do step 3 |
 | `SECRET_KEY must be set when DEBUG is False` | add `DEBUG=True` to `.env` for local use, or set `SECRET_KEY` |
-| AI Copilot says the API key is not set | expected without `ANTHROPIC_API_KEY` |
+| AI Copilot says the API key is not set | add `ANTHROPIC_API_KEY` to `.env` |
