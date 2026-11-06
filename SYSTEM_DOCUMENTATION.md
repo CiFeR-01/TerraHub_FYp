@@ -205,7 +205,7 @@ Defined in `core/models.py`:
 - **Allocation**: `StockAllocation` (shared reservation engine used by sales orders and production runs, resolved via FEFO in `core/utils.py`)
 - **Messaging**: `Notification`
 - **Configuration**: `SystemSetting` (key/value store for admin-editable operational tunables; read via `core/settings_store.py` — see §7)
-- **Analytics snapshots**: `WarehouseUtilizationSnapshot` (one row per warehouse per day, written by `manage.py snapshot_utilization`; see §7)
+- **Analytics snapshots**: `WarehouseUtilizationSnapshot` (one row per warehouse per day, kept current by `core/signals.py`; see §7.8)
 - **Decision support**: `RentSuggestion` (an accepted or dismissed Rent Opportunities suggestion; see §7.13)
 - **AI Copilot**: `BriefingTick` (one user's tick on one checklist bullet), `OpsBriefing` (one row per category-briefing run or per-user checklist run — stored Claude output plus its input `signals_json` and token counts, keyed by `category`; see §7.9/§7.11)
 
@@ -295,15 +295,13 @@ Analytics; the six briefings share one page with the same tab-strip pattern
 (`/assistant/briefing/<category>/`), and the checklist is `/assistant/briefing/`
 itself.
 
-### 7.1. The RegistryLog material spine  *(Phase 0 — implemented)*
+### 7.1. The RegistryLog material spine
 
 `RegistryLog` is the append-only ledger of every physical stock movement
 (`Inbound`, `Outbound`, `Consumed_For_Manufacturing`, `Produced`, `Adjusted`,
-`Spoiled_Disposal`, `QA_Extension`). Historically its only item reference was the
-free-text `item_name` (e.g. `"MAP (Run RUN-2010)"`).
-
-`RegistryLog.material` (nullable FK → `Material`, `related_name='registry_logs'`)
-adds a machine-readable key. It is stamped at write time wherever a specific raw
+`Spoiled_Disposal`, `QA_Extension`). Each row carries a free-text `item_name`
+(e.g. `"MAP (Run RUN-2010)"`) and a machine-readable key,
+`RegistryLog.material` (nullable FK → `Material`, `related_name='registry_logs'`). It is stamped at write time wherever a specific raw
 material moves; it is left **null** for movements that are not material-specific
 (finished-goods `Produced`, bulk-import summaries, outbound shipments of finished
 products). Migration `0035` adds the column (guarded with `ADD COLUMN IF NOT
@@ -317,7 +315,7 @@ the first hit — `<name> (Run …)`, `<name> (Batch …)` (± ` - force closed`
 `Batch <b> (<sku> - <name>)`, or an exact `<name>`. No match ⇒ leave null
 (conservative: a null row is excluded from rates, never mis-attributed).
 
-### 7.2. Consumption rate  *(Phase 0 — implemented)*
+### 7.2. Consumption rate
 
 ```
 daily_consumption(material, window_days=30, end=today) -> { date: Decimal }
@@ -333,12 +331,10 @@ consumption_rate(material, window_days=30, end=today) -> Decimal
 ```
 
 The denominator is the **whole window**, not the number of active days, so idle
-days correctly drag the burn rate down. The result is the input to the Phase 2
-stockout forecast (`on_hand / rate → days of cover`) that will replace the
-current flat degradation threshold in `dashboard_view`
-(`days_remaining <= 30 or < material.safe_storage_days`).
+days correctly drag the burn rate down. The result is the input to the
+stockout forecast (`on_hand / rate → days of cover`, §7.7).
 
-### 7.3. Supplier reliability scorecard  *(Phase 1 — implemented)*
+### 7.3. Supplier reliability scorecard
 
 `supplier_reliability(since=None, until=None)` → `views_analytics.supplier_scorecard_view`
 → `/analytics/supplier-performance/` (nav: *Analytics → Supply Chain*, tab: Supplier Performance; Suppliers links to it via a header call-out).
@@ -379,7 +375,7 @@ is a fallback. `core/settings_store.py` holds the registry of such tunables
 `get_setting(key)` which returns the typed DB override or the default. A data
 migration seeds one row per registry entry so they are all editable from day one.
 
-### 7.4. Sales-order delivery risk  *(Phase 1 — implemented)*
+### 7.4. Sales-order delivery risk
 
 `sales_order_delivery_risk()` → `views_analytics.sales_order_delivery_risk_view`
 → `/decision-support/delivery/` (nav: *Analytics → Supply Chain*, tab: Delivery Performance; Sales Orders links to it via a header call-out).
@@ -404,7 +400,7 @@ Open = status in Pending / Awaiting Acknowledgement / In Production / Ready to
 Ship / Partially Shipped / Shipped. Sorted `(risk rank, days_slack, so_number)`.
 `so_at_risk_window_days` (default 7) is a `SystemSetting` (see below).
 
-### 7.5. Stock-audit accuracy  *(Phase 1 — implemented)*
+### 7.5. Stock-audit accuracy
 
 `audit_accuracy(since=None)` → `views_analytics.audit_accuracy_view` →
 `/analytics/audit-accuracy/` (nav: *Analytics → Operations*, tab: Inventory Audit Accuracy; Stock Tally links to it via a header call-out).
@@ -415,7 +411,7 @@ Ship / Partially Shipped / Shipped. Sorted `(risk rank, days_slack, so_number)`.
 `chronic_shrinkage` when net < 0 over ≥ 3 audits), plus a monthly `trend`
 (count / mean |variance| / net). Sorted lowest accuracy, then largest mean |var|.
 
-### 7.6. Production yield variance  *(Phase 1 — implemented)*
+### 7.6. Production yield variance
 
 `production_yield_variance()` → `views_analytics.production_yield_view` →
 `/analytics/yield/` (nav: *Analytics → Operations*, tab: Yield Performance; Manufacture links to it via a header call-out).
@@ -446,7 +442,7 @@ top_reasons    = the 3 most common reasons (case / spacing merged);  top_people 
 
 Sorted highest share first (unknown share last), then window quantity, then name.
 
-### 7.7. Stockout & reorder forecast  *(Phase 2a — implemented)*
+### 7.7. Stockout & reorder forecast
 
 `stockout_forecast(window_days=30)` → `views_analytics.forecast_view` →
 `/decision-support/stockout/` (nav: *Analytics → Inventory*, tab: Stockout & Reorder; Materials Hub links to it via a header call-out).
@@ -477,10 +473,10 @@ status      = critical     if days_cover <= 0 (out, nothing arriving today), or 
 (lands before run-out, included in days_cover) and `on_order_late`; also
 `days_cover_on_hand` (stock alone), `next_po_number/date`, `po_overdue`. Rows
 sorted `(status rank, reorder_by, -burn/day, name)`. `consumption_rates()` is the
-batched sibling of Phase 0's `consumption_rate()` — one grouped query for many
+batched sibling of `consumption_rate()` — one grouped query for many
 materials.
 
-### 7.8. Capacity runway  *(Phase 2b — implemented)*
+### 7.8. Capacity runway
 
 `capacity_forecast()` → `views_analytics.capacity_forecast_view` →
 `/decision-support/capacity/` (nav: *Analytics → Inventory*, tab: Inventory Capacity; Facility Management
@@ -495,10 +491,9 @@ Quarantined via `analytics.used_mt_expr()`, and `quarantined_mt`) and rent
 (Malaysia time, `timezone.localdate()`) after any commit that saves a `Batch`
 (incl. moves between warehouses), a `Warehouse`, or a Material/Product unit
 weight — the last write of the day is that day's figure; a day with no row means
-nothing changed. Bulk `QuerySet.update()` skips signals, so the Capacity page compares live occupancy
-with the last snapshot and warns (with "Run snapshot now") when they differ; page
-views never write. `manage.py snapshot_utilization` remains for manual use. (The old Railway
-cron service for this command can be removed.)
+nothing changed. The Capacity page also compares live occupancy with the last snapshot and
+offers "Run snapshot now" when they differ; page views never write. `manage.py snapshot_utilization`
+takes a snapshot on demand.
 
 Rows written before daily rent was recorded (and rows the seed/simulation
 scripts write directly) have their rent estimated as that day's tonnage × the
@@ -524,14 +519,13 @@ status = no_data   if < 3 calendar days of history (first snapshot -> today)
 Sorted `(status rank, days_to_full, -current, name)`. The UI shows a "collecting
 data" banner until there are 7 calendar days of history.
 
-### 7.9. AI Copilot — category briefings  *(Phase 3 — implemented; split into categories in Phase 4)*
+### 7.9. AI Copilot — category briefings
 
 `core/briefing.py` → `generate_ops_briefing` command / `category_briefing_view` →
 `/assistant/briefing/<category>/` for `category` in `materials`, `products`,
 `sales`, `purchase`, `logistics`, `warehouse` (nav: *Overview → AI Copilot*,
-tab strip across the top of the page). Phase 3 shipped one company-wide
-briefing mixing all six domains; Phase 4 split it so each domain reads on its
-own, and added the previously-missing Logistics signal (§7.10).
+tab strip across the top of the page). Each domain has its own briefing,
+including Logistics (§7.10).
 
 Two steps per category, **one stateless LLM call**, no agent loop and no tools:
 
@@ -569,19 +563,19 @@ naming what it's based on, never a new invented number or date. This is the
 only place in the whole briefing system where the model is allowed to say
 something not already a fact in the payload, and the prompt, the parsing
 (`_parse_briefing_body` → `(points, watch, outlook)`), and the template all
-keep it visibly separate (a dashed purple box, "estimate, not a fact"). No
-trend field exists yet for Sales/Purchase/Products/Logistics, so the same
-prompt naturally omits Outlook there — adding it to another category is
-purely a matter of computing and attaching that category's own trend field;
-no prompt or template change is needed.
+keep it visibly separate (a dashed purple box, "estimate, not a fact").
+Sales gets the same section from its product sales trend (§7.12). A category
+whose payload has no trend field simply has no Outlook section, and giving one
+to another category only needs that category's own trend field; no prompt or
+template change is needed.
 
 **`OpsBriefing`** row per run: `category` (see §7.11 for `my_checklist`),
 `period`, `status` (`ok|empty|skipped|error`), `headline`, `body_text`,
 `signals_json`, `signal_count`, `model_id`, `input_tokens`/`output_tokens`
 (cost trace), `error_detail`, `generated_by` (null for the scheduled job).
 Each category page renders the latest `ok` row for its own `category`; a newer
-failed run shows a "last good briefing" notice. Pre-Phase-4 rows carry
-`category='legacy'` and are invisible to every page.
+failed run shows a "last good briefing" notice. Rows from the earlier single
+company-wide briefing carry `category='legacy'` and are not shown on any page.
 
 Config in `settings_store.REGISTRY` (editable at `/system/settings/`):
 `ops_briefing_enabled` (bool; off → `skipped` run, no API call, shared by every
@@ -591,25 +585,23 @@ the **`ANTHROPIC_API_KEY` environment variable** — a secret, deliberately not 
 `SystemSetting`.
 
 `generate_briefing()` never raises for a config/API/network problem — it
-records the failure on the row so the scheduled job stays green. **Like
-`snapshot_utilization`, this command has no scheduler wired** — run it daily
+records the failure on the row so the scheduled job stays green. Run it daily
 (`python manage.py generate_ops_briefing --category all`, or `--period weekly`,
-or one category at a time) via Heroku Scheduler, cron, or a scheduled GitHub
-Action (on Railway: a second Cron Schedule service, same pattern as
-`snapshot_utilization` in §7.8 — remember to give it the `ANTHROPIC_API_KEY`
-env var too). Admin/Manager can also trigger a run for one category from its
+or one category at a time) from any scheduler: cron, Heroku Scheduler, a
+scheduled GitHub Action, or on Railway a Cron Schedule service with the
+`ANTHROPIC_API_KEY` env var set. Admin/Manager can also trigger a run for one category from its
 page. `--dry-run` prints the signal payload(s) without calling the API.
 
-### 7.10. Shipment logistics  *(Phase 4 — implemented)*
+### 7.10. Shipment logistics
 
 `analytics.shipment_logistics()` → `views_analytics.shipment_logistics_view` →
 `/analytics/logistics-performance/` (nav: *Analytics → Supply Chain*, tab: Logistics
 Performance). Also feeds the Logistics category briefing (§7.9).
 
-Before this, `Shipment` was only read indirectly — the outbound leg inside
-`sales_order_delivery_risk()`, the inbound leg inside `supplier_reliability()`.
-Neither sees a `Transfer` shipment (warehouse-to-warehouse, no SO or PO at
-all). This function looks at every in-flight shipment regardless of direction:
+`sales_order_delivery_risk()` reads the outbound leg of a shipment and
+`supplier_reliability()` the inbound leg; this function looks at every in-flight
+shipment regardless of direction, including `Transfer` shipments
+(warehouse-to-warehouse, no SO or PO):
 
 ```
 scope = Shipment.status not in (Completed, Cancelled)
@@ -630,12 +622,11 @@ worst first. `logistics_at_risk_window_days` (default 3) and
 `logistics_stall_days` (default 5) are `SystemSetting`s, editable at
 `/system/settings/`.
 
-### 7.11. Personal checklist — "My Open Jobs"  *(Phase 4 — implemented)*
+### 7.11. Personal checklist — "My Open Jobs"
 
 `analytics.my_open_jobs(user)` + `core/briefing.py::generate_my_checklist()` →
 `ops_briefing_view` → `/assistant/briefing/` (nav: *Overview → AI Copilot*,
-the checklist tab). This is the target of the formerly inert "Digital
-Assistant (AI)" link, now renamed **AI Copilot**.
+the checklist tab).
 
 Not a company-wide roll-up — one person's own records, still open or in
 process, across every domain:
@@ -644,9 +635,8 @@ process, across every domain:
   statuses excluded (`Delivered`/`Rejected`, `Completed`/`Rejected`,
   `Completed`/`Cancelled` respectively — each model's real ownership field).
 - `StockAudit` — `auditor=user`, `status='Pending'` (still unresolved).
-- `Shipment` — has **no creator field at all**, so `last_edited_by=user` is
-  used as an honest, clearly-labelled proxy (`ownership='touched'`, rendered
-  "(last touched by you)" rather than implying authorship).
+- `Shipment` — `last_edited_by=user` (`ownership='touched'`, rendered
+  "(last touched by you)").
 
 Each row optionally carries a `context` dict — a small, already-computed
 cross-reference into the same Tier 1 functions above (a Sales Order's own
@@ -674,7 +664,7 @@ click) — never scheduled, since a per-user daily job would multiply the API
 cost by the number of active users. `generate_ops_briefing` explicitly never
 produces `my_checklist` rows.
 
-### 7.12. Product sales trend  *(Phase 5 — implemented)*
+### 7.12. Product sales trend
 
 `analytics.product_sales_trend()` → `views_analytics.product_sales_trend_view`
 → `/analytics/sales-trends/` (nav: *Analytics → Demand*; the category's
@@ -778,7 +768,7 @@ among codes of exactly that form, plus one (e.g. `SO-1004`, `SHP-1188`). The pre
 
 ### 8.3. CSV import and export
 
-Products, materials, sales orders and purchase orders export to CSV and import from a matching template; recipes export only.
+Products, materials, sales orders and purchase orders export to CSV and import from a matching template; recipes export to CSV and are edited in the recipe studio.
 The order export puts the import columns first, so an export can be re-imported. Imports run as a **dry run** first
 and report errors per order before anything is saved. Imported orders are records of past activity: they do not
 move stock, which is entered as batches.

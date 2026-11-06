@@ -15,6 +15,7 @@ from django.core.validators import MinValueValidator
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import csv
+import math
 import io
 import uuid
 from django.utils import timezone
@@ -288,6 +289,8 @@ def po_manual_transitions(po):
 
 # Unapproved orders cannot be allocated, received or produced against.
 UNAPPROVED_STATUSES = ('Draft', 'Pending Approval', 'Rejected')
+# Orders a shipment can't be raised for from the Shipments page: not approved yet, finished or cancelled.
+SO_NOT_SHIPPABLE = UNAPPROVED_STATUSES + ('Shipped', 'Delivered', 'Cancelled')
 # Orders that stock can be allocated to: approved and not covered yet, or part-shipped and still owed units.
 SO_ALLOCATABLE = ('Pending', 'Partially Shipped')
 # Orders whose shortages may be sent to manufacturing: approved and not yet Ready to Ship.
@@ -4770,6 +4773,9 @@ def shipments_view(request):
                     messages.error(request, f"{po.po_number} was cancelled, so no delivery can be raised for it.")
                     return redirect('shipments')
                 so = SalesOrder.objects.filter(id=so_id).first() if so_id else None
+                if so and so.status in SO_NOT_SHIPPABLE:
+                    messages.error(request, f"{so.so_number} is {so.status}, so no shipment can be raised for it.")
+                    return redirect('shipments')
 
                 # Delivery contact and address come from the linked Client (contact person kept separate from the company name).
                 client_contact_name_val = None
@@ -4864,7 +4870,7 @@ def shipments_view(request):
     materials = Material.objects.all().order_by('name')
     products = Product.objects.all().order_by('name')
     purchase_orders = PurchaseOrder.objects.exclude(status__in=['Completed', 'Cancelled']).order_by('-po_number')
-    sales_orders = SalesOrder.objects.exclude(status='Delivered').order_by('-so_number')
+    sales_orders = SalesOrder.objects.exclude(status__in=SO_NOT_SHIPPABLE).order_by('-so_number')
     batches = Batch.objects.filter(status='Active').order_by('batch_number')
 
     stats = {
@@ -5289,6 +5295,12 @@ def shipment_detail_view(request, pk):
                 prod = Product.objects.filter(id=prod_id).first() if prod_id else None
                 batch = Batch.objects.filter(id=batch_id).first() if batch_id else None
                 qty_val = float(qty) if qty else 0.0
+                if not math.isfinite(qty_val) or qty_val <= 0:
+                    messages.error(request, "Enter a quantity greater than 0.")
+                    return redirect('shipment_detail', pk=shipment.pk)
+                if batch and ((mat and batch.material_id != mat.id) or (prod and batch.product_id != prod.id)):
+                    messages.error(request, f"Batch {batch.batch_number} holds {batch.material or batch.product}, not the item you picked. Choose a matching batch.")
+                    return redirect('shipment_detail', pk=shipment.pk)
                 
                 # Outbound/Transfer items need a batch at the shipment's origin.
                 if shipment.direction in ['Outbound', 'Transfer'] and not batch:
