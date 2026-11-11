@@ -7049,8 +7049,10 @@ class StatusGuardTests(TestCase):
         self.assertEqual(batch.status, 'Active')
 
     def _add_line(self):
+        other, _ = Material.objects.get_or_create(sku='MAT-SG2', defaults={'name': 'Second Material', 'category': 'Bulk',
+                                                                           'unit_of_measure': 'MT', 'safe_storage_days': 90})
         self._as(self.admin).post(reverse('po_detail', args=[self.po.pk]), {
-            'action': 'add_po_item', 'material_id': self.material.id, 'quantity_ordered': '5'})
+            'action': 'add_po_item', 'material_id': other.id, 'quantity_ordered': '5'})
         self.po.refresh_from_db()
         return self.po.items.count()
 

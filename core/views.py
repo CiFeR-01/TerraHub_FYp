@@ -27,7 +27,7 @@ from .models import (
     Shipment, ShipmentItem, ShipmentItemReceipt, StockAudit, RegistryLog, OrderTimeline, Notification,
     StockAllocation, Supplier, SupplierMaterial, Client
 )
-from .utils import generate_next_code, format_stock_display, unexpired, read_decimal, read_date, read_unit_weight, UNIT_WEIGHT_MT
+from .utils import generate_next_code, format_stock_display, unexpired, read_decimal, read_date, read_unit_weight, UNIT_WEIGHT_MT, parse_id, user_error, UserFacingError
 from .validators import normalise_phone, normalise_phone_or_email, validate_email_address, validation_messages
 from .decorators import permission_or_redirect
 from .settings_store import get_setting
@@ -828,7 +828,17 @@ def warehouse_inventory_view(request):
             err = err or date_err
             if not err and bool(material_id) == bool(product_id):
                 err = "Choose one material or one product (not both)."
-            if not err and not Warehouse.objects.filter(id=wh_id or None).exists():
+            if not err and expiry_date and expiry_date < timezone.localdate():
+                err = "Expiry date is already past. Stock that has already expired can't be received as usable stock."
+            if not err:
+                item_model = Material if material_id else Product
+                item = item_model.objects.filter(id=parse_id(material_id or product_id)).first() if parse_id(material_id or product_id) else None
+                if item is None:
+                    err = "That item wasn't found."
+                elif not item.is_active:
+                    err = f"{item.name} is archived, so stock can't be received for it."
+            wh_id = parse_id(wh_id)
+            if not err and not Warehouse.objects.filter(id=wh_id).exists():
                 err = "Choose the facility the stock was received into."
             if not err and not may_use_warehouse(request.user, wh_id):
                 err = FACILITY_REFUSED
@@ -843,7 +853,7 @@ def warehouse_inventory_view(request):
             try:
                 log_material = None
                 if material_id:
-                    mat = get_object_or_404(Material, id=material_id)
+                    mat = get_object_or_404(Material, id=parse_id(material_id))
                     log_material = mat
                     b = Batch.objects.create(
                         batch_number=f"M-ADJ-{mat.sku}-{date.today().strftime('%Y%m%d')}-{suffix}",
@@ -857,7 +867,7 @@ def warehouse_inventory_view(request):
                     )
                     log_item = mat.name
                 elif product_id:
-                    prod = get_object_or_404(Product, id=product_id)
+                    prod = get_object_or_404(Product, id=parse_id(product_id))
                     b = Batch.objects.create(
                         batch_number=f"P-ADJ-{prod.sku}-{date.today().strftime('%Y%m%d')}-{suffix}",
                         status='Active',
@@ -883,7 +893,7 @@ def warehouse_inventory_view(request):
                 )
                 messages.success(request, f"Successfully received {qty} of {log_item}.")
             except Exception as e:
-                messages.error(request, f"Error receiving stock: {e}")
+                messages.error(request, f"Couldn't receive the stock. {user_error(e)}")
             return redirect('warehouse_inventory')
 
     warehouses = Warehouse.objects.all().order_by('name')
@@ -899,13 +909,13 @@ def warehouse_inventory_view(request):
 
     if material_id:
         try:
-            selected_material = Material.objects.get(id=material_id)
+            selected_material = Material.objects.get(id=parse_id(material_id))
         except Material.DoesNotExist:
             pass
 
     if warehouse_id:
         try:
-            selected_warehouse = warehouses.get(id=warehouse_id)
+            selected_warehouse = warehouses.get(id=parse_id(warehouse_id))
             # Quarantined stock still sits in the facility, so it stays on the ledger.
             batches = Batch.objects.filter(warehouse=selected_warehouse,
 status__in=('Active', 'Quarantined')).select_related('warehouse',
@@ -1031,9 +1041,21 @@ def batch_detail_view(request, batch_number):
                                         "Inspect / release, Write off), so the reason is recorded.")
                 return redirect('batch_detail', batch_number=batch.batch_number)
 
+            # check every field before changing any, so a bad value doesn't save half the edit or crash the page
+            problem = None
+            if 'rental_rate_per_mt' in request.POST and request.POST.get('rental_rate_per_mt', '').strip():
+                _, problem = read_decimal(request.POST, 'rental_rate_per_mt', "Rental rate", min_value=0, max_value=Decimal('99999999.99'))
+            if not problem and len((request.POST.get('location') or '').strip()) > 255:
+                problem = "Location can't be longer than 255 characters."
+            if problem:
+                messages.error(request, problem)
+                return redirect('batch_detail', batch_number=batch.batch_number)
+
             expiry_note = None
             if new_expiry:
                 parsed_expiry, err = read_date(request.POST, 'expiry_date', "Expiry date")
+                if not err and batch.manufacturing_date and parsed_expiry < batch.manufacturing_date:
+                    err = f"Expiry date can't be before the manufacturing date ({batch.manufacturing_date})."
                 if err:
                     messages.error(request, err)
                     return redirect('batch_detail', batch_number=batch.batch_number)
@@ -1171,6 +1193,12 @@ class WarehouseForm(forms.ModelForm):
         capacity = self.cleaned_data.get('total_capacity_mt')
         if capacity is not None and capacity <= 0:
             raise forms.ValidationError("Capacity must be more than 0.")
+        if capacity is not None and self.instance.pk:
+            from .analytics import warehouse_rent_burn
+            rows = warehouse_rent_burn(warehouse_ids=[self.instance.pk])
+            stored = Decimal(str(rows[0]['used_mt'])) if rows else Decimal('0')
+            if capacity < stored:
+                raise forms.ValidationError(f"Capacity can't be less than the {stored} MT already stored here.")
         return capacity
 
 
@@ -1306,7 +1334,7 @@ def stock_audit_view(request):
                 if err:
                     messages.error(request, err)
                     return redirect('stock_audit')
-                batch = get_object_or_404(Batch, id=batch_id)
+                batch = get_object_or_404(Batch, id=parse_id(batch_id))
                 if not may_use_warehouse(request.user, batch.warehouse_id):
                     messages.error(request, FACILITY_REFUSED)
                     return redirect('stock_audit')
@@ -1330,7 +1358,7 @@ def stock_audit_view(request):
                 messages.error(request, "Invalid quantity provided.")
         elif action == 'resolve':
             audit_id = request.POST.get('audit_id')
-            audit = get_object_or_404(StockAudit, id=audit_id)
+            audit = get_object_or_404(StockAudit, id=parse_id(audit_id))
             if not may_use_warehouse(request.user, audit.batch.warehouse_id):
                 messages.error(request, FACILITY_REFUSED)
                 return redirect('stock_audit')
@@ -1367,7 +1395,7 @@ def stock_audit_view(request):
                     )
                 messages.success(request, f"Audit #{audit.id} resolved. Physical stock updated.")
         elif action == 'reject':
-            audit = get_object_or_404(StockAudit, id=request.POST.get('audit_id'))
+            audit = get_object_or_404(StockAudit, id=parse_id(request.POST.get('audit_id')))
             if not may_use_warehouse(request.user, audit.batch.warehouse_id):
                 messages.error(request, FACILITY_REFUSED)
                 return redirect('stock_audit')
@@ -1535,7 +1563,7 @@ def import_products(request):
         io_string = io.StringIO(file_data)
         reader = csv.DictReader(io_string)
     except Exception as e:
-        messages.error(request, f"Could not read CSV file: {e}")
+        messages.error(request, "Couldn't read the CSV file. Save it as CSV (UTF-8) with a header row and try again.")
         return redirect('product_list')
 
     if not reader.fieldnames:
@@ -1591,27 +1619,27 @@ def import_products(request):
             try:
                 # MT, kg and g fix their own weight; pcs and L need weight_mt_per_unit in the file
                 weight = float(fixed) if fixed is not None else float(weight_str)
-                if weight <= 0: raise ValueError()
+                if not 0 < weight < 1000000: raise ValueError()
             except ValueError:
-                err = f"Line {idx}: weight_mt_per_unit must be a number above 0 for pcs and L."
+                err = f"Line {idx}: weight_mt_per_unit must be a number above 0 and below 1,000,000 for pcs and L."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
 
             try:
                 price = float(price_str) if price_str else 0.0
-                if price < 0: raise ValueError()
+                if not 0 <= price <= 9999999999.99: raise ValueError()
             except ValueError:
-                err = f"Line {idx}: Price/Unit must be a non-negative number."
+                err = f"Line {idx}: Price/Unit must be a number from 0 to 9,999,999,999.99."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
 
             try:
                 shelf = int(shelf_str) if shelf_str else None
-                if shelf is not None and shelf <= 0: raise ValueError()
+                if shelf is not None and not 1 <= shelf <= 36500: raise ValueError()
             except ValueError:
-                err = f"Line {idx}: Shelf life must be a whole number of days, or blank."
+                err = f"Line {idx}: Shelf life must be a whole number of days from 1 to 36500, or blank."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
@@ -1772,7 +1800,7 @@ def import_materials(request):
         io_string = io.StringIO(file_data)
         reader = csv.DictReader(io_string)
     except Exception as e:
-        messages.error(request, f"Could not read CSV file: {e}")
+        messages.error(request, "Couldn't read the CSV file. Save it as CSV (UTF-8) with a header row and try again.")
         return redirect('material_list')
 
     if not reader.fieldnames:
@@ -1826,9 +1854,9 @@ def import_materials(request):
 
             try:
                 days = int(days_str) if days_str else 90
-                if days < 1: raise ValueError()
+                if not 1 <= days <= 36500: raise ValueError()
             except ValueError:
-                err = f"Line {idx}: Safe storage days must be a whole number of at least 1."
+                err = f"Line {idx}: Safe storage days must be a whole number from 1 to 36500."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
@@ -1837,18 +1865,18 @@ def import_materials(request):
             try:
                 # MT, kg and g fix their own weight; pcs and L need weight_mt_per_unit in the file
                 weight = float(fixed) if fixed is not None else float(weight_str)
-                if weight <= 0: raise ValueError()
+                if not 0 < weight < 1000000: raise ValueError()
             except ValueError:
-                err = f"Line {idx}: weight_mt_per_unit must be a number above 0 for pcs and L."
+                err = f"Line {idx}: weight_mt_per_unit must be a number above 0 and below 1,000,000 for pcs and L."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
 
             try:
                 cost = float(cost_str) if cost_str else 0.0
-                if cost < 0: raise ValueError()
+                if not 0 <= cost <= 9999999999.99: raise ValueError()
             except ValueError:
-                err = f"Line {idx}: Cost/Unit must be a non-negative number."
+                err = f"Line {idx}: Cost/Unit must be a number from 0 to 9,999,999,999.99."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
@@ -2051,7 +2079,7 @@ def save_product_recipe_api(request):
     if action == 'delete_item':
         recipe_id = request.POST.get('recipe_id')
         try:
-            item = get_object_or_404(ProductRecipe, id=recipe_id)
+            item = get_object_or_404(ProductRecipe, id=parse_id(recipe_id))
             locked = recipe_locked(item.product)
             if locked:
                 return JsonResponse({'success': False, 'error': locked}, status=400)
@@ -2059,14 +2087,14 @@ def save_product_recipe_api(request):
             item.delete()
             return JsonResponse({'success': True, 'message': 'Recipe item deleted successfully.', 'product_id': p_id})
         except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+            return JsonResponse({'success': False, 'error': user_error(e)}, status=400)
 
     elif action == 'clone_recipe':
         source_id = request.POST.get('source_product_id')
         target_id = request.POST.get('target_product_id')
         try:
-            source_prod = get_object_or_404(Product, id=source_id)
-            target_prod = get_object_or_404(Product, id=target_id)
+            source_prod = get_object_or_404(Product, id=parse_id(source_id))
+            target_prod = get_object_or_404(Product, id=parse_id(target_id))
             locked = recipe_locked(target_prod)
             if locked:
                 return JsonResponse({'success': False, 'error': locked}, status=400)
@@ -2091,11 +2119,11 @@ def save_product_recipe_api(request):
                 'product_id': target_prod.id
             })
         except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+            return JsonResponse({'success': False, 'error': user_error(e)}, status=400)
 
     elif action == 'save_batch':
         try:
-            product = get_object_or_404(Product, id=product_id)
+            product = get_object_or_404(Product, id=parse_id(product_id))
             locked = recipe_locked(product)
             if locked:
                 return JsonResponse({'success': False, 'error': locked}, status=400)
@@ -2109,20 +2137,27 @@ def save_product_recipe_api(request):
                     material_ids = [m_id]
                     quantities = [qty]
 
-            saved_count = 0
+            # check every row first, then save all of them or none
+            rows = []
             for m_id, q_val in zip(material_ids, quantities):
                 if not m_id or not q_val: continue
-                qty = float(q_val)
-                if qty <= 0: continue
-                mat = get_object_or_404(Material, id=m_id)
+                qty, qty_err = read_decimal({'q': q_val}, 'q', 'Quantity required', above=0, max_value=Decimal('99999999.9999'))
+                if qty_err:
+                    return JsonResponse({'success': False, 'error': qty_err}, status=400)
+                mat = Material.objects.filter(id=parse_id(m_id)).first() if parse_id(m_id) else None
+                if mat is None:
+                    return JsonResponse({'success': False, 'error': "That material wasn't found."}, status=400)
                 if not mat.is_active:
                     return JsonResponse({'success': False, 'error': f"{mat.name} is archived, so it can't be added to a recipe."}, status=400)
-                ProductRecipe.objects.update_or_create(
-                    product=product,
-                    material=mat,
-                    defaults={'quantity_required': qty}
-                )
-                saved_count += 1
+                rows.append((mat, qty))
+            with transaction.atomic():
+                for mat, qty in rows:
+                    ProductRecipe.objects.update_or_create(
+                        product=product,
+                        material=mat,
+                        defaults={'quantity_required': qty}
+                    )
+            saved_count = len(rows)
 
             return JsonResponse({
                 'success': True,
@@ -2130,7 +2165,7 @@ def save_product_recipe_api(request):
                 'product_id': product.id
             })
         except Exception as e:
-            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+            return JsonResponse({'success': False, 'error': user_error(e)}, status=400)
 
     return JsonResponse({'success': False, 'error': 'Invalid action.'}, status=400)
 
@@ -2172,15 +2207,15 @@ def product_list_view(request):
                 )
                 messages.success(request, f"Product '{name}' (SKU: {sku}) added successfully.")
             except Exception as e:
-                messages.error(request, f"Error creating product: {e}")
+                messages.error(request, f"Couldn't create the product. {user_error(e)}")
 
         elif action == 'add_recipe':
             product_id = request.POST.get('product_id')
             material_id = request.POST.get('material_id')
             qty = request.POST.get('quantity_required')
             try:
-                prod = get_object_or_404(Product, id=product_id)
-                mat = get_object_or_404(Material, id=material_id)
+                prod = get_object_or_404(Product, id=parse_id(product_id))
+                mat = get_object_or_404(Material, id=parse_id(material_id))
                 qty, err = read_decimal(request.POST, 'quantity_required', "Quantity", above=0)
                 err = err or recipe_locked(prod) or (None if mat.is_active else f"{mat.name} is archived, so it can't be added to a recipe.")
                 if err:
@@ -2194,12 +2229,12 @@ def product_list_view(request):
                 else:
                     messages.success(request, f"{mat.sku} was already on the {prod.sku} recipe; its amount is now {qty}.")
             except Exception as e:
-                messages.error(request, f"Error adding recipe item: {e}")
+                messages.error(request, f"Couldn't add the recipe item. {user_error(e)}")
 
         elif action == 'toggle_active':
             if request.user.has_perm('core.change_product'):
                 product_id = request.POST.get('product_id')
-                prod = get_object_or_404(Product, id=product_id)
+                prod = get_object_or_404(Product, id=parse_id(product_id))
                 prod.is_active = not prod.is_active
                 prod.save()
                 messages.success(request, f"Product {prod.sku} is now {'Active' if prod.is_active else 'Archived'}.")
@@ -2243,6 +2278,14 @@ def product_detail_view(request, pk):
         if action == 'update_product':
             uom = request.POST.get('unit_of_measure', product.unit_of_measure)
             weight, err = read_unit_weight(request.POST, uom)
+            if not err and 'price_per_unit' in request.POST:
+                price, err = read_decimal(request.POST, 'price_per_unit', 'Price', min_value=0)
+            else:
+                price = product.price_per_unit
+            if not err and request.POST.get('shelf_life_days', '').strip():
+                raw_shelf = request.POST.get('shelf_life_days', '').strip()
+                if not raw_shelf.isdigit() or not 1 <= int(raw_shelf) <= 36500:
+                    err = "Shelf life must be a whole number of days from 1 to 36500, or blank for the 365-day default."
             if err:
                 messages.error(request, err)
                 return redirect('product_detail', pk=pk)
@@ -2252,16 +2295,16 @@ def product_detail_view(request, pk):
                 product.description = request.POST.get('description', product.description)
                 product.unit_of_measure = uom
                 product.weight_mt_per_unit = weight
-                product.price_per_unit = float(request.POST.get('price_per_unit', product.price_per_unit))
+                product.price_per_unit = price
                 if 'shelf_life_days' in request.POST:
                     raw_shelf = request.POST.get('shelf_life_days', '').strip()
                     product.shelf_life_days = int(raw_shelf) if raw_shelf else None
                     if product.shelf_life_days is not None and product.shelf_life_days <= 0:
-                        raise ValueError("Shelf life must be at least 1 day, or blank for the 365-day default.")
+                        raise UserFacingError("Shelf life must be at least 1 day, or blank for the 365-day default.")
                 product.save()
                 messages.success(request, f"Product '{product.sku}' updated successfully.")
             except Exception as e:
-                messages.error(request, f"Error updating product: {e}")
+                messages.error(request, f"Couldn't update the product. {user_error(e)}")
         return redirect('product_detail', pk=pk)
 
     # This product's active batches (earliest expiry first) with their total stock and reservations.
@@ -2357,7 +2400,7 @@ def material_list_view(request):
         if action == 'toggle_active':
             if request.user.has_perm('core.change_material'):
                 material_id = request.POST.get('material_id')
-                mat = get_object_or_404(Material, id=material_id)
+                mat = get_object_or_404(Material, id=parse_id(material_id))
                 mat.is_active = not mat.is_active
                 mat.save()
                 messages.success(request, f"Material {mat.sku} is now {'Active' if mat.is_active else 'Archived'}.")
@@ -2396,7 +2439,7 @@ def material_list_view(request):
                 messages.success(request, f"Material '{name}' (SKU: {sku}) registered.")
                 return redirect('material_list')
             except Exception as e:
-                err = f"Error registering material: {e}"
+                err = f"Couldn't register the material. {user_error(e)}"
         # Refused: fall through and re-render with the form reopened, the typed values kept and the error inside it.
         form_error, form_values = err, request.POST
     else:
@@ -2434,6 +2477,8 @@ def safe_storage_days_problem(raw):
         return "Safe storage days must be a whole number."
     if days < 1:
         return "Safe storage days must be at least 1."
+    if days > 36500:
+        return "Safe storage days can't be more than 36500 (100 years)."
     return None
 
 
@@ -2445,8 +2490,16 @@ def _apply_material_update(request, material):
     uom = request.POST.get('unit_of_measure', 'MT')
 
     try:
-        safe_days = int(request.POST.get('safe_storage_days', 90))
-        cost = float(request.POST.get('cost_per_unit', 0.0))
+        days_err = safe_storage_days_problem(request.POST.get('safe_storage_days', 90))
+        if days_err:
+            messages.error(request, days_err)
+            return False
+        safe_days = int(str(request.POST.get('safe_storage_days', 90)).strip())
+        cost, cost_err = read_decimal(request.POST, 'cost_per_unit', 'Cost per unit', min_value=0, required=False)
+        if cost_err:
+            messages.error(request, cost_err)
+            return False
+        cost = cost if cost is not None else Decimal('0')
         weight, weight_err = read_unit_weight(request.POST, uom)
         if weight_err:
             messages.error(request, weight_err)
@@ -2501,7 +2554,7 @@ def _apply_material_update(request, material):
         messages.success(request, f"Material '{material.name}' (SKU: {material.sku}) updated successfully.")
         return True
     except Exception as e:
-        messages.error(request, f"Error updating material: {e}")
+        messages.error(request, f"Couldn't update the material. {user_error(e)}")
         return False
 
 
@@ -2681,7 +2734,7 @@ def supplier_list_view(request):
         if action == 'toggle_active':
             if request.user.has_perm('core.change_supplier'):
                 supplier_id = request.POST.get('supplier_id')
-                sup = get_object_or_404(Supplier, id=supplier_id)
+                sup = get_object_or_404(Supplier, id=parse_id(supplier_id))
                 sup.is_active = not sup.is_active
                 sup.save()
                 messages.success(request, f"Supplier {sup.name} is now {'Active' if sup.is_active else 'Archived'}.")
@@ -2708,7 +2761,7 @@ def supplier_list_view(request):
         except ValidationError as e:
             messages.error(request, f"Supplier not saved. {validation_messages(e)}")
         except Exception as e:
-            messages.error(request, f"Error registering supplier: {e}")
+            messages.error(request, f"Couldn't register the supplier. {user_error(e)}")
         return redirect('supplier_list')
 
     search_query = request.GET.get('q', '').strip()
@@ -2759,7 +2812,7 @@ def supplier_edit_view(request, pk):
         except ValidationError as e:
             messages.error(request, f"Supplier not updated. {validation_messages(e)}")
         except Exception as e:
-            messages.error(request, f"Error updating supplier: {e}")
+            messages.error(request, f"Couldn't update the supplier. {user_error(e)}")
 
     return redirect('supplier_detail', pk=supplier.pk)
 
@@ -2777,7 +2830,7 @@ def client_list_view(request):
         if action == 'toggle_active':
             if request.user.has_perm('core.change_client'):
                 client_id = request.POST.get('client_id')
-                cli = get_object_or_404(Client, id=client_id)
+                cli = get_object_or_404(Client, id=parse_id(client_id))
                 cli.is_active = not cli.is_active
                 cli.save()
                 messages.success(request, f"Client {cli.name} is now {'Active' if cli.is_active else 'Archived'}.")
@@ -2804,7 +2857,7 @@ def client_list_view(request):
         except ValidationError as e:
             messages.error(request, f"Client not saved. {validation_messages(e)}")
         except Exception as e:
-            messages.error(request, f"Error registering client: {e}")
+            messages.error(request, f"Couldn't register the client. {user_error(e)}")
         return redirect('client_list')
 
     search_query = request.GET.get('q', '').strip()
@@ -2855,7 +2908,7 @@ def client_edit_view(request, pk):
         except ValidationError as e:
             messages.error(request, f"Client not updated. {validation_messages(e)}")
         except Exception as e:
-            messages.error(request, f"Error updating client: {e}")
+            messages.error(request, f"Couldn't update the client. {user_error(e)}")
 
     return redirect('client_detail', pk=client.pk)
 
@@ -2876,9 +2929,9 @@ def supplier_detail_view(request, pk):
             messages.success(request, f"{supplier.name} is now {'Active' if supplier.is_active else 'Archived'}.")
             log_archive_change(request, 'Supplier', supplier)
         elif action == 'save_material':
-            material = get_object_or_404(Material, pk=request.POST.get('material_id'))
+            material = get_object_or_404(Material, pk=parse_id(request.POST.get('material_id')))
             price, err = read_decimal(request.POST, 'unit_price', "Unit price", min_value=0, required=False)
-            lead, lead_err = read_decimal(request.POST, 'lead_time_days', "Lead time", min_value=0, required=False)
+            lead, lead_err = read_decimal(request.POST, 'lead_time_days', "Lead time", min_value=0, required=False, max_value=3650)
             err = err or lead_err or (lead is not None and lead != int(lead) and "Lead time must be whole days.")
             if err:
                 messages.error(request, err)
@@ -2888,7 +2941,7 @@ def supplier_detail_view(request, pk):
                     defaults={'unit_price': price, 'lead_time_days': int(lead) if lead is not None else None})
                 messages.success(request, f"{'Added' if created else 'Updated'} {material.name}.")
         elif action == 'remove_material':
-            sm = get_object_or_404(SupplierMaterial, pk=request.POST.get('supplier_material_id'), supplier=supplier)
+            sm = get_object_or_404(SupplierMaterial, pk=parse_id(request.POST.get('supplier_material_id')), supplier=supplier)
             sm.delete()
             messages.success(request, f"Removed {sm.material.name} from {supplier.name}.")
         return redirect('supplier_detail', pk=supplier.pk)
@@ -2980,8 +3033,11 @@ def sales_order_list_view(request):
             client_id = request.POST.get('client_id')
             warehouse_id = request.POST.get('origin_warehouse_id')
             try:
-                wh = get_object_or_404(Warehouse, id=warehouse_id)
-                client_obj = Client.objects.filter(id=client_id).first() if client_id else None
+                wh = get_object_or_404(Warehouse, id=parse_id(warehouse_id) or 0)
+                client_obj = Client.objects.filter(id=parse_id(client_id)).first() if parse_id(client_id) else None
+                if client_obj and not client_obj.is_active:
+                    messages.error(request, f"{client_obj.name} is archived, so new orders can't be raised for them.")
+                    return redirect('so_list')
                 so = SalesOrder.objects.create(
                     so_number=so_number, client_name=client_name, client=client_obj,
                     origin_warehouse=wh, status='Draft', created_by=request.user
@@ -2990,12 +3046,12 @@ def sales_order_list_view(request):
                 messages.success(request, f"Sales Order {so_number} created.")
                 return redirect('so_detail', pk=so.pk)  # straight to the new order, so it isn't created twice
             except Exception as e:
-                messages.error(request, f"Error creating Sales Order: {e}")
+                messages.error(request, f"Couldn't create the sales order. {user_error(e)}")
 
         elif action == 'update_so_status':
             so_id = request.POST.get('so_id')
             new_status = request.POST.get('status')
-            so = get_object_or_404(SalesOrder, id=so_id)
+            so = get_object_or_404(SalesOrder, id=parse_id(so_id))
             problem = so_manual_status_problem(so, new_status)
             if problem:
                 messages.error(request, problem)
@@ -3094,8 +3150,11 @@ def purchase_order_list_view(request):
                     messages.error(request, err)
                     return redirect(f"{reverse('po_list')}?new=1&material_id={line_mat_id}")
             try:
-                wh = get_object_or_404(Warehouse, id=warehouse_id)
-                supplier_obj = Supplier.objects.filter(id=supplier_id).first() if supplier_id else None
+                wh = get_object_or_404(Warehouse, id=parse_id(warehouse_id) or 0)
+                supplier_obj = Supplier.objects.filter(id=parse_id(supplier_id)).first() if parse_id(supplier_id) else None
+                if supplier_obj and not supplier_obj.is_active:
+                    messages.error(request, f"{supplier_obj.name} is archived, so new orders can't be raised with them.")
+                    return redirect('po_list')
                 with transaction.atomic():
                     po = PurchaseOrder.objects.create(
                         po_number=po_number, supplier_name=supplier_name, supplier=supplier_obj,
@@ -3108,12 +3167,12 @@ def purchase_order_list_view(request):
                 messages.success(request, f"Purchase Order {po_number} created.")
                 return redirect('po_detail', pk=po.pk)
             except Exception as e:
-                messages.error(request, f"Error creating Purchase Order: {e}")
+                messages.error(request, f"Couldn't create the purchase order. {user_error(e)}")
 
         elif action == 'update_po_status':
             po_id = request.POST.get('po_id')
             new_status = request.POST.get('status')
-            po = get_object_or_404(PurchaseOrder, id=po_id)
+            po = get_object_or_404(PurchaseOrder, id=parse_id(po_id))
             if new_status not in po_manual_transitions(po):
                 messages.error(request, f"{po.po_number} can't be changed from {po.status} to {new_status} by hand.")
                 return redirect('po_list')
@@ -3346,7 +3405,7 @@ def import_orders(request, kind):
         rows = [{k.strip().lower(): (v or '').strip() for k, v in r.items() if k}
                 for r in reader]
     except Exception as e:
-        return fail(f"Could not read CSV file: {e}")
+        return fail("Couldn't read the CSV file. Save it as CSV (UTF-8) with a header row and try again.")
     sku_col = f"{cfg['item']}_sku"
     missing = [c for c in (cfg['party'], cfg['warehouse'], sku_col, 'quantity_ordered') if c not in headers]
     if missing:
@@ -3562,7 +3621,7 @@ def so_detail_view(request, pk):
                 messages.error(request, err)
                 return redirect('so_detail', pk=so.pk)
             try:
-                prod = get_object_or_404(Product, id=prod_id)
+                prod = get_object_or_404(Product, id=parse_id(prod_id))
                 if not prod.is_active:
                     messages.error(request, f"{prod.name} is archived, so it can't be added to an order. Restore it first.")
                     return redirect('so_detail', pk=so.pk)
@@ -3593,7 +3652,7 @@ def so_detail_view(request, pk):
                 if was := so_return_for_reapproval(so, request.user, "Line item added"):
                     messages.warning(request, reapproval_message(so.so_number, was))
             except Exception as e:
-                messages.error(request, f"Error adding item: {e}")
+                messages.error(request, f"Couldn't add the item. {user_error(e)}")
 
         elif action == 'remove_so_item':
             item_id = request.POST.get('item_id')
@@ -3612,7 +3671,7 @@ def so_detail_view(request, pk):
                 if was := so_return_for_reapproval(so, request.user, "Line item removed"):
                     messages.warning(request, reapproval_message(so.so_number, was))
             except Exception as e:
-                messages.error(request, f"Error removing item: {e}")
+                messages.error(request, f"Couldn't remove the item. {user_error(e)}")
 
         elif action == 'update_so_status':
             new_status = request.POST.get('status')
@@ -3644,12 +3703,23 @@ def so_detail_view(request, pk):
             
         elif action == 'update_so_header':
             before = (so.client_name, so.origin_warehouse_id, str(so.fulfillment_deadline or ''))
-            so.client_name = request.POST.get('client_name', so.client_name)
+            client_name = request.POST.get('client_name', so.client_name).strip()
+            deadline, err = read_date(request.POST, 'fulfillment_deadline', "Fulfilment deadline")
+            if not client_name:
+                err = "Client name can't be blank."
+            elif (Client.objects.filter(name__iexact=client_name, is_active=False).exists()
+                  and not Client.objects.filter(name__iexact=client_name, is_active=True).exists()):
+                err = f"{client_name} is archived, so orders can't be moved to them."
             wh_id = request.POST.get('origin_warehouse_id')
+            if not err and wh_id and parse_id(wh_id) is None:
+                err = "Choose a facility from the list."
+            if err:
+                messages.error(request, err)
+                return redirect('so_detail', pk=so.pk)
+            so.client_name = client_name
             if wh_id:
-                so.origin_warehouse = get_object_or_404(Warehouse, id=wh_id)
-            deadline = request.POST.get('fulfillment_deadline')
-            so.fulfillment_deadline = deadline if deadline else so.fulfillment_deadline
+                so.origin_warehouse = get_object_or_404(Warehouse, id=parse_id(wh_id))
+            so.fulfillment_deadline = deadline or so.fulfillment_deadline
             so.updated_by = request.user
             so.save()
             messages.success(request, f"{so.so_number} details updated.")
@@ -3661,7 +3731,7 @@ def so_detail_view(request, pk):
             manager_id = request.POST.get('manager_id')
             remarks = request.POST.get('remarks', '').strip()
             
-            mgr = CustomUser.objects.filter(id=manager_id).first()
+            mgr = CustomUser.objects.filter(id=parse_id(manager_id)).first()
             # Approval is only for unapproved orders (or resending one still pending); an approved or shipped order can't be sent back through it.
             problem = (None if so.status in UNAPPROVED_STATUSES
                        else f"{so.so_number} is {so.status}, so it can't be sent for approval again.")
@@ -3696,7 +3766,7 @@ def so_detail_view(request, pk):
             plant_id = request.POST.get('manufacturing_plant_id')
             plant = None
             if plant_id:
-                plant = Warehouse.objects.filter(id=plant_id).first()
+                plant = Warehouse.objects.filter(id=parse_id(plant_id)).first()
 
             from .utils import create_shortage_production_runs
             created_any = create_shortage_production_runs(so, plant, request.user)
@@ -3712,7 +3782,7 @@ def so_detail_view(request, pk):
                 
         elif action == 'add_follower':
             user_id = request.POST.get('user_id')
-            user_to_add = CustomUser.objects.filter(id=user_id).first()
+            user_to_add = CustomUser.objects.filter(id=parse_id(user_id)).first()
             if user_to_add:
                 if not so.followers.filter(pk=user_to_add.pk).exists():
                     so.followers.add(user_to_add)
@@ -3723,7 +3793,7 @@ def so_detail_view(request, pk):
 
         elif action == 'remove_follower':
             user_id = request.POST.get('user_id')
-            user_to_remove = CustomUser.objects.filter(id=user_id).first()
+            user_to_remove = CustomUser.objects.filter(id=parse_id(user_id)).first()
             if user_to_remove:
                 so.followers.remove(user_to_remove)
                 messages.success(request, f"Removed {user_to_remove.username} from followers.")
@@ -3742,7 +3812,7 @@ def so_detail_view(request, pk):
             target_so_id = request.POST.get('target_so_id')
             try:
                 allocation = get_object_or_404(StockAllocation, id=alloc_id, sales_order=so)
-                target_so = SalesOrder.objects.filter(id=target_so_id).first() if target_so_id else None
+                target_so = SalesOrder.objects.filter(id=parse_id(target_so_id)).first() if target_so_id else None
 
                 from .utils import unallocate_so_batch, so_line_deficit, UNSTARTED_RUN_STATUSES
                 if target_so:
@@ -3770,7 +3840,7 @@ def so_detail_view(request, pk):
                 else:
                     messages.success(request, f"Released {qty_str} back to available stock.")
             except Exception as e:
-                messages.error(request, f"Error unallocating stock: {e}")
+                messages.error(request, f"Couldn't unallocate the stock. {user_error(e)}")
 
         elif action == 'consolidate_stock':
             # "One delivery": move reserved stock outside the origin warehouse there first, one transfer per warehouse.
@@ -4039,23 +4109,36 @@ def po_detail_view(request, pk):
                 messages.error(request, err)
                 return redirect('po_detail', pk=pk)
             try:
-                mat = get_object_or_404(Material, id=mat_id)
+                mat = get_object_or_404(Material, id=parse_id(mat_id))
                 if not mat.is_active:
                     messages.error(request, f"{mat.name} is archived, so it can't be ordered. Restore it first.")
                     return redirect('po_detail', pk=pk)
-                PurchaseOrderDetail.objects.create(
-                    purchase_order=po,
-                    material=mat,
-                    quantity_ordered=qty,
-                    unit_price=mat.cost_per_unit if unit_price is None else unit_price,
-                    negotiated_rental_rate_per_mt=rental_rate
-                )
-                OrderTimeline.objects.create(purchase_order=po, action=f"Line item added: {mat.name} x{qty}", user=request.user)
-                messages.success(request, f"Added {mat.name} to {po.po_number}.")
+                # One line per material: adding a material already on the order raises that line instead.
+                existing = PurchaseOrderDetail.objects.filter(purchase_order=po, material=mat).first()
+                if existing:
+                    old_qty = existing.quantity_ordered
+                    existing.quantity_ordered += qty
+                    if unit_price is not None:
+                        existing.unit_price = unit_price
+                    if rental_rate is not None:
+                        existing.negotiated_rental_rate_per_mt = rental_rate
+                    existing.save()
+                    OrderTimeline.objects.create(purchase_order=po, action=f"Line quantity raised: {mat.name} {old_qty} -> {existing.quantity_ordered}", user=request.user)
+                    messages.success(request, f"{mat.name} was already on {po.po_number}, so its quantity was raised to {existing.quantity_ordered}.")
+                else:
+                    PurchaseOrderDetail.objects.create(
+                        purchase_order=po,
+                        material=mat,
+                        quantity_ordered=qty,
+                        unit_price=mat.cost_per_unit if unit_price is None else unit_price,
+                        negotiated_rental_rate_per_mt=rental_rate
+                    )
+                    OrderTimeline.objects.create(purchase_order=po, action=f"Line item added: {mat.name} x{qty}", user=request.user)
+                    messages.success(request, f"Added {mat.name} to {po.po_number}.")
                 if was := po_return_for_reapproval(po, request.user, "Line item added"):
                     messages.warning(request, reapproval_message(po.po_number, was))
             except Exception as e:
-                messages.error(request, f"Error adding item: {e}")
+                messages.error(request, f"Couldn't add the item. {user_error(e)}")
 
         elif action == 'remove_po_item':
             if po.linked_production_run:
@@ -4078,7 +4161,7 @@ def po_detail_view(request, pk):
                 if was := po_return_for_reapproval(po, request.user, "Line item removed"):
                     messages.warning(request, reapproval_message(po.po_number, was))
             except Exception as e:
-                messages.error(request, f"Error removing item: {e}")
+                messages.error(request, f"Couldn't remove the item. {user_error(e)}")
 
         elif action == 'mark_received':
             item_id = request.POST.get('item_id')
@@ -4139,7 +4222,7 @@ def po_detail_view(request, pk):
                 else:
                     messages.success(request, f"Corrected received quantity for {item.material.name} and took {-delta} back out of inventory.")
             except Exception as e:
-                messages.error(request, f"Error updating received qty: {e}")
+                messages.error(request, f"Couldn't update the received quantity. {user_error(e)}")
 
         elif action == 'cancel_po':
             reason = request.POST.get('reason', '').strip()
@@ -4211,7 +4294,7 @@ def po_detail_view(request, pk):
             manager_id = request.POST.get('manager_id')
             remarks = request.POST.get('remarks', '').strip()
             
-            mgr = CustomUser.objects.filter(id=manager_id).first()
+            mgr = CustomUser.objects.filter(id=parse_id(manager_id)).first()
             # Same rule as sales orders: only unapproved POs (or resending one still pending) go for approval
             problem = (None if po.status in UNAPPROVED_STATUSES
                        else f"{po.po_number} is {po.status}, so it can't be sent for approval again.")
@@ -4236,7 +4319,7 @@ def po_detail_view(request, pk):
                 messages.success(request, f"Approval requested from {mgr.get_full_name() or mgr.username}.")
         elif action == 'add_follower':
             user_id = request.POST.get('user_id')
-            user_to_add = CustomUser.objects.filter(id=user_id).first()
+            user_to_add = CustomUser.objects.filter(id=parse_id(user_id)).first()
             if user_to_add:
                 if not po.followers.filter(pk=user_to_add.pk).exists():
                     po.followers.add(user_to_add)
@@ -4247,7 +4330,7 @@ def po_detail_view(request, pk):
 
         elif action == 'remove_follower':
             user_id = request.POST.get('user_id')
-            user_to_remove = CustomUser.objects.filter(id=user_id).first()
+            user_to_remove = CustomUser.objects.filter(id=parse_id(user_id)).first()
             if user_to_remove:
                 po.followers.remove(user_to_remove)
                 messages.success(request, f"Removed {user_to_remove.username} from followers.")
@@ -4319,14 +4402,17 @@ def manufacturing_view(request):
             prod_id = request.POST.get('target_product_id')
             plant_id = request.POST.get('manufacturing_plant_id')
             so_id = request.POST.get('sales_order_id')
+            yield_qty, err = read_decimal(request.POST, 'expected_yield', "Expected yield", above=0)
+            if err:
+                messages.error(request, err)
+                return redirect('readiness')
             try:
-                yield_qty = float(request.POST.get('expected_yield', 100))
-                prod = get_object_or_404(Product, id=prod_id)
+                prod = get_object_or_404(Product, id=parse_id(prod_id))
                 if not prod.is_active:
                     messages.error(request, f"{prod.name} is archived, so no new production run can be scheduled for it. Restore it first.")
                     return redirect('readiness')
-                plant = get_object_or_404(Warehouse, id=plant_id)
-                so = SalesOrder.objects.filter(id=so_id).first() if so_id else None
+                plant = get_object_or_404(Warehouse, id=parse_id(plant_id))
+                so = SalesOrder.objects.filter(id=parse_id(so_id)).first() if so_id else None
                 if so and so.status in UNAPPROVED_STATUSES + ('Cancelled',):
                     messages.error(request, f"{so.so_number} hasn't been approved yet, so no production run can be scheduled for it.")
                     return redirect('readiness')
@@ -4363,10 +4449,10 @@ def manufacturing_view(request):
                 if archived:
                     messages.warning(request, f"Heads up: {prod.name}'s recipe uses archived material(s): {', '.join(m.name for m in archived)}.")
             except Exception as e:
-                messages.error(request, f"Error scheduling run: {e}")
+                messages.error(request, f"Couldn't schedule the run. {user_error(e)}")
         elif action == 'cancel_allocation':
             run_id = request.POST.get('run_id')
-            run = get_object_or_404(ProductionRun, id=run_id)
+            run = get_object_or_404(ProductionRun, id=parse_id(run_id))
 
             from .utils import cancel_run_allocation
             problem = cancel_run_allocation(run, request.user)
@@ -4378,7 +4464,7 @@ def manufacturing_view(request):
 
         elif action == 'draft_transfer_from_shortage':
             run_id = request.POST.get('run_id')
-            run = get_object_or_404(ProductionRun, id=run_id)
+            run = get_object_or_404(ProductionRun, id=parse_id(run_id))
             
             if run.status != 'Awaiting Materials':
                 messages.error(request, "Run is not awaiting materials.")
@@ -4445,7 +4531,7 @@ def manufacturing_view(request):
             
         elif action == 'draft_po_from_shortage':
             run_id = request.POST.get('run_id')
-            run = get_object_or_404(ProductionRun, id=run_id)
+            run = get_object_or_404(ProductionRun, id=parse_id(run_id))
             
             if run.status != 'Awaiting Materials':
                 messages.error(request, "Run is not awaiting materials.")
@@ -4512,7 +4598,7 @@ def manufacturing_view(request):
 
         elif action == 'approve_run':
             run_id = request.POST.get('run_id')
-            run = get_object_or_404(ProductionRun, id=run_id)
+            run = get_object_or_404(ProductionRun, id=parse_id(run_id))
             if not may_decide_run_approval(request.user, run):
                 messages.error(request, "Only someone who may approve production runs (the named approver, if there is one) can approve a run that is pending approval.")
                 return redirect('readiness')
@@ -4526,7 +4612,7 @@ def manufacturing_view(request):
             run_id = request.POST.get('run_id')
             start_str = request.POST.get('start_time')
             end_str = request.POST.get('end_time')
-            run = get_object_or_404(ProductionRun, id=run_id)
+            run = get_object_or_404(ProductionRun, id=parse_id(run_id))
             from django.utils.dateparse import parse_datetime
             if start_str:
                 run.start_time = parse_datetime(start_str)
@@ -4542,7 +4628,7 @@ def manufacturing_view(request):
                 messages.error(request, "Permission Denied: You do not have permission to start Production Runs.")
                 return redirect('readiness')
             run_id = request.POST.get('run_id')
-            run = get_object_or_404(ProductionRun, id=run_id)
+            run = get_object_or_404(ProductionRun, id=parse_id(run_id))
             from .qa import run_hold_problem
             hold_problem = run_hold_problem(run) if run.status == 'Planned' else None
             if hold_problem:
@@ -4560,7 +4646,7 @@ def manufacturing_view(request):
                 messages.error(request, "Permission Denied: You do not have permission to complete Production Runs.")
                 return redirect('readiness')
             # Runs are completed on the run page (needs quantities, extra-material sources and variance checks), never from the list.
-            run = get_object_or_404(ProductionRun, id=request.POST.get('run_id'))
+            run = get_object_or_404(ProductionRun, id=parse_id(request.POST.get('run_id')))
             messages.info(request, f"Enter the material usage and yield for {run.run_number} to complete it.")
             return redirect(reverse('production_run_detail', args=[run.pk]) + '#finalize')
 
@@ -4569,7 +4655,7 @@ def manufacturing_view(request):
     loc_filter = request.GET.get('loc_filter', '')
     runs = ProductionRun.objects.select_related('target_product', 'supervisor', 'manufacturing_plant', 'sales_order').order_by('-id')
     if loc_filter:
-        runs = runs.filter(manufacturing_plant_id=loc_filter)
+        runs = runs.filter(manufacturing_plant_id=parse_id(loc_filter) or 0)
     search_query = request.GET.get('q', '').strip()
     if search_query:
         runs = runs.filter(
@@ -4766,13 +4852,13 @@ def shipments_view(request):
                 if tracking_mode == 'auto' or not tracking_number:
                     tracking_number = generate_next_code(Shipment, 'tracking_number', get_setting('prefix_shipment'), 1001, pad=4)
 
-                origin_wh = Warehouse.objects.filter(id=origin_id).first() if origin_id else None
-                dest_wh = Warehouse.objects.filter(id=dest_id).first() if dest_id else None
-                po = PurchaseOrder.objects.filter(id=po_id).first() if po_id else None
+                origin_wh = Warehouse.objects.filter(id=parse_id(origin_id)).first() if origin_id else None
+                dest_wh = Warehouse.objects.filter(id=parse_id(dest_id)).first() if dest_id else None
+                po = PurchaseOrder.objects.filter(id=parse_id(po_id)).first() if po_id else None
                 if po and po.status == 'Cancelled':
                     messages.error(request, f"{po.po_number} was cancelled, so no delivery can be raised for it.")
                     return redirect('shipments')
-                so = SalesOrder.objects.filter(id=so_id).first() if so_id else None
+                so = SalesOrder.objects.filter(id=parse_id(so_id)).first() if so_id else None
                 if so and so.status in SO_NOT_SHIPPABLE:
                     messages.error(request, f"{so.so_number} is {so.status}, so no shipment can be raised for it.")
                     return redirect('shipments')
@@ -4829,7 +4915,7 @@ def shipments_view(request):
                     messages.success(request, f"Shipment '{tracking_number}' registered. Now you can add items.")
                 return redirect('shipment_detail', pk=shipment.pk)
             except Exception as e:
-                messages.error(request, f"Error registering shipment: {e}")
+                messages.error(request, f"Couldn't register the shipment. {user_error(e)}")
 
         return redirect('shipments')
 
@@ -4963,7 +5049,7 @@ def approvals_inbox_view(request):
             return redirect(back)
 
         if item_type == 'sales_order':
-            so = get_object_or_404(SalesOrder, id=item_id)
+            so = get_object_or_404(SalesOrder, id=parse_id(item_id))
             if not may_decide_approval(request.user, so):
                 messages.error(request, refused)
                 return redirect(back)
@@ -4988,7 +5074,7 @@ def approvals_inbox_view(request):
                                       action == 'approve', comment, sales_order=so)
 
         elif item_type == 'production_run':
-            run = get_object_or_404(ProductionRun, id=item_id)
+            run = get_object_or_404(ProductionRun, id=parse_id(item_id))
             if not may_decide_run_approval(request.user, run):
                 messages.error(request, "Only someone who may approve production runs (the named approver, if there is one) can decide a run that is pending approval.")
                 return redirect(back)
@@ -5037,7 +5123,7 @@ def approvals_inbox_view(request):
                     Notification.objects.create(user=run.created_by, message=_with_comment(note, comment), link=run_link)
 
         elif item_type == 'purchase_order':
-            po = get_object_or_404(PurchaseOrder, id=item_id)
+            po = get_object_or_404(PurchaseOrder, id=parse_id(item_id))
             if not may_decide_approval(request.user, po):
                 messages.error(request, refused)
                 return redirect(back)
@@ -5059,7 +5145,7 @@ def approvals_inbox_view(request):
                                       action == 'approve', comment, purchase_order=po)
 
         else:  # shipment
-            ship = get_object_or_404(Shipment, id=item_id)
+            ship = get_object_or_404(Shipment, id=parse_id(item_id))
             if not may_decide_approval(request.user, ship):
                 messages.error(request, refused)
                 return redirect(back)
@@ -5291,9 +5377,9 @@ def shipment_detail_view(request, pk):
             qty = request.POST.get('quantity')
             
             try:
-                mat = Material.objects.filter(id=mat_id).first() if mat_id else None
-                prod = Product.objects.filter(id=prod_id).first() if prod_id else None
-                batch = Batch.objects.filter(id=batch_id).first() if batch_id else None
+                mat = Material.objects.filter(id=parse_id(mat_id)).first() if mat_id else None
+                prod = Product.objects.filter(id=parse_id(prod_id)).first() if prod_id else None
+                batch = Batch.objects.filter(id=parse_id(batch_id)).first() if batch_id else None
                 qty_val = float(qty) if qty else 0.0
                 if not math.isfinite(qty_val) or qty_val <= 0:
                     messages.error(request, "Enter a quantity greater than 0.")
@@ -5356,7 +5442,7 @@ def shipment_detail_view(request, pk):
                     )
                     messages.success(request, "Item added to shipment.")
             except Exception as e:
-                messages.error(request, f"Error adding item: {e}")
+                messages.error(request, f"Couldn't add the item. {user_error(e)}")
                 
         elif action == 'remove_item':
             item_id = request.POST.get('item_id')
@@ -5378,7 +5464,7 @@ def shipment_detail_view(request, pk):
                     OrderTimeline.objects.create(shipment=shipment, action=f"Removed item from shipment.", user=request.user)
                     messages.success(request, "Item removed and stock lock released.")
             except Exception as e:
-                messages.error(request, f"Error removing item: {e}")
+                messages.error(request, f"Couldn't remove the item. {user_error(e)}")
 
         elif action == 'update_route':
             eta = request.POST.get('eta_date')
@@ -5568,7 +5654,7 @@ def shipment_detail_view(request, pk):
             elif not approver_id:
                 messages.error(request, "You must select a Manager for approval.")
             else:
-                approver = CustomUser.objects.filter(id=approver_id).first()
+                approver = CustomUser.objects.filter(id=parse_id(approver_id)).first()
                 problem = approver_problem(approver, APPROVE_SHIPMENTS)
                 if problem:
                     messages.error(request, problem)
@@ -5706,7 +5792,7 @@ def shipment_detail_view(request, pk):
                         item.refresh_from_db()
                         messages.success(request, f"Logged {qty} received for {item_name}. Running total: {item.received_quantity}.")
             except Exception as e:
-                messages.error(request, f"Error logging receipt: {e}")
+                messages.error(request, f"Couldn't log the receipt. {user_error(e)}")
 
         elif action == 'undo_item_receipt':
             # Only a record until Finalize moves the stock; a PO delivery has already made stock, so it's corrected on the PO
@@ -5714,7 +5800,7 @@ def shipment_detail_view(request, pk):
                 messages.error(request, "This receipt can't be undone here.")
                 return redirect('shipment_detail', pk=shipment.pk)
             with transaction.atomic():
-                item = get_object_or_404(ShipmentItem.objects.select_for_update(), id=request.POST.get('item_id'), shipment=shipment)
+                item = get_object_or_404(ShipmentItem.objects.select_for_update(), id=parse_id(request.POST.get('item_id')), shipment=shipment)
                 last = item.receipts.order_by('-id').first()
                 if not last:
                     messages.error(request, "There is no receipt to undo.")
@@ -5751,7 +5837,7 @@ def shipment_detail_view(request, pk):
                 messages.error(request, "You must provide remarks and assign a manager to request Force Close.")
                 return redirect('shipment_detail', pk=shipment.pk)
                 
-            mgr = CustomUser.objects.filter(id=mgr_id).first()
+            mgr = CustomUser.objects.filter(id=parse_id(mgr_id)).first()
             problem = approver_problem(mgr, APPROVE_SHIPMENTS)
             if problem:
                 messages.error(request, problem)
@@ -5909,7 +5995,7 @@ def shipment_detail_view(request, pk):
         elif action == 'add_follower':
             user_id = request.POST.get('user_id')
             if user_id:
-                user_obj = CustomUser.objects.filter(id=user_id).first()
+                user_obj = CustomUser.objects.filter(id=parse_id(user_id)).first()
                 if user_obj and user_obj not in shipment.followers.all():
                     shipment.followers.add(user_obj)
                     notify_added_follower(request.user, user_obj, f"Shipment {shipment.tracking_number}", reverse('shipment_detail', args=[shipment.pk]))
@@ -5918,7 +6004,7 @@ def shipment_detail_view(request, pk):
         elif action == 'remove_follower':
             user_id = request.POST.get('user_id')
             if user_id:
-                user_obj = CustomUser.objects.filter(id=user_id).first()
+                user_obj = CustomUser.objects.filter(id=parse_id(user_id)).first()
                 if user_obj in shipment.followers.all():
                     shipment.followers.remove(user_obj)
                     messages.success(request, f"Removed {user_obj.get_full_name() or user_obj.username} from followers.")
@@ -6000,6 +6086,10 @@ def mark_notifications_read(request):
 def profile_view(request):
     if request.method == 'POST':
         user = request.user
+        for field, label in (('first_name', "First name"), ('last_name', "Last name")):
+            if len(request.POST.get(field, '')) > 150:
+                messages.error(request, f"{label} can't be longer than 150 characters.")
+                return redirect('profile')
         user.first_name = request.POST.get('first_name', user.first_name)
         user.last_name = request.POST.get('last_name', user.last_name)
         email = request.POST.get('email', user.email).strip()
@@ -6135,7 +6225,7 @@ def user_management_view(request):
         action = request.POST.get('action')
         if action == 'update_user':
             user_id = request.POST.get('user_id')
-            user_obj = get_object_or_404(CustomUser, id=user_id)
+            user_obj = get_object_or_404(CustomUser, id=parse_id(user_id))
 
             # Roles: only groups the editor could hold themselves may be added or removed
             old_groups = set(user_obj.groups.all())
@@ -6175,7 +6265,7 @@ def user_management_view(request):
 
         if action == 'reset_password':
             from .account import issue_temp_password
-            user_obj = get_object_or_404(CustomUser, id=request.POST.get('user_id'))
+            user_obj = get_object_or_404(CustomUser, id=parse_id(request.POST.get('user_id')))
             if user_obj == request.user:
                 messages.error(request, "To change your own password, use Change password on My Profile.")
             elif not user_obj.is_active:
@@ -6193,7 +6283,7 @@ def user_management_view(request):
 
         if action == 'unlock_user':
             from .login_throttle import unlock
-            user_obj = get_object_or_404(CustomUser, id=request.POST.get('user_id'))
+            user_obj = get_object_or_404(CustomUser, id=parse_id(request.POST.get('user_id')))
             unlock(user_obj.username)
             log_user_change(request, user_obj, 'unlocked')
             messages.success(request, f"{user_obj.username} can sign in again.")
@@ -6201,7 +6291,7 @@ def user_management_view(request):
 
         if action == 'sign_out_everywhere':
             from .account import sign_out_everywhere
-            user_obj = get_object_or_404(CustomUser, id=request.POST.get('user_id'))
+            user_obj = get_object_or_404(CustomUser, id=parse_id(request.POST.get('user_id')))
             if _outranks(request.user, user_obj):
                 messages.error(request, f"You can't sign out {user_obj.username}, because they have permissions you don't have.")
                 return redirect('user_management')
@@ -6263,7 +6353,7 @@ def user_audit_log_view(request):
     target = None
     user_id = request.GET.get('user', '')
     if user_id.isdigit():
-        target = CustomUser.objects.filter(pk=user_id).first()
+        target = CustomUser.objects.filter(pk=parse_id(user_id)).first()
         entries = entries.filter(target_id=user_id)
     action = request.GET.get('action', '')
     if action in dict(UserAuditLog.ACTION_CHOICES):
@@ -6430,7 +6520,7 @@ def so_allocate_view(request, pk):
                 if send_to_mfg and total_unfulfilled_across_so > 0:
                     plant = None
                     if plant_id:
-                        plant = Warehouse.objects.filter(id=plant_id).first()
+                        plant = Warehouse.objects.filter(id=parse_id(plant_id)).first()
 
                     from .utils import create_shortage_production_runs
                     create_shortage_production_runs(so, plant, request.user)
@@ -6651,7 +6741,7 @@ def production_run_allocate_view(request, pk):
                 if not wh_id:
                     messages.error(request, "Please select the manufacturing facility for this run.")
                     return redirect('production_run_allocate', pk=pk)
-                destination_warehouse = get_object_or_404(Warehouse, id=wh_id)
+                destination_warehouse = get_object_or_404(Warehouse, id=parse_id(wh_id))
                 run.manufacturing_plant = destination_warehouse
             
             override_reason = request.POST.get('override_reason', '').strip()
@@ -6959,10 +7049,29 @@ def production_run_detail_view(request, pk):
     if request.method == 'POST':
         action = request.POST.get('action')
         if action == 'schedule_run':
-            start_val = request.POST.get('start_time')
-            end_val = request.POST.get('end_time')
-            if start_val: run.start_time = start_val
-            if end_val: run.end_time = end_val
+            from django.utils.dateparse import parse_datetime
+            if run.status in ('Completed', 'Cancelled'):
+                messages.error(request, f"This run is {run.get_status_display()}, so it can't be rescheduled.")
+                return redirect('production_run_detail', pk=pk)
+            times = {}
+            for field, label in (('start_time', "Start time"), ('end_time', "End time")):
+                raw = (request.POST.get(field) or '').strip()
+                if not raw:
+                    continue
+                try:
+                    value = parse_datetime(raw)
+                except ValueError:
+                    value = None
+                if value is None:
+                    messages.error(request, f"{label} must be a valid date and time.")
+                    return redirect('production_run_detail', pk=pk)
+                times[field] = timezone.make_aware(value) if timezone.is_naive(value) else value
+            start, end = times.get('start_time', run.start_time), times.get('end_time', run.end_time)
+            if start and end and end < start:
+                messages.error(request, "End time can't be before the start time.")
+                return redirect('production_run_detail', pk=pk)
+            for field, value in times.items():
+                setattr(run, field, value)
             run.save()
             messages.success(request, "Production schedule updated successfully. Calendar is updated.")
             return redirect('production_run_detail', pk=pk)
@@ -7110,7 +7219,7 @@ def production_run_detail_view(request, pk):
                     OrderTimeline.objects.create(production_run=run, action=f"Logged {qty} units of yield on {log_date}.", user=request.user)
                     messages.success(request, f"Logged {qty} units.")
             except Exception as e:
-                messages.error(request, f"Error logging yield: {e}")
+                messages.error(request, f"Couldn't log the yield. {user_error(e)}")
             return redirect('production_run_detail', pk=pk)
 
         elif action == 'complete_production':
@@ -7125,7 +7234,7 @@ def production_run_detail_view(request, pk):
                 return redirect('production_run_detail', pk=pk)
             approver_id = request.POST.get('approver_id')
             if approver_id:
-                problem = approver_problem(CustomUser.objects.filter(id=approver_id).first(), APPROVE_PRODUCTION_RUNS)
+                problem = approver_problem(CustomUser.objects.filter(id=parse_id(approver_id)).first(), APPROVE_PRODUCTION_RUNS)
                 if problem:
                     messages.error(request, problem)
                     return redirect('production_run_detail', pk=pk)
@@ -7240,7 +7349,7 @@ def production_run_detail_view(request, pk):
         elif action == 'add_follower':
             user_id = request.POST.get('user_id')
             if user_id:
-                user_obj = get_object_or_404(CustomUser, id=user_id)
+                user_obj = get_object_or_404(CustomUser, id=parse_id(user_id))
                 if user_obj not in run.followers.all():
                     run.followers.add(user_obj)
                     OrderTimeline.objects.create(production_run=run, action=f"Added {user_obj.get_full_name() or user_obj.username} as a follower.", user=request.user)
@@ -7251,7 +7360,7 @@ def production_run_detail_view(request, pk):
         elif action == 'remove_follower':
             user_id = request.POST.get('user_id')
             if user_id:
-                user_obj = get_object_or_404(CustomUser, id=user_id)
+                user_obj = get_object_or_404(CustomUser, id=parse_id(user_id))
                 if user_obj in run.followers.all():
                     run.followers.remove(user_obj)
                     OrderTimeline.objects.create(production_run=run, action=f"Removed {user_obj.get_full_name() or user_obj.username} from followers.", user=request.user)

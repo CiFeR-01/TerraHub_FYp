@@ -44,7 +44,8 @@ def read_unit_weight(data, uom):
         return None, "Choose a unit of measure."
     if uom in UNIT_WEIGHT_MT:
         return UNIT_WEIGHT_MT[uom], None
-    kg, err = read_decimal(data, 'weight_kg_per_unit', "Weight of one piece" if uom == 'pcs' else "Weight of one litre", above=0)
+    kg, err = read_decimal(data, 'weight_kg_per_unit', "Weight of one piece" if uom == 'pcs' else "Weight of one litre", above=0,
+                           max_value=Decimal('999999999'))  # the stored MT figure must stay below 1,000,000
     return (kg / 1000 if kg is not None else None), err
 
 def generate_next_code(model_class, field_name, prefix, default_num=1001, pad=4):
@@ -69,7 +70,11 @@ def generate_next_code(model_class, field_name, prefix, default_num=1001, pad=4)
         candidate = f"{prefix}-{next_num:0{pad}d}" if pad else f"{prefix}-{next_num}"
     return candidate
 
-def read_decimal(data, field, label, min_value=None, above=None, required=True):
+# Largest number most quantity/money columns hold (max_digits 12, 2 places); bigger values crash the save
+MAX_AMOUNT = Decimal('9999999999.99')
+
+
+def read_decimal(data, field, label, min_value=None, above=None, required=True, max_value=MAX_AMOUNT):
     """Read a number from form data. Returns (Decimal or None, error message or None)."""
     from decimal import InvalidOperation
     raw = (data.get(field) or '').strip()
@@ -85,7 +90,18 @@ def read_decimal(data, field, label, min_value=None, above=None, required=True):
         return None, f"{label} must be more than {above}."
     if min_value is not None and value < min_value:
         return None, f"{label} can't be less than {min_value}."
+    if max_value is not None and value > max_value:
+        return None, f"{label} is too large."
     return value, None
+
+
+def parse_id(raw):
+    """A record id from form or query data as an int, or None if it isn't a whole number (so a bad id is refused, not a 500)."""
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 def read_date(data, field, label, required=False):
@@ -110,6 +126,31 @@ def unexpired(batches):
 
 class StockTaken(Exception):
     """A batch picked on a page no longer has the free stock it showed: someone reserved it first."""
+
+
+class UserFacingError(ValueError):
+    """A refusal whose text is written for the user, so it is shown as it is."""
+
+
+GENERIC_FORM_ERROR = "Something in the form isn't valid. Check the values and try again."
+
+
+def user_error(exc):
+    """Plain wording for an exception caught around a form action. Raw Python/Django text only goes to the server log."""
+    import logging
+    from django.core.exceptions import ObjectDoesNotExist, ValidationError
+    from django.db import IntegrityError
+    from django.http import Http404
+    if isinstance(exc, (UserFacingError, StockTaken)) or type(exc).__name__ == 'QAError':
+        return str(exc)
+    if isinstance(exc, (Http404, ObjectDoesNotExist)):
+        return "That record no longer exists. Reload the page and try again."
+    if isinstance(exc, ValidationError):
+        return ' '.join(exc.messages)
+    if isinstance(exc, IntegrityError):
+        return "That clashes with an existing record (for example a duplicate code or name)."
+    logging.getLogger('core').exception("Unexpected error in a form action")
+    return GENERIC_FORM_ERROR
 
 
 def lock_free_batch(batch_id, qty):
@@ -879,11 +920,11 @@ def unallocate_so_batch(allocation, quantity, user, target_so=None):
     from .models import StockAllocation, OrderTimeline, SalesOrder
 
     if allocation.sales_order is None:
-        raise ValueError("This allocation isn't held by a Sales Order — nothing to unallocate here.")
+        raise UserFacingError("This allocation isn't held by a Sales Order — nothing to unallocate here.")
 
     quantity = Decimal(str(quantity))
     if quantity <= 0 or quantity > allocation.quantity:
-        raise ValueError(f"Quantity must be between 0 and {allocation.quantity}.")
+        raise UserFacingError(f"Quantity must be between 0 and {allocation.quantity}.")
 
     source_so = allocation.sales_order
     batch = allocation.batch
@@ -1023,8 +1064,8 @@ def apply_po_material_receipt(po_detail, delta_qty, user, expiry_date=None, manu
                        .exclude(status__in=['Depleted', 'Spoiled']).order_by('-id'))
         free = sum((b.quantity - b.allocated_quantity for b in batches), Decimal('0'))
         if free < -delta_qty:
-            raise ValueError(f"only {free} of the received {po_detail.material.name} is still unreserved in stock, "
-                             f"so the receipt can't be lowered by {-delta_qty}")
+            raise UserFacingError(f"Only {free} of the received {po_detail.material.name} is still unreserved in stock, "
+                             f"so the receipt can't be lowered by {-delta_qty}.")
         to_remove = -delta_qty
         for b in batches:
             if to_remove <= 0:

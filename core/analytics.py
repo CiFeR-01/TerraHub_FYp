@@ -867,7 +867,8 @@ def snapshot_warehouse_utilization(snap_date=None, warehouse_ids=None):
                 "used_mt": r["used_mt"],
                 "quarantined_mt": r["quarantined_mt"],
                 "capacity_mt": cap,
-                "utilization_percent": round(r["used_mt"] / cap * 100, 2) if cap > 0 else 0.0,
+                # capped to what the column holds (9999.99%) so an overfull facility can't crash every stock move there
+                "utilization_percent": min(round(r["used_mt"] / cap * 100, 2), 9999.99) if cap > 0 else 0.0,
                 "daily_rent_cost": r["daily_cost"],
                 "billing_mode": r["billing_mode"],
                 "rent_estimated": False,
