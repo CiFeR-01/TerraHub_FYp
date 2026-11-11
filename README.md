@@ -1,6 +1,6 @@
 # TerraHub
 
-Inventory, production and warehouse management system. Final year project by Hariharan, 2026.
+Inventory warehouse management system. Final year project by Hariharan, 2026.
 
 Built with Django 6.0 (Python 3.14) and PostgreSQL. Modules: purchase orders, sales orders, manufacturing runs, shipments, QA and batch tracking, stock audits, facility rent and the Rent Reduction DSS, approvals, analytics, and an optional AI Copilot.
 
