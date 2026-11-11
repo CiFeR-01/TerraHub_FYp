@@ -1,6 +1,7 @@
 """Typed access to editable settings in the SystemSetting table (registered here with defaults).
 get_setting("key") returns the DB value if it parses, else the default; read once per request, not in a loop."""
 from __future__ import annotations
+import math
 
 # key -> (default, type, description)
 REGISTRY: dict[str, tuple[object, str, str]] = {
@@ -277,6 +278,25 @@ LIMITS = {
     "qa_extension_max_days": (1, 730),
     "qa_writeoff_approval_rm": (0, None),
     "qa_writeoff_undo_days": (0, 365),
+    "po_default_lead_time_days": (1, 365),
+    "so_at_risk_window_days": (0, 365),
+    "logistics_at_risk_window_days": (0, 365),
+    "logistics_stall_days": (1, 365),
+    "dss_min_total_saving_rm": (0, 10_000_000),
+    "dss_dismiss_snooze_days": (1, 365),
+    "dss_saving_horizon_days": (1, 3650),
+    "capacity_trend_window_days": (1, 3650),
+    "stockout_reorder_now_days": (0, 365),
+    "stockout_watch_days": (0, 365),
+    "capacity_critical_percent": (0, 100),
+    "capacity_critical_days": (0, 3650),
+    "capacity_watch_days": (0, 3650),
+    "capacity_flat_slope_pp": (0, 100),
+    "supplier_good_on_time_pct": (0, 100),
+    "supplier_good_fill_pct": (0, 100),
+    "supplier_poor_on_time_pct": (0, 100),
+    "supplier_poor_fill_pct": (0, 100),
+    "trend_significant_pct": (0, 1000),
 }
 
 ALL_SETTINGS = {**SECURITY_REGISTRY, **REGISTRY}
@@ -324,7 +344,8 @@ def cast_value(raw, value_type):
         if value_type == "int":
             return int(raw)
         if value_type == "float":
-            return float(raw)
+            value = float(raw)
+            return value if math.isfinite(value) else None  # 'nan' and 'inf' parse as floats but pass every range check
         if value_type == "bool":
             return str(raw).strip().lower() in ("1", "true", "yes", "on")
         return str(raw)

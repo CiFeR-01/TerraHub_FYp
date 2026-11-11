@@ -36,3 +36,15 @@ def server_error(request):
 def csrf_failure(request, reason=""):
     return _page(403, "Session expired", "This form was out of date, usually because you were signed out. "
                                          "Reload the page or sign in again, then retry.")
+
+
+class RejectNulByteMiddleware:
+    """400 for a NUL byte in the URL path or query string. Postgres refuses text with NUL, so such a lookup or search would otherwise end in a 500."""
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if '\x00' in request.path or any('\x00' in k or any('\x00' in v for v in vs)
+                                          for k, vs in request.GET.lists()):
+            return _page(400)
+        return self.get_response(request)

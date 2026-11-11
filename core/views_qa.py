@@ -17,6 +17,7 @@ from .models import Batch, QAApproval, QAEvent, QARequest, QA_REASON_CHOICES, St
 from .permissions import (APPROVE_QA_WRITEOFFS, DISPOSE_STOCK, FACILITY_REFUSED, PERFORM_QA, REQUEST_QA,
                           action_denied, limited_warehouse_ids, may_use_warehouse)
 from .settings_store import get_setting
+from .utils import parse_id
 
 TABS = ('requests', 'expiring', 'at_risk', 'quarantined', 'approvals', 'history')
 # Reasons offered per action (all reasons are valid everywhere; these just order the dropdowns sensibly).
@@ -53,7 +54,7 @@ def _handle_post(request):
     note = (request.POST.get('note') or '').strip()
 
     if action in ('approve_qa', 'reject_qa'):
-        approval = get_object_or_404(QAApproval, pk=request.POST.get('approval_id'))
+        approval = get_object_or_404(QAApproval, pk=parse_id(request.POST.get('approval_id')))
         if not may_use_warehouse(user, approval.batch.warehouse_id):
             messages.error(request, FACILITY_REFUSED)
             return back
@@ -67,7 +68,7 @@ def _handle_post(request):
         return back
 
     if action in ('assign_request', 'resolve_request'):
-        req = get_object_or_404(QARequest, pk=request.POST.get('request_id'))
+        req = get_object_or_404(QARequest, pk=parse_id(request.POST.get('request_id')))
         if not may_use_warehouse(user, req.batch.warehouse_id):
             messages.error(request, FACILITY_REFUSED)
             return back
@@ -87,7 +88,7 @@ def _handle_post(request):
         return back
 
     batch = get_object_or_404(Batch.objects.select_related('material', 'product', 'warehouse', 'purchase_order'),
-                              id=request.POST.get('batch_id'))
+                              id=parse_id(request.POST.get('batch_id')))
     if not may_use_warehouse(user, batch.warehouse_id):
         messages.error(request, FACILITY_REFUSED)
         return back
@@ -281,7 +282,7 @@ def qa_request_create(request):
     if not request.user.has_perm(REQUEST_QA):
         messages.error(request, "You don't have permission to send batches to QA. Ask a Manager or Admin if you need it.")
         return redirect(back)
-    batch = get_object_or_404(Batch.objects.select_related('material', 'product', 'warehouse'), id=request.POST.get('batch_id'))
+    batch = get_object_or_404(Batch.objects.select_related('material', 'product', 'warehouse'), id=parse_id(request.POST.get('batch_id')))
     if not may_use_warehouse(request.user, batch.warehouse_id):
         messages.error(request, FACILITY_REFUSED)
         return redirect(back)
