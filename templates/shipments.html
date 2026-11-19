@@ -266,7 +266,7 @@
         {
             {% for po in purchase_orders %}
             "{{ po.id }}": {
-                "warehouse_id": "{{ po.target_warehouse.id|default:'' }}",
+                "warehouse_id": "{{ po.target_warehouse_id|default:'' }}",
                 "supplier_name": "{{ po.supplier_name|default:''|escapejs }}",
                 "expected_delivery_date": "{{ po.expected_delivery_date|date:'Y-m-d'|default:'' }}",
                 "items": [
@@ -284,7 +284,7 @@
         {
             {% for so in sales_orders %}
             "{{ so.id }}": {
-                "warehouse_id": "{{ so.origin_warehouse.id|default:'' }}",
+                "warehouse_id": "{{ so.origin_warehouse_id|default:'' }}",
                 "fulfillment_deadline": "{{ so.fulfillment_deadline|date:'Y-m-d'|default:'' }}",
                 "items": [
                     {% for item in so.items.all %}

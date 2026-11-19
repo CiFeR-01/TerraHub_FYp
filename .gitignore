@@ -46,3 +46,4 @@ ANALYTICS_CHANGELOG.md
 CODE-IMAGE.PY
 core/another1.py
 .coverage
+*.patch
