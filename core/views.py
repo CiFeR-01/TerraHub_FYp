@@ -151,9 +151,40 @@ def _csv_safe(value):
     return value
 
 
+def _csv_cell(value):
+    """An uploaded cell, trimmed, with the ' that _csv_safe added on export taken off again."""
+    value = (value or '').strip()
+    return value[1:] if value[:1] == "'" and value[1:2] in FORMULA_START else value
+
+
+def _apply_row_update(obj, new, idx, name, is_dry_run, results):
+    """Update-mode import of one CSV row onto `obj`. Lists each changed field as 'field: old → new' in the
+    preview, and saves only when something changed. Returns True if the row changes the record."""
+    def show(v):
+        return f"{v.normalize():f}" if isinstance(v, Decimal) else v
+    changes = []
+    for field, value in new.items():
+        old, places = getattr(obj, field), getattr(obj._meta.get_field(field), 'decimal_places', None)
+        if places is not None:  # compare at the column's precision, so 85.5 vs stored 85.50 is no change
+            value = Decimal(str(value)).quantize(Decimal(1).scaleb(-places))
+        if value != old:
+            changes.append(f"{field}: {show(old)} → {show(value)}")
+            setattr(obj, field, value)
+    if not changes:
+        results.append({'line': idx, 'name': name, 'sku': obj.sku, 'status': 'unchanged',
+                        'msg': f"Line {idx}: No changes; '{name}' (SKU: {obj.sku}) already matches."})
+        return False
+    if not is_dry_run:
+        obj.save()
+    results.append({'line': idx, 'name': name, 'sku': obj.sku, 'status': 'updated',
+                    'msg': f"Line {idx}: Updates {'; '.join(changes)}."})
+    return True
+
+
 class SafeCSVWriter:
     """csv.writer that escapes formula-like text cells (CSV injection)."""
     def __init__(self, f):
+        f.write('﻿')  # BOM so Excel opens the file as UTF-8, not ANSI
         self._w = csv.writer(f)
 
     def writerow(self, row):
@@ -1530,7 +1561,7 @@ def export_products_csv(request):
             prod.sku,
             prod.description or '',
             prod.unit_of_measure,
-            f"{prod.weight_mt_per_unit:.4f}",
+            f"{prod.weight_mt_per_unit:.6f}",
             f"{prod.price_per_unit:.2f}",
             prod.shelf_life_days or '',
         ])
@@ -1551,7 +1582,7 @@ def import_products(request):
         messages.error(request, "Please select a valid CSV file to upload.")
         return redirect('product_list')
 
-    if not csv_file.name.endswith('.csv'):
+    if not csv_file.name.lower().endswith('.csv'):
         messages.error(request, "File format not supported. Please upload a standard .csv file.")
         return redirect('product_list')
 
@@ -1592,7 +1623,9 @@ def import_products(request):
 
     with transaction.atomic():
         for idx, raw_row in enumerate(rows, start=2):
-            row = {k.strip().lower(): (v.strip() if v else '') for k, v in raw_row.items() if k}
+            row = {k.strip().lower(): _csv_cell(v) for k, v in raw_row.items() if k}
+            if not any(row.values()):  # blank row, e.g. ",,,," that Excel leaves at the end
+                continue
             
             name = row.get('name', '')
             sku = row.get('sku', '').upper()
@@ -1609,6 +1642,7 @@ def import_products(request):
                 dry_run_results.append({'line': idx, 'name': name or '—', 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
 
+            uom = {c.lower(): c for c, _ in Product.UNIT_CHOICES}.get(uom.lower(), uom)  # 'KG' -> 'kg', as stored
             if uom.lower() not in valid_uoms:
                 err = f"Line {idx}: Invalid unit of measure '{uom}'. Valid: MT, kg, L, g, pcs."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
@@ -1652,7 +1686,7 @@ def import_products(request):
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku, 'status': 'error', 'msg': err})
                 continue
 
-            if clean_name_key in seen_names_in_file and not sku:
+            if clean_name_key in seen_names_in_file:
                 err = f"Line {idx}: Duplicate product name '{name}' within CSV file."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
                 dry_run_results.append({'line': idx, 'name': name, 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
@@ -1672,17 +1706,13 @@ def import_products(request):
                     dry_run_results.append({'line': idx, 'name': name, 'sku': db_match.sku, 'status': 'duplicate', 'msg': msg})
                     continue
                 else: # 'update'
-                    if not is_dry_run:
-                        db_match.name = name
-                        if description: db_match.description = description
-                        db_match.unit_of_measure = uom
-                        db_match.weight_mt_per_unit = weight
-                        db_match.price_per_unit = price
-                        if shelf is not None: db_match.shelf_life_days = shelf
-                        db_match.save()
-                    updated_count += 1
-                    msg = f"Line {idx}: Updated existing product '{name}' (SKU: {db_match.sku})."
-                    dry_run_results.append({'line': idx, 'name': name, 'sku': db_match.sku, 'status': 'updated', 'msg': msg})
+                    new = {'name': name, 'unit_of_measure': uom, 'weight_mt_per_unit': weight, 'price_per_unit': price}
+                    if description: new['description'] = description
+                    if shelf is not None: new['shelf_life_days'] = shelf
+                    if _apply_row_update(db_match, new, idx, name, is_dry_run, dry_run_results):
+                        updated_count += 1
+                    else:
+                        skipped_count += 1
                     continue
 
             if not sku:
@@ -1729,7 +1759,7 @@ def import_products(request):
             user=request.user if request.user.is_authenticated else None
         )
 
-    summary_msg = f"Product import completed: {created_count} created, {updated_count} updated, {skipped_count} skipped duplicates."
+    summary_msg = f"Product import completed: {created_count} created, {updated_count} updated, {skipped_count} skipped (duplicate or no changes)."
     if error_rows:
         summary_msg += f" {len(error_rows)} row(s) had validation errors."
         messages.warning(request, summary_msg)
@@ -1768,7 +1798,7 @@ def export_materials_csv(request):
             mat.category,
             mat.unit_of_measure,
             mat.safe_storage_days,
-            f"{mat.weight_mt_per_unit:.4f}",
+            f"{mat.weight_mt_per_unit:.6f}",
             f"{mat.cost_per_unit:.2f}"
         ])
     return response
@@ -1788,7 +1818,7 @@ def import_materials(request):
         messages.error(request, "Please select a valid CSV file to upload.")
         return redirect('material_list')
 
-    if not csv_file.name.endswith('.csv'):
+    if not csv_file.name.lower().endswith('.csv'):
         messages.error(request, "File format not supported. Please upload a standard .csv file.")
         return redirect('material_list')
 
@@ -1829,7 +1859,9 @@ def import_materials(request):
 
     with transaction.atomic():
         for idx, raw_row in enumerate(rows, start=2):
-            row = {k.strip().lower(): (v.strip() if v else '') for k, v in raw_row.items() if k}
+            row = {k.strip().lower(): _csv_cell(v) for k, v in raw_row.items() if k}
+            if not any(row.values()):  # blank row, e.g. ",,,," that Excel leaves at the end
+                continue
             
             name = row.get('name', '')
             sku = row.get('sku', '').upper()
@@ -1846,6 +1878,7 @@ def import_materials(request):
                 dry_run_results.append({'line': idx, 'name': name or '—', 'sku': sku or 'Auto', 'status': 'error', 'msg': err})
                 continue
 
+            uom = {c.lower(): c for c, _ in Product.UNIT_CHOICES}.get(uom.lower(), uom)  # 'KG' -> 'kg', as stored
             if uom.lower() not in valid_uoms:
                 err = f"Line {idx}: Invalid unit of measure '{uom}'. Valid: MT, kg, L, g, pcs."
                 error_rows.append({'line': idx, 'row': raw_row, 'error': err})
@@ -1909,17 +1942,13 @@ def import_materials(request):
                     dry_run_results.append({'line': idx, 'name': name, 'sku': db_match.sku, 'status': 'duplicate', 'msg': msg})
                     continue
                 else: # 'update'
-                    if not is_dry_run:
-                        db_match.name = name
-                        db_match.category = category or db_match.category
-                        db_match.unit_of_measure = uom
-                        db_match.safe_storage_days = days
-                        db_match.weight_mt_per_unit = weight
-                        db_match.cost_per_unit = cost
-                        db_match.save()
-                    updated_count += 1
-                    msg = f"Line {idx}: Updated existing material '{name}' (SKU: {db_match.sku})."
-                    dry_run_results.append({'line': idx, 'name': name, 'sku': db_match.sku, 'status': 'updated', 'msg': msg})
+                    new = {'name': name, 'unit_of_measure': uom, 'safe_storage_days': days,
+                           'weight_mt_per_unit': weight, 'cost_per_unit': cost}
+                    if category: new['category'] = category
+                    if _apply_row_update(db_match, new, idx, name, is_dry_run, dry_run_results):
+                        updated_count += 1
+                    else:
+                        skipped_count += 1
                     continue
 
             if not sku:
@@ -1967,7 +1996,7 @@ def import_materials(request):
             user=request.user if request.user.is_authenticated else None
         )
 
-    summary_msg = f"Material import completed: {created_count} created, {updated_count} updated, {skipped_count} skipped duplicates."
+    summary_msg = f"Material import completed: {created_count} created, {updated_count} updated, {skipped_count} skipped (duplicate or no changes)."
     if error_rows:
         summary_msg += f" {len(error_rows)} row(s) had validation errors."
         messages.warning(request, summary_msg)
@@ -3402,7 +3431,7 @@ def import_orders(request, kind):
     try:
         reader = csv.DictReader(io.StringIO(decode_csv_upload(csv_file.read())))
         headers = [h.strip().lower() for h in (reader.fieldnames or []) if h]
-        rows = [{k.strip().lower(): (v or '').strip() for k, v in r.items() if k}
+        rows = [{k.strip().lower(): _csv_cell(v) for k, v in r.items() if k}
                 for r in reader]
     except Exception as e:
         return fail("Couldn't read the CSV file. Save it as CSV (UTF-8) with a header row and try again.")
@@ -4955,8 +4984,8 @@ def shipments_view(request):
     warehouses = Warehouse.objects.all().order_by('name')
     materials = Material.objects.all().order_by('name')
     products = Product.objects.all().order_by('name')
-    purchase_orders = PurchaseOrder.objects.exclude(status__in=['Completed', 'Cancelled']).order_by('-po_number')
-    sales_orders = SalesOrder.objects.exclude(status__in=SO_NOT_SHIPPABLE).order_by('-so_number')
+    purchase_orders = PurchaseOrder.objects.exclude(status__in=['Completed', 'Cancelled']).prefetch_related('items__material').order_by('-po_number')
+    sales_orders = SalesOrder.objects.exclude(status__in=SO_NOT_SHIPPABLE).prefetch_related('items__product').order_by('-so_number')
     batches = Batch.objects.filter(status='Active').order_by('batch_number')
 
     stats = {
@@ -5341,7 +5370,7 @@ def shipment_detail_view(request, pk):
     if denied:
         messages.error(request, denied)
         return redirect(request.get_full_path())
-    shipment = get_object_or_404(Shipment.objects.prefetch_related('items__material', 'items__product', 'items__batch'), pk=pk)
+    shipment = get_object_or_404(Shipment.objects.prefetch_related('items__material', 'items__product', 'items__batch', 'followers', 'timeline__user'), pk=pk)
     
     route_error = False
     if request.method == 'POST':

@@ -21,7 +21,9 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 if not SECRET_KEY:
     if not DEBUG:
         raise ImproperlyConfigured('SECRET_KEY must be set when DEBUG is False.')
-    SECRET_KEY = 'django-insecure-q-%3+dj4%@gt&773333mbq41=6abjt9j%=3@n+spibj9t#3jv0'
+    # No fixed fallback key: a fresh random key per run, so the old published dev key is never used.
+    from django.core.management.utils import get_random_secret_key
+    SECRET_KEY = 'django-insecure-' + get_random_secret_key()
 
 # Locally: accepts all. On Railway: set ALLOWED_HOSTS=your-app.up.railway.app
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')

@@ -231,9 +231,9 @@ python manage.py migrate
 
 ### 6.4. Superuser Creation
 ```powershell
-$env:DJANGO_SUPERUSER_PASSWORD="admin"
-python manage.py createsuperuser --noinput --username=admin --email=admin@terrahub.local
+python manage.py createsuperuser
 ```
+It asks for a username and password. Use a strong password, and never reuse the database password.
 
 ### 6.5. Start Development Server
 ```powershell

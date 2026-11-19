@@ -314,6 +314,7 @@ function runMaterialDryRun() {
             var statusBadge = '';
             if (r.status === 'created') statusBadge = '<span style="background:var(--success-soft); color:var(--success-strong); padding:2px 6px; border-radius:4px; font-weight:600;">NEW</span>';
             else if (r.status === 'updated') statusBadge = '<span style="background:var(--info-soft); color:var(--info-strong); padding:2px 6px; border-radius:4px; font-weight:600;">UPDATE</span>';
+            else if (r.status === 'unchanged') statusBadge = '<span style="background:var(--surface-muted); color:var(--text-muted); padding:2px 6px; border-radius:4px; font-weight:600;">NO CHANGE</span>';
             else if (r.status === 'duplicate') statusBadge = '<span style="background:var(--warning-soft); color:var(--warning-strong); padding:2px 6px; border-radius:4px; font-weight:600;">SKIP</span>';
             else statusBadge = '<span style="background:var(--danger-soft); color:var(--danger-strong); padding:2px 6px; border-radius:4px; font-weight:600;">ERROR</span>';
 
